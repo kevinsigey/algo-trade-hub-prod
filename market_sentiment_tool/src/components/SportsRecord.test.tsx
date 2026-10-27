@@ -139,3 +139,26 @@ describe("SportsRecord Kalshi comparison per row", () => {
     expect(screen.queryByText("too early")).toBeNull();
   });
 });
+
+describe("SportsRecord loading and labels", () => {
+  it("shows the records without waiting for a journal request that never answers", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      String(url).includes("/api/journal")
+        ? new Promise(() => {}) // never resolves
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(SPORTS_BODY) })));
+    render(<SportsRecord />);
+    expect(await screen.findByText("59%")).toBeInTheDocument();
+  });
+
+  it("names each sport's own pre-event moment", async () => {
+    stub();
+    render(<SportsRecord />);
+    await screen.findByText("59%");
+    const nba = screen.getByText("NBA").closest(".rounded-lg") as unknown as HTMLElement;
+    expect(within(nba).getByText(/before tip-off/)).toBeInTheDocument();
+    const f1 = screen.getByText("F1").closest(".rounded-lg") as unknown as HTMLElement;
+    expect(within(f1).getByText(/before the session/)).toBeInTheDocument();
+    const nfl = screen.getByText("NFL").closest(".rounded-lg") as unknown as HTMLElement;
+    expect(within(nfl).getAllByText(/before kickoff/).length).toBeGreaterThan(0);
+  });
+});

@@ -15,6 +15,15 @@ const SPORT_TITLES: Record<string, string> = {
 
 const ORDER = ["nfl", "cfb", "nba", "pl", "f1"] as const;
 
+/** What the predictor calls the moment its pre-event subset is frozen. */
+const PRE_LABEL: Record<string, string> = {
+  nfl: "before kickoff",
+  cfb: "before kickoff",
+  nba: "before tip-off",
+  pl: "before kickoff",
+  f1: "before the session",
+};
+
 function pct(x: number | null): string {
   if (x === null) return "";
   return `${Math.round(x * 100)}%`;
@@ -48,7 +57,7 @@ function Row({ row, vs }: { row: SportsRecordRow; vs: string | null }) {
       </div>
       {row.n_pre !== null && (
         <div className="text-xs text-slate-500">
-          before kickoff:{" "}
+          {PRE_LABEL[row.sport] ?? "before the event"}:{" "}
           {row.hit_rate_pre === null ? `n ${row.n_pre}` : `${pct(row.hit_rate_pre)} of ${row.n_pre}`}
         </div>
       )}
@@ -99,20 +108,20 @@ export default function SportsRecord() {
   const [scores, setScores] = useState<JournalScore[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Two requests, two states: the journal only adds the Kalshi line, so a slow or failed journal must not
+  // hold the five records back.
   useEffect(() => {
-    Promise.all([
-      loadSportsRecord(),
-      getJson<JournalResponse>("/api/journal").then((j) => j.forecasters ?? []).catch(() => [] as JournalScore[]),
-    ])
-      .then(([d, s]) => { setData(d); setScores(s as JournalScore[]); })
-      .catch((e: Error) => setError(e.message));
+    loadSportsRecord().then(setData).catch((e: Error) => setError(e.message));
+    getJson<JournalResponse>("/api/journal")
+      .then((j) => setScores(j.forecasters ?? []))
+      .catch(() => setScores([]));
   }, []);
 
   if (error) {
     return (
       <section aria-label="Sports predictors" className="space-y-3">
         <h2 className="text-xl font-semibold text-white">Sports predictors</h2>
-        <p className="text-sm text-rose-300/80">{error}</p>
+        <p className="text-sm text-slate-500" title={error}>Sports records unavailable right now</p>
       </section>
     );
   }
