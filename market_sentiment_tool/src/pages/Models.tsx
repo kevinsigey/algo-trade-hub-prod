@@ -4,6 +4,7 @@ import { Chip, type Tone } from "@/components/Chip";
 import { GateBadge } from "@/components/GateBadge";
 import { SettledBars } from "@/components/SettledBars";
 import { Stat } from "@/components/Stat";
+import SportsRecord from "@/components/SportsRecord";
 import { buildApiUrl } from "@/lib/api";
 import {
   brierPair,
@@ -169,6 +170,8 @@ export default function Models() {
       )}
 
       <p className="text-sm"><a href="/scoreboard" className="text-emerald-400 hover:underline">Full backtest detail</a></p>
+
+      <SportsRecord />
     </div>
   );
 }
