@@ -104,3 +104,38 @@ describe("SportsRecord", () => {
     expect(screen.getAllByText("No market comparison yet").length).toBeGreaterThan(0);
   });
 });
+
+describe("SportsRecord Kalshi comparison per row", () => {
+  it("grades each NFL row from its own journal scorecard, and says so when one is missing", async () => {
+    stub();
+    render(<SportsRecord />);
+    await screen.findByText("59%");
+    const nflCard = screen.getByText("NFL").closest(".rounded-lg") as unknown as HTMLElement;
+    const lines = within(nflCard).getAllByText(/vs Kalshi price:/).map((e) => e.textContent);
+    expect(lines).toHaveLength(2); // Winner and Spread rows; the fixture journal has only the winner scorecard
+    expect(lines.filter((l) => l?.includes("not scored yet"))).toHaveLength(1);
+    expect(lines.filter((l) => /\(.*(Ahead|Behind|No signal)\)/.test(l ?? ""))).toHaveLength(1);
+  });
+
+  it("never shows a Kalshi number for NBA, Premier League or F1", async () => {
+    stub();
+    render(<SportsRecord />);
+    await screen.findByText("59%");
+    for (const title of ["NBA", "Premier League", "F1"]) {
+      const card = screen.getByText(title).closest(".rounded-lg") as unknown as HTMLElement;
+      expect(within(card).queryByText(/vs Kalshi price:/)).toBeNull();
+      expect(within(card).getByText("No market comparison yet")).toBeInTheDocument();
+    }
+  });
+
+  it("a null count shows a dash and no too-early chip", async () => {
+    const body = { ...SPORTS_BODY, sports: [{ sport: "nba", status: "ok", rows: [
+      { sport: "nba", market: "h2h", label: "Winner", n: null, hit_rate: 0.5, n_pre: null, hit_rate_pre: null, vs_market: null, note: null },
+    ] }] };
+    stub(body);
+    render(<SportsRecord />);
+    expect(await screen.findByText("50%")).toBeInTheDocument();
+    expect(screen.getByText("n —")).toBeInTheDocument();
+    expect(screen.queryByText("too early")).toBeNull();
+  });
+});

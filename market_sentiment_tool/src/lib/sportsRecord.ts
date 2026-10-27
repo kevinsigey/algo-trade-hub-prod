@@ -4,7 +4,7 @@ export interface SportsRecordRow {
   sport: Sport;
   market: string;
   label: string;
-  n: number;
+  n: number | null;
   hit_rate: number | null;
   n_pre: number | null;
   hit_rate_pre: number | null;

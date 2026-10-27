@@ -20,13 +20,12 @@ function pct(x: number | null): string {
   return `${Math.round(x * 100)}%`;
 }
 
-function TooEarly({ n }: { n: number }) {
-  if (n >= 100) return null;
+function TooEarly({ n }: { n: number | null }) {
+  if (n === null || n >= 100) return null;
   return <span className="ml-2 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300">too early</span>;
 }
 
-function Row({ row }: { row: SportsRecordRow }) {
-  const early = row.n < 100;
+function Row({ row, vs }: { row: SportsRecordRow; vs: string | null }) {
   const hitNull = row.hit_rate === null;
   return (
     <div className="space-y-1 text-sm">
@@ -34,14 +33,14 @@ function Row({ row }: { row: SportsRecordRow }) {
         <span className="text-slate-200">{row.label}</span>
         <span className="flex items-center gap-2 tabular-nums">
           {hitNull ? (
-            <span className="text-slate-400">n {row.n}</span>
+            <span className="text-slate-400">n {row.n ?? "—"}</span>
           ) : (
             <>
               <span className="text-lg font-semibold text-white">{pct(row.hit_rate)}</span>
-              <span className="h-1.5 w-16 overflow-hidden rounded bg-slate-700">
+              <span aria-hidden className="h-1.5 w-16 overflow-hidden rounded bg-slate-700">
                 <span className="block h-full bg-emerald-500" style={{ width: `${(row.hit_rate as number) * 100}%` }} />
               </span>
-              <span className="text-slate-400">n {row.n}</span>
+              <span className="text-slate-400">n {row.n ?? "—"}</span>
             </>
           )}
           <TooEarly n={row.n} />
@@ -54,42 +53,43 @@ function Row({ row }: { row: SportsRecordRow }) {
         </div>
       )}
       {row.note && <div className="text-xs text-slate-500">{row.note}</div>}
+      {vs && <div className="text-xs text-slate-400">{vs}</div>}
     </div>
   );
 }
 
-function kalshiLine(sport: string, scores: JournalScore[] | null): string | null {
-  if (sport !== "nfl" && sport !== "cfb") return "No market comparison yet";
-  const forecaster = sport === "nfl" ? "sports_nfl" : "sports_cfb";
-  const sc = (scores ?? []).find((s) => s.forecaster === forecaster && s.baseline === "market" && s.gap != null);
-  if (!sc) return null;
+/** The journal scorecard that grades this row against the Kalshi price on the same contracts, by market. */
+const JOURNAL_SUFFIX: Record<string, string> = { moneyline: "", spread: "_spread", total: "_total" };
+
+/** NFL and college football only: the other three have no Kalshi feed yet. Numbers come from the server. */
+function vsLine(sport: string, market: string, scores: JournalScore[]): string | null {
+  if (sport !== "nfl" && sport !== "cfb") return null;
+  const suffix = JOURNAL_SUFFIX[market];
+  if (suffix === undefined) return null;
+  const sc = scores.find((x) => x.forecaster === `sports_${sport}${suffix}` && x.baseline === "market" && x.gap != null);
+  if (!sc) return "vs Kalshi price: not scored yet";
   const g = sc.gap as number;
   const se = sc.gap_se ?? null;
   const v = verdict(g, se);
-  const word = v === "ahead" ? "Ahead" : v === "behind" ? "Behind" : "No signal";
-  return `vs Kalshi price: ${gapText(g, se)} (${word})`;
+  return `vs Kalshi price: ${gapText(g, se)} (${v === "ahead" ? "Ahead" : v === "behind" ? "Behind" : "No signal"})`;
 }
 
-function Card({ sport, data, scores }: { sport: SportsRecordSport; data: SportsRecordResponse | null; scores: JournalScore[] | null }) {
+function Card({ sport, scores }: { sport: SportsRecordSport; scores: JournalScore[] }) {
   const title = SPORT_TITLES[sport.sport] ?? sport.sport.toUpperCase();
-  if (sport.status === "unavailable") {
-    return (
-      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
-        <h3 className="text-sm font-semibold text-white">{title}</h3>
-        <p className="mt-2 text-sm text-slate-500">Unavailable right now</p>
-      </div>
-    );
-  }
-  const line = kalshiLine(sport.sport, scores);
+  const compared = sport.sport === "nfl" || sport.sport === "cfb";
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
       <h3 className="text-sm font-semibold text-white">{title}</h3>
-      <div className="mt-3 space-y-3">
-        {sport.rows.map((r, i) => <Row key={i} row={r} />)}
-      </div>
-      <div className="mt-3 text-xs text-slate-400">
-        {line === null ? null : line === "No market comparison yet" ? "No market comparison yet" : line}
-      </div>
+      {sport.status === "unavailable" ? (
+        <p className="mt-2 text-sm text-slate-500">Unavailable right now</p>
+      ) : (
+        <>
+          <div className="mt-3 space-y-3">
+            {sport.rows.map((r) => <Row key={r.market} row={r} vs={vsLine(sport.sport, r.market, scores)} />)}
+          </div>
+          {!compared && <div className="mt-3 text-xs text-slate-400">No market comparison yet</div>}
+        </>
+      )}
     </div>
   );
 }
@@ -125,7 +125,7 @@ export default function SportsRecord() {
     <section aria-label="Sports predictors" className="space-y-3">
       <h2 className="text-xl font-semibold text-white">Sports predictors</h2>
       <div className="grid gap-4 md:grid-cols-2">
-        {ordered.map((s) => <Card key={s.sport} sport={s} data={data} scores={scores} />)}
+        {ordered.map((s) => <Card key={s.sport} sport={s} scores={scores ?? []} />)}
       </div>
     </section>
   );
