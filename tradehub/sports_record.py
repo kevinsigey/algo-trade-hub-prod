@@ -18,7 +18,7 @@ from time import monotonic
 from typing import Any
 
 SPORTS = ("nfl", "cfb", "nba", "pl", "f1")
-TIMEOUT_SECONDS = 6.0
+TIMEOUT_SECONDS = 8.0
 CACHE_SECONDS = 300.0
 
 # NBA's /api/... path returns the site page, not data: the record is served at /hub/track-record.
@@ -150,7 +150,8 @@ _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def collect(fetch: Callable[[str], Any] = fetch_json, now: Callable[[], float] = monotonic) -> dict[str, Any]:
-    """All five sports, fetched in parallel, each cached for five minutes (failures are not cached)."""
+    """All five sports, fetched in parallel, each cached for five minutes. A failed refresh serves the last good
+    answer marked `stale`; a sport that has never answered is `unavailable`."""
     t = now()
 
     def one(sport: str) -> dict[str, Any]:
@@ -160,6 +161,9 @@ def collect(fetch: Callable[[str], Any] = fetch_json, now: Callable[[], float] =
         result = sport_record(sport, fetch)
         if result["status"] == "ok":
             _cache[sport] = (t, result)
+            return result
+        if hit:  # a predictor that is slow or busy (NBA runs a 12-minute rescore) keeps its last good numbers
+            return {**hit[1], "stale": True}
         return result
 
     with ThreadPoolExecutor(max_workers=len(SPORTS)) as pool:
