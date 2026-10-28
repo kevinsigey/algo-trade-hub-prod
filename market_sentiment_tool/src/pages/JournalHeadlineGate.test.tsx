@@ -82,7 +82,6 @@ describe("journal hero honours the calibration gate", () => {
     render(<Journal />);
     // It carries 999 settled rows, so `split` files it under Results. Either table proves the point:
     // the gate hides it from the AGGREGATE, never from the page.
-    const results = await screen.findByLabelText("Results");
-    expect(within(results).getByRole("button", { name: /Volatility \(VIX\) tomorrow/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Volatility \(VIX\) tomorrow/ })).toBeInTheDocument();
   });
 });
