@@ -117,3 +117,23 @@ def test_the_endpoint_serves_the_collected_record(monkeypatch):
     monkeypatch.setattr(sr, "collect", lambda: {"as_of": "x", "sports": [{"sport": "nfl", "status": "ok", "rows": []}]})
     response = TestClient(main.app).get("/api/sports-record")
     assert response.status_code == 200 and response.json()["sports"][0]["sport"] == "nfl"
+
+
+def test_a_failed_refresh_serves_the_last_good_answer_marked_stale():
+    sr._cache.clear()
+    good = {"games": {"n_resolved": 94, "pct_moneyline_correct": 0.5851063829787234}}
+
+    def ok(url):
+        return good
+
+    def down(url):
+        raise TimeoutError("busy")
+
+    first = sr.collect(fetch=ok, now=lambda: 100.0)
+    assert {s["status"] for s in first["sports"]} == {"ok"}
+    later = sr.collect(fetch=down, now=lambda: 100.0 + sr.CACHE_SECONDS + 1)  # cache expired, predictor busy
+    nfl = next(s for s in later["sports"] if s["sport"] == "nfl")
+    assert nfl["status"] == "ok" and nfl["stale"] is True and nfl["rows"][0]["n"] == 94
+    sr._cache.clear()
+    never = sr.collect(fetch=down, now=lambda: 1.0)
+    assert {s["status"] for s in never["sports"]} == {"unavailable"}  # nothing to fall back on
