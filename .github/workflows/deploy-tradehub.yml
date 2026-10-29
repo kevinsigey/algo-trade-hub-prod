@@ -18,7 +18,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/kevocado/tradehub
+  IMAGE: ghcr.io/kevinsigey/tradehub
 
 jobs:
   test:

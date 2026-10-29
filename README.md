@@ -72,7 +72,7 @@ The trade hub runs on the same VPS as the predictor sites, managed by the `vps-s
 | `tradehub-scan.timer` | `python -m tradehub.scripts.scan`: weather + gas predictions and edges (suggest-only) | hourly at :05 |
 | `tradehub-settle.timer` | `python -m tradehub.scripts.settle_predictions`: settles predictions, refreshes the track record | hourly at :35 |
 
-Every push to `main` that touches the app runs `.github/workflows/deploy-tradehub.yml`: tests, then build and push `ghcr.io/kevocado/tradehub`, then `ssh deploy@$VPS_HOST deploy tradehub <sha>`, which health-checks `/api/health` and rolls back on failure.
+Every push to `main` that touches the app runs `.github/workflows/deploy-tradehub.yml`: tests, then build and push `ghcr.io/kevinsigey/tradehub`, then `ssh deploy@$VPS_HOST deploy tradehub <sha>`, which health-checks `/api/health` and rolls back on failure.
 
 On the VPS (as `deploy`):
 
