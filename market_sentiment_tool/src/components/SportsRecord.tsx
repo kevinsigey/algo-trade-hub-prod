@@ -71,7 +71,9 @@ function Row({ row, vs }: { row: SportsRecordRow; vs: string | null }) {
 const JOURNAL_SUFFIX: Record<string, string> = { moneyline: "", spread: "_spread", total: "_total" };
 
 /** NFL and college football only: the other three have no Kalshi feed yet. Numbers come from the server. */
-function vsLine(sport: string, market: string, scores: JournalScore[]): string | null {
+function vsLine(sport: string, market: string, scores: JournalScore[] | null): string | null {
+  // null = the journal is still loading or failed: say nothing rather than claim the market is unscored.
+  if (scores === null) return null;
   if (sport !== "nfl" && sport !== "cfb") return null;
   const suffix = JOURNAL_SUFFIX[market];
   if (suffix === undefined) return null;
@@ -83,7 +85,7 @@ function vsLine(sport: string, market: string, scores: JournalScore[]): string |
   return `vs Kalshi price: ${gapText(g, se)} (${v === "ahead" ? "Ahead" : v === "behind" ? "Behind" : "No signal"})`;
 }
 
-function Card({ sport, scores }: { sport: SportsRecordSport; scores: JournalScore[] }) {
+function Card({ sport, scores }: { sport: SportsRecordSport; scores: JournalScore[] | null }) {
   const title = SPORT_TITLES[sport.sport] ?? sport.sport.toUpperCase();
   const compared = sport.sport === "nfl" || sport.sport === "cfb";
   return (
@@ -114,7 +116,7 @@ export default function SportsRecord() {
     loadSportsRecord().then(setData).catch((e: Error) => setError(e.message));
     getJson<JournalResponse>("/api/journal")
       .then((j) => setScores(j.forecasters ?? []))
-      .catch(() => setScores([]));
+      .catch(() => undefined); // stays null: no Kalshi line, never a false "not scored yet"
   }, []);
 
   if (error) {
@@ -134,7 +136,7 @@ export default function SportsRecord() {
     <section aria-label="Sports predictors" className="space-y-3">
       <h2 className="text-xl font-semibold text-white">Sports predictors</h2>
       <div className="grid gap-4 md:grid-cols-2">
-        {ordered.map((s) => <Card key={s.sport} sport={s} scores={scores ?? []} />)}
+        {ordered.map((s) => <Card key={s.sport} sport={s} scores={scores} />)}
       </div>
     </section>
   );

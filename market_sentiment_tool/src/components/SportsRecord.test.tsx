@@ -117,6 +117,17 @@ describe("SportsRecord Kalshi comparison per row", () => {
     expect(lines.filter((l) => /\(.*(Ahead|Behind|No signal)\)/.test(l ?? ""))).toHaveLength(1);
   });
 
+  it("says nothing about Kalshi when the journal request fails, rather than 'not scored yet'", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => String(url).includes("/api/journal")
+      ? Promise.reject(new Error("down"))
+      : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(SPORTS_BODY) })));
+    render(<SportsRecord />);
+    await screen.findByText("59%");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/vs Kalshi price:/)).toBeNull();
+    expect(screen.queryByText(/not scored yet/)).toBeNull();
+  });
+
   it("never shows a Kalshi number for NBA, Premier League or F1", async () => {
     stub();
     render(<SportsRecord />);
