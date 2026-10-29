@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 
+import { NextRelease } from "@/components/NextRelease";
 import { ReportDumbbells } from "@/components/ReportDumbbells";
 import { useJobsScorecard } from "@/hooks/useJobsScorecard";
 import { formatValue, summarizeScorecard, toChartPoints, type JobsSeries } from "@/lib/jobsScorecard";
@@ -35,6 +36,8 @@ export default function JobsNowcast() {
         <h1 className="text-3xl font-bold tracking-tight text-white">Jobs nowcast vs Kalshi</h1>
         <p className="max-w-[680px] text-sm leading-relaxed text-slate-400">Our nowcast vs Kalshi's, one report at a time.</p>
       </header>
+
+      <NextRelease family="labor" title="Next jobs report" />
 
       {error && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-4 text-sm text-rose-200">

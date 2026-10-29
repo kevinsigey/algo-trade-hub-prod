@@ -466,6 +466,18 @@ def get_journal(supabase=Depends(get_supabase)):
     }
 
 
+@app.get("/api/journal/previews", tags=["Journal"])
+def get_journal_previews(supabase=Depends(get_supabase)):
+    """The next jobs and CPI releases as the models see them right now. Not locked, not scored."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    try:
+        rows = _fetch_all(supabase, "journal_previews", lambda q: q.select("*"), order=("close_at", "target"))
+    except Exception as exc:  # noqa: BLE001 - classified by _table_fault
+        raise _table_fault("journal_previews", exc) from exc
+    return {"as_of": datetime.now(timezone.utc).isoformat(), "previews": rows}
+
+
 @app.get("/api/journal/feed", tags=["Journal"])
 def get_journal_feed(forecaster: str, version: str, limit: int = 100, offset: int = 0,
                      supabase=Depends(get_supabase)):
