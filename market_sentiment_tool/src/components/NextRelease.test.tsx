@@ -23,6 +23,14 @@ describe("NextRelease", () => {
     expect(cells).toEqual(["100k52%60%", "200k12%20%"]);
   });
 
+  it("shows only the next release when a later month is also open", () => {
+    const later = { ...row("kalshi:KXPAYROLLS-26NOV-T100000", 0.9, 0.9), close_at: "2026-12-04T13:29:00Z" };
+    render(<NextRelease family="labor" title="Next jobs report" previews={[later, row("kalshi:KXPAYROLLS-26OCT-T100000", 0.52, 0.6)]} />);
+    expect(screen.getAllByRole("row")).toHaveLength(2); // header + the October strike only
+    expect(screen.getByText("52%")).toBeTruthy();
+    expect(screen.queryByText("90%")).toBeNull();
+  });
+
   it("renders nothing when there is no preview for that family", () => {
     const { container } = render(<NextRelease family="cpi" title="x" previews={[row("kalshi:KXPAYROLLS-26OCT-T0", 0.9, 0.9)]} />);
     expect(container.firstChild).toBeNull();

@@ -50,7 +50,15 @@ export function NextRelease({ family, title, previews }: { family: "labor" | "cp
 
   if (failed || rows === null) return null; // a preview is an extra; its absence must not break the page
   const mine = rows.filter((r) => r.family === family);
-  const groups = [...new Set(mine.map((r) => `${r.forecaster}|${r.forecaster_version}`))];
+  // One card per model, for its NEXT release only: strikes of a later month (also open on Kalshi) are a different report.
+  const eventOf = (r: Preview) => r.target.split("-T")[0];
+  const nextEvent = new Map<string, Preview>();
+  for (const r of mine) {
+    const k = `${r.forecaster}|${r.forecaster_version}`;
+    const cur = nextEvent.get(k);
+    if (!cur || r.close_at < cur.close_at) nextEvent.set(k, r);
+  }
+  const groups = [...nextEvent.keys()];
   if (groups.length === 0) return null;
 
   return (
@@ -60,7 +68,7 @@ export function NextRelease({ family, title, previews }: { family: "labor" | "cp
         <p className="text-xs text-slate-500">Current estimate, not locked in. It locks 24 hours before the report and is scored after.</p>
       </div>
       {groups.map((g) => {
-        const set = mine.filter((r) => `${r.forecaster}|${r.forecaster_version}` === g)
+        const set = mine.filter((r) => `${r.forecaster}|${r.forecaster_version}` === g && eventOf(r) === eventOf(nextEvent.get(g)!))
           .sort((a, b) => Number(a.target.split("-T").pop()) - Number(b.target.split("-T").pop()));
         const when = new Date(set[0].close_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
         return (

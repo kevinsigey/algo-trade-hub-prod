@@ -17,6 +17,7 @@ from tradehub.core.kalshi_feed import fetch_market
 from tradehub.data.kalshi_live import KalshiLive
 from tradehub.journal.forecasters.cpi import CpiForecaster
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster
+from tradehub.journal.kalshi_linked import FREEZE_LEAD
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ def build_previews(now: datetime, live=None, labor: LaborData | None = None) -> 
     for fc in forecasters:
         try:
             for entry in fc.targets(now):
+                if entry.cutoff_at <= now + FREEZE_LEAD:
+                    continue  # inside the freeze window the journal locks the real forecast; no 'preview' of it
                 f = fc.forecast(entry, now)
                 if f is None:
                     continue
@@ -51,8 +54,10 @@ def build_previews(now: datetime, live=None, labor: LaborData | None = None) -> 
 
 def run_previews(supa, now: datetime, **kw) -> dict[str, int]:
     rows = build_previews(now, **kw)
-    if rows:  # on a total failure keep the last rows: their computed_at tells the reader how old they are
+    if rows:
         supa.table(PREVIEWS).upsert(rows, on_conflict="target,forecaster,forecaster_version").execute()
-        # A strike that is no longer open (the report was released) must stop showing as a preview.
-        supa.table(PREVIEWS).delete().lt("computed_at", now.isoformat()).execute()
+    # Expire by close time only, whether or not this run produced rows: a report that has been released, or
+    # whose forecast the journal has now locked, stops being a preview. Never delete by freshness, or one
+    # source failing would wipe the previews another source still has open.
+    supa.table(PREVIEWS).delete().lte("close_at", (now + FREEZE_LEAD).isoformat()).execute()
     return {"previews": len(rows)}

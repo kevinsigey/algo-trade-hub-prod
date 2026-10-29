@@ -46,3 +46,21 @@ def test_run_previews_never_touches_the_scored_tables(monkeypatch):
     supa = MagicMock()
     assert run_previews(supa, NOW) == {"previews": 1}
     assert {c.args[0] for c in supa.table.call_args_list} == {"journal_previews"}
+
+
+def test_expiry_is_by_close_time_even_when_nothing_was_produced(monkeypatch):
+    monkeypatch.setattr(preview, "build_previews", lambda now, **k: [])
+    supa = MagicMock()
+    run_previews(supa, NOW)
+    supa.table.return_value.delete.return_value.lte.assert_called_once()
+    assert supa.table.return_value.delete.return_value.lte.call_args.args[0] == "close_at"
+    supa.table.return_value.upsert.assert_not_called()
+
+
+def test_a_market_inside_the_freeze_window_is_not_previewed(monkeypatch):
+    live = FakeLive([_cpi("KXCPI", 0.3, close="2026-09-11T20:00:00Z")])  # 8h out: the journal locks it
+    monkeypatch.setattr(preview, "PayrollsForecaster", lambda *a, **k: MagicMock(targets=lambda now: []))
+    monkeypatch.setattr(preview, "CpiForecaster",
+                        lambda series, live, fm, **k: _cpi_fc(live, k["lead"]) if series == "KXCPI"
+                        else MagicMock(targets=lambda now: []))
+    assert preview.build_previews(NOW, live=live, labor=object()) == []
