@@ -84,7 +84,9 @@ def test_only_paper_orders_module_writes_to_alpaca():
     assert [str(p) for p in writers] == ["tradehub/portfolio/paper_orders.py"]
 
 
-def test_paper_orders_posts_only_new_orders_to_the_paper_host():
+def test_paper_orders_posts_new_orders_and_cancels_only_its_own_stops():
+    # Step 5: one POST (new orders) and one DELETE (cancelling a stop the hub placed). Nothing else, paper host only.
     src = Path("tradehub/portfolio/paper_orders.py").read_text()
-    assert len(re.findall(r"\.post\(", src)) == 1 and not re.search(r"\.(patch|put|delete)\(", src)
-    assert '"/v2/orders"' in src and "PAPER_BASE" in src and "https://" not in src
+    assert len(re.findall(r"\.post\(", src)) == 1 and len(re.findall(r"\.delete\(", src)) == 1
+    assert not re.search(r"\.(patch|put)\(", src)
+    assert '"/v2/orders"' in src and 'f"/v2/orders/{order_id}"' in src and "PAPER_BASE" in src and "https://" not in src

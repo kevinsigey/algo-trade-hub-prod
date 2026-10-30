@@ -13,6 +13,7 @@ import json
 import sys
 from datetime import UTC, date, datetime, timedelta
 
+import pandas as pd
 import requests
 
 from tradehub.core.env import load_local_env
@@ -22,9 +23,10 @@ from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_out, plan
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
-from tradehub.workshop.engine import target_and_reason, tickers_for
+from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_and_reason, tickers_for
 from tradehub.workshop.spec import IdeaSpec
 from tradehub.scripts.ideas_shadow import FRED_LEAD
+from tradehub.scripts.paper_orders_protect import _cancel
 
 
 def _send(row: dict, submit) -> dict:
@@ -53,11 +55,28 @@ def _exit_text(spec: IdeaSpec, why: str) -> str:
     return f"{why.replace('trailing', 'trailing stop')} {pct:g}% hit"
 
 
+def _stopped_out(idea_id: int, spec: IdeaSpec, fills: list[dict], client_ids: dict[str, str], prices_frame,
+                 series) -> str:
+    """Why the idea may not reopen yet after one of its real stop orders filled, or '' when it may."""
+    if spec.exits.mode != "intraday":
+        return ""
+    prefix = f"idea-{idea_id}-stop-"
+    stops = [f["transaction_time"][:10] for f in fills if client_ids.get(f.get("order_id"), "").startswith(prefix)]
+    if not stops:
+        return ""
+    last = max(stops)
+    after = daily_frame(spec, prices_frame, series)
+    after = after[after.index > pd.Timestamp(last)]
+    fresh = (not after["on"].all()) if spec.when is not None else len(after) >= EXIT_COOLDOWN
+    return "" if fresh else f"stopped out on {last}; waiting for a fresh signal"
+
+
 class StalePrices(Exception):
     """The rule's prices don't reach the last trading day yet: the target would be the day before's."""
 
 
-def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, fred=data.fred_series
+def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, fred=data.fred_series,
+        bars=data.bars, cancel=paper_orders.cancel
         ) -> tuple[dict, dict[int, str]]:
     day = now.astimezone(NY).date()
     try:
@@ -70,11 +89,11 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
         if equity <= 0:  # every target would be zero and every held share would be sold
             return {"account": "no equity"}, {}
         positions = service.paper_get("/v2/positions")
-        pending = service.paper_get("/v2/orders", {"status": "open", "limit": 500})
+        pending = service.paper_get("/v2/orders", {"status": "open", "limit": 500, "nested": "true"})
         # Fail closed: unlike the public page, an unreadable order map or label table stops the run. Unknown
         # holdings would look like zero shares and every idea would buy its full size again.
-        fills = book.tag_fills(service._fills(), service._orders(), store.labels(supa),
-                               service._titles(supa, public=False))
+        client_ids = service._orders()
+        fills = book.tag_fills(service._fills(), client_ids, store.labels(supa), service._titles(supa, public=False))
     except AccountNotConnected:
         return {"account": "not connected"}, {}
     # Shares per symbol per idea id (FIFO lots, tags + relabels); account-wide signed value per symbol.
@@ -88,7 +107,8 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
         last_px.update({s: float(frame[s].dropna().iloc[-1]) for s in need if s in frame and frame[s].notna().any()})
     waiting = [(o.get("client_order_id") or "", o["symbol"],
                 float(o["qty"]) * (1 if o["side"] == "buy" else -1)
-                * float(o.get("limit_price") or last_px.get(o["symbol"], 0.0))) for o in pending]
+                * float(o.get("limit_price") or last_px.get(o["symbol"], 0.0))) for o in pending
+               if not paper_orders.STOP_TAG.match(o.get("client_order_id") or "")]  # stops protect, never add
 
     summary: dict = {}
     failed: dict[int, str] = {}
@@ -103,11 +123,10 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 if not cid.startswith(mine):
                     view[symbol] = view.get(symbol, 0.0) + value
             if closing:
-                if not held:
-                    continue
-                rows = close_out(idea["id"], held, last_px, day)
+                rows = close_out(idea["id"], held, last_px, day) if held else []
             else:
-                prices_frame = closes(tickers_for(spec), spec.start)
+                prices_frame = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start,
+                                                   bars_fn=bars)
                 last = prices_frame.dropna(subset=list(spec.hold) + list(spec.short)).index[-1].date()
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
@@ -118,11 +137,25 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
                 rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,
                             spec.execution)
+                waiting_out = _stopped_out(idea["id"], spec, fills, client_ids, prices_frame, series)
+                if waiting_out:  # a real stop sold it: no buying back until the rule gives a fresh signal
+                    rows = [{**r, "status": "skip", "reason": waiting_out} if r["kind"] == "open" else r
+                            for r in rows]
             if not closing and exit_reason:
                 rows = [{**r, "reason": r["reason"] or exit_reason} if r["kind"] == "close" else r for r in rows]
-            done = [_send(r, submit) for r in rows]
+            protecting = [o for o in pending
+                          if (o.get("client_order_id") or "").startswith(f"idea-{idea['id']}-stop-")]
+            cancels = []
+            if protecting and (not held or any(r["status"] == "send" and r["kind"] == "close" for r in rows)):
+                # No shares behind a stop means it would OPEN a position if it triggered; a close needs the shares.
+                cancels = [_cancel(o, cancel, "closing the position" if held else "no shares to protect")
+                           for o in protecting]
+            if any(c.get("filled") for c in cancels):  # the stop already sold: selling again would open a short
+                rows = [{**r, "status": "skip", "reason": "the protective stop filled first"} if r["kind"] == "close"
+                        else r for r in rows]
+            done = cancels + [_send(r, submit) for r in rows]
             for r in done:
-                if r["status"] == "sent":  # later ideas see this run's orders in the 25% check
+                if r["status"] == "sent" and "price" in r:  # later ideas see this run's orders in the 25% check
                     signed = r["qty"] * (1 if r["side"] == "buy" else -1) * r["price"]
                     account[r["symbol"]] = account.get(r["symbol"], 0.0) + signed
             store.log_orders(supa, idea["id"], str(day), done)

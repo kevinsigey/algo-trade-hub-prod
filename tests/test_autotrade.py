@@ -85,3 +85,39 @@ def test_close_out_is_always_market_at_the_open():
     # Review I7: a kill closes at the next open, whatever order type the idea traded with.
     out = close_out(7, {"GLD": 5}, {"GLD": 300.0}, DAY)
     assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "opg" and out[0]["limit_price"] is None
+
+
+def test_protective_order_matches_the_exits():
+    from tradehub.portfolio.autotrade import protective, signature
+    from tradehub.workshop.spec import Exits
+    sl = protective(3, Exits(stop_loss_pct=5), "GLD", 25, 220.0, DAY)
+    assert (sl["order_type"], sl["side"], sl["qty"], sl["stop_price"]) == ("stop", "sell", 25, 209.0)
+    assert sl["client_order_id"] == "idea-3-stop-20261102-GLD-sl" and sl["time_in_force"] == "gtc"
+    tr = protective(3, Exits(trailing_pct=8), "QQQ", -5, 400.0, DAY)
+    assert (tr["order_type"], tr["side"], tr["trail_percent"]) == ("trailing_stop", "buy", 8)
+    oco = protective(3, Exits(stop_loss_pct=5, take_profit_pct=10), "GLD", 25, 200.0, DAY)
+    assert oco["order_class"] == "oco" and oco["stop_price"] == 190.0 and oco["take_profit_price"] == 220.0
+    tp = protective(3, Exits(take_profit_pct=10, max_days=20), "GLD", 25, 200.0, DAY)
+    assert (tp["order_type"], tp["limit_price"]) == ("limit", 220.0)
+    assert protective(3, Exits(max_days=20), "GLD", 25, 200.0, DAY) is None
+    assert protective(3, Exits(stop_loss_pct=5), "GLD", 0.4, 200.0, DAY) is None  # no whole share to protect
+    # A resting Alpaca order with the same shape counts as already in place.
+    resting = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "stop", "stop_price": "209.00",
+               "order_class": "simple", "client_order_id": "idea-3-stop-20261030-GLD-sl"}
+    assert signature(resting) == signature(sl)
+
+
+def test_signature_reads_alpacas_resting_shapes():
+    # Step 5 B review I2/I3: a correct resting OCO or trailing stop must match, or it's torn down every day.
+    from tradehub.portfolio.autotrade import protective, signature
+    from tradehub.workshop.spec import Exits
+    oco = protective(3, Exits(stop_loss_pct=5, take_profit_pct=10), "GLD", 25, 200.0, DAY)
+    resting_oco = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "limit", "order_class": "oco",
+                   "limit_price": "220", "stop_price": None, "client_order_id": oco["client_order_id"],
+                   "legs": [{"symbol": "GLD", "qty": "25", "side": "sell", "type": "stop", "stop_price": "190",
+                             "limit_price": None, "order_class": "oco"}]}
+    assert signature(resting_oco) == signature(oco)
+    tr = protective(3, Exits(trailing_pct=8), "GLD", 25, 200.0, DAY)
+    resting_tr = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "trailing_stop", "order_class": "simple",
+                  "trail_percent": "8", "stop_price": "193.2", "hwm": "210", "limit_price": None}
+    assert signature(resting_tr) == signature(tr)

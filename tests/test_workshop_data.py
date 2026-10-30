@@ -82,3 +82,43 @@ def test_todays_partial_bar_is_never_returned_or_cached(tmp_path):
     friday_evening = datetime(2020, 1, 10, 23, tzinfo=UTC)  # 18:00 New York: Friday has closed
     df = closes(["SPY"], date(2020, 1, 1), download=fake_download(calls), cache_dir=tmp_path, now=friday_evening)
     assert len(calls) == 2 and df.index[-1] == pd.Timestamp("2020-01-10")
+
+
+def fake_bars(calls):
+    def download(tickers, start=None, auto_adjust=True, progress=False):
+        calls.append(list(tickers))
+        cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close"], tickers])
+        df = pd.DataFrame(1.0, index=IDX, columns=cols)
+        for t in tickers:
+            base = pd.Series(range(100, 100 + len(IDX)), index=IDX, dtype=float)
+            df[("Open", t)], df[("High", t)], df[("Low", t)], df[("Close", t)] = base, base + 2, base - 2, base + 1
+        return df
+    return download
+
+
+def test_bars_columns_cut_and_cache(tmp_path):
+    from tradehub.workshop.data import bars
+    calls = []
+    friday_morning = datetime(2020, 1, 10, 15, tzinfo=UTC)
+    out = bars(["SPY"], date(2020, 1, 1), download=fake_bars(calls), cache_dir=tmp_path, now=friday_morning)
+    spy = out["SPY"]
+    assert list(spy.columns) == ["open", "high", "low", "close"] and spy.index[-1] == pd.Timestamp("2020-01-09")
+    assert spy["high"].iloc[0] == spy["open"].iloc[0] + 2
+    assert (tmp_path / "SPY.ohlc.csv").exists() and not (tmp_path / "SPY.csv").exists()
+    bars(["SPY"], date(2020, 1, 1), download=fake_bars(calls), cache_dir=tmp_path, now=friday_morning)
+    assert len(calls) == 1
+    with pytest.raises(UnknownSymbol, match="XYZ"):
+        bars(["XYZ"], date(2020, 1, 1), download=lambda *a, **k: pd.DataFrame(), now=friday_morning)
+
+
+def test_with_rule_bars_only_for_intraday_exits():
+    from tradehub.workshop.data import with_rule_bars
+    from tradehub.workshop.spec import IdeaSpec
+    prices = pd.DataFrame({"GLD": [1.0, 2.0]}, index=pd.bdate_range("2020-01-02", periods=2))
+    plain = IdeaSpec(title="gold", hold=["GLD"], claim="beats_benchmark", exits={"stop_loss_pct": 5})
+    assert with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda *a: 1 / 0) is prices
+    plain.exits.mode = "intraday"
+    got = with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda t, s: {
+        "GLD": pd.DataFrame({"open": [1.0, 2.0], "high": [1.1, 2.2], "low": [0.9, 1.8], "close": [1.0, 2.0]},
+                            index=prices.index)})
+    assert list(got.columns) == ["GLD", "GLD.open", "GLD.high", "GLD.low"]

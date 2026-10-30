@@ -184,3 +184,13 @@ def win_rate(trades: list[dict]) -> float | None:
     if not trades:
         return None
     return sum(1 for t in trades if t["pnl"] > 0) / len(trades) * 100
+
+
+def open_cost(fills: list[dict]) -> dict[str, dict[str, tuple[float, float]]]:
+    """Open signed quantity and average entry price per symbol per idea (the base for protective stops)."""
+    out: dict[str, dict] = {}
+    for symbol, lots in _fifo(fills)[1].items():
+        for qty, price, _, idea in lots:
+            q, cost = out.setdefault(symbol, {}).get(idea, (0.0, 0.0))
+            out[symbol][idea] = (q + qty, cost + qty * price)
+    return {s: {i: (q, c / q) for i, (q, c) in v.items() if q} for s, v in out.items()}

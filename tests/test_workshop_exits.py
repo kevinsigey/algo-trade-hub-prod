@@ -148,3 +148,80 @@ def test_exit_reason_only_when_the_exit_made_it_flat():
     weights, why = target_and_reason(s, off, {})
     assert weights == {} and why == ""
     assert target_and_reason(spec(exits={}), up, {}) == ({"AAA": 1.0}, "")
+
+
+def ohlc(rows):
+    """rows of (open, high, low, close); the day before the first row closed at 100."""
+    a = np.array(rows, dtype=float)
+    return {"open": a[:, 0], "high": a[:, 1], "low": a[:, 2], "close": a[:, 3], "prev": np.r_[100.0, a[:-1, 3]]}
+
+
+def test_intraday_stop_fills_at_the_stop_or_the_gap_open():
+    from tradehub.workshop.engine import apply_exits_intraday
+    b = ohlc([(100, 101, 99, 100), (99, 100, 94, 96), (96, 97, 95, 96)])  # day 1 trades through 95
+    held, why, ret = apply_exits_intraday(ON[:3], b, 1, Exits(stop_loss_pct=5), cooldown=None, lag=1)
+    assert held.tolist() == [True, True, False] and why[1] == "stop-loss"
+    assert ret[1] == pytest.approx(95 / 100 - 1)  # filled at the stop, not the 96 close
+    gap = ohlc([(100, 101, 99, 100), (90, 92, 88, 91), (91, 92, 90, 91)])  # opens below the stop
+    _, _, ret = apply_exits_intraday(ON[:3], gap, 1, Exits(stop_loss_pct=5), cooldown=None, lag=1)
+    assert ret[1] == pytest.approx(90 / 100 - 1)  # the worse price: the open
+
+
+def test_intraday_stop_first_when_one_day_touches_both():
+    from tradehub.workshop.engine import apply_exits_intraday
+    b = ohlc([(100, 111, 94, 105), (105, 106, 104, 105)])
+    _, why, ret = apply_exits_intraday(ON[:2], b, 1, Exits(stop_loss_pct=5, take_profit_pct=10), cooldown=None,
+                                       lag=1)
+    assert why[0] == "stop-loss" and ret[0] == pytest.approx(-0.05)
+
+
+def test_intraday_take_profit_and_trailing_from_the_high():
+    from tradehub.workshop.engine import apply_exits_intraday
+    b = ohlc([(100, 112, 99, 110), (110, 111, 109, 110)])
+    _, why, ret = apply_exits_intraday(ON[:2], b, 1, Exits(take_profit_pct=10), cooldown=None, lag=1)
+    assert why[0] == "take-profit" and ret[0] == pytest.approx(0.10)
+    t = ohlc([(100, 120, 99, 119), (119, 119, 107, 108), (108, 109, 107, 108)])  # high 120, then 10% below = 108
+    _, why, ret = apply_exits_intraday(ON[:3], t, 1, Exits(trailing_pct=10), cooldown=None, lag=1)
+    assert why[1] == "trailing" and ret[1] == pytest.approx(108 / 119 - 1)
+
+
+def test_intraday_short_mirrors():
+    from tradehub.workshop.engine import apply_exits_intraday
+    b = ohlc([(100, 106, 99, 104), (104, 105, 103, 104)])  # a short stops when price rises 5%
+    held, why, ret = apply_exits_intraday(ON[:2], b, -1, Exits(stop_loss_pct=5), cooldown=None, lag=1)
+    assert why[0] == "stop-loss" and ret[0] == pytest.approx(-(105 / 100 - 1)) and held.tolist() == [True, False]
+
+
+def test_intraday_time_stop_and_reentry_like_close_mode():
+    from tradehub.workshop.engine import apply_exits_intraday
+    flat = ohlc([(100, 100.5, 99.5, 100)] * 8)
+    signal = np.array([True] * 4 + [False] + [True] * 3)
+    held, why, _ = apply_exits_intraday(signal, flat, 1, Exits(max_days=2), cooldown=None, lag=1)
+    assert why[1] == "time" and held.tolist() == [True, True, False, False, False, True, True, False]
+
+
+def intraday(s):
+    s.exits.mode = "intraday"  # the spec refuses it until the order side ships (Task 8); the engine is ready now
+    return s
+
+
+def with_bars(closes, low_dip=None):
+    from tradehub.workshop.data import add_bars
+    bars = {"AAA": pd.DataFrame({"open": closes["AAA"].shift(1).fillna(closes["AAA"]), "high": closes["AAA"] * 1.005,
+                                 "low": closes["AAA"] * 0.995, "close": closes["AAA"]})}
+    if low_dip is not None:
+        bars["AAA"].loc[low_dip, "low"] = bars["AAA"].loc[low_dip, "close"] * 0.5
+    return add_bars(closes, bars)
+
+
+def test_intraday_mode_runs_through_the_one_rule_path():
+    closes = market(7)
+    dip = closes.index[2000]
+    s = intraday(spec(when=None, exits={"stop_loss_pct": 20}))
+    df = daily_frame(s, with_bars(closes, low_dip=dip), {})
+    assert df.loc[dip, "exit"] == "stop-loss"
+    with pytest.raises(ValueError, match="daily bars"):
+        daily_frame(s, closes, {})
+    out = run_test(s, with_bars(closes, low_dip=dip), {}, variations=1, seed=1, permutations=100)
+    assert out["verdict"] in ("PASS", "FAIL")
+    assert target_today(s, with_bars(closes), {}) in ({"AAA": 1.0}, {})

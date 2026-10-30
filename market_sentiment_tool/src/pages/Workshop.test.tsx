@@ -239,10 +239,24 @@ describe("Workshop editor: exits", () => {
     fireEvent.change(await screen.findByLabelText("Stop-loss %"), { target: { value: "8" } });
     fireEvent.change(screen.getByLabelText("Trailing stop %"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("Max days held"), { target: { value: "60" } });
-    expect(screen.getByRole("option", { name: /During the day/ })).toBeDisabled();  // not until Part B ships
+    fireEvent.change(screen.getByLabelText("Exits checked"), { target: { value: "intraday" } });
     fireEvent.click(screen.getByRole("button", { name: "Run it" }));
     await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
     const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
-    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "close" });
+    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "intraday" });
+  });
+});
+
+
+describe("Workshop editor: intraday exits", () => {
+  it("only offers during-the-day exits for one ticker", async () => {
+    serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Pair", plain_words: "Gold vs SPY", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: ["SPY"] }, model: "x/y:free" } },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole("option", { name: /During the day/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Short (tickers, comma separated)"), { target: { value: "" } });
+    expect(screen.getByRole("option", { name: /During the day/ })).toBeEnabled();
   });
 });

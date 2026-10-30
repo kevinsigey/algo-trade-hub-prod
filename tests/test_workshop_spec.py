@@ -89,9 +89,14 @@ def test_exits_round_trip_and_bounds():
 
 def test_intraday_exits_need_a_single_leg():
     from tradehub.workshop.spec import IdeaSpec
-    with pytest.raises(ValueError, match="not available yet"):  # review I3: nothing runs it until Part B ships
-        IdeaSpec(title="one leg", hold=[], short=["QQQ"], claim="beats_benchmark",
-                 exits={"stop_loss_pct": 5, "mode": "intraday"})
+    IdeaSpec(title="one leg", hold=[], short=["QQQ"], claim="beats_benchmark",
+             exits={"stop_loss_pct": 5, "take_profit_pct": 10, "max_days": 20, "mode": "intraday"})
+    # Alpaca holds a position's shares for one resting exit: a trailing stop can't sit beside another exit.
+    for combo in ({"trailing_pct": 8, "stop_loss_pct": 5}, {"trailing_pct": 8, "take_profit_pct": 10}):
+        with pytest.raises(ValueError, match="trailing"):
+            IdeaSpec(title="one leg", hold=["GLD"], claim="beats_benchmark", exits={**combo, "mode": "intraday"})
+    with pytest.raises(ValueError, match="needs a price exit"):
+        IdeaSpec(title="one leg", hold=["GLD"], claim="beats_benchmark", exits={"max_days": 5, "mode": "intraday"})
     with pytest.raises(ValueError, match="one ticker"):
         IdeaSpec(title="pair", hold=["GLD"], short=["SPY"], claim="beats_benchmark",
                  exits={"stop_loss_pct": 5, "mode": "intraday"})

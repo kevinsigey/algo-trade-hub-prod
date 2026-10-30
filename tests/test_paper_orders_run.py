@@ -35,6 +35,8 @@ class Alpaca:
             return [{"date": d} for d in days if self.open_today or d != params["end"]]
         if path == "/v2/orders" and (params or {}).get("status") == "open":
             return self.pending
+        if path.startswith("/v2/orders/"):  # a cancel's progress check: done at once in these tests
+            return {"id": path.rsplit("/", 1)[1], "status": "canceled"}
         return {"/v2/account": {"account_number": "PA1", "equity": str(self.equity), "cash": str(self.equity)},
                 "/v2/positions": self.positions, "/v2/account/activities/FILL": self.fills,
                 "/v2/orders": self.orders}[path]
@@ -228,3 +230,85 @@ def test_a_stop_exit_closes_with_its_reason(db, monkeypatch):
     assert failed == {}, failed
     assert [(c[0], c[1], c[2]) for c in sub.calls] == [("GLD", "sell", 66)]
     assert db.db["paper_orders"][0]["reason"] == "stop-loss 5% hit"
+
+
+INTRADAY = {**SPEC, "exits": {"stop_loss_pct": 5, "mode": "intraday"}}
+
+
+def flat_bars(tickers, start):
+    frame = closes(tickers, start)
+    return {t: pd.DataFrame({"open": frame[t], "high": frame[t], "low": frame[t], "close": frame[t]})
+            for t in tickers}
+
+
+def test_protective_order_is_cancelled_before_the_close(db, monkeypatch):
+    # Step 5 B: Alpaca holds the shares for the resting stop, so the close would be refused unless it goes first.
+    live_idea(db, 1, spec=INTRADAY)
+    store.set_auto(db, 1, False, "kevin")
+    fills = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-GLD-open", "submitted_at": "t1"}]
+    resting = [{"id": "r1", "client_order_id": "idea-1-stop-20261102-GLD-sl", "symbol": "GLD", "qty": "66",
+                "side": "sell", "type": "stop", "stop_price": "285.00", "limit_price": None}]
+    positions = [{"symbol": "GLD", "qty": "66", "market_value": "19800", "current_price": "300"}]
+    log = []
+
+    def submit(symbol, qty, side, cid, **kw):
+        log.append(("submit", symbol, side, qty))
+        return {"id": "x"}
+    monkeypatch.setattr(service, "paper_get", Alpaca(fills=fills, orders=orders, positions=positions, pending=resting))
+    paper_orders_run.run(MORNING, db, submit=submit, closes=closes, fred=None, bars=flat_bars,
+                         cancel=lambda oid, cid: log.append(("cancel", oid)))
+    assert log == [("cancel", "r1"), ("submit", "GLD", "sell", 66)]
+
+
+def test_no_buy_back_after_a_real_stop_fired(db, monkeypatch):
+    # Step 5 B review focus 5: the stop sold yesterday; the rule (no condition) must wait out its cooldown.
+    live_idea(db, 1, spec=INTRADAY)
+    fills = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
+              "transaction_time": "2026-10-28T14:30:00Z"},
+             {"id": "f2", "order_id": "leg", "symbol": "GLD", "side": "sell", "qty": "66", "price": "285",
+              "transaction_time": "2026-11-02T15:10:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261028-GLD-open", "submitted_at": "t1"},
+              {"id": "leg", "client_order_id": "idea-1-stop-20261029-GLD-sl", "submitted_at": "t2"}]
+    sub = Submit()
+    monkeypatch.setattr(service, "paper_get", Alpaca(fills=fills, orders=orders))
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, bars=flat_bars, cancel=lambda *a: None)
+    assert sub.calls == []
+    row = db.db["paper_orders"][0]
+    assert row["status"] == "skipped" and "stopped out on 2026-11-02" in row["reason"]
+
+
+def test_a_stop_resting_on_no_shares_is_cancelled_in_the_morning(db, monkeypatch):
+    # Step 5 B review C1: the idea holds nothing (its close filled), so any stop it left is cancelled.
+    live_idea(db, 1, spec={**INTRADAY, "hold": [], "short": ["GLD"]})
+    resting = [{"id": "r1", "client_order_id": "idea-1-stop-20261102-GLD-sl", "symbol": "GLD", "qty": "66",
+                "side": "buy", "type": "stop", "stop_price": "315.00", "limit_price": None}]
+    log = []
+    monkeypatch.setattr(service, "paper_get", Alpaca(pending=resting))
+    paper_orders_run.run(MORNING, db, submit=lambda *a, **k: log.append(("submit",) + a) or {"id": "x"},
+                         closes=closes, fred=None, bars=flat_bars, cancel=lambda oid, cid: log.append(("cancel", oid)))
+    assert log[0] == ("cancel", "r1")
+
+
+def test_if_the_stop_filled_while_cancelling_the_close_is_not_sent(db, monkeypatch):
+    # Review I4: the stop sold the shares between the decision and the cancel; selling again would open a short.
+    from tradehub.scripts import paper_orders_protect
+    monkeypatch.setattr(paper_orders_protect, "_sleep", lambda s: None)
+    live_idea(db, 1, spec=INTRADAY)
+    store.set_auto(db, 1, False, "kevin")
+    fills = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-GLD-open", "submitted_at": "t1"}]
+    resting = [{"id": "r1", "client_order_id": "idea-1-stop-20261102-GLD-sl", "symbol": "GLD", "qty": "66",
+                "side": "sell", "type": "stop", "stop_price": "285.00", "limit_price": None}]
+    positions = [{"symbol": "GLD", "qty": "66", "market_value": "19800", "current_price": "300"}]
+    alpaca = Alpaca(fills=fills, orders=orders, positions=positions, pending=resting)
+
+    def get(path, params=None):
+        return {"id": "r1", "status": "filled"} if path == "/v2/orders/r1" else alpaca(path, params)
+    sub = Submit()
+    monkeypatch.setattr(service, "paper_get", get)
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, bars=flat_bars, cancel=lambda *a: None)
+    assert sub.calls == []
+    assert any("filled" in (r["reason"] or "") for r in db.db["paper_orders"])

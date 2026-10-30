@@ -24,6 +24,10 @@ class Session:
         self.calls.append({"url": url, "headers": headers, "json": json})
         return self.resp
 
+    def delete(self, url, headers=None, timeout=None):
+        self.calls.append({"url": url, "method": "DELETE"})
+        return self.resp
+
 
 @pytest.fixture
 def keys(monkeypatch):
@@ -94,3 +98,63 @@ def test_403_is_an_order_refusal_not_bad_keys(keys, monkeypatch):
         paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(403, {"message": "insufficient buying power"})))
     with pytest.raises(AccountNotConnected):
         paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(401)))
+
+
+
+STOP_ID = "idea-3-stop-20261103-GLD-sl"
+
+
+def test_stop_and_trailing_orders_only_with_a_stop_tag(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-1"}))
+    paper_orders.submit("GLD", 5, "sell", STOP_ID, order_type="stop", time_in_force="gtc", stop_price=285.5,
+                        session=s)
+    assert s.calls[0]["json"] == {"symbol": "GLD", "qty": "5", "side": "sell", "type": "stop", "time_in_force": "gtc",
+                                  "client_order_id": STOP_ID, "stop_price": "285.50"}
+    paper_orders.submit("GLD", 5, "sell", "idea-3-stop-20261103-GLD-tr", order_type="trailing_stop",
+                        time_in_force="gtc", trail_percent=8, session=s)
+    assert s.calls[1]["json"]["trail_percent"] == "8" and s.calls[1]["json"]["type"] == "trailing_stop"
+    paper_orders.submit("GLD", 5, "sell", "idea-3-stop-20261103-GLD-tp", order_type="limit", time_in_force="gtc",
+                        limit_price=330, session=s)
+    for bad in ({"order_type": "stop", "time_in_force": "gtc", "stop_price": 1.0},
+                {"order_type": "market", "time_in_force": "gtc"}):
+        with pytest.raises(ValueError):
+            paper_orders.submit("GLD", 5, "sell", "idea-3-auto-20261103-GLD-open", session=s, **bad)
+    with pytest.raises(ValueError):
+        paper_orders.submit("GLD", 5, "sell", STOP_ID, order_type="stop", time_in_force="gtc", session=s)
+    assert len(s.calls) == 3
+
+
+def test_cancel_only_the_hubs_own_stops(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(204))
+    paper_orders.cancel("o-9", STOP_ID, session=s)
+    assert s.calls == [{"url": "https://paper-api.alpaca.markets/v2/orders/o-9", "method": "DELETE"}]
+    for cid in ("idea-3-auto-20261103-GLD-open", "manual-1", "", "xidea-3-stop-1"):
+        with pytest.raises(ValueError):
+            paper_orders.cancel("o-9", cid, session=s)
+    with pytest.raises(ValueError):
+        paper_orders.cancel("../account", STOP_ID, session=s)
+    assert len(s.calls) == 1
+    monkeypatch.delenv("TRADEHUB_PAPER_ORDERS")
+    with pytest.raises(paper_orders.OrdersDisabled):
+        paper_orders.cancel("o-9", STOP_ID, session=s)
+
+
+def test_cancel_of_an_order_already_gone(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    with pytest.raises(paper_orders.OrderGone):
+        paper_orders.cancel("o-9", STOP_ID, session=Session(Resp(422, {"message": "order is already in filled state"})))
+
+
+def test_oco_take_profit_and_stop_only_as_a_protective_order(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-1"}))
+    paper_orders.submit("GLD", 5, "sell", "idea-3-stop-20261103-GLD-oco", order_type="limit", time_in_force="gtc",
+                        order_class="oco", take_profit_price=330, stop_price=285, session=s)
+    assert s.calls[0]["json"] == {"symbol": "GLD", "qty": "5", "side": "sell", "type": "limit", "time_in_force": "gtc",
+                                  "client_order_id": "idea-3-stop-20261103-GLD-oco", "order_class": "oco",
+                                  "take_profit": {"limit_price": "330.00"}, "stop_loss": {"stop_price": "285.00"}}
+    with pytest.raises(ValueError):
+        paper_orders.submit("GLD", 5, "sell", "idea-3-auto-20261103-GLD-open", order_type="limit",
+                            time_in_force="day", order_class="oco", take_profit_price=330, stop_price=285, session=s)

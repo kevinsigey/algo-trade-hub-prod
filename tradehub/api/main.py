@@ -33,7 +33,8 @@ from tradehub.api.dependencies import get_supabase
 from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
-from tradehub.workshop.data import UnknownSymbol, closes as workshop_closes, fred_series as workshop_fred
+from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
+    fred_series as workshop_fred, with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, run_test, tickers_for
 from tradehub.workshop.data import NY
@@ -513,7 +514,8 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
                 "reasons": ["the latest run did not PASS"]}, None
     spec = IdeaSpec.model_validate(latest["spec"])
     try:
-        prices = workshop_closes(tickers_for(spec), spec.start)
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
         fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
                 if spec.when is not None and spec.when.source == "fred" else {})
     except UnknownSymbol as exc:
@@ -576,7 +578,8 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
         raise HTTPException(status_code=404, detail="no such idea")
     spec = body.spec
     try:
-        prices = workshop_closes(tickers_for(spec), spec.start)
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
         fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
                 if spec.when is not None and spec.when.source == "fred" else {})
     except UnknownSymbol as exc:
