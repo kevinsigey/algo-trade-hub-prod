@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
-import Login from "@/pages/Login";
+import Login, { RecoveryRedirect } from "@/pages/Login";
 
 const auth = vi.hoisted(() => ({
   listener: null as null | ((event: string) => void),
@@ -17,6 +17,7 @@ vi.mock("@/lib/supabase", () => ({
         auth.listener = cb;
         return { data: { subscription: { unsubscribe() {} } } };
       },
+      getSession: async () => ({ data: { session: null } }),
       updateUser: auth.updateUser,
       resetPasswordForEmail: auth.resetPasswordForEmail,
       signInWithPassword: auth.signInWithPassword,
@@ -49,5 +50,28 @@ describe("Login", () => {
     fireEvent.change(screen.getByLabelText("New password again"), { target: { value: "a-long-pass-123" } });
     fireEvent.click(screen.getByRole("button", { name: "Set password" }));
     await waitFor(() => expect(auth.updateUser).toHaveBeenCalledWith({ password: "a-long-pass-123" }));
+  });
+});
+
+
+describe("a reset link that lands anywhere on the site", () => {
+  it("is sent to the new-password form instead of just signing in", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <RecoveryRedirect />
+        <Routes>
+          <Route path="/" element={<p>Portfolio</p>} />
+          <Route path="/login" element={<Login />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Portfolio")).toBeInTheDocument();
+    act(() => auth.listener?.("PASSWORD_RECOVERY"));
+    expect(await screen.findByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
+  });
+
+  it("opens the form when /login is reached with reset=1", () => {
+    render(<MemoryRouter initialEntries={["/login?reset=1"]}><Login /></MemoryRouter>);
+    expect(screen.getByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
   });
 });
