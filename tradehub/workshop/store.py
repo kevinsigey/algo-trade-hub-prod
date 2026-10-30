@@ -102,3 +102,8 @@ def insert_run(supa, idea_id: int, variation: int, spec: dict, draft_model: str 
     row = {"idea_id": idea_id, "variation": variation, "spec": spec, "draft_model": draft_model,
            "verdict": result["verdict"], "result": result, "data_end": result.get("data_end")}
     return supa.table(RUNS).insert(row).execute().data[0]
+
+
+def get_run(supa, run_id: int) -> dict | None:
+    rows = supa.table(RUNS).select("*").eq("id", run_id).execute().data
+    return rows[0] if rows else None
