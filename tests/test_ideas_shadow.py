@@ -125,3 +125,15 @@ def test_catch_up_records_the_same_exit_day_as_the_backtest(db):
     assert len(got) == 6
     for day, (why, ret) in got.items():
         assert why == want.loc[pd.Timestamp(day), "exit"] and ret == pytest.approx(want.loc[pd.Timestamp(day), "ret"])
+
+
+def test_intraday_ideas_read_daily_bars(db):
+    db.db["idea_runs"][0]["spec"] = {**SPEC, "exits": {"stop_loss_pct": 5, "mode": "intraday"}}
+    seen = []
+
+    def bars(tickers, start):
+        seen.append(tuple(tickers))
+        f = prices()
+        return {t: pd.DataFrame({"open": f[t], "high": f[t], "low": f[t], "close": f[t]}) for t in tickers}
+    added, failed = ideas_shadow.run(evening("2026-11-04"), db, closes=fake_closes(prices()), fred=None, bars=bars)
+    assert failed == {} and added == {1: 2} and seen == [("AAA",)]

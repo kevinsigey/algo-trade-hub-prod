@@ -44,8 +44,16 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const exec = spec.execution ?? DEFAULT_EXECUTION;
   const exits = spec.exits ?? NO_EXITS;
+  const legs = spec.hold.length + (spec.short ?? []).length;
   const setExit = <K extends keyof Exits>(key: K, value: Exits[K]) => set("exits", { ...exits, [key]: value });
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const setLegs = (key: "hold" | "short", value: string[]) =>
+    setSpec((s) => {
+      const next = { ...s, [key]: value };
+      const n = next.hold.length + (next.short ?? []).length;
+      const ex = next.exits ?? NO_EXITS;
+      return n !== 1 && ex.mode === "intraday" ? { ...next, exits: { ...ex, mode: "close" } } : next;
+    });
   const setWhen = <K extends keyof Condition>(key: K, value: Condition[K]) =>
     setSpec((s) => ({ ...s, when: { ...(s.when ?? DEFAULT_CONDITION), [key]: value } }));
 
@@ -65,10 +73,10 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
           </select>
         </Field>
         <Field label="Hold (tickers, comma separated, equal weight)">
-          <input className={field} value={spec.hold.join(", ")} onChange={(e) => set("hold", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+          <input className={field} value={spec.hold.join(", ")} onChange={(e) => setLegs("hold", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
         </Field>
         <Field label="Short (tickers, comma separated)">
-          <input className={field} value={(spec.short ?? []).join(", ")} onChange={(e) => set("short", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+          <input className={field} value={(spec.short ?? []).join(", ")} onChange={(e) => setLegs("short", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
         </Field>
         <Field label="Otherwise hold (ticker or CASH)">
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
@@ -157,10 +165,17 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         <Field label="Exits checked">
           <select className={field} value={exits.mode} onChange={(e) => setExit("mode", e.target.value as Exits["mode"])}>
             <option value="close">At each close</option>
-            <option value="intraday" disabled>During the day (coming next)</option>
+            <option value="intraday" disabled={legs !== 1}>During the day: real stop orders (one ticker)</option>
           </select>
         </Field>
       </div>
+
+      {exits.mode === "intraday" && (
+        <p className="mt-2 text-xs text-slate-400">
+          During the day, Alpaca holds one resting exit per position: a stop, a take-profit, both together, or a trailing stop on its own.
+          The stop goes on after the morning order fills (about 10am New York).
+        </p>
+      )}
 
       <Field label="Assumptions (one per line; edit any you disagree with)">
         <textarea rows={3} className={field} value={spec.assumptions.join("\n")} onChange={(e) => set("assumptions", e.target.value.split("\n").filter((l) => l.trim()))} />

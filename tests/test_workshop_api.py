@@ -208,3 +208,20 @@ def test_auto_switch(passed, monkeypatch):
 
 def test_auto_route_needs_admin():
     assert TestClient(main.app).post("/api/workshop/ideas/1/auto", json={"on": True}).status_code == 401
+
+
+def test_intraday_run_fetches_daily_bars(api, monkeypatch):
+    c, _, _ = api
+    seen = []
+
+    def bars(tickers, start):
+        seen.append(tuple(tickers))
+        return {}
+    monkeypatch.setattr(main, "workshop_bars", bars)
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, prices, start, bars_fn: (bars_fn(["GLD"], start), prices)[1]
+                        if spec.exits.mode == "intraday" else prices)
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    spec = {**SPEC, "otherwise": "CASH", "claim": "beats_benchmark", "when": None,
+            "exits": {"stop_loss_pct": 5, "mode": "intraday"}}
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": spec}).status_code == 200
+    assert seen == [("GLD",)]
