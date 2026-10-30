@@ -136,3 +136,16 @@ def test_positions_split_by_open_lots_with_manual_remainder():
     assert gld == [(TITLES[1], 10.0, 10000.0), (TITLES[2], 20.0, 20000.0), (MANUAL, 10.0, 10000.0)]
     assert {g["idea"]: g["pct_of_book"] for g in composition(rows)} == pytest.approx(
         {TITLES[1]: 10.0, TITLES[2]: 20.0, MANUAL: 10.0})
+
+
+def test_a_sale_closes_its_own_ideas_lots_first():
+    # Review finding 5: B's sale must close B's position, not A's older lot.
+    from tradehub.portfolio.book import open_lots
+    fills = [{**fill("GLD", "buy", 10, 200, "2026-11-02"), "idea": TITLES[1]},
+             {**fill("GLD", "buy", 10, 210, "2026-11-03"), "idea": TITLES[2]},
+             {**fill("GLD", "sell", 10, 220, "2026-11-05"), "idea": TITLES[2]}]
+    trades = closed_trades(fills)
+    assert [(t["idea"], t["entry_price"]) for t in trades] == [(TITLES[2], 210)]
+    assert open_lots(fills) == {"GLD": {TITLES[1]: 10.0}}
+    manual_sale = fills[:2] + [{**fill("GLD", "sell", 15, 220, "2026-11-05"), "idea": MANUAL}]
+    assert [(t["idea"], t["qty"]) for t in closed_trades(manual_sale)] == [(TITLES[1], 10), (TITLES[2], 5)]

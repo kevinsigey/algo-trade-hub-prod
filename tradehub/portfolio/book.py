@@ -137,15 +137,18 @@ def _day(ts: str) -> datetime:
 
 def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
     """FIFO round trips from Alpaca FILL activities, plus the lots still open. Longs qty > 0, shorts qty < 0.
-    A trade carries the idea of the lot that opened it."""
+    FIFO runs per idea first: a sale closes its own idea's lots before anyone else's. A trade carries the idea
+    of the lot that opened it."""
     lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time, idea]
     trades = []
     for f in sorted(fills, key=lambda f: f["transaction_time"]):
         qty = float(f["qty"]) * (1 if f["side"] == "buy" else -1)
         price, at = float(f["price"]), f["transaction_time"]
-        book = lots[f["symbol"]]
+        book, idea = lots[f["symbol"]], f.get("idea", MANUAL)
         while qty and book and (book[0][0] > 0) != (qty > 0):
-            lot = book[0]
+            # A closing fill takes its own idea's oldest lot first, then the oldest lot of any idea.
+            at_lot = next((i for i, lot in enumerate(book) if lot[3] == idea), 0)
+            lot = book[at_lot]
             matched = min(abs(qty), abs(lot[0]))
             signed = math.copysign(matched, lot[0])
             trades.append({
@@ -157,9 +160,9 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
             lot[0] -= signed
             qty += signed
             if not lot[0]:
-                book.popleft()
+                del book[at_lot]
         if qty:
-            book.append([qty, price, at, f.get("idea", MANUAL)])
+            book.append([qty, price, at, idea])
     return trades, lots
 
 
