@@ -80,13 +80,13 @@ describe("Workshop pages", () => {
     expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
   });
 
-  it("falls back to the hand-fill form when Claude can't draft", async () => {
+  it("falls back to the hand-fill form when the AI can't draft", async () => {
     serve({
       "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Bonds protect me", created_at: "" }, runs: [] } },
-      "/api/workshop/draft": { status: 424, body: { detail: "ANTHROPIC_API_KEY is not set", reason: "no_key", template: { ...SPEC, title: "", hold: [], when: null, claim: "beats_benchmark", assumptions: [] } } },
+      "/api/workshop/draft": { status: 424, body: { detail: "OPENROUTER_API_KEY is not set", reason: "no_key", template: { ...SPEC, title: "", hold: [], when: null, claim: "beats_benchmark", assumptions: [] } } },
     });
     render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText("Claude couldn't draft this — fill it in.")).toBeInTheDocument();
+    expect(await screen.findByText("The AI couldn't draft this — fill it in.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run it" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("Bonds")).toBeInTheDocument();
   });

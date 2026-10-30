@@ -243,7 +243,7 @@ export default function WorkshopIdea() {
       .then((d) => setDraft({ spec: d.spec, model: d.model }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
-        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "Claude couldn't draft this — fill it in." });
+        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
         else setError(e instanceof Error ? e.message : "Draft failed");
       })
       .finally(() => {
@@ -276,7 +276,7 @@ export default function WorkshopIdea() {
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Claude is drafting the test…
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
         </p>
       )}
       {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} />}

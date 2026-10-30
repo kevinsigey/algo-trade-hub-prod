@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from tradehub.api import admin, main
 from tradehub.api.dependencies import get_supabase
-from tradehub.workshop import draft as draft_mod
 from tradehub.workshop.data import UnknownSymbol
 
 
@@ -79,7 +78,7 @@ def test_every_route_needs_admin():
 
 def test_draft_without_key_is_424_with_template(api, monkeypatch):
     c, _, _ = api
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     r = c.post("/api/workshop/draft", json={"text": "gold beats stocks when rates rise"})
     assert r.status_code == 424
     body = r.json()
@@ -89,9 +88,9 @@ def test_draft_without_key_is_424_with_template(api, monkeypatch):
 def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: IdeaSpec.model_validate(SPEC))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
     r = c.post("/api/workshop/draft", json={"text": "gold"})
-    assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == draft_mod.MODEL
+    assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
 
 
 def test_two_runs_are_variations_1_and_2(api):

@@ -34,7 +34,7 @@ from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, closes as workshop_closes, fred_series as workshop_fred
-from tradehub.workshop.draft import MODEL as DRAFT_MODEL, DraftUnavailable, draft_spec
+from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.engine import run_test, tickers_for
 from tradehub.workshop.spec import IdeaSpec, blank_spec
 from tradehub.engine_catalogue import engine_catalogue
@@ -434,11 +434,11 @@ def _fred_start(start: date) -> date:
 @app.post("/api/workshop/draft", tags=["Workshop"])
 def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
     try:
-        spec = draft_spec(body.text)
+        spec, model = draft_spec(body.text)
     except DraftUnavailable as exc:
         return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
                                                       "template": blank_spec()})
-    return {"spec": spec.model_dump(mode="json"), "model": DRAFT_MODEL}
+    return {"spec": spec.model_dump(mode="json"), "model": model}
 
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])
