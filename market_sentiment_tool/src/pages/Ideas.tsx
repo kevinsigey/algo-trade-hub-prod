@@ -9,7 +9,10 @@ export const signedPct = (v: number | null | undefined) => (v == null ? "—" : 
 
 /** One line of paper record: idea vs benchmark since go-live, its as-of, and the failing flag. */
 export function PaperLine({ live }: { live: ShadowSummary }) {
-  if (live.days === 0) return <p className="text-sm text-slate-400">Paper record starts on the next trading day.</p>;
+  if (live.days === 0)
+    return live.state === "stale"
+      ? <p className="text-sm text-amber-300">No paper days recorded since going live · stale</p>
+      : <p className="text-sm text-slate-400">Paper record starts on the next trading day.</p>;
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
       <span className="font-mono text-lg text-white">{signedPct(live.return_pct)}</span>

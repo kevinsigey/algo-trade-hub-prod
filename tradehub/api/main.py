@@ -36,6 +36,7 @@ from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, closes as workshop_closes, fred_series as workshop_fred
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, run_test, tickers_for
+from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
 from tradehub.workshop.spec import IdeaSpec, blank_spec
 from tradehub.engine_catalogue import engine_catalogue
@@ -463,12 +464,17 @@ def _live_spec(supabase, idea: dict) -> IdeaSpec:
     return IdeaSpec.model_validate(workshop_store.get_run(supabase, idea["live_run_id"])["spec"])
 
 
+def _shadow(supabase, idea: dict) -> dict:
+    live_day = datetime.fromisoformat(idea["live_at"]).astimezone(NY).date()
+    return shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea["id"]), _today(),
+                          live_day)
+
+
 @app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
 def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     found = _found(supabase, idea_id)
     idea = found["idea"]
-    shadow = (shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea_id), _today())
-              if idea.get("live_at") else None)
+    shadow = _shadow(supabase, idea) if idea.get("live_at") else None
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow}
 
 
@@ -574,8 +580,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else "backtest"
     live = None
     if idea.get("live_at"):
-        live = shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea["id"]),
-                              _today())
+        live = _shadow(supabase, idea)
         if idea.get("killed_at"):
             live["state"] = "killed"  # the record ended on purpose; not stale
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],

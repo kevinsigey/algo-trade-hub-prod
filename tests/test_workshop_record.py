@@ -32,3 +32,10 @@ def test_failing_needs_a_full_window():
 def test_stale_after_three_weekdays():
     out = shadow_summary(SPEC, rows(1, 0.0), today=date(2026, 11, 9))  # last day Mon 11-02, today Mon 11-09
     assert out["state"] == "stale"
+
+
+def test_no_rows_long_after_go_live_is_stale():
+    # Review finding 4: a job broken since go-live must not read "starts on the next trading day" forever.
+    fresh = shadow_summary(SPEC, [], today=date(2026, 11, 4), live_day=date(2026, 11, 2))
+    late = shadow_summary(SPEC, [], today=date(2026, 11, 9), live_day=date(2026, 11, 2))
+    assert fresh["state"] == "waiting" and late["state"] == "stale"

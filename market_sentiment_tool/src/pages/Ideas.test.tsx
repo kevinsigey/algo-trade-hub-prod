@@ -52,6 +52,12 @@ describe("Ideas record", () => {
     expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
   });
 
+  it("says a live idea with no paper days is stale, not about to start", async () => {
+    serve([{ ...ROWS[1], live: { ...LIVE, days: 0, as_of: null, state: "stale", return_pct: null, bench_return_pct: null, claim: null, failing: false } }]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText(/No paper days recorded since going live/)).toBeInTheDocument();
+  });
+
   it("refuses a non-numeric id without fetching", async () => {
     const f = vi.fn();
     vi.stubGlobal("fetch", f);

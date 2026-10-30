@@ -14,14 +14,20 @@ FAILING_WINDOW = 63  # rolling 3 months; the flag waits for a full window
 STALE_WEEKDAYS = 3
 
 
-def shadow_summary(spec: IdeaSpec, rows: list[dict], today: date) -> dict:
+def _late(last: date, today: date) -> int:
+    """Weekdays after `last`, before today: how far behind the record is."""
+    return int(np.busday_count(last + timedelta(days=1), today)) if today > last else 0
+
+
+def shadow_summary(spec: IdeaSpec, rows: list[dict], today: date, live_day: date | None = None) -> dict:
     if not rows:
-        return {"days": 0, "since": None, "as_of": None, "state": "waiting", "return_pct": None,
+        stale = live_day is not None and _late(live_day, today) > STALE_WEEKDAYS
+        return {"days": 0, "since": None, "as_of": None, "state": "stale" if stale else "waiting", "return_pct": None,
                 "bench_return_pct": None, "claim": None, "failing": False, "curve": []}
     frame = pd.DataFrame(rows)
     idea, bench = np.cumprod(1 + frame["ret"].to_numpy()), np.cumprod(1 + frame["bench"].to_numpy())
     as_of = date.fromisoformat(rows[-1]["day"])
-    late = int(np.busday_count(as_of + timedelta(days=1), today)) if today > as_of else 0
+    late = _late(as_of, today)
     claim = claim_check(spec, frame.iloc[-FAILING_WINDOW:]) if len(rows) >= FAILING_WINDOW else None
     return {
         "days": len(rows), "since": rows[0]["day"], "as_of": rows[-1]["day"],
