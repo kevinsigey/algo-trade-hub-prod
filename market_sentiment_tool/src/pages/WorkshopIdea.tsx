@@ -173,7 +173,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
       {exits.mode === "intraday" && (
         <p className="mt-2 text-xs text-slate-400">
           During the day, Alpaca holds one resting exit per position: a stop, a take-profit, both together, or a trailing stop on its own.
-          The stop goes on after the morning order fills (about 10am New York).
+          The stop goes on after the morning order fills (about 9:45 to 10:45am New York).
         </p>
       )}
 

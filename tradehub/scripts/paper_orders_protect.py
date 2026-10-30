@@ -1,6 +1,6 @@
 """Cron entrypoint: keep exactly one protective order under each intraday-exit position (Trading HQ step 5 B).
 
-Run at 14:00 UTC Mon-Fri by `tradehub-paper-protect.timer`, after the morning's opening orders have filled. For
+Run at 14:45 UTC Mon-Fri by `tradehub-paper-protect.timer` (09:45 or 10:45 New York), after the opening orders fill. For
 each switched-on idea whose exits run during the day: the idea's shares and average entry (FIFO lots, tags +
 relabels), the one resting exit Alpaca should hold for them (autotrade.protective), and the hub's own resting
 stop orders for that idea. Same shape -> left alone; otherwise the stale ones are cancelled and the right one placed.

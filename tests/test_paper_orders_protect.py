@@ -8,7 +8,7 @@ from tradehub.portfolio import paper_orders, service
 from tradehub.scripts import paper_orders_protect
 from tradehub.workshop import store
 
-AFTER_OPEN = datetime.fromisoformat("2026-11-03T14:00:00+00:00")  # Tue 09:00/10:00 New York
+AFTER_OPEN = datetime.fromisoformat("2026-11-03T14:45:00+00:00")  # Tue 09:45 New York
 INTRADAY = {**SPEC, "exits": {"stop_loss_pct": 5, "mode": "intraday"}}
 FILLS = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
           "transaction_time": "2026-11-03T14:30:00Z"}]
