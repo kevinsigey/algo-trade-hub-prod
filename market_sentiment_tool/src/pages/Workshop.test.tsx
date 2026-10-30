@@ -205,3 +205,24 @@ describe("Workshop editor: shorts and orders", () => {
     expect(body.spec.execution).toEqual({ order_type: "limit", timing: "close", limit_offset_bps: 15 });
   });
 });
+
+
+describe("Workshop automatic paper orders", () => {
+  const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20, auto_orders: false };
+  const ORDER = { id: 1, idea_id: 1, day: "2026-11-03", symbol: "GLD", side: "buy", qty: 66, client_order_id: "idea-1-auto-20261103-GLD-open", status: "skipped", reason: "TRADEHUB_PAPER_ORDERS is off", alpaca_order_id: null, at: "" };
+
+  it("asks before switching orders on, and says when the server switch is off", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: live, runs: [PASS_RUN], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [ORDER] } },
+      "/api/workshop/ideas/1/auto": { body: { ...live, auto_orders: true } },
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    openIdea();
+    expect(await screen.findByText(/server's paper-order switch is off/)).toBeInTheDocument();
+    expect(screen.getByText("TRADEHUB_PAPER_ORDERS is off")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on automatic paper orders" }));
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/auto"), JSON.stringify({ on: true })]));
+  });
+});

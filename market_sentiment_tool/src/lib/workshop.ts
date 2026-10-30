@@ -81,6 +81,19 @@ export interface Idea {
   live_at?: string | null;
   killed_at?: string | null;
   size_pct?: number | null;
+  auto_orders?: boolean;
+}
+
+export interface PaperOrder {
+  id: number;
+  day: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  client_order_id: string;
+  status: "sent" | "already sent" | "skipped" | "rejected";
+  reason: string | null;
+  alpaca_order_id: string | null;
 }
 
 export interface IdeaDetail {
@@ -88,6 +101,8 @@ export interface IdeaDetail {
   runs: Run[];
   tag?: string;
   shadow?: ShadowSummary | null;
+  orders_enabled?: boolean;
+  orders?: PaperOrder[];
 }
 
 export interface GateResult {

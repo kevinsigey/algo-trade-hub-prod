@@ -475,7 +475,24 @@ def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin),
     found = _found(supabase, idea_id)
     idea = found["idea"]
     shadow = _shadow(supabase, idea) if idea.get("live_at") else None
-    return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow}
+    from tradehub.portfolio.paper_orders import orders_enabled
+
+    return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
+            "orders": workshop_store.order_log(supabase, idea_id, 50)}
+
+
+class _AutoIn(BaseModel):
+    on: bool
+
+
+@app.post("/api/workshop/ideas/{idea_id}/auto", tags=["Workshop"])
+def workshop_auto(idea_id: int, body: _AutoIn, user: dict = Depends(admin.require_admin),
+                  supabase=Depends(get_supabase)):
+    """Step 4: switch an idea's automatic PAPER orders on or off. On needs a live, unkilled idea."""
+    idea = _found(supabase, idea_id)["idea"]
+    if body.on and (not idea.get("live_at") or idea.get("killed_at")):
+        raise HTTPException(status_code=409, detail="only a live idea that has not been killed can trade")
+    return workshop_store.set_auto(supabase, idea_id, body.on, user.get("email", "admin"))
 
 
 class _LiveIn(BaseModel):
