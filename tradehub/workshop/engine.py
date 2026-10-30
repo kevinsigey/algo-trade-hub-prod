@@ -40,7 +40,7 @@ HEADLINES = {
 
 def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
-    needed = list(spec.hold) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
+    needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
     if spec.when and spec.when.source == "price":
         needed.append(spec.when.series)
     return list(dict.fromkeys(needed + list(CONTEXT)))
@@ -67,6 +67,7 @@ def condition_mask(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Seri
         values, lag = raw.reindex(idx.union(raw.index)).ffill().reindex(idx), 2  # +1 day for publication
     measured = _measure(values, c.measure, c.lookback_days)
     hit = measured > c.threshold if c.op == ">" else measured < c.threshold
+    lag += 1 if spec.execution.timing == "close" else 0  # a market-on-close order fills a day after the decision
     return (hit & measured.notna()).shift(lag, fill_value=False).astype(bool)
 
 
@@ -140,12 +141,13 @@ def _clean(x):
 
 def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
     """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
-    rule = list(dict.fromkeys(list(spec.hold) + ([spec.otherwise] if spec.otherwise != CASH else [])
+    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
                               + [spec.benchmark, "SPY"]))
     frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
-    held = rets[spec.hold].mean(axis=1).to_numpy()
+    # Equal weight across every leg; a short leg earns -r (rebalanced daily, borrow cost inside cost_bps).
+    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / (len(spec.hold) + len(spec.short))).to_numpy()
     other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(rets))
     return (rets.index, mask_all.iloc[1:].to_numpy(), held, other, rets[spec.benchmark].to_numpy(),
             rets["SPY"].to_numpy(), rets)

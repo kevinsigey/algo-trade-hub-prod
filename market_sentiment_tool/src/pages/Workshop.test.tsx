@@ -185,3 +185,23 @@ describe("Workshop trade labels", () => {
     await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
   });
 });
+
+
+describe("Workshop editor: shorts and orders", () => {
+  it("posts short legs and the order type with the run", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Short QQQ", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [], execution: { order_type: "market", timing: "open", limit_offset_bps: 0 } }, model: "x/y:free" } },
+      "/api/workshop/ideas/2/runs": { body: RUN },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Short (tickers, comma separated)"), { target: { value: "SPY" } });
+    fireEvent.change(screen.getByLabelText("Orders"), { target: { value: "limit:close" } });
+    fireEvent.change(screen.getByLabelText("Limit offset (bps)"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
+    const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
+    expect(body.spec.short).toEqual(["SPY"]);
+    expect(body.spec.execution).toEqual({ order_type: "limit", timing: "close", limit_offset_bps: 15 });
+  });
+});

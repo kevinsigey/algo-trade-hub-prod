@@ -160,3 +160,35 @@ def test_daily_frame_matches_run_test():
     unseen = claim_check(s, df.iloc[k:])
     assert unseen["value"] == pytest.approx(out["claim"]["unseen"]["value"])
     assert unseen["holds"] == out["claim"]["unseen"]["holds"] and unseen["days"] == len(df) - k
+
+
+def test_short_leg_of_a_falling_asset_passes():
+    rng, spy, frame = market(12)
+    falling = spy + rng.normal(-0.0015, 0.004, N)  # drifts down vs SPY
+    closes = pd.DataFrame({**frame, "BBB": prices(falling)}, index=IDX)
+    s = IdeaSpec(title="Short BBB", hold=[], short=["BBB"], claim="beats_benchmark", benchmark="SPY", cost_bps=0)
+    out = run_test(s, closes, {}, variations=1, seed=2)
+    assert out["claim"]["unseen"]["holds"]
+    from tradehub.workshop.engine import tickers_for
+    assert "BBB" in tickers_for(s)
+
+
+def test_pair_return_is_half_long_minus_half_short():
+    from tradehub.workshop.engine import daily_frame
+    rng, spy, frame = market(13)
+    closes = pd.DataFrame({**frame, "AAA": prices(rng.normal(0.0004, 0.01, N)),
+                           "BBB": prices(rng.normal(0.0001, 0.01, N))}, index=IDX)
+    s = IdeaSpec(title="AAA vs BBB", hold=["AAA"], short=["BBB"], claim="beats_benchmark", cost_bps=0)
+    df = daily_frame(s, closes, {})
+    r = closes.pct_change().iloc[1:]
+    assert np.allclose(df["ret"].to_numpy(), ((r["AAA"] - r["BBB"]) / 2).to_numpy())
+
+
+def test_close_timing_lags_the_condition_one_more_day():
+    from tradehub.workshop.engine import condition_mask
+    rng, spy, frame = market(14)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX)
+    when = {"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 5, "op": ">", "threshold": 0}
+    at_open = condition_mask(spec(when=when), closes, {})
+    at_close = condition_mask(spec(when=when, execution={"timing": "close"}), closes, {})
+    assert at_close.iloc[1:].tolist() == at_open.iloc[:-1].tolist()

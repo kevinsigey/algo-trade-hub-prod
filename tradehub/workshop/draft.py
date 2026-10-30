@@ -24,7 +24,10 @@ SYSTEM = (
     "overall (beats_benchmark), beating it only while a condition holds (beats_benchmark_when), protecting on SPY's "
     "down days (ballast), or a shallower worst drop at similar return (smoother_ride). Every choice the words do "
     "not pin down goes in assumptions as one short sentence, for example \"rates rising = 10-year yield up more "
-    "than 0.25 points over 3 months\". Never invent results. Reply with JSON only."
+    "than 0.25 points over 3 months\". Tickers the idea bets against go in short (hold stays the long side; either may be "
+    "empty, not both). Order execution defaults to a market order at the open; use timing close only when the idea "
+    "says so (it fills a day later), and a limit order only when it names a price discipline. Never invent results. "
+    "Reply with JSON only."
 )
 
 

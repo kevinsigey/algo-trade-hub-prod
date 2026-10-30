@@ -8,12 +8,15 @@ import { toneClass } from "@/pages/Workshop";
 import {
   ApiError,
   CLAIM_OPTIONS,
+  DEFAULT_EXECUTION,
+  ORDER_OPTIONS,
   adminJson,
   claimLabel,
   conditionText,
   verdictTone,
   type Claim,
   type Condition,
+  type Execution,
   type GateResult,
   type IdeaDetail,
   type IdeaSpec,
@@ -37,6 +40,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(initial);
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
+  const exec = spec.execution ?? DEFAULT_EXECUTION;
   const setWhen = <K extends keyof Condition>(key: K, value: Condition[K]) =>
     setSpec((s) => ({ ...s, when: { ...(s.when ?? DEFAULT_CONDITION), [key]: value } }));
 
@@ -57,6 +61,9 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         </Field>
         <Field label="Hold (tickers, comma separated, equal weight)">
           <input className={field} value={spec.hold.join(", ")} onChange={(e) => set("hold", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+        </Field>
+        <Field label="Short (tickers, comma separated)">
+          <input className={field} value={(spec.short ?? []).join(", ")} onChange={(e) => set("short", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
         </Field>
         <Field label="Otherwise hold (ticker or CASH)">
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
@@ -113,6 +120,20 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         <Field label="Unseen share (most recent)">
           <input type="number" step="0.05" min="0.1" max="0.5" className={field} value={spec.unseen_fraction} onChange={(e) => set("unseen_fraction", Number(e.target.value))} />
         </Field>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-4">
+        <Field label="Orders">
+          <select className={field} value={`${exec.order_type}:${exec.timing}`}
+            onChange={(e) => { const [order_type, timing] = e.target.value.split(":") as [Execution["order_type"], Execution["timing"]]; set("execution", { ...exec, order_type, timing }); }}>
+            {ORDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+        {exec.order_type === "limit" && (
+          <Field label="Limit offset (bps)">
+            <input type="number" min={0} max={500} className={field} value={exec.limit_offset_bps} onChange={(e) => set("execution", { ...exec, limit_offset_bps: Number(e.target.value) })} />
+          </Field>
+        )}
       </div>
 
       <Field label="Assumptions (one per line; edit any you disagree with)">
