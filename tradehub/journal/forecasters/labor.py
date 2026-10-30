@@ -47,6 +47,7 @@ from tradehub.engines.labor_direction import (
 )
 from tradehub.journal.contract import CalendarEntry, Forecast, Settlement
 from tradehub.journal.kalshi_linked import (
+    FREEZE_LEAD,
     entry_for,
     in_freeze_window,
     kalshi_target,
@@ -130,12 +131,12 @@ def quits_nowcast(data: LaborData, month: date, now: datetime) -> DirectionNowca
                              threshold=QUITS_UP, min_sigma=MIN_QUITS_SIGMA, features=QUITS_FEATURES)
 
 
-def payroll_markets_by_month(live, now: datetime) -> dict[date, list[LiveMarket]]:
+def payroll_markets_by_month(live, now: datetime, lead: timedelta = FREEZE_LEAD) -> dict[date, list[LiveMarket]]:
     """Open KXPAYROLLS markets inside the freeze lead whose reference month has ended."""
     out: dict[date, list[LiveMarket]] = {}
     for lm in live.open_markets(PAYROLL_SERIES):
         month = event_month(lm.market.event_ticker)
-        if in_freeze_window(lm, now) and month_end(month) < now.astimezone(ET).date():
+        if in_freeze_window(lm, now, lead) and month_end(month) < now.astimezone(ET).date():
             out.setdefault(month, []).append(lm)
     return out
 
@@ -146,8 +147,8 @@ class PayrollsForecaster:
     cadence = "monthly"
 
     def __init__(self, live, fetch_market: Callable[[str], Any], data: LaborData, *,
-                 nowcasts_fn: Callable[[list[date], datetime], dict] | None = None):
-        self._live, self._fetch_market = live, fetch_market
+                 nowcasts_fn: Callable[[list[date], datetime], dict] | None = None, lead: timedelta = FREEZE_LEAD):
+        self._live, self._fetch_market, self._lead = live, fetch_market, lead
         self._nowcasts_fn = nowcasts_fn or (lambda months, now: payroll_nowcasts(
             data.inputs(now), months, {}, train_from=TRAIN_START))
         self._open: dict[str, tuple[date, LiveMarket]] = {}
@@ -155,7 +156,7 @@ class PayrollsForecaster:
 
     def targets(self, now: datetime) -> list[CalendarEntry]:
         self._open = {kalshi_target(lm.market.ticker): (month, lm)
-                      for month, lms in payroll_markets_by_month(self._live, now).items() for lm in lms}
+                      for month, lms in payroll_markets_by_month(self._live, now, self._lead).items() for lm in lms}
         self._nowcasts = None
         return [entry_for(lm, "labor", self.cadence) for _, lm in self._open.values()]
 
