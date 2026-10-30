@@ -5,6 +5,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
 
+// The pages share helpers with the Workshop, which imports the Supabase client; CI has no Supabase env.
+vi.mock("@/lib/supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
+
 const LIVE = {
   days: 70, since: "2026-11-03", as_of: "2027-02-12", state: "live", return_pct: 4.2, bench_return_pct: 6.1,
   claim: { holds: false, label: "-3.1 pts/yr vs benchmark", days: 63 }, failing: true,
