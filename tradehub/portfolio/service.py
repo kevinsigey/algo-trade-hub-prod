@@ -60,10 +60,13 @@ def _fills() -> list[dict]:
 def _orders() -> dict[str, str]:
     """order id -> client_order_id, for every order on the paper account (GET only)."""
     out: dict[str, str] = {}
-    params: dict = {"status": "all", "direction": "asc", "limit": ORDER_PAGE}
+    params: dict = {"status": "all", "direction": "asc", "limit": ORDER_PAGE, "nested": "true"}
     for _ in range(20):  # ponytail: 10,000 orders cap
         page = paper_get("/v2/orders", params)
-        out.update({o["id"]: o.get("client_order_id") or "" for o in page})
+        for o in page:
+            out[o["id"]] = o.get("client_order_id") or ""
+            for leg in o.get("legs") or []:  # one-cancels-other halves fill under the parent's tag
+                out[leg["id"]] = out[o["id"]]
         if len(page) < ORDER_PAGE:
             break
         params = {**params, "after": page[-1]["submitted_at"]}

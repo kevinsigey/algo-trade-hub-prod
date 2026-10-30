@@ -252,3 +252,15 @@ def test_admin_fills_not_connected(client_with, monkeypatch):
     c = client_with(FakeSupabase())
     main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
     assert c.get("/api/workshop/fills").json() == {"state": "not_connected", "fills": []}
+
+
+def test_order_map_gives_oco_legs_their_parents_tag(monkeypatch):
+    seen = []
+
+    def fake(path, params=None):
+        seen.append(dict(params))
+        return [{"id": "p", "client_order_id": "idea-3-stop-20261103-GLD-oco", "submitted_at": "t1",
+                 "legs": [{"id": "leg-1", "client_order_id": "alpaca-random"}]}]
+    monkeypatch.setattr(service, "paper_get", fake)
+    out = service._orders()
+    assert out["leg-1"] == "idea-3-stop-20261103-GLD-oco" and seen[0]["nested"] == "true"

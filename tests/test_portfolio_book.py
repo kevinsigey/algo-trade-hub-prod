@@ -149,3 +149,13 @@ def test_a_sale_closes_its_own_ideas_lots_first():
     assert open_lots(fills) == {"GLD": {TITLES[1]: 10.0}}
     manual_sale = fills[:2] + [{**fill("GLD", "sell", 15, 220, "2026-11-05"), "idea": MANUAL}]
     assert [(t["idea"], t["qty"]) for t in closed_trades(manual_sale)] == [(TITLES[1], 10), (TITLES[2], 5)]
+
+
+def test_open_cost_gives_qty_and_average_entry_per_idea():
+    from tradehub.portfolio.book import open_cost
+    fills = [{**fill("GLD", "buy", 10, 200, "2026-11-02"), "idea": 1},
+             {**fill("GLD", "buy", 30, 220, "2026-11-03"), "idea": 1},
+             {**fill("GLD", "sell", 15, 230, "2026-11-05"), "idea": 1},
+             {**fill("QQQ", "sell", 5, 400, "2026-11-02"), "idea": 2}]
+    out = open_cost(fills)
+    assert out["GLD"][1] == (25.0, pytest.approx(220.0)) and out["QQQ"][2] == (-5.0, pytest.approx(400.0))

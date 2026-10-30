@@ -145,3 +145,16 @@ def test_cancel_of_an_order_already_gone(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     with pytest.raises(paper_orders.OrderGone):
         paper_orders.cancel("o-9", STOP_ID, session=Session(Resp(422, {"message": "order is already in filled state"})))
+
+
+def test_oco_take_profit_and_stop_only_as_a_protective_order(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-1"}))
+    paper_orders.submit("GLD", 5, "sell", "idea-3-stop-20261103-GLD-oco", order_type="limit", time_in_force="gtc",
+                        order_class="oco", take_profit_price=330, stop_price=285, session=s)
+    assert s.calls[0]["json"] == {"symbol": "GLD", "qty": "5", "side": "sell", "type": "limit", "time_in_force": "gtc",
+                                  "client_order_id": "idea-3-stop-20261103-GLD-oco", "order_class": "oco",
+                                  "take_profit": {"limit_price": "330.00"}, "stop_loss": {"stop_price": "285.00"}}
+    with pytest.raises(ValueError):
+        paper_orders.submit("GLD", 5, "sell", "idea-3-auto-20261103-GLD-open", order_type="limit",
+                            time_in_force="day", order_class="oco", take_profit_price=330, stop_price=285, session=s)

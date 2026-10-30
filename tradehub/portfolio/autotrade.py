@@ -95,3 +95,47 @@ def close_out(idea_id: int, held: dict[str, float], prices: dict[str, float], da
     """Sell/cover every whole share the idea holds (kill or switch-off), always market at the next open."""
     return [_row(idea_id, s, -math.copysign(math.floor(abs(q)), q), "close", prices[s], day, Execution())
             for s, q in sorted(held.items()) if math.floor(abs(q)) >= 1]
+
+
+def protective(idea_id: int, exits, symbol: str, held: float, entry: float, day: date) -> dict | None:
+    """The one resting order that protects an idea's position during the day (step 5 intraday exits), or None.
+
+    Alpaca reserves a position's shares for one resting exit, so it is one of: a stop, a trailing stop, a
+    take-profit limit, or a stop and take-profit as one-cancels-other. Prices come from the idea's average entry."""
+    qty = math.floor(abs(held))
+    if qty < 1 or not (exits.stop_loss_pct or exits.trailing_pct or exits.take_profit_pct):
+        return None
+    side_mult = 1 if held > 0 else -1
+    tag = f"idea-{idea_id}-stop-{day:%Y%m%d}-{symbol}"
+    row = {"symbol": symbol, "qty": qty, "side": "sell" if held > 0 else "buy", "time_in_force": "gtc",
+           "order_class": None, "limit_price": None, "stop_price": None, "trail_percent": None,
+           "take_profit_price": None}
+    rnd = lambda p: round(p, 2 if p >= 1 else 4)  # noqa: E731
+    stop = rnd(entry * (1 - side_mult * exits.stop_loss_pct / 100)) if exits.stop_loss_pct else None
+    target = rnd(entry * (1 + side_mult * exits.take_profit_pct / 100)) if exits.take_profit_pct else None
+    if exits.trailing_pct:
+        return {**row, "order_type": "trailing_stop", "trail_percent": exits.trailing_pct, "client_order_id": f"{tag}-tr"}
+    if stop and target:
+        return {**row, "order_type": "limit", "order_class": "oco", "stop_price": stop, "take_profit_price": target,
+                "client_order_id": f"{tag}-oco"}
+    if stop:
+        return {**row, "order_type": "stop", "stop_price": stop, "client_order_id": f"{tag}-sl"}
+    return {**row, "order_type": "limit", "limit_price": target, "client_order_id": f"{tag}-tp"}
+
+
+def signature(order: dict) -> tuple:
+    """What makes two protective orders the same, for a desired row or a resting Alpaca order."""
+    def num(v):
+        return None if v in (None, "") else round(float(v), 4)
+    oco = (order.get("order_class") or "") == "oco"
+    take = order.get("take_profit_price")
+    if take is None and isinstance(order.get("take_profit"), dict):
+        take = order["take_profit"].get("limit_price")
+    if take is None and oco:
+        take = order.get("limit_price")
+    stop = order.get("stop_price")
+    if stop is None and isinstance(order.get("stop_loss"), dict):
+        stop = order["stop_loss"].get("stop_price")
+    return (order["symbol"], int(float(order["qty"])), order["side"], "oco" if oco else order.get("order_type") or
+            order.get("type"), num(stop), num(None if oco else order.get("limit_price")), num(take if oco else None),
+            num(order.get("trail_percent")))

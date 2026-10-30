@@ -51,14 +51,19 @@ def _price(p: float) -> str:
 def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id: str, *,
            order_type: str = "market", time_in_force: str = "opg", limit_price: float | None = None,
            stop_price: float | None = None, trail_percent: float | None = None,
+           order_class: str | None = None, take_profit_price: float | None = None,
            session=requests) -> dict[str, Any]:
     if order_type not in ORDER_TYPES or time_in_force not in TIMES_IN_FORCE or side not in ("buy", "sell"):
         raise ValueError(f"unsupported order: {order_type}/{time_in_force}/{side}")
-    protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc"
+    protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
     if protective and not (STOP_TAG.match(client_order_id) and time_in_force == "gtc"
                            and order_type in ("stop", "trailing_stop", "limit")):
         raise ValueError("stops and good-till-cancelled orders are only the hub's own protective orders")
-    if order_type == "limit" and not limit_price:
+    if order_class not in (None, "oco"):
+        raise ValueError(f"unsupported order class: {order_class}")
+    if order_class == "oco" and not (order_type == "limit" and take_profit_price and stop_price):
+        raise ValueError("a one-cancels-other exit needs a take-profit price and a stop price")
+    if order_type == "limit" and not (limit_price or order_class == "oco"):
         raise ValueError("a limit order needs a limit price")
     if order_type == "stop" and not stop_price:
         raise ValueError("a stop order needs a stop price")
@@ -70,7 +75,10 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         raise OrdersDisabled("TRADEHUB_PAPER_ORDERS is off")
     body = {"symbol": symbol, "qty": str(int(qty)), "side": side, "type": order_type, "time_in_force": time_in_force,
             "client_order_id": client_order_id}
-    if order_type == "limit":
+    if order_class == "oco":
+        body.update({"order_class": "oco", "take_profit": {"limit_price": _price(take_profit_price)},
+                     "stop_loss": {"stop_price": _price(stop_price)}})
+    elif order_type == "limit":
         body["limit_price"] = _price(limit_price)
     if order_type == "stop":
         body["stop_price"] = _price(stop_price)
