@@ -106,3 +106,5 @@ _attic/
 
 # ── Generated knowledge graph (rebuild locally; see AGENTS.md) ──
 graphify-out/
+
+.superpowers/

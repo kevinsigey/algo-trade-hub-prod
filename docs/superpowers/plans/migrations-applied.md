@@ -51,8 +51,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 27 | `20260428000021_journal_scores_paired_brier_validate.sql` |
 | 28 | `20260428000022_journal_scores_gap.sql` |
 | 29 | `20261029000001_journal_previews.sql` |
+| 30 | `20261030000001_portfolio_snapshots.sql` |
 
-**Watermark: `20261029000001_journal_previews.sql`**
+**Watermark: `20261030000001_portfolio_snapshots.sql`**
 
 ## How to record a new one
 

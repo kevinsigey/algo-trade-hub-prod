@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/pages/Login.tsx"
+        ],
+        "createdAt": "2026-10-30T06:12:08.020Z",
+        "reason": "Claude: near-black slate-950 label on emerald-500 button is ~9:1 contrast, not gray-on-color"
+      }
+    ]
+  }
+}

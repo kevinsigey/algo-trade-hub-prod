@@ -28,6 +28,7 @@ from tradehub.api.schemas import (
     ShadowPerformanceResponse,
 )
 from tradehub.api.dependencies import get_supabase
+from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.engine_catalogue import engine_catalogue
 from tradehub.engine_health import engine_health
@@ -383,6 +384,31 @@ async def get_pnl_summary(supabase=Depends(get_supabase)):
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 5: /api/nws_weather (removed: the cache-backed scanner endpoint, 2026-10-01)
 # ════════════════════════════════════════════════════════════════════════════
+
+
+# ── Trading HQ: the public Alpaca PAPER portfolio (spec 2026-10-29 §4.2) ─────
+# Plain `def`: the Alpaca reads are blocking `requests` calls, so FastAPI runs these in its threadpool.
+@app.get("/api/portfolio", tags=["Portfolio"])
+def get_portfolio(supabase=Depends(get_supabase)):
+    from tradehub.portfolio import service
+
+    try:
+        return service.portfolio(supabase)
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault(service.SNAPSHOTS, exc) from exc
+
+
+@app.get("/api/admin/me", tags=["Admin"])
+def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
+    """Kevin's session, confirmed server-side. The Workshop's routes use the same dependency."""
+    return user
+
+
+@app.get("/api/portfolio/closed", tags=["Portfolio"])
+def get_portfolio_closed():
+    from tradehub.portfolio import service
+
+    return service.closed()
 
 
 # ════════════════════════════════════════════════════════════════════════════
