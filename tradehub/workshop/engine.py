@@ -223,22 +223,29 @@ def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]
                          "exit": why}, index=idx)
 
 
-def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
+def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> tuple[dict[str, float], str]:
     """Signed weights for the holding the order placed this morning establishes, from data up to the last close.
 
     Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
     engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
     ahead = 2 if spec.execution.timing == "close" else 1
-    last = closes.dropna(subset=list(spec.hold) + list(spec.short)).index[-1]
-    extra = pd.bdate_range(last, periods=ahead + 1)[1:]
-    padded = pd.concat([closes[closes.index <= last],
-                        pd.DataFrame(index=extra, columns=closes.columns, dtype=float)]).ffill()
+    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
+                              + [spec.benchmark, "SPY"]))
+    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)  # drop gaps exactly as _legs does
+    extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
+    padded = pd.concat([frame, frame.iloc[[-1] * ahead].set_axis(extra)])  # phantom days copy the last close
     _, mask, held, *_ = _legs(spec, padded, fred)
-    position, _ = _held(spec, mask, held)  # exits too: the morning after a stop, the idea is out
+    position, why = _held(spec, mask, held)  # exits too: the morning after a stop, the idea is out
     if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
-        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}
-    return {} if spec.otherwise == CASH else {spec.otherwise: 1.0}
+        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}, ""
+    # The reason names an exit only when the exit is what keeps it flat: the rule itself still says hold.
+    reason = next((w for w in why[::-1] if w), "") if bool(mask[-1]) else ""
+    return ({} if spec.otherwise == CASH else {spec.otherwise: 1.0}), reason
+
+
+def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
+    return target_and_reason(spec, closes, fred)[0]
 
 
 def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:

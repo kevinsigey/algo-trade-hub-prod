@@ -89,8 +89,9 @@ def test_exits_round_trip_and_bounds():
 
 def test_intraday_exits_need_a_single_leg():
     from tradehub.workshop.spec import IdeaSpec
-    IdeaSpec(title="one leg", hold=[], short=["QQQ"], claim="beats_benchmark",
-             exits={"stop_loss_pct": 5, "mode": "intraday"})
+    with pytest.raises(ValueError, match="not available yet"):  # review I3: nothing runs it until Part B ships
+        IdeaSpec(title="one leg", hold=[], short=["QQQ"], claim="beats_benchmark",
+                 exits={"stop_loss_pct": 5, "mode": "intraday"})
     with pytest.raises(ValueError, match="one ticker"):
         IdeaSpec(title="pair", hold=["GLD"], short=["SPY"], claim="beats_benchmark",
                  exits={"stop_loss_pct": 5, "mode": "intraday"})

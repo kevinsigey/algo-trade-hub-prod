@@ -115,3 +115,36 @@ def test_exits_fit_the_time_budget():
     t0 = time.perf_counter()
     run_test(s, big, {}, variations=1, seed=1, permutations=1000)
     assert time.perf_counter() - t0 < 15
+
+
+def test_target_today_matches_the_backtest_when_a_bar_is_missing():
+    # Review I1: a missing bar must be dropped the way _legs drops it, not forward-filled into the lookback.
+    full = market(5)
+    s = spec(when={"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 3, "op": ">",
+                   "threshold": 0}, exits={})
+    for end in range(300, 900, 7):
+        for k, col in ((2, "SPY"), (3, "AAA"), (4, "SPY")):
+            closes = full.iloc[:end].copy()
+            closes.iloc[-k, closes.columns.get_loc(col)] = np.nan
+            nxt = pd.bdate_range(closes.index[-1], periods=2)[1]
+            tomorrow = pd.concat([closes, closes.iloc[[-1]].set_axis([nxt])])
+            on = bool(daily_frame(s, tomorrow, {})["on"].iloc[-1])
+            assert (target_today(s, closes, {}) == {"AAA": 1.0}) == on, (end, k, col)
+
+
+def test_exit_reason_only_when_the_exit_made_it_flat():
+    # Review I2: an old stop must not label a close that the rule itself caused.
+    from tradehub.workshop.engine import target_and_reason
+    up = market(6).iloc[:400].copy()
+    up["SPY"] = np.linspace(100, 160, len(up))  # condition (SPY up over 20 days) always on
+    up["AAA"] = 100.0
+    s = spec(exits={"stop_loss_pct": 5})
+    crash = up.copy()
+    crash.iloc[-1, crash.columns.get_loc("AAA")] = 80.0
+    assert target_and_reason(s, crash, {}) == ({}, "stop-loss")
+    off = up.copy()
+    off.iloc[-1, off.columns.get_loc("SPY")] = 50.0  # the rule turns off on the last close
+    off.iloc[-30, off.columns.get_loc("AAA")] = 80.0  # and there was a stop a month ago
+    weights, why = target_and_reason(s, off, {})
+    assert weights == {} and why == ""
+    assert target_and_reason(spec(exits={}), up, {}) == ({"AAA": 1.0}, "")

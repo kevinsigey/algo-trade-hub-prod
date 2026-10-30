@@ -104,6 +104,8 @@ class IdeaSpec(BaseModel):
             raise ValueError("a ticker can't be both held and shorted")
         if self.exits.mode == "intraday" and len(self.hold) + len(self.short) != 1:
             raise ValueError("intraday stops are for an idea with exactly one ticker (one hold or one short)")
+        if self.exits.mode == "intraday":  # ponytail: lifted when step 5 Part B (real stop orders) ships
+            raise ValueError("intraday stops are not available yet: exits are checked at each close for now")
         if self.claim == "beats_benchmark_when" and self.when is None:
             raise ValueError("beats_benchmark_when needs a 'when' condition")
         if self.benchmark == CASH:

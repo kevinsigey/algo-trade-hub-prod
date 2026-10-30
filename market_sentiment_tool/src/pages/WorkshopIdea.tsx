@@ -44,7 +44,6 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const exec = spec.execution ?? DEFAULT_EXECUTION;
   const exits = spec.exits ?? NO_EXITS;
-  const legs = spec.hold.length + (spec.short ?? []).length;
   const setExit = <K extends keyof Exits>(key: K, value: Exits[K]) => set("exits", { ...exits, [key]: value });
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const setWhen = <K extends keyof Condition>(key: K, value: Condition[K]) =>
@@ -144,21 +143,21 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
 
       <div className="mt-4 grid gap-4 sm:grid-cols-5">
         <Field label="Stop-loss %">
-          <input type="number" min={0} step="any" className={field} value={exits.stop_loss_pct ?? ""} onChange={(e) => setExit("stop_loss_pct", num(e.target.value))} />
+          <input type="number" min={0.01} max={90} step="any" className={field} value={exits.stop_loss_pct ?? ""} onChange={(e) => setExit("stop_loss_pct", num(e.target.value))} />
         </Field>
         <Field label="Trailing stop %">
-          <input type="number" min={0} step="any" className={field} value={exits.trailing_pct ?? ""} onChange={(e) => setExit("trailing_pct", num(e.target.value))} />
+          <input type="number" min={0.01} max={90} step="any" className={field} value={exits.trailing_pct ?? ""} onChange={(e) => setExit("trailing_pct", num(e.target.value))} />
         </Field>
         <Field label="Take-profit %">
-          <input type="number" min={0} step="any" className={field} value={exits.take_profit_pct ?? ""} onChange={(e) => setExit("take_profit_pct", num(e.target.value))} />
+          <input type="number" min={0.01} max={1000} step="any" className={field} value={exits.take_profit_pct ?? ""} onChange={(e) => setExit("take_profit_pct", num(e.target.value))} />
         </Field>
         <Field label="Max days held">
-          <input type="number" min={1} className={field} value={exits.max_days ?? ""} onChange={(e) => setExit("max_days", num(e.target.value))} />
+          <input type="number" min={1} max={756} className={field} value={exits.max_days ?? ""} onChange={(e) => setExit("max_days", num(e.target.value))} />
         </Field>
         <Field label="Exits checked">
           <select className={field} value={exits.mode} onChange={(e) => setExit("mode", e.target.value as Exits["mode"])}>
             <option value="close">At each close</option>
-            <option value="intraday" disabled={legs !== 1}>During the day (one ticker only)</option>
+            <option value="intraday" disabled>During the day (coming next)</option>
           </select>
         </Field>
       </div>

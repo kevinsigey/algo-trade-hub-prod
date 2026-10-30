@@ -239,10 +239,10 @@ describe("Workshop editor: exits", () => {
     fireEvent.change(await screen.findByLabelText("Stop-loss %"), { target: { value: "8" } });
     fireEvent.change(screen.getByLabelText("Trailing stop %"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("Max days held"), { target: { value: "60" } });
-    fireEvent.change(screen.getByLabelText("Exits checked"), { target: { value: "intraday" } });
+    expect(screen.getByRole("option", { name: /During the day/ })).toBeDisabled();  // not until Part B ships
     fireEvent.click(screen.getByRole("button", { name: "Run it" }));
     await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
     const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
-    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "intraday" });
+    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "close" });
   });
 });
