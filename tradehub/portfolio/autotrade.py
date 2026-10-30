@@ -4,7 +4,10 @@ From an idea's target weights, its size, the account and what the idea already h
 row is either sent or skipped with a reason; the morning job logs all of them.
 - The idea's own shares only: it never sells shares it does not hold (Kevin's manual shares are untouched).
 - Exposure falls before it rises: closing/reducing rows first, then opening/adding rows.
-- A long-to-short flip is two orders (close, then open): Alpaca won't reverse a position in one order.
+- A long-to-short flip closes today and opens the new side the next morning: Alpaca won't open a short while the
+  long is still held (or the reverse).
+- It never opens against the account's opposite-side position (Kevin's manual shares or another idea): FIFO would
+  net the two and the idea would buy again every day.
 - The 25% limit is checked on every row that adds exposure, against the whole account plus earlier rows of this run.
 - Whole shares (opening/closing auction orders can't be fractional). Under 1 share or under $100 is noise, except a
   close, which is always sent so an idea can always get flat.
@@ -47,6 +50,10 @@ def plan(idea_id: int, weights: dict[str, float], size_pct: float, equity: float
             if math.floor(abs(have)) >= 1:
                 closing.append(_row(idea_id, symbol, -math.copysign(math.floor(abs(have)), have), "close", price, day,
                                     execution))
+                if target:  # a flip: Alpaca won't open the other side while this side is still held
+                    opening.append(_row(idea_id, symbol, target, "open", price, day, execution, "skip",
+                                        "flipping sides: the close goes first, the new side opens tomorrow"))
+                continue
             have = 0.0
         delta = target - have
         if w and target == 0 and have == 0:
@@ -62,6 +69,11 @@ def plan(idea_id: int, weights: dict[str, float], size_pct: float, equity: float
         if abs(qty) < 1 or abs(qty) * price < MIN_ORDER_USD:
             (closing if reducing else opening).append(
                 _row(idea_id, symbol, qty, kind, price, day, execution, "skip", "too small to trade", direction=delta))
+            continue
+        others = book.get(symbol, 0.0) - have * price  # manual shares and other ideas, signed
+        if not reducing and others and (others > 0) != (qty > 0):
+            opening.append(_row(idea_id, symbol, qty, kind, price, day, execution, "skip",
+                                f"the account holds the opposite side of {symbol} (manual or another idea)"))
             continue
         (closing if reducing else opening).append(_row(idea_id, symbol, qty, kind, price, day, execution))
     book = dict(book)
@@ -79,8 +91,7 @@ def plan(idea_id: int, weights: dict[str, float], size_pct: float, equity: float
     return closing + opening
 
 
-def close_out(idea_id: int, held: dict[str, float], prices: dict[str, float], day: date,
-              execution: Execution) -> list[dict]:
-    """Sell/cover every whole share the idea holds (kill or switch-off)."""
-    return [_row(idea_id, s, -math.copysign(math.floor(abs(q)), q), "close", prices[s], day, execution)
+def close_out(idea_id: int, held: dict[str, float], prices: dict[str, float], day: date) -> list[dict]:
+    """Sell/cover every whole share the idea holds (kill or switch-off), always market at the next open."""
+    return [_row(idea_id, s, -math.copysign(math.floor(abs(q)), q), "close", prices[s], day, Execution())
             for s, q in sorted(held.items()) if math.floor(abs(q)) >= 1]

@@ -51,8 +51,8 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
     if order_type == "limit":
         body["limit_price"] = f"{limit_price:.2f}" if limit_price >= 1 else f"{limit_price:.4f}"
     response = session.post(PAPER_BASE + "/v2/orders", headers=_headers(), json=body, timeout=10)
-    if response.status_code in (401, 403):
-        raise AccountNotConnected(f"Alpaca rejected the keys (HTTP {response.status_code})")
+    if response.status_code == 401:  # 403 on an order is a refusal (buying power, wash trade), not the keys
+        raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
     if response.status_code == 422:
         message = str((response.json() or {}).get("message", ""))
         if "client_order_id must be unique" in message:

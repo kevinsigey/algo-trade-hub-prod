@@ -24,13 +24,17 @@ def closes(tickers, start):
 
 
 class Alpaca:
-    def __init__(self, open_today=True, equity=100_000.0, fills=(), orders=(), positions=()):
+    def __init__(self, open_today=True, equity=100_000.0, fills=(), orders=(), positions=(), pending=()):
         self.open_today, self.equity = open_today, equity
         self.fills, self.orders, self.positions = list(fills), list(orders), list(positions)
+        self.pending = list(pending)
 
     def __call__(self, path, params=None):
         if path == "/v2/calendar":
-            return [{"date": params["start"]}] if self.open_today else []
+            days = [str(d.date()) for d in pd.bdate_range(params["start"], params["end"])]
+            return [{"date": d} for d in days if self.open_today or d != params["end"]]
+        if path == "/v2/orders" and (params or {}).get("status") == "open":
+            return self.pending
         return {"/v2/account": {"account_number": "PA1", "equity": str(self.equity), "cash": str(self.equity)},
                 "/v2/positions": self.positions, "/v2/account/activities/FILL": self.fills,
                 "/v2/orders": self.orders}[path]
@@ -160,3 +164,46 @@ def test_unknown_holdings_stop_the_run_instead_of_buying_again(db, monkeypatch):
     with pytest.raises(RuntimeError):
         paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None)
     assert sub.calls == []
+
+
+def test_pending_orders_count_toward_the_25_percent_limit(db, monkeypatch):
+    # Review C1: on a re-run, idea 2's GLD order is already waiting; idea 1 must still see it.
+    live_idea(db, 1)
+    live_idea(db, 2, spec={**SPEC, "title": "Also GLD"})
+    pending = [{"symbol": "GLD", "side": "buy", "qty": "66", "limit_price": None,
+                "client_order_id": "idea-2-auto-20261103-GLD-open"}]
+    sub = Submit(fail={"GLD": paper_orders.DuplicateOrder("c")})
+    run(db, Alpaca(pending=pending), sub, monkeypatch)
+    by_idea = {r["idea_id"]: (r["status"], r["reason"]) for r in db.db["paper_orders"]}
+    assert by_idea[2][0] == "already sent"
+    assert by_idea[1][0] == "skipped" and "25%" in by_idea[1][1]
+
+
+def test_no_equity_sends_nothing_and_fails(db, monkeypatch):
+    # Review I1: equity 0 would size every target to 0 and sell everything the idea holds.
+    live_idea(db, 1)
+    sub = Submit()
+    summary, failed = run(db, Alpaca(equity=0), sub, monkeypatch)
+    assert sub.calls == [] and summary == {"account": "no equity"}
+    assert paper_orders_run.exit_code(summary, failed) == 1
+
+
+def test_rejections_and_disconnects_fail_the_job(db, monkeypatch):
+    # Review I2: an all-rejected morning or refused keys must not exit 0.
+    live_idea(db, 1)
+    summary, failed = run(db, Alpaca(), Submit(fail={"GLD": paper_orders.OrderRejected("no")}), monkeypatch)
+    assert failed == {1: "1 order(s) rejected"} and paper_orders_run.exit_code(summary, failed) == 1
+    assert paper_orders_run.exit_code({"market": "closed"}, {}) == 0
+    assert paper_orders_run.exit_code({"account": "not connected"}, {}) == 1
+
+
+def test_stale_prices_skip_the_idea(db, monkeypatch):
+    # Review I6: yesterday's bar missing means the target would be the day before's; skip and fail instead.
+    live_idea(db, 1)
+
+    def stale(tickers, start):
+        return closes(tickers, start).iloc[:-1]
+    monkeypatch.setattr(service, "paper_get", Alpaca())
+    sub = Submit()
+    summary, failed = paper_orders_run.run(MORNING, db, submit=sub, closes=stale, fred=None)
+    assert sub.calls == [] and "2026-10-30" in failed[1] and "2026-11-02" in failed[1]

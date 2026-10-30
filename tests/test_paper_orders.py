@@ -77,7 +77,7 @@ def test_duplicate_client_id(keys, monkeypatch):
 def test_rejected_keys_not_connected_without_leaking(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     with pytest.raises(AccountNotConnected) as e:
-        paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(403)))
+        paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(401)))
     assert "s3cr3t" not in str(e.value)
 
 
@@ -85,3 +85,12 @@ def test_other_rejection_carries_alpaca_message(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     with pytest.raises(paper_orders.OrderRejected, match="not shortable"):
         paper_orders.submit("XYZ", 1, "sell", "c", session=Session(Resp(422, {"message": "asset XYZ is not shortable"})))
+
+
+def test_403_is_an_order_refusal_not_bad_keys(keys, monkeypatch):
+    # Review I3: Alpaca answers 403 for insufficient buying power / wash trade; only 401 means the keys.
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    with pytest.raises(paper_orders.OrderRejected, match="insufficient buying power"):
+        paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(403, {"message": "insufficient buying power"})))
+    with pytest.raises(AccountNotConnected):
+        paper_orders.submit("GLD", 1, "buy", "c", session=Session(Resp(401)))

@@ -26,10 +26,14 @@ def test_switch_sells_before_it_buys():
     assert out[0]["client_order_id"].endswith("GLD-close")
 
 
-def test_short_target_and_flip_is_two_orders():
+def test_short_target_and_flip_closes_first_and_opens_tomorrow():
+    # Review I4: Alpaca won't take the short sale while the long is still held, so a flip is two days.
     out = plan(7, {"QQQ": -1.0}, 10, 100_000, {"QQQ": 400.0}, {"QQQ": 5}, {"QQQ": 2_000}, DAY, MOO)
-    assert rows(out) == [("QQQ", "sell", 5, "send"), ("QQQ", "sell", 25, "send")]
-    assert [x["client_order_id"][-5:] for x in out] == ["close", "-open"]
+    assert rows(out) == [("QQQ", "sell", 5, "send"), ("QQQ", "sell", 25, "skip")]
+    assert "tomorrow" in out[1]["reason"]
+    fresh = plan(7, {"QQQ": -1.0}, 10, 100_000, {"QQQ": 400.0}, {}, {}, DAY, MOO)
+    assert rows(fresh) == [("QQQ", "sell", 25, "send")]
+    assert fresh[0]["client_order_id"].endswith("QQQ-open")
 
 
 def test_too_small_is_skipped_but_a_close_never_is():
@@ -39,7 +43,7 @@ def test_too_small_is_skipped_but_a_close_never_is():
     assert out == [] or out[0]["status"] == "skip"
     out = plan(7, {"BRK.A": 1.0}, 0.1, 100_000, {"BRK.A": 700_000.0}, {}, {}, DAY, MOO)
     assert rows(out) == [("BRK.A", "buy", 0, "skip")] and "too small" in out[0]["reason"]
-    tiny = close_out(7, {"GLD": 0.2, "SLV": 3}, {"GLD": 300.0, "SLV": 30.0}, DAY, MOO)
+    tiny = close_out(7, {"GLD": 0.2, "SLV": 3}, {"GLD": 300.0, "SLV": 30.0}, DAY)
     assert rows(tiny) == [("SLV", "sell", 3, "send")]  # fractional remainder can't be traded; whole shares close
 
 
@@ -67,3 +71,17 @@ def test_limit_prices_move_against_us():
 def test_no_equity_no_orders():
     out = plan(7, {"GLD": 1.0}, 20, 0, {"GLD": 300.0}, {}, {}, DAY, MOO)
     assert rows(out) == [("GLD", "buy", 0, "skip")]
+
+
+def test_never_opens_against_someone_elses_position():
+    # Review C2: Kevin is short 100 GLD by hand; the idea must not buy into it (FIFO would net it away daily).
+    out = plan(7, {"GLD": 1.0}, 1, 100_000, {"GLD": 100.0}, {}, {"GLD": -10_000}, DAY, MOO)
+    assert rows(out) == [("GLD", "buy", 10, "skip")] and "opposite side" in out[0]["reason"]
+    mine = plan(7, {"GLD": 1.0}, 2, 100_000, {"GLD": 100.0}, {"GLD": 10}, {"GLD": 1_000}, DAY, MOO)
+    assert rows(mine) == [("GLD", "buy", 10, "send")]  # adding to its own long is fine
+
+
+def test_close_out_is_always_market_at_the_open():
+    # Review I7: a kill closes at the next open, whatever order type the idea traded with.
+    out = close_out(7, {"GLD": 5}, {"GLD": 300.0}, DAY)
+    assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "opg" and out[0]["limit_price"] is None
