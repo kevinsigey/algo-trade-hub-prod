@@ -14,12 +14,14 @@ Then visit: http://localhost:8000/docs  (Swagger UI — auto-generated)
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from tradehub.core.env import load_local_env
 from tradehub.health import collect_health
@@ -30,6 +32,11 @@ from tradehub.api.schemas import (
 from tradehub.api.dependencies import get_supabase
 from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
+from tradehub.workshop import store as workshop_store
+from tradehub.workshop.data import UnknownSymbol, closes as workshop_closes, fred_series as workshop_fred
+from tradehub.workshop.draft import MODEL as DRAFT_MODEL, DraftUnavailable, draft_spec
+from tradehub.workshop.engine import run_test, tickers_for
+from tradehub.workshop.spec import IdeaSpec, blank_spec
 from tradehub.engine_catalogue import engine_catalogue
 from tradehub.engine_health import engine_health
 from tradehub.gate_status import DEFAULT_GATE_STATUS, latest_gate_statuses, table_missing
@@ -402,6 +409,73 @@ def get_portfolio(supabase=Depends(get_supabase)):
 def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
     """Kevin's session, confirmed server-side. The Workshop's routes use the same dependency."""
     return user
+
+
+# ── Trading HQ Workshop (step 2): Kevin-only. Plain words -> draft -> Kevin confirms -> run -> verdict. ──
+class _DraftIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class _IdeaIn(BaseModel):
+    title: str = Field(min_length=3, max_length=120)
+    plain_words: str = Field(min_length=1, max_length=4000)
+
+
+class _RunIn(BaseModel):
+    spec: IdeaSpec
+    draft_model: str | None = None
+
+
+def _fred_start(start: date) -> date:
+    """FRED reads reach 3 years before the test start, so a lookback (max 756 trading days) is filled on day one."""
+    return start - timedelta(days=3 * 366)
+
+
+@app.post("/api/workshop/draft", tags=["Workshop"])
+def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
+    try:
+        spec = draft_spec(body.text)
+    except DraftUnavailable as exc:
+        return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
+                                                      "template": blank_spec()})
+    return {"spec": spec.model_dump(mode="json"), "model": DRAFT_MODEL}
+
+
+@app.post("/api/workshop/ideas", tags=["Workshop"])
+def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    return workshop_store.create_idea(supabase, body.title, body.plain_words)
+
+
+@app.get("/api/workshop/ideas", tags=["Workshop"])
+def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    return workshop_store.list_ideas(supabase)
+
+
+@app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
+def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    return found
+
+
+@app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])
+def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.require_admin),
+                 supabase=Depends(get_supabase)):
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    spec = body.spec
+    try:
+        prices = workshop_closes(tickers_for(spec), spec.start)
+        fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
+                if spec.when is not None and spec.when.source == "fred" else {})
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    variation = len(found["runs"]) + 1
+    result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation)
+    return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
+                                     result)
 
 
 @app.get("/api/portfolio/closed", tags=["Portfolio"])

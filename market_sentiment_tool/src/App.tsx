@@ -16,11 +16,13 @@ import { NoOrdersBanner } from "@/components/NoOrdersBanner";
 import Portfolio from "@/pages/Portfolio";
 import ClosedTrades from "@/pages/ClosedTrades";
 import Login from "@/pages/Login";
+import Workshop from "@/pages/Workshop";
+import WorkshopIdea from "@/pages/WorkshopIdea";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -98,6 +100,10 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
         </Group>
         <Group label="Admin">
+          {/* Trading HQ step 2: plain-words idea -> drafted test -> verdict. */}
+          <NavLink to="/workshop" className={linkClass}>
+            <FlaskConical className="w-5 h-5 text-amber-300" /> Workshop
+          </NavLink>
           {/* "Engine Scoreboard", not "Shadow Scoreboard": the page scores ENGINES against their
               markets, and "shadow" already names two other things here. */}
           <NavLink to="/scoreboard" className={linkClass}>
@@ -265,6 +271,8 @@ function App() {
           <Route path="/portfolio/closed" element={<ClosedTrades />} />
           <Route path="/predictions" element={<Home />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
+          <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
           <Route path="/lab" element={<Navigate to="/journal" replace />} />
