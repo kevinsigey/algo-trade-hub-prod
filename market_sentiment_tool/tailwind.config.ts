@@ -15,8 +15,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Inter", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
+        sans: ["Barlow", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["Barlow", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Barlow Condensed", "Arial Narrow", "ui-sans-serif", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",

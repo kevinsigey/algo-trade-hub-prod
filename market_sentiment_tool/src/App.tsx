@@ -34,17 +34,24 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
     <>
       <div className="p-6">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center border border-emerald-500/40">
-            <Activity className="w-5 h-5 text-emerald-400" />
+          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center border border-border">
+            <Activity className="w-5 h-5 text-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-tight text-white uppercase italic">Algo Trade Hub</span>
+          <span className="font-display text-2xl font-semibold tracking-wide text-foreground uppercase">Algo Trade Hub</span>
         </div>
       </div>
       
       <nav onClick={onNavigate} className="flex-1 px-4 space-y-2 mt-4">
+        <NavLink
+          to="/journal"
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+        >
+          {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
+          <BookOpen className="w-5 h-5 text-foreground" /> Journal
+        </NavLink>
         <NavLink 
           to="/" 
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
           <LayoutDashboard className="w-5 h-5" /> Portfolio
         </NavLink>
@@ -56,26 +63,19 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
             and the route below is /shadow, so the label and the path finally say the same thing. */}
         <NavLink
           to="/shadow"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
-          <LineChart className="w-5 h-5 text-amber-400" /> Crypto Shadow
-        </NavLink>
-        <NavLink
-          to="/journal"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
-          <BookOpen className="w-5 h-5 text-emerald-400" /> Journal
+          <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto Shadow
         </NavLink>
         <NavLink
           to="/models"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
           {/* "Models", not "Engines": the product's own word for these is engine, and that word
               appears in every row of the page, but the person reading the nav asked what the MODELS
               are doing and did not know the site had any. It sits above Scoreboard in the list
               because it is the frame the other pages sit inside. */}
-          <Cpu className="w-5 h-5 text-indigo-400" /> Models
+          <Cpu className="w-5 h-5 text-muted-foreground" /> Models
         </NavLink>
         {/* "Engine Scoreboard", not "Shadow Scoreboard" and not "Shadow". The h1 has always said
             "Engine scoreboard" and the page scores ENGINES against their markets, so the nav says
@@ -86,38 +86,38 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
             below -- the name works without being the name. */}
         <NavLink
           to="/scoreboard"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
-          <Scale className="w-5 h-5 text-rose-400" /> Engine Scoreboard
+          <Scale className="w-5 h-5 text-muted-foreground" /> Engine Scoreboard
         </NavLink>
         <NavLink
           to="/sports"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
-          <Trophy className="w-5 h-5 text-cyan-400" /> Sports
+          <Trophy className="w-5 h-5 text-muted-foreground" /> Sports
         </NavLink>
         <NavLink
           to="/jobs"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
-          <Briefcase className="w-5 h-5 text-sky-400" /> Jobs nowcast
+          <Briefcase className="w-5 h-5 text-muted-foreground" /> Jobs nowcast
         </NavLink>
         {/* Label says "Display", not "Nowcast" or "Edges". This board is NOT a board of
             opportunities, and a nav entry that reads like the other four would put the claim back
             that the page spends its length taking away. */}
         <NavLink
           to="/cpi"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
-          <BarChart3 className="w-5 h-5 text-amber-400" /> CPI Display
+          <BarChart3 className="w-5 h-5 text-muted-foreground" /> CPI Display
         </NavLink>
         <NavLink
           to="/health"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
+          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
         >
           {/* Freshness of every timer and forecaster. Not a scoreboard: it answers "is anything
               running", which is a different question from "who is winning". */}
-          <HeartPulse className="w-5 h-5 text-teal-400" /> Health
+          <HeartPulse className="w-5 h-5 text-muted-foreground" /> Health
         </NavLink>
       </nav>
 
@@ -244,7 +244,7 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
             <Menu className="w-5 h-5" aria-hidden="true" />
           )}
         </button>
-        <span className="text-sm font-bold uppercase italic tracking-tight text-white">Algo Trade Hub</span>
+        <span className="font-display text-lg font-semibold uppercase tracking-wide text-foreground">Algo Trade Hub</span>
       </div>
       <main className="flex-1 min-h-screen overflow-auto bg-slate-950 text-slate-100">
         <NoOrdersBanner />

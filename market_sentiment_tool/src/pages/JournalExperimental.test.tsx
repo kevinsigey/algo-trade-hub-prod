@@ -50,7 +50,7 @@ describe("experimental forecasters are labelled", () => {
     // never rendered, and nothing failed.
     stubJournal([FOMC, CPI]);
     render(<Journal />);
-    await screen.findByLabelText("Results");
+    await screen.findByLabelText("Macro & markets");
 
     expect(within(rowFor(/Fed rate decision/)).getByText("Experimental")).toBeInTheDocument();
     // The control: the label must be per-forecaster, not a blanket badge on every row.
