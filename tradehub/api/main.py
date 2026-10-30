@@ -35,7 +35,8 @@ from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, closes as workshop_closes, fred_series as workshop_fred
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
-from tradehub.workshop.engine import run_test, tickers_for
+from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, run_test, tickers_for
+from tradehub.workshop.record import shadow_summary
 from tradehub.workshop.spec import IdeaSpec, blank_spec
 from tradehub.engine_catalogue import engine_catalogue
 from tradehub.engine_health import engine_health
@@ -451,12 +452,97 @@ def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=De
     return workshop_store.list_ideas(supabase)
 
 
-@app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
-def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+def _found(supabase, idea_id: int) -> dict:
     found = workshop_store.get_idea(supabase, idea_id)
     if found is None:
         raise HTTPException(status_code=404, detail="no such idea")
     return found
+
+
+def _live_spec(supabase, idea: dict) -> IdeaSpec:
+    return IdeaSpec.model_validate(workshop_store.get_run(supabase, idea["live_run_id"])["spec"])
+
+
+@app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
+def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    found = _found(supabase, idea_id)
+    idea = found["idea"]
+    shadow = (shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea_id), date.today())
+              if idea.get("live_at") else None)
+    return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow}
+
+
+class _LiveIn(BaseModel):
+    size_pct: float = Field(gt=0, le=100)
+
+
+class _LabelIn(BaseModel):
+    order_id: str = Field(min_length=1, max_length=128)
+    idea_id: int | None = None
+
+
+def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | None]:
+    """The live-paper gate on the idea's latest run, recomputed from fresh prices every time it is asked."""
+    runs = _found(supabase, idea_id)["runs"]
+    latest = runs[-1] if runs else None
+    if latest is None or latest["verdict"] != "PASS":
+        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+                "reasons": ["the latest run did not PASS"]}, None
+    spec = IdeaSpec.model_validate(latest["spec"])
+    try:
+        prices = workshop_closes(tickers_for(spec), spec.start)
+        fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
+                if spec.when is not None and spec.when.source == "fred" else {})
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    frame = workshop_daily_frame(spec, prices, fred)
+    return gate_check(spec, frame, date.fromisoformat(latest["data_end"]), size_pct), latest
+
+
+@app.get("/api/workshop/ideas/{idea_id}/gate", tags=["Workshop"])
+def workshop_gate(idea_id: int, size_pct: float | None = Query(None, gt=0, le=100),
+                  _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    return _gate(supabase, idea_id, size_pct)[0]
+
+
+@app.post("/api/workshop/ideas/{idea_id}/publish", tags=["Workshop"])
+def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    _found(supabase, idea_id)
+    try:
+        return workshop_store.publish(supabase, idea_id)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already published") from exc
+
+
+@app.post("/api/workshop/ideas/{idea_id}/live", tags=["Workshop"])
+def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    if _found(supabase, idea_id)["idea"].get("live_at"):
+        raise HTTPException(status_code=409, detail="already live")
+    gate, run = _gate(supabase, idea_id, body.size_pct)
+    if gate["status"] != "ready":
+        raise HTTPException(status_code=409, detail="; ".join(gate["reasons"]) or "the gate is not clear")
+    try:
+        return workshop_store.go_live(supabase, idea_id, run["id"], body.size_pct, gate)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already live") from exc
+
+
+@app.post("/api/workshop/ideas/{idea_id}/kill", tags=["Workshop"])
+def workshop_kill(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    if not _found(supabase, idea_id)["idea"].get("live_at"):
+        raise HTTPException(status_code=409, detail="only a live idea can be killed")
+    try:
+        return workshop_store.kill(supabase, idea_id)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already killed") from exc
+
+
+@app.post("/api/workshop/labels", tags=["Workshop"])
+def workshop_label(body: _LabelIn, user: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    if body.idea_id is not None and workshop_store.get_idea(supabase, body.idea_id) is None:
+        raise HTTPException(status_code=422, detail=f"no idea {body.idea_id}")
+    return workshop_store.add_label(supabase, body.order_id, body.idea_id, user.get("email", "admin"))
 
 
 @app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])
