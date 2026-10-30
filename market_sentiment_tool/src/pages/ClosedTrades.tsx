@@ -36,7 +36,7 @@ export default function ClosedTrades() {
                 <span className={`font-semibold tabular-nums ${tone(total)}`}>{fmtUsd(total, { signed: true })}</span>
               </div>
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[44rem] text-sm tabular-nums">
+                <table className="w-full min-w-[40rem] text-sm tabular-nums">
                   <thead className="text-left text-slate-400">
                     <tr>
                       <th className="py-2 pr-4 font-medium">Holding</th>
@@ -57,16 +57,16 @@ export default function ClosedTrades() {
                         </td>
                         <td className="py-2 pr-4 text-right text-slate-300">{Math.abs(t.qty)}</td>
                         <td className="py-2 pr-4 text-right text-slate-300">
-                          {fmtUsd(t.entry_price)} <span className="text-xs text-slate-500">{day(t.entered_at)}</span>
+                          {fmtUsd(t.entry_price)} <span className="block text-xs text-slate-500">{day(t.entered_at)}</span>
                         </td>
                         <td className="py-2 pr-4 text-right text-slate-300">
-                          {fmtUsd(t.exit_price)} <span className="text-xs text-slate-500">{day(t.exited_at)}</span>
+                          {fmtUsd(t.exit_price)} <span className="block text-xs text-slate-500">{day(t.exited_at)}</span>
                         </td>
                         <td className={`py-2 pr-4 text-right ${tone(t.pnl)}`}>
-                          {fmtUsd(t.pnl, { signed: true })} <span className="text-xs">{fmtPct(t.return_pct)}</span>
+                          {fmtUsd(t.pnl, { signed: true })} <span className="block text-xs">{fmtPct(t.return_pct)}</span>
                         </td>
                         <td className="py-2 pr-4 text-right text-slate-300">{t.held_days}d</td>
-                        <td className="py-2 text-slate-300">{t.idea}</td>
+                        <td className="whitespace-nowrap py-2 text-slate-300">{t.idea}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -42,7 +42,7 @@ const Group = ({ label, children }: { label: string; children: React.ReactNode }
  * new page is never read through it. The rail passes nothing, because the rail is always there.
  */
 const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
-  const { data } = useApi<PortfolioPayload>("/api/portfolio");
+  const { data, loading } = useApi<PortfolioPayload>("/api/portfolio");
   const admin = useAdminSession();
   // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
   const book = data?.scoreboard && data.state !== "not_connected" ? data : null;
@@ -128,7 +128,7 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
             <Wallet className="w-4 h-4" aria-hidden="true" /> Paper account
           </div>
           <div className={`text-2xl font-bold tabular-nums tracking-tight ${book ? "text-white" : "text-slate-400"}`}>
-            {book ? fmtUsd(book.scoreboard.equity, { whole: true }) : "Not connected"}
+            {book ? fmtUsd(book.scoreboard.equity, { whole: true }) : loading ? "—" : "Not connected"}
           </div>
           {book && <div className="mt-1 text-[11px] text-slate-400">{stateLabel(book.state, book.as_of)}</div>}
         </div>
