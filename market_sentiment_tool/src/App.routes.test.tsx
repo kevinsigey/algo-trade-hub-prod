@@ -11,7 +11,11 @@ import type { ShadowPerformanceResponse } from "@/lib/shadowPerformance";
 // need: neither route rendered here reads a Supabase table directly (the API does), so nothing
 // calls it. Setting a fake URL instead would be worse: it would let a test that means to prove
 // reachability quietly exercise a real network path.
-vi.mock("@/lib/supabase", () => ({ supabase: {} }));
+// The operator pages (/scoreboard, /models) sit behind the admin gate, so the stub carries a session
+// and `/api/admin/me` answers 200 below: these tests are about the routes, the gate has its own file.
+vi.mock("@/lib/supabase", () => ({
+  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "jwt" } } }) } },
+}));
 
 /**
  * A mount counter for the Scoreboard component, so a redirect loop is observable.
@@ -134,8 +138,8 @@ function stubApi() {
       headline: { forecasters: 0, calibrated: 0, settled_calibrated: 0, promoted: 0 },
     },
     "/api/shadow-performance": EMPTY_SHADOW,
-    "/api/pnl_summary": { total_pnl_cents: 0, suggest_only: true },
-    "/api/positions": [],
+    "/api/admin/me": { email: "kevin@example.com" },
+    "/api/portfolio": { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] },
   };
   const spy = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);

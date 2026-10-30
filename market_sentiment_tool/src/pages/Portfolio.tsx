@@ -105,7 +105,7 @@ export default function Portfolio() {
         </div>
       )}
 
-      {data && data.state !== "not_connected" && <Body data={data} />}
+      {data && data.state !== "not_connected" && data.scoreboard && <Body data={data} />}
     </div>
   );
 }

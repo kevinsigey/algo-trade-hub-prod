@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 from tradehub.api.dependencies import get_supabase
-
-router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
 
 def require_admin(authorization: str | None = Header(None), supabase=Depends(get_supabase)) -> dict:
@@ -24,8 +22,3 @@ def require_admin(authorization: str | None = Header(None), supabase=Depends(get
     if email != admin:
         raise HTTPException(status_code=401, detail="admin only")
     return {"email": email}
-
-
-@router.get("/me")
-def me(user: dict = Depends(require_admin)) -> dict:
-    return user

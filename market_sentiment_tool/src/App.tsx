@@ -13,22 +13,39 @@ import Health from "@/pages/Health";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Weather from "@/pages/Weather";
 import { NoOrdersBanner } from "@/components/NoOrdersBanner";
-import { usePortfolio } from "@/hooks/usePortfolio";
-import { portfolioHeadline } from "@/lib/portfolioTruth";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X } from "lucide-react";
+import Portfolio from "@/pages/Portfolio";
+import ClosedTrades from "@/pages/ClosedTrades";
+import Login from "@/pages/Login";
+import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
+import { useApi } from "@/hooks/usePaperPortfolio";
+import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
+import { supabase } from "@/lib/supabase";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut } from "lucide-react";
+
+const linkClass = ({ isActive }: { isActive: boolean }) =>
+  `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
+
+const Group = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div>
+    <div className="px-3 pb-1 text-xs font-medium text-slate-500">{label}</div>
+    <div className="space-y-1">{children}</div>
+  </div>
+);
 
 /**
  * The nav itself, written once and shared by the desktop rail and the phone overlay.
+ *
+ * Three groups (Trading HQ spec §4.1): the public Portfolio, the public Predictions, and the operator
+ * pages behind Kevin's login. Moved pages keep their URLs, so the shared global nav's links still work.
  *
  * `onNavigate` is the overlay's way of saying "the reader picked a page": the drawer closes, so a
  * new page is never read through it. The rail passes nothing, because the rail is always there.
  */
 const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
-  const { portfolio } = usePortfolio();
-  // The sidebar used to render "LIVE BALANCE $0.00" from an empty table, which reads as a flat
-  // book. This product places no orders, so it says that instead of showing a number nobody can act
-  // on -- and an unreadable payload reads as unknown, never as zero.
-  const headline = portfolioHeadline(portfolio);
+  const { data } = useApi<PortfolioPayload>("/api/portfolio");
+  const admin = useAdminSession();
+  // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
+  const book = data?.scoreboard && data.state !== "not_connected" ? data : null;
 
   return (
     <>
@@ -40,102 +57,80 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           <span className="text-xl font-bold tracking-tight text-white uppercase italic">Algo Trade Hub</span>
         </div>
       </div>
-      
-      <nav onClick={onNavigate} className="flex-1 px-4 space-y-2 mt-4">
-        <NavLink 
-          to="/" 
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <LayoutDashboard className="w-5 h-5" /> Portfolio
-        </NavLink>
-        {/* "Crypto Shadow", not "Shadow". This is the nav entry that cost the owner a page on
-            2026-09-28: a list item reading "Shadow" beside one reading "Scoreboard" reads as two
-            halves of the same thing, and they are not. This page is the crypto shadow-timeline
-            backtester; the other is every engine's Brier against the market. Naming the domain
-            here is the whole fix -- the word "shadow" on its own in a nav list is the collision,
-            and the route below is /shadow, so the label and the path finally say the same thing. */}
-        <NavLink
-          to="/shadow"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <LineChart className="w-5 h-5 text-amber-400" /> Crypto Shadow
-        </NavLink>
-        <NavLink
-          to="/journal"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
-          <BookOpen className="w-5 h-5 text-emerald-400" /> Journal
-        </NavLink>
-        <NavLink
-          to="/models"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          {/* "Models", not "Engines": the product's own word for these is engine, and that word
-              appears in every row of the page, but the person reading the nav asked what the MODELS
-              are doing and did not know the site had any. It sits above Scoreboard in the list
-              because it is the frame the other pages sit inside. */}
-          <Cpu className="w-5 h-5 text-indigo-400" /> Models
-        </NavLink>
-        {/* "Engine Scoreboard", not "Shadow Scoreboard" and not "Shadow". The h1 has always said
-            "Engine scoreboard" and the page scores ENGINES against their markets, so the nav says
-            what is being scored. "Shadow" would name a word this product uses for two other
-            things (the crypto timeline at /shadow, and the not-promoted gate status), and a nav
-            entry that reads like a sibling of /shadow is what sent the owner to the wrong page on
-            2026-09-28. People who type "shadow scoreboard" still land here, via the redirect
-            below -- the name works without being the name. */}
-        <NavLink
-          to="/scoreboard"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <Scale className="w-5 h-5 text-rose-400" /> Engine Scoreboard
-        </NavLink>
-        <NavLink
-          to="/sports"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <Trophy className="w-5 h-5 text-cyan-400" /> Sports
-        </NavLink>
-        <NavLink
-          to="/jobs"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <Briefcase className="w-5 h-5 text-sky-400" /> Jobs nowcast
-        </NavLink>
-        {/* Label says "Display", not "Nowcast" or "Edges". This board is NOT a board of
-            opportunities, and a nav entry that reads like the other four would put the claim back
-            that the page spends its length taking away. */}
-        <NavLink
-          to="/cpi"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          <BarChart3 className="w-5 h-5 text-amber-400" /> CPI Display
-        </NavLink>
-        <NavLink
-          to="/health"
-          className={({isActive}) => `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`}
-        >
-          {/* Freshness of every timer and forecaster. Not a scoreboard: it answers "is anything
-              running", which is a different question from "who is winning". */}
-          <HeartPulse className="w-5 h-5 text-teal-400" /> Health
-        </NavLink>
+
+      <nav onClick={onNavigate} className="flex-1 overflow-y-auto px-4 space-y-5 mt-2">
+        <Group label="Portfolio">
+          <NavLink to="/" end className={linkClass}>
+            <LayoutDashboard className="w-5 h-5" /> Portfolio
+          </NavLink>
+          <NavLink to="/portfolio/closed" className={linkClass}>
+            <History className="w-5 h-5 text-slate-400" /> Closed trades
+          </NavLink>
+        </Group>
+        <Group label="Predictions">
+          <NavLink to="/predictions" className={linkClass}>
+            <Compass className="w-5 h-5 text-emerald-300" /> Overview
+          </NavLink>
+          <NavLink to="/journal" className={linkClass}>
+            {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
+            <BookOpen className="w-5 h-5 text-emerald-400" /> Journal
+          </NavLink>
+          <NavLink to="/sports" className={linkClass}>
+            <Trophy className="w-5 h-5 text-cyan-400" /> Sports
+          </NavLink>
+          <NavLink to="/jobs" className={linkClass}>
+            <Briefcase className="w-5 h-5 text-sky-400" /> Jobs nowcast
+          </NavLink>
+          {/* Label says "Display", not "Nowcast" or "Edges". This board is NOT a board of
+              opportunities, and a nav entry that reads like the others would put the claim back
+              that the page spends its length taking away. */}
+          <NavLink to="/cpi" className={linkClass}>
+            <BarChart3 className="w-5 h-5 text-amber-400" /> CPI Display
+          </NavLink>
+          <NavLink to="/weather" className={linkClass}>
+            <CloudSun className="w-5 h-5 text-sky-300" /> Weather
+          </NavLink>
+          {/* "Crypto Shadow", not "Shadow": a list item reading "Shadow" beside "Scoreboard" reads as
+              two halves of the same thing, and they are not (the 2026-09-28 collision). This is the
+              crypto shadow-timeline backtester at /shadow. */}
+          <NavLink to="/shadow" className={linkClass}>
+            <LineChart className="w-5 h-5 text-amber-400" /> Crypto Shadow
+          </NavLink>
+        </Group>
+        <Group label="Admin">
+          {/* "Engine Scoreboard", not "Shadow Scoreboard": the page scores ENGINES against their
+              markets, and "shadow" already names two other things here. */}
+          <NavLink to="/scoreboard" className={linkClass}>
+            <Scale className="w-5 h-5 text-rose-400" /> Engine Scoreboard
+          </NavLink>
+          <NavLink to="/models" className={linkClass}>
+            <Cpu className="w-5 h-5 text-indigo-400" /> Models
+          </NavLink>
+          {/* Freshness of every timer and forecaster: "is anything running", not "who is winning". */}
+          <NavLink to="/health" className={linkClass}>
+            <HeartPulse className="w-5 h-5 text-teal-400" /> Health
+          </NavLink>
+          {admin === "admin" ? (
+            <button type="button" onClick={() => void supabase.auth.signOut()} className={`${linkClass({ isActive: false })} w-full`}>
+              <LogOut className="w-5 h-5" /> Sign out
+            </button>
+          ) : (
+            <NavLink to="/login" className={linkClass}>
+              <Lock className="w-5 h-5" /> Sign in
+            </NavLink>
+          )}
+        </Group>
       </nav>
 
       <div className="p-4 border-t border-slate-900">
         <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-800 shadow-sm">
-          <div className="flex items-center gap-2 mb-2 text-slate-400 text-sm font-medium uppercase tracking-tighter">
-            <Wallet className="w-4 h-4" aria-hidden="true" /> {headline.label}
+          <div className="flex items-center gap-2 mb-2 text-slate-400 text-sm font-medium">
+            <Wallet className="w-4 h-4" aria-hidden="true" /> Paper account
           </div>
-          <div
-            className={`text-2xl font-bold tracking-tight ${
-              headline.tone === "muted" ? "text-slate-400" : "text-white"
-            }`}
-          >
-            {headline.value}
+          <div className={`text-2xl font-bold tabular-nums tracking-tight ${book ? "text-white" : "text-slate-400"}`}>
+            {book ? fmtUsd(book.scoreboard.equity, { whole: true }) : "Not connected"}
           </div>
-          <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-1 font-black bg-emerald-500/10 w-fit px-2 py-0.5 rounded-full border border-emerald-500/20 uppercase">
-             Live Telemetry
-          </div>
+          {book && <div className="mt-1 text-[11px] text-slate-400">{stateLabel(book.state, book.as_of)}</div>}
         </div>
       </div>
     </>
@@ -264,7 +259,12 @@ function App() {
       <AppShell>
         <Guarded>
         <Routes>
-          <Route path="/" element={<Home />} />
+          {/* Trading HQ (spec 2026-10-29): the paper portfolio is the home page; the old home is the
+              Predictions overview. */}
+          <Route path="/" element={<Portfolio />} />
+          <Route path="/portfolio/closed" element={<ClosedTrades />} />
+          <Route path="/predictions" element={<Home />} />
+          <Route path="/login" element={<Login />} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
           <Route path="/lab" element={<Navigate to="/journal" replace />} />
@@ -275,7 +275,7 @@ function App() {
               scoreboard instead. */}
           <Route path="/shadow" element={<ShadowBacktester />} />
           <Route path="/journal" element={<Journal />} />
-          <Route path="/models" element={<Models />} />
+          <Route path="/models" element={<RequireAdmin><Models /></RequireAdmin>} />
           {/* The engine scoreboard, canonically at /scoreboard.
               `/engines` was the other candidate and was rejected: /models already lists every
               engine one row at a time, so /engines would have been a SECOND route that means "the
@@ -283,7 +283,7 @@ function App() {
               close, one level down. `/scoreboard` names the artifact rather than its contents, so
               it takes a new engine without the name going stale, and it already matches the
               endpoint (/api/scoreboard) and the file (Scoreboard.tsx), so it costs no rename. */}
-          <Route path="/scoreboard" element={<Scoreboard />} />
+          <Route path="/scoreboard" element={<RequireAdmin><Scoreboard /></RequireAdmin>} />
           {/* `/shadow-scoreboard` -> `/scoreboard`, permanently.
               The owner's approval for this page was literally called "the shadow scoreboard", so
               that string is a name people will type. A redirect makes the NAME work without making
@@ -297,7 +297,7 @@ function App() {
           <Route path="/sports" element={<SportsEdges />} />
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />
-          <Route path="/health" element={<Health />} />
+          <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
           <Route path="/weather" element={<Weather />} />
         </Routes>
         </Guarded>

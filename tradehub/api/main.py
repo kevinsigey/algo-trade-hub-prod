@@ -398,6 +398,12 @@ def get_portfolio(supabase=Depends(get_supabase)):
         raise _table_fault(service.SNAPSHOTS, exc) from exc
 
 
+@app.get("/api/admin/me", tags=["Admin"])
+def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
+    """Kevin's session, confirmed server-side. The Workshop's routes use the same dependency."""
+    return user
+
+
 @app.get("/api/portfolio/closed", tags=["Portfolio"])
 def get_portfolio_closed():
     from tradehub.portfolio import service
@@ -1406,8 +1412,6 @@ def get_quarantine(
 
 # ── War Room SPA (mounted last so every /api route above wins) ─────────────
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().parents[2] / "market_sentiment_tool" / "dist")))
-# Kevin-only routes (Trading HQ). Before mount_frontend, like every /api route.
-app.include_router(admin.router)
 mount_frontend(app, FRONTEND_DIST)
 
 

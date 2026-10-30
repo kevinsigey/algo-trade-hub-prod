@@ -12,8 +12,8 @@ vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 // The rail reads the portfolio on every route. That read is not what this file is about, and it
 // is a real request that lands after the assertions, so it is stubbed at the hook: the shell
 // renders its nav either way.
-vi.mock("@/hooks/usePortfolio", () => ({
-  usePortfolio: () => ({ portfolio: null, positions: [], loading: false, error: null }),
+vi.mock("@/hooks/usePaperPortfolio", () => ({
+  useApi: () => ({ data: null, error: null, loading: false }),
 }));
 
 /**
