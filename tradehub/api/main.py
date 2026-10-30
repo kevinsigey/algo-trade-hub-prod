@@ -385,6 +385,25 @@ async def get_pnl_summary(supabase=Depends(get_supabase)):
 # ════════════════════════════════════════════════════════════════════════════
 
 
+# ── Trading HQ: the public Alpaca PAPER portfolio (spec 2026-10-29 §4.2) ─────
+# Plain `def`: the Alpaca reads are blocking `requests` calls, so FastAPI runs these in its threadpool.
+@app.get("/api/portfolio", tags=["Portfolio"])
+def get_portfolio(supabase=Depends(get_supabase)):
+    from tradehub.portfolio import service
+
+    try:
+        return service.portfolio(supabase)
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault(service.SNAPSHOTS, exc) from exc
+
+
+@app.get("/api/portfolio/closed", tags=["Portfolio"])
+def get_portfolio_closed():
+    from tradehub.portfolio import service
+
+    return service.closed()
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 8: /api/shadow-performance
 # ════════════════════════════════════════════════════════════════════════════
