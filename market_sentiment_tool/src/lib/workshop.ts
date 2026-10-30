@@ -20,6 +20,16 @@ export interface Execution {
   limit_offset_bps: number;
 }
 
+export interface Exits {
+  stop_loss_pct: number | null;
+  trailing_pct: number | null;
+  take_profit_pct: number | null;
+  max_days: number | null;
+  mode: "close" | "intraday";
+}
+
+export const NO_EXITS: Exits = { stop_loss_pct: null, trailing_pct: null, take_profit_pct: null, max_days: null, mode: "close" };
+
 export const DEFAULT_EXECUTION: Execution = { order_type: "market", timing: "open", limit_offset_bps: 0 };
 
 export const ORDER_OPTIONS: { value: string; label: string }[] = [
@@ -36,6 +46,7 @@ export interface IdeaSpec {
   hold: string[];
   short?: string[];
   execution?: Execution;
+  exits?: Exits;
   when: Condition | null;
   otherwise: string;
   claim: Claim;
