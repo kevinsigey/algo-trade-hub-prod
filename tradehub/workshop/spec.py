@@ -38,11 +38,21 @@ class Condition(BaseModel):
         return v
 
 
+class Execution(BaseModel):
+    """How the paper orders go in (step 4). `close` fills a day after the decision, and the engine lags it to match."""
+    model_config = ConfigDict(extra="forbid")
+
+    order_type: Literal["market", "limit"] = "market"
+    timing: Literal["open", "close", "day"] = "open"
+    limit_offset_bps: float = Field(0, ge=0, le=500)
+
+
 class IdeaSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=3, max_length=120)
-    hold: list[str] = Field(min_length=1, max_length=5)
+    hold: list[str] = Field(default_factory=list, max_length=5)
+    short: list[str] = Field(default_factory=list, max_length=5)
     when: Condition | None = None
     otherwise: str = CASH
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
@@ -51,8 +61,9 @@ class IdeaSpec(BaseModel):
     start: date = date(2006, 1, 3)
     unseen_fraction: float = Field(0.3, ge=0.1, le=0.5)
     assumptions: list[str] = []
+    execution: Execution = Field(default_factory=Execution)
 
-    @field_validator("hold")
+    @field_validator("hold", "short")
     @classmethod
     def _hold(cls, v: list[str]) -> list[str]:
         return [_ticker(t) for t in v]
@@ -71,6 +82,10 @@ class IdeaSpec(BaseModel):
 
     @model_validator(mode="after")
     def _claim_needs_condition(self) -> IdeaSpec:
+        if not self.hold and not self.short:
+            raise ValueError("hold or short needs at least one ticker")
+        if set(self.hold) & set(self.short):
+            raise ValueError("a ticker can't be both held and shorted")
         if self.claim == "beats_benchmark_when" and self.when is None:
             raise ValueError("beats_benchmark_when needs a 'when' condition")
         if self.benchmark == CASH:
@@ -80,5 +95,5 @@ class IdeaSpec(BaseModel):
 
 def blank_spec() -> dict:
     """The hand-fill template: what the form starts from when the AI cannot draft."""
-    return {"title": "", "hold": [], "when": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
+    return {"title": "", "hold": [], "short": [], "when": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
             "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": []}

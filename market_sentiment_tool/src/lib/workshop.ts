@@ -14,9 +14,28 @@ export interface Condition {
   threshold: number;
 }
 
+export interface Execution {
+  order_type: "market" | "limit";
+  timing: "open" | "close" | "day";
+  limit_offset_bps: number;
+}
+
+export const DEFAULT_EXECUTION: Execution = { order_type: "market", timing: "open", limit_offset_bps: 0 };
+
+export const ORDER_OPTIONS: { value: string; label: string }[] = [
+  { value: "market:open", label: "Market at the open" },
+  { value: "market:close", label: "Market at the close (fills a day later)" },
+  { value: "market:day", label: "Market, during the day" },
+  { value: "limit:open", label: "Limit at the open" },
+  { value: "limit:close", label: "Limit at the close (fills a day later)" },
+  { value: "limit:day", label: "Limit, during the day" },
+];
+
 export interface IdeaSpec {
   title: string;
   hold: string[];
+  short?: string[];
+  execution?: Execution;
   when: Condition | null;
   otherwise: string;
   claim: Claim;
@@ -62,6 +81,19 @@ export interface Idea {
   live_at?: string | null;
   killed_at?: string | null;
   size_pct?: number | null;
+  auto_orders?: boolean;
+}
+
+export interface PaperOrder {
+  id: number;
+  day: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  client_order_id: string;
+  status: "sent" | "already sent" | "skipped" | "rejected";
+  reason: string | null;
+  alpaca_order_id: string | null;
 }
 
 export interface IdeaDetail {
@@ -69,6 +101,8 @@ export interface IdeaDetail {
   runs: Run[];
   tag?: string;
   shadow?: ShadowSummary | null;
+  orders_enabled?: boolean;
+  orders?: PaperOrder[];
 }
 
 export interface GateResult {

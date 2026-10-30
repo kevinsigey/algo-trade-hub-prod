@@ -8,12 +8,15 @@ import { toneClass } from "@/pages/Workshop";
 import {
   ApiError,
   CLAIM_OPTIONS,
+  DEFAULT_EXECUTION,
+  ORDER_OPTIONS,
   adminJson,
   claimLabel,
   conditionText,
   verdictTone,
   type Claim,
   type Condition,
+  type Execution,
   type GateResult,
   type IdeaDetail,
   type IdeaSpec,
@@ -37,6 +40,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(initial);
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
+  const exec = spec.execution ?? DEFAULT_EXECUTION;
   const setWhen = <K extends keyof Condition>(key: K, value: Condition[K]) =>
     setSpec((s) => ({ ...s, when: { ...(s.when ?? DEFAULT_CONDITION), [key]: value } }));
 
@@ -57,6 +61,9 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         </Field>
         <Field label="Hold (tickers, comma separated, equal weight)">
           <input className={field} value={spec.hold.join(", ")} onChange={(e) => set("hold", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+        </Field>
+        <Field label="Short (tickers, comma separated)">
+          <input className={field} value={(spec.short ?? []).join(", ")} onChange={(e) => set("short", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
         </Field>
         <Field label="Otherwise hold (ticker or CASH)">
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
@@ -113,6 +120,20 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         <Field label="Unseen share (most recent)">
           <input type="number" step="0.05" min="0.1" max="0.5" className={field} value={spec.unseen_fraction} onChange={(e) => set("unseen_fraction", Number(e.target.value))} />
         </Field>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-4">
+        <Field label="Orders">
+          <select className={field} value={`${exec.order_type}:${exec.timing}`}
+            onChange={(e) => { const [order_type, timing] = e.target.value.split(":") as [Execution["order_type"], Execution["timing"]]; set("execution", { ...exec, order_type, timing }); }}>
+            {ORDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+        {exec.order_type === "limit" && (
+          <Field label="Limit offset (bps)">
+            <input type="number" min={0} max={500} className={field} value={exec.limit_offset_bps} onChange={(e) => set("execution", { ...exec, limit_offset_bps: Number(e.target.value) })} />
+          </Field>
+        )}
       </div>
 
       <Field label="Assumptions (one per line; edit any you disagree with)">
@@ -240,8 +261,13 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   };
   const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
   const goLive = () => act(() => adminJson(`/api/workshop/ideas/${id}/live`, { method: "POST", body: JSON.stringify({ size_pct: Number(size) }) }));
+  const toggleAuto = () => {
+    const on = !idea.auto_orders;
+    if (on && !window.confirm(`Turn on automatic paper orders? Each weekday morning the hub trades this idea's rule in the paper account at ${idea.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/auto`, { method: "POST", body: JSON.stringify({ on }) }));
+  };
   const kill = () => {
-    if (!window.confirm("Kill this idea? Its paper record stops today and stays on the record.")) return;
+    if (!window.confirm("Kill this idea? Its paper record stops today and stays on the record. If it traded automatically, its paper positions are closed at the next open.")) return;
     act(() => adminJson(`/api/workshop/ideas/${id}/kill`, { method: "POST" }));
   };
 
@@ -294,6 +320,35 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
               <code className="rounded bg-slate-800 px-2 py-0.5 text-amber-200">{tag}</code>
               <button type="button" className={button} onClick={() => navigator.clipboard?.writeText(tag)}>Copy tag</button>
             </div>
+          )}
+          {!idea.killed_at && (
+            <div className="space-y-1 border-t border-slate-800 pt-3">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-slate-300">Automatic paper orders: <strong className={idea.auto_orders ? "text-emerald-300" : "text-slate-400"}>{idea.auto_orders ? "on" : "off"}</strong></span>
+                <button type="button" className={button} disabled={busy} onClick={toggleAuto}>
+                  {idea.auto_orders ? "Turn off automatic paper orders" : "Turn on automatic paper orders"}
+                </button>
+              </div>
+              {!detail.orders_enabled && (
+                <p className="text-xs text-amber-300">The server's paper-order switch is off, so nothing is sent until it's turned on.</p>
+              )}
+            </div>
+          )}
+          {(detail.orders?.length ?? 0) > 0 && (
+            <table className="w-full text-xs">
+              <thead className="text-left text-slate-500">
+                <tr><th className="py-1 font-normal">Day</th><th className="font-normal">Order</th><th className="font-normal">Status</th></tr>
+              </thead>
+              <tbody>
+                {detail.orders?.map((o) => (
+                  <tr key={o.id} className="border-t border-slate-800 align-top">
+                    <td className="whitespace-nowrap py-1 pr-2 text-slate-400">{o.day}</td>
+                    <td className="py-1 pr-2 font-mono text-slate-200">{o.side} {o.qty} {o.symbol}</td>
+                    <td className="py-1"><span className={o.status === "sent" ? "text-emerald-300" : o.status === "rejected" ? "text-rose-300" : "text-slate-400"}>{o.status}</span>{o.reason && <span className="block text-slate-500">{o.reason}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
           {!idea.killed_at && (
             <button type="button" className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" disabled={busy} onClick={kill}>

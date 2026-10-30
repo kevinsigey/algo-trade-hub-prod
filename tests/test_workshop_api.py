@@ -190,3 +190,21 @@ def test_labels(api):
     assert c.post("/api/workshop/labels", json={"order_id": "o-1", "idea_id": 42}).status_code == 422
     assert [(r["idea_id"], r["by"]) for r in db.db["order_labels"]] == [(1, "kevin@example.com"),
                                                                        (None, "kevin@example.com")]
+
+
+def test_auto_switch(passed, monkeypatch):
+    c, db, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True}).status_code == 409  # not live yet
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    r = c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True})
+    assert r.status_code == 200 and r.json()["auto_orders"] is True
+    assert db.db["order_switches"][-1]["by"] == "kevin@example.com"
+    monkeypatch.delenv("TRADEHUB_PAPER_ORDERS", raising=False)
+    got = c.get(f"/api/workshop/ideas/{i}").json()
+    assert got["idea"]["auto_orders"] is True and got["orders_enabled"] is False and got["orders"] == []
+    assert c.post(f"/api/workshop/ideas/{i}/auto", json={"on": False}).json()["auto_orders"] is False
+    assert c.post("/api/workshop/ideas/99/auto", json={"on": True}).status_code == 404
+
+
+def test_auto_route_needs_admin():
+    assert TestClient(main.app).post("/api/workshop/ideas/1/auto", json={"on": True}).status_code == 401

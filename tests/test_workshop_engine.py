@@ -160,3 +160,65 @@ def test_daily_frame_matches_run_test():
     unseen = claim_check(s, df.iloc[k:])
     assert unseen["value"] == pytest.approx(out["claim"]["unseen"]["value"])
     assert unseen["holds"] == out["claim"]["unseen"]["holds"] and unseen["days"] == len(df) - k
+
+
+def test_short_leg_of_a_falling_asset_passes():
+    rng, spy, frame = market(12)
+    falling = spy + rng.normal(-0.0015, 0.004, N)  # drifts down vs SPY
+    closes = pd.DataFrame({**frame, "BBB": prices(falling)}, index=IDX)
+    s = IdeaSpec(title="Short BBB", hold=[], short=["BBB"], claim="beats_benchmark", benchmark="SPY", cost_bps=0)
+    out = run_test(s, closes, {}, variations=1, seed=2)
+    assert out["claim"]["unseen"]["holds"]
+    from tradehub.workshop.engine import tickers_for
+    assert "BBB" in tickers_for(s)
+
+
+def test_pair_return_is_half_long_minus_half_short():
+    from tradehub.workshop.engine import daily_frame
+    rng, spy, frame = market(13)
+    closes = pd.DataFrame({**frame, "AAA": prices(rng.normal(0.0004, 0.01, N)),
+                           "BBB": prices(rng.normal(0.0001, 0.01, N))}, index=IDX)
+    s = IdeaSpec(title="AAA vs BBB", hold=["AAA"], short=["BBB"], claim="beats_benchmark", cost_bps=0)
+    df = daily_frame(s, closes, {})
+    r = closes.pct_change().iloc[1:]
+    assert np.allclose(df["ret"].to_numpy(), ((r["AAA"] - r["BBB"]) / 2).to_numpy())
+
+
+def test_close_timing_lags_the_condition_one_more_day():
+    from tradehub.workshop.engine import condition_mask
+    rng, spy, frame = market(14)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX)
+    when = {"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 5, "op": ">", "threshold": 0}
+    at_open = condition_mask(spec(when=when), closes, {})
+    at_close = condition_mask(spec(when=when, execution={"timing": "close"}), closes, {})
+    assert at_close.iloc[1:].tolist() == at_open.iloc[:-1].tolist()
+
+
+def test_target_today_uses_yesterdays_close():
+    from tradehub.workshop.engine import target_today
+    rng, spy, frame = market(15)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX).iloc[:300].copy()
+    s = spec(when={"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 1, "op": ">",
+                   "threshold": 0}, otherwise="CASH", short=["IWM"])
+    closes.iloc[-1, closes.columns.get_loc("SPY")] = closes["SPY"].iloc[-2] * 1.01  # up on the last close
+    assert target_today(s, closes, {}) == {"AAA": 0.5, "IWM": -0.5}
+    closes.iloc[-1, closes.columns.get_loc("SPY")] = closes["SPY"].iloc[-2] * 0.99  # down on the last close
+    assert target_today(s, closes, {}) == {}
+
+
+def test_target_today_fred_lags_one_more_day_and_close_timing_targets_tomorrow():
+    from tradehub.workshop.engine import target_today
+    rng, spy, frame = market(16)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX).iloc[:300]
+    level = pd.Series(1.0, index=closes.index)
+    level.iloc[-1] = 5.0  # jumps above 3 on the last day only
+    s = spec(when={"source": "fred", "series": "X", "measure": "level", "lookback_days": 1, "op": ">", "threshold": 3})
+    assert target_today(s, closes, {"X": level}) == {"SPY": 1.0}  # not yet: FRED needs one more day
+    level.iloc[-2] = 5.0
+    assert target_today(s, closes, {"X": level}) == {"AAA": 1.0}
+    cls = spec(when={"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 1, "op": ">",
+                     "threshold": 0}, execution={"timing": "close"})
+    up = closes.copy()
+    up.iloc[-1, up.columns.get_loc("SPY")] = up["SPY"].iloc[-2] * 1.01
+    # A close order placed today sets tomorrow's holding, which still reads yesterday's close.
+    assert target_today(cls, up, {}) == {"AAA": 1.0}

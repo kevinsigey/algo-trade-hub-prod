@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 IDEAS, RUNS, SHADOW, LABELS = "ideas", "idea_runs", "idea_shadow_days", "order_labels"
+SWITCHES, ORDERS = "order_switches", "paper_orders"
 
 
 class AlreadySet(Exception):
@@ -32,7 +33,7 @@ def go_live(supa, idea_id: int, run_id: int, size_pct: float, gate: dict) -> dic
 
 
 def kill(supa, idea_id: int) -> dict:
-    return _set_once(supa, idea_id, "killed_at")
+    return _set_once(supa, idea_id, "killed_at", {"auto_orders": False})  # a killed idea never trades again
 
 
 def _all_ideas(supa) -> list[dict]:
@@ -107,3 +108,32 @@ def insert_run(supa, idea_id: int, variation: int, spec: dict, draft_model: str 
 def get_run(supa, run_id: int) -> dict | None:
     rows = supa.table(RUNS).select("*").eq("id", run_id).execute().data
     return rows[0] if rows else None
+
+
+def set_auto(supa, idea_id: int, on: bool, by: str) -> dict:
+    """Switch an idea's automatic paper orders on or off; every change is appended to order_switches."""
+    row = supa.table(IDEAS).update({"auto_orders": on}).eq("id", idea_id).execute().data[0]
+    supa.table(SWITCHES).insert({"idea_id": idea_id, "on": on, "by": by}).execute()
+    return row
+
+
+def auto_ideas(supa) -> list[dict]:
+    return [i for i in live_ideas(supa) if i.get("auto_orders")]
+
+
+def closing_ideas(supa) -> list[dict]:
+    """Ideas whose orders were on at some point and are now off (switched off or killed): their shares get closed."""
+    ever_on = {r["idea_id"] for r in supa.table(SWITCHES).select("idea_id,on").execute().data if r["on"]}
+    return [i for i in _all_ideas(supa) if i["id"] in ever_on and not (i.get("auto_orders") and not i.get("killed_at"))]
+
+
+def log_orders(supa, idea_id: int, day: str, rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+    keep = ("symbol", "side", "qty", "client_order_id", "status", "reason", "alpaca_order_id")
+    return supa.table(ORDERS).insert([{"idea_id": idea_id, "day": day, **{k: r.get(k) for k in keep}}
+                                      for r in rows]).execute().data
+
+
+def order_log(supa, idea_id: int, limit: int = 100) -> list[dict]:
+    return supa.table(ORDERS).select("*").eq("idea_id", idea_id).order("id", desc=True).execute().data[:limit][::-1]

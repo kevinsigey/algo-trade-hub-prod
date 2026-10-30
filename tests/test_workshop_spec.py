@@ -51,3 +51,26 @@ def test_schema_is_closed():
 def test_blank_template():
     b = blank_spec()
     assert b["title"] == "" and b["hold"] == [] and b["claim"] == "beats_benchmark" and b["when"] is None
+
+
+def test_short_legs_and_execution():
+    from tradehub.workshop.spec import IdeaSpec
+    s = IdeaSpec(title="Short QQQ", hold=[], short=["qqq"], claim="beats_benchmark")
+    assert s.short == ["QQQ"] and s.execution.order_type == "market" and s.execution.timing == "open"
+    pair = IdeaSpec(title="Gold vs stocks", hold=["GLD"], short=["SPY"], claim="beats_benchmark",
+                    execution={"order_type": "limit", "timing": "close", "limit_offset_bps": 20})
+    assert pair.execution.limit_offset_bps == 20
+    with pytest.raises(ValueError, match="both"):
+        IdeaSpec(title="x both", hold=["GLD"], short=["gld"], claim="beats_benchmark")
+    with pytest.raises(ValueError, match="at least one"):
+        IdeaSpec(title="nothing", hold=[], claim="beats_benchmark")
+    with pytest.raises(ValueError):
+        IdeaSpec(title="bad type", hold=["GLD"], claim="beats_benchmark", execution={"order_type": "stop"})
+
+
+def test_old_specs_still_load():
+    from tradehub.workshop.spec import IdeaSpec
+    old = {"title": "Gold", "hold": ["GLD"], "claim": "beats_benchmark", "otherwise": "CASH", "benchmark": "SPY",
+           "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": [], "when": None}
+    s = IdeaSpec.model_validate(old)
+    assert s.short == [] and s.execution.timing == "open"
