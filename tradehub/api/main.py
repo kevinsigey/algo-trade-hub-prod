@@ -28,6 +28,7 @@ from tradehub.api.schemas import (
     ShadowPerformanceResponse,
 )
 from tradehub.api.dependencies import get_supabase
+from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.engine_catalogue import engine_catalogue
 from tradehub.engine_health import engine_health
@@ -1405,6 +1406,8 @@ def get_quarantine(
 
 # ── War Room SPA (mounted last so every /api route above wins) ─────────────
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().parents[2] / "market_sentiment_tool" / "dist")))
+# Kevin-only routes (Trading HQ). Before mount_frontend, like every /api route.
+app.include_router(admin.router)
 mount_frontend(app, FRONTEND_DIST)
 
 
