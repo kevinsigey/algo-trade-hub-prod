@@ -192,3 +192,33 @@ def test_close_timing_lags_the_condition_one_more_day():
     at_open = condition_mask(spec(when=when), closes, {})
     at_close = condition_mask(spec(when=when, execution={"timing": "close"}), closes, {})
     assert at_close.iloc[1:].tolist() == at_open.iloc[:-1].tolist()
+
+
+def test_target_today_uses_yesterdays_close():
+    from tradehub.workshop.engine import target_today
+    rng, spy, frame = market(15)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX).iloc[:300].copy()
+    s = spec(when={"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 1, "op": ">",
+                   "threshold": 0}, otherwise="CASH", short=["IWM"])
+    closes.iloc[-1, closes.columns.get_loc("SPY")] = closes["SPY"].iloc[-2] * 1.01  # up on the last close
+    assert target_today(s, closes, {}) == {"AAA": 0.5, "IWM": -0.5}
+    closes.iloc[-1, closes.columns.get_loc("SPY")] = closes["SPY"].iloc[-2] * 0.99  # down on the last close
+    assert target_today(s, closes, {}) == {}
+
+
+def test_target_today_fred_lags_one_more_day_and_close_timing_targets_tomorrow():
+    from tradehub.workshop.engine import target_today
+    rng, spy, frame = market(16)
+    closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX).iloc[:300]
+    level = pd.Series(1.0, index=closes.index)
+    level.iloc[-1] = 5.0  # jumps above 3 on the last day only
+    s = spec(when={"source": "fred", "series": "X", "measure": "level", "lookback_days": 1, "op": ">", "threshold": 3})
+    assert target_today(s, closes, {"X": level}) == {"SPY": 1.0}  # not yet: FRED needs one more day
+    level.iloc[-2] = 5.0
+    assert target_today(s, closes, {"X": level}) == {"AAA": 1.0}
+    cls = spec(when={"source": "price", "series": "SPY", "measure": "pct_change", "lookback_days": 1, "op": ">",
+                     "threshold": 0}, execution={"timing": "close"})
+    up = closes.copy()
+    up.iloc[-1, up.columns.get_loc("SPY")] = up["SPY"].iloc[-2] * 1.01
+    # A close order placed today sets tomorrow's holding, which still reads yesterday's close.
+    assert target_today(cls, up, {}) == {"AAA": 1.0}

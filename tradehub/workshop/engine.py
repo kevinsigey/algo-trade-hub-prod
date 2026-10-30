@@ -165,6 +165,22 @@ def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]
                         index=idx)
 
 
+def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
+    """Signed weights for the holding the order placed this morning establishes, from data up to the last close.
+
+    Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
+    engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
+    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short)))
+    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
+    ahead = 2 if spec.execution.timing == "close" else 1
+    extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
+    padded = pd.concat([frame, pd.DataFrame(index=extra, columns=frame.columns, dtype=float)]).ffill()
+    if bool(condition_mask(spec, padded, fred).iloc[-1]):
+        n = len(spec.hold) + len(spec.short)
+        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}
+    return {} if spec.otherwise == CASH else {spec.otherwise: 1.0}
+
+
 def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
     """The claim on any span of daily_frame rows (gate recheck, paper record)."""
     holds, value, label = _claim(spec.claim, rows["ret"].to_numpy(), rows["bench"].to_numpy(),
