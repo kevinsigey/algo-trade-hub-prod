@@ -2,13 +2,58 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
-import { adminJson, verdictTone, type Idea, type IdeaRow } from "@/lib/workshop";
+import { adminJson, verdictTone, type FillRow, type Idea, type IdeaRow } from "@/lib/workshop";
 
 export const toneClass = {
   ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
   bad: "border-rose-500/40 bg-rose-500/10 text-rose-300",
   flat: "border-slate-600/60 bg-slate-700/20 text-slate-300",
 } as const;
+
+/** Kevin's paper fills, each with the idea it counts toward. A relabel is appended; the order's tag is never erased. */
+export function TradeLabels({ ideas }: { ideas: IdeaRow[] }) {
+  const [fills, setFills] = useState<FillRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () =>
+    adminJson<{ state: string; fills?: FillRow[] }>("/api/workshop/fills")
+      .then((d) => setFills(d.fills ?? []))
+      .catch((e: Error) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, []);
+  const relabel = (order_id: string, value: string) =>
+    adminJson("/api/workshop/labels", { method: "POST", body: JSON.stringify({ order_id, idea_id: value ? Number(value) : null }) })
+      .then(load)
+      .catch((e: Error) => setError(e.message));
+  const title = (n: number | null) => (n == null ? "manual" : ideas.find((i) => i.id === n)?.title ?? `idea ${n}`);
+
+  return (
+    <>
+      <h2 className="mt-12 text-lg font-semibold text-white">Trade labels</h2>
+      <p className="mt-1 text-sm text-slate-400">Which idea each paper trade counts toward. Tagged orders label themselves.</p>
+      {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+      {fills?.length === 0 && <p className="mt-3 text-sm text-slate-400">No paper trades yet.</p>}
+      <ul className="mt-3 divide-y divide-slate-800/80">
+        {fills?.map((f) => {
+          const name = `${f.symbol} ${f.side} ${f.qty} on ${f.at.slice(0, 10)}`;
+          return (
+            <li key={f.order_id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
+              <span className="font-mono text-slate-200">{name}</span>
+              <span className="flex flex-wrap items-center gap-2">
+                {f.history.length > 0 && <span className="text-xs text-slate-500">was {title(f.history[f.history.length - 1].from)}</span>}
+                <select aria-label={`Idea for ${name}`} value={f.idea_id ?? ""} onChange={(e) => relabel(f.order_id, e.target.value)}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-white">
+                  <option value="">No idea yet (manual)</option>
+                  {ideas.map((i) => <option key={i.id} value={i.id}>{i.title}</option>)}
+                </select>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
 
 /** Kevin's Workshop: type an idea in plain words, then test it. Admin only (wrapped in RequireAdmin). */
 export default function Workshop() {
@@ -86,6 +131,7 @@ export default function Workshop() {
           </li>
         ))}
       </ul>
+      {ideas && <TradeLabels ideas={ideas} />}
     </div>
   );
 }

@@ -5,47 +5,8 @@ from fastapi.testclient import TestClient
 
 from tradehub.api import admin, main
 from tradehub.api.dependencies import get_supabase
-from tradehub.workshop import draft as draft_mod
 from tradehub.workshop.data import UnknownSymbol
-
-
-class Q:
-    def __init__(self, db, table):
-        self.db, self.table, self.filters, self.sort, self.row = db, table, [], None, None
-
-    def select(self, *_):
-        return self
-
-    def eq(self, col, val):
-        self.filters.append((col, val))
-        return self
-
-    def order(self, col, desc=False):
-        self.sort = (col, desc)
-        return self
-
-    def insert(self, row):
-        self.row = row
-        return self
-
-    def execute(self):
-        rows = self.db.setdefault(self.table, [])
-        if self.row is not None:
-            row = {"id": len(rows) + 1, "created_at": f"2026-10-30T0{len(rows)}:00:00Z", **self.row}
-            rows.append(row)
-            return type("R", (), {"data": [row]})()
-        out = [r for r in rows if all(r.get(c) == v for c, v in self.filters)]
-        if self.sort:
-            out.sort(key=lambda r: r[self.sort[0]], reverse=self.sort[1])
-        return type("R", (), {"data": out})()
-
-
-class DB:
-    def __init__(self):
-        self.db = {}
-
-    def table(self, name):
-        return Q(self.db, name)
+from workshop_fake import DB
 
 
 SPEC = {"title": "Gold when rates rise", "hold": ["GLD"], "otherwise": "SPY", "claim": "beats_benchmark_when",
@@ -79,7 +40,7 @@ def test_every_route_needs_admin():
 
 def test_draft_without_key_is_424_with_template(api, monkeypatch):
     c, _, _ = api
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     r = c.post("/api/workshop/draft", json={"text": "gold beats stocks when rates rise"})
     assert r.status_code == 424
     body = r.json()
@@ -89,9 +50,9 @@ def test_draft_without_key_is_424_with_template(api, monkeypatch):
 def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: IdeaSpec.model_validate(SPEC))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
     r = c.post("/api/workshop/draft", json={"text": "gold"})
-    assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == draft_mod.MODEL
+    assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
 
 
 def test_two_runs_are_variations_1_and_2(api):
@@ -141,3 +102,91 @@ def test_fred_start_reaches_back_for_the_lookback(api):
 def test_fred_start_survives_feb_29():
     from tradehub.api.main import _fred_start
     assert _fred_start(date(2008, 2, 29)) < date(2005, 3, 1)
+
+
+PASS_RESULT = {"verdict": "PASS", "headline": "Did what it claims on the years it hadn't seen.", "data_end": "2026-10-29"}
+
+
+@pytest.fixture
+def passed(api, monkeypatch):
+    """An idea whose only run PASSed; the gate's answer is set per test through `gate`."""
+    c, db, _ = api
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: PASS_RESULT)
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})
+    gate = {"status": "ready", "new_days": 70, "needed": 63, "claim": {"holds": True}, "size_ok": True, "reasons": []}
+    seen = []
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, closes, fred: "frame")
+
+    def fake_gate(spec, frame, data_end, size_pct):
+        seen.append((frame, str(data_end), size_pct))
+        return {**gate, "size_ok": None if size_pct is None else gate["size_ok"]}
+    monkeypatch.setattr(main, "gate_check", fake_gate)
+    return c, db, idea["id"], gate, seen
+
+
+def test_lifecycle_routes_need_admin():
+    c = TestClient(main.app)
+    for method, path in [("get", "/api/workshop/ideas/1/gate"), ("post", "/api/workshop/ideas/1/publish"),
+                         ("post", "/api/workshop/ideas/1/live"), ("post", "/api/workshop/ideas/1/kill"),
+                         ("post", "/api/workshop/labels")]:
+        assert getattr(c, method)(path).status_code == 401, path
+
+
+def test_gate_reads_the_latest_pass(passed):
+    c, _, i, _, seen = passed
+    r = c.get(f"/api/workshop/ideas/{i}/gate", params={"size_pct": 20})
+    assert r.status_code == 200 and r.json()["status"] == "ready"
+    assert seen == [("frame", "2026-10-29", 20.0)]
+    assert c.get("/api/workshop/ideas/99/gate").status_code == 404
+
+
+def test_gate_fails_when_latest_run_did_not_pass(api):
+    c, _, _ = api
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})  # RESULT is a FAIL
+    out = c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()
+    assert out["status"] == "fails" and out["reasons"] == ["the latest run did not PASS"]
+
+
+def test_go_live_once_and_only_when_ready(passed):
+    c, db, i, gate, _ = passed
+    gate["status"] = "waiting"
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20}).status_code == 409
+    gate["status"] = "ready"
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    assert r.status_code == 200 and r.json()["live_at"] and r.json()["live_run_id"] == 1
+    first = db.db["ideas"][0]["live_at"]
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 10}).status_code == 409
+    assert db.db["ideas"][0]["live_at"] == first and db.db["ideas"][0]["size_pct"] == 20
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 0}).status_code == 422
+
+
+def test_publish_and_kill_are_once(passed):
+    c, _, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409  # not live yet
+    assert c.post(f"/api/workshop/ideas/{i}/publish").status_code == 200
+    assert c.post(f"/api/workshop/ideas/{i}/publish").status_code == 409
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 200
+    assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409
+    assert c.post("/api/workshop/ideas/99/publish").status_code == 404
+
+
+def test_idea_detail_has_tag_and_shadow(passed):
+    c, db, i, _, _ = passed
+    got = c.get(f"/api/workshop/ideas/{i}").json()
+    assert got["tag"] == f"idea-{i}-" and got["shadow"] is None
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    got = c.get(f"/api/workshop/ideas/{i}").json()
+    assert got["shadow"]["days"] == 0 and got["shadow"]["failing"] is False
+
+
+def test_labels(api):
+    c, db, _ = api
+    c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"})
+    assert c.post("/api/workshop/labels", json={"order_id": "o-1", "idea_id": 1}).status_code == 200
+    assert c.post("/api/workshop/labels", json={"order_id": "o-1", "idea_id": None}).status_code == 200
+    assert c.post("/api/workshop/labels", json={"order_id": "o-1", "idea_id": 42}).status_code == 422
+    assert [(r["idea_id"], r["by"]) for r in db.db["order_labels"]] == [(1, "kevin@example.com"),
+                                                                       (None, "kevin@example.com")]

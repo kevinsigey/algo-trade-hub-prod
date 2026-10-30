@@ -1,4 +1,4 @@
-"""The idea-test contract shared by Claude's draft, Kevin's edited form and the engine (Trading HQ step 2)."""
+"""The idea-test contract shared by the AI draft, Kevin's edited form and the engine (Trading HQ step 2)."""
 
 from __future__ import annotations
 
@@ -79,6 +79,6 @@ class IdeaSpec(BaseModel):
 
 
 def blank_spec() -> dict:
-    """The hand-fill template: what the form starts from when Claude cannot draft."""
+    """The hand-fill template: what the form starts from when the AI cannot draft."""
     return {"title": "", "hold": [], "when": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
             "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": []}

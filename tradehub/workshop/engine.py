@@ -13,6 +13,7 @@ Pure: daily closes and FRED series in, a verdict dict out. Rules (spec 2026-10-2
 from __future__ import annotations
 
 import math
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,9 @@ DAYS = 252
 MIN_UNSEEN_DAYS = 504
 MIN_CONDITION_DAYS = 21
 CURVE_POINTS = 600
+MIN_GATE_DAYS = 63  # live-paper gate: ~3 months of data the backtest never saw (Kevin, 2026-10-30)
+GATE_WINDOW = 252  # ...judged on at most the most recent 12 months of it
+MAX_POSITION_PCT = 25
 CONTEXT = ("SPY", "QQQ", "IWM")
 HEADLINES = {
     "pass": "Did what it claims on the years it hadn't seen.",
@@ -134,23 +138,76 @@ def _clean(x):
     return x
 
 
-def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
-             permutations: int = 1000) -> dict:
+def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
+    """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
     rule = list(dict.fromkeys(list(spec.hold) + ([spec.otherwise] if spec.otherwise != CASH else [])
                               + [spec.benchmark, "SPY"]))
     frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
-    mask = mask_all.iloc[1:].to_numpy()
-    idx = rets.index
     held = rets[spec.hold].mean(axis=1).to_numpy()
-    other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(idx))
-    b, s = rets[spec.benchmark].to_numpy(), rets["SPY"].to_numpy()
+    other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(rets))
+    return (rets.index, mask_all.iloc[1:].to_numpy(), held, other, rets[spec.benchmark].to_numpy(),
+            rets["SPY"].to_numpy(), rets)
+
+
+def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
+    switches = np.concatenate([[False], m[1:] != m[:-1]])
+    return np.where(m, held, other) - cost * switches
+
+
+def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
+    """Per trading day: the idea's return after costs, whether the condition held, the benchmark's and SPY's."""
+    idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
+    return pd.DataFrame({"ret": _build(mask, held, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s},
+                        index=idx)
+
+
+def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
+    """The claim on any span of daily_frame rows (gate recheck, paper record)."""
+    holds, value, label = _claim(spec.claim, rows["ret"].to_numpy(), rows["bench"].to_numpy(),
+                                 rows["spy"].to_numpy(), rows["on"].to_numpy(dtype=bool))
+    judged = math.isfinite(value)  # e.g. the condition never held on these days: nothing to judge yet
+    return {"holds": bool(holds) if judged else None, "value": value, "label": label, "days": len(rows)}
+
+
+def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: float | None) -> dict:
+    """Live-paper gate (spec §5): the claim on data that arrived after the backtest (at most the last 12 months),
+    each position within the book limit. Kevin's button is the third part."""
+    new = frame[frame.index > pd.Timestamp(data_end)]
+    reasons: list[str] = []
+    per = None if size_pct is None else size_pct / len(spec.hold)
+    size_ok = None if per is None else per <= MAX_POSITION_PCT
+    if size_ok is False:
+        reasons.append(f"each position would be {per:.0f}% of the account; the limit is {MAX_POSITION_PCT}%")
+    claim = None
+    if len(new) < MIN_GATE_DAYS:
+        reasons.insert(0, f"waiting for data: {len(new)} of {MIN_GATE_DAYS} new trading days since the backtest")
+    else:
+        claim = _clean(claim_check(spec, new.iloc[-GATE_WINDOW:]))
+        if claim["holds"] is None:
+            reasons.append(f"waiting for data: the claim can't be judged on the new data yet ({claim['label']})")
+        elif not claim["holds"]:
+            reasons.append(f"the claim did not hold on the new data ({claim['label']})")
+    if size_ok is None:
+        reasons.append("enter a size")
+    if size_ok is False or (claim is not None and claim["holds"] is False):
+        status = "fails"
+    elif claim is None or claim["holds"] is None or size_ok is None:
+        status = "waiting"
+    else:
+        status = "ready"
+    return {"status": status, "new_days": len(new), "needed": MIN_GATE_DAYS, "claim": claim, "size_ok": size_ok,
+            "reasons": reasons}
+
+
+def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
+             permutations: int = 1000) -> dict:
+    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
     cost = spec.cost_bps / 1e4
 
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
-        switches = np.concatenate([[False], m[1:] != m[:-1]])
-        return np.where(m, h, other) - cost * switches
+        return _build(m, h, other, cost)
 
     r = build(mask)
     n = len(r)

@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { PaperLine } from "@/pages/Ideas";
 import { toneClass } from "@/pages/Workshop";
 import {
   ApiError,
@@ -13,7 +14,8 @@ import {
   verdictTone,
   type Claim,
   type Condition,
-  type Idea,
+  type GateResult,
+  type IdeaDetail,
   type IdeaSpec,
   type Run,
 } from "@/lib/workshop";
@@ -213,13 +215,105 @@ export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) =
   );
 }
 
+const button = "rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900 disabled:opacity-50";
+
+/** Publish, the live-paper gate, the order tag and the kill button (spec §4.5-4.6). Each step happens once. */
+export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: IdeaDetail; onChange: () => void }) {
+  const { idea, runs, tag, shadow } = detail;
+  const [size, setSize] = useState("");
+  const [gate, setGate] = useState<GateResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const passed = runs.length > 0 && runs[runs.length - 1].verdict === "PASS";
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
+  const goLive = () => act(() => adminJson(`/api/workshop/ideas/${id}/live`, { method: "POST", body: JSON.stringify({ size_pct: Number(size) }) }));
+  const kill = () => {
+    if (!window.confirm("Kill this idea? Its paper record stops today and stays on the record.")) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/kill`, { method: "POST" }));
+  };
+
+  return (
+    <section className="mt-6 space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        {idea.published_at ? (
+          <span className="text-slate-400">Published {idea.published_at.slice(0, 10)} · <Link to={`/ideas/${id}`} className="text-emerald-300 hover:underline">public record</Link></span>
+        ) : (
+          <button type="button" className={button} disabled={busy} onClick={() => act(() => adminJson(`/api/workshop/ideas/${id}/publish`, { method: "POST" }))}>
+            Publish to the Ideas record
+          </button>
+        )}
+      </div>
+
+      {passed && !idea.live_at && (
+        <div>
+          <h2 className="text-sm font-semibold text-white">Live-paper gate</h2>
+          <p className="mt-1 text-xs text-slate-400">The claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of the account or less.</p>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <label className="text-xs text-slate-300">
+              Size (% of account)
+              <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} />
+            </label>
+            <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
+            <button type="button" disabled={busy || gate?.status !== "ready"} onClick={goLive}
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+              Go live on paper
+            </button>
+          </div>
+          {gate && (
+            <ul className="mt-2 space-y-1 text-sm">
+              {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
+              {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
+              {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the paper record.</li>}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {idea.live_at && (
+        <div className="space-y-2">
+          <p className="text-sm text-slate-300">
+            {idea.killed_at ? `Killed ${idea.killed_at.slice(0, 10)}` : "Live on paper"} · since {idea.live_at.slice(0, 10)} · size {idea.size_pct}%
+          </p>
+          {shadow && <PaperLine live={shadow} />}
+          {!idea.killed_at && tag && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-slate-400">Order tag (start each client order id with it):</span>
+              <code className="rounded bg-slate-800 px-2 py-0.5 text-amber-200">{tag}</code>
+              <button type="button" className={button} onClick={() => navigator.clipboard?.writeText(tag)}>Copy tag</button>
+            </div>
+          )}
+          {!idea.killed_at && (
+            <button type="button" className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" disabled={busy} onClick={kill}>
+              Kill this idea
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+    </section>
+  );
+}
+
 export default function WorkshopIdea() {
   // Only a numeric id ever reaches a URL: the requests below carry Kevin's session token, so a crafted link
   // must not be able to point them at another API path.
   const raw = useParams().id ?? "";
   const id = /^\d+$/.test(raw) ? raw : null;
   const [params, setParams] = useSearchParams();
-  const [data, setData] = useState<{ idea: Idea; runs: Run[] } | null>(null);
+  const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string } | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -230,7 +324,7 @@ export default function WorkshopIdea() {
       setError("No such idea.");
       return Promise.resolve();
     }
-    return adminJson<{ idea: Idea; runs: Run[] }>(`/api/workshop/ideas/${id}`).then(setData).catch((e: Error) => setError(e.message));
+    return adminJson<IdeaDetail>(`/api/workshop/ideas/${id}`).then(setData).catch((e: Error) => setError(e.message));
   }, [id]);
   useEffect(() => {
     load();
@@ -243,7 +337,7 @@ export default function WorkshopIdea() {
       .then((d) => setDraft({ spec: d.spec, model: d.model }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
-        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "Claude couldn't draft this — fill it in." });
+        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
         else setError(e instanceof Error ? e.message : "Draft failed");
       })
       .finally(() => {
@@ -274,9 +368,10 @@ export default function WorkshopIdea() {
       </Link>
       {data && <h1 className="mt-3 text-xl font-semibold text-white">“{data.idea.plain_words}”</h1>}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
+      {data && id && <LifecyclePanel id={id} detail={data} onChange={load} />}
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Claude is drafting the test…
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
         </p>
       )}
       {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} />}

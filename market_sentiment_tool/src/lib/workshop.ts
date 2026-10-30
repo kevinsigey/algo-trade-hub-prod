@@ -58,6 +58,39 @@ export interface Idea {
   title: string;
   plain_words: string;
   created_at: string;
+  published_at?: string | null;
+  live_at?: string | null;
+  killed_at?: string | null;
+  size_pct?: number | null;
+}
+
+export interface IdeaDetail {
+  idea: Idea;
+  runs: Run[];
+  tag?: string;
+  shadow?: ShadowSummary | null;
+}
+
+export interface GateResult {
+  status: "ready" | "waiting" | "fails";
+  new_days: number;
+  needed: number;
+  claim: { holds: boolean | null; label: string; days: number } | null;
+  size_ok: boolean | null;
+  reasons: string[];
+}
+
+export interface FillRow {
+  order_id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  price: number;
+  at: string;
+  tag: string | null;
+  idea_id: number | null;
+  idea: string;
+  history: { from: number | null; to: number | null; by: string; at: string }[];
 }
 
 export interface IdeaRow {
@@ -119,3 +152,42 @@ export function conditionText(c: Condition | null): string {
   const what = c.measure === "level" ? c.series : `${c.series} ${c.measure === "change" ? "change" : "% change"} over ${c.lookback_days} trading days`;
   return `${what} ${c.op} ${c.threshold}`;
 }
+
+/** A live idea's paper record (spec §4.6): the shadow track summed up, and the 3-month claim check. */
+export interface ShadowSummary {
+  days: number;
+  since: string | null;
+  as_of: string | null;
+  state: "waiting" | "live" | "stale" | "killed";
+  return_pct: number | null;
+  bench_return_pct: number | null;
+  claim: { holds: boolean | null; label: string; days: number } | null;
+  failing: boolean;
+  curve?: { t: string; idea: number; bench: number }[];
+}
+
+export interface PublicIdea {
+  id: number;
+  title: string;
+  published_at: string;
+  claim: Claim | null;
+  latest_verdict: Verdict | null;
+  variations: number;
+  status: "backtest" | "live" | "killed";
+  live_at: string | null;
+  killed_at: string | null;
+  live: ShadowSummary | null;
+}
+
+export interface PublicIdeaDetail extends Omit<PublicIdea, "live"> {
+  plain_words: string;
+  shadow: ShadowSummary | null;
+  runs: { variation: number; verdict: Verdict; created_at: string; headline: string | null; p: number | null; bar: number | null; claim: Claim }[];
+  trades: { symbol: string; qty: number; entry_price: number; exit_price: number; pnl: number; return_pct: number; exited_at: string; held_days: number; idea: string }[];
+}
+
+export const STATUS_LABEL: Record<PublicIdea["status"], string> = {
+  backtest: "Backtest only",
+  live: "Live on paper",
+  killed: "Killed",
+};

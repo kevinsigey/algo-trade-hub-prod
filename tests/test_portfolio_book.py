@@ -94,3 +94,58 @@ def test_empty_inputs():
 
 def test_win_rate():
     assert win_rate([{"pnl": 5}, {"pnl": -1}, {"pnl": 2}, {"pnl": 0}]) == pytest.approx(50.0)
+
+
+def tfill(symbol, side, qty, price, day, order_id):
+    return {**fill(symbol, side, qty, price, day), "order_id": order_id}
+
+
+TITLES = {1: "Gold when rates rise", 2: "Energy ballast"}
+
+
+def test_tag_fills_label_beats_tag_and_unknown_is_manual():
+    from tradehub.portfolio.book import tag_fills
+    fills = [tfill("GLD", "buy", 1, 1, "2026-11-02", o) for o in ("a", "b", "c", "d", "e")]
+    client_ids = {"a": "idea-1-001", "b": "idea-2-x", "c": "idea-9-001", "d": "my-own-id", "e": "idea-1-002"}
+    out = tag_fills(fills, client_ids, {"b": 1, "e": None}, TITLES)
+    assert [f["idea"] for f in out] == [TITLES[1], TITLES[1], MANUAL, MANUAL, MANUAL]
+    assert [f["idea_id"] for f in out] == [1, 1, None, None, None]
+
+
+def test_closed_trades_carry_the_entry_idea():
+    fills = [{**fill("GLD", "buy", 10, 200, "2026-11-02"), "idea": TITLES[1]},
+             {**fill("GLD", "sell", 10, 220, "2026-11-05"), "idea": TITLES[2]}]
+    assert closed_trades(fills)[0]["idea"] == TITLES[1]
+
+
+def test_open_lots_split_two_ideas_in_one_symbol():
+    from tradehub.portfolio.book import open_lots
+    fills = [{**fill("GLD", "buy", 10, 200, "2026-11-02"), "idea": TITLES[1]},
+             {**fill("GLD", "buy", 30, 210, "2026-11-03"), "idea": TITLES[2]},
+             {**fill("GLD", "sell", 15, 220, "2026-11-05"), "idea": MANUAL},
+             {**fill("XLE", "sell", 20, 100, "2026-11-02"), "idea": TITLES[2]}]
+    assert open_lots(fills) == {"GLD": {TITLES[2]: 25.0}, "XLE": {TITLES[2]: -20.0}}
+
+
+def test_positions_split_by_open_lots_with_manual_remainder():
+    rows = positions_view({"equity": "100000", "cash": "50000"},
+                          [{"symbol": "GLD", "qty": "40", "side": "long", "market_value": "40000",
+                            "unrealized_pl": "400"}],
+                          {"GLD": {TITLES[1]: 10.0, TITLES[2]: 20.0}})
+    gld = [(r["idea"], r["qty"], r["market_value"]) for r in rows if r["symbol"] == "GLD"]
+    assert gld == [(TITLES[1], 10.0, 10000.0), (TITLES[2], 20.0, 20000.0), (MANUAL, 10.0, 10000.0)]
+    assert {g["idea"]: g["pct_of_book"] for g in composition(rows)} == pytest.approx(
+        {TITLES[1]: 10.0, TITLES[2]: 20.0, MANUAL: 10.0})
+
+
+def test_a_sale_closes_its_own_ideas_lots_first():
+    # Review finding 5: B's sale must close B's position, not A's older lot.
+    from tradehub.portfolio.book import open_lots
+    fills = [{**fill("GLD", "buy", 10, 200, "2026-11-02"), "idea": TITLES[1]},
+             {**fill("GLD", "buy", 10, 210, "2026-11-03"), "idea": TITLES[2]},
+             {**fill("GLD", "sell", 10, 220, "2026-11-05"), "idea": TITLES[2]}]
+    trades = closed_trades(fills)
+    assert [(t["idea"], t["entry_price"]) for t in trades] == [(TITLES[2], 210)]
+    assert open_lots(fills) == {"GLD": {TITLES[1]: 10.0}}
+    manual_sale = fills[:2] + [{**fill("GLD", "sell", 15, 220, "2026-11-05"), "idea": MANUAL}]
+    assert [(t["idea"], t["qty"]) for t in closed_trades(manual_sale)] == [(TITLES[1], 10), (TITLES[2], 5)]
