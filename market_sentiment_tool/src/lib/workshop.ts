@@ -58,6 +58,39 @@ export interface Idea {
   title: string;
   plain_words: string;
   created_at: string;
+  published_at?: string | null;
+  live_at?: string | null;
+  killed_at?: string | null;
+  size_pct?: number | null;
+}
+
+export interface IdeaDetail {
+  idea: Idea;
+  runs: Run[];
+  tag?: string;
+  shadow?: ShadowSummary | null;
+}
+
+export interface GateResult {
+  status: "ready" | "waiting" | "fails";
+  new_days: number;
+  needed: number;
+  claim: { holds: boolean; label: string; days: number } | null;
+  size_ok: boolean | null;
+  reasons: string[];
+}
+
+export interface FillRow {
+  order_id: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  price: number;
+  at: string;
+  tag: string | null;
+  idea_id: number | null;
+  idea: string;
+  history: { from: number | null; to: number | null; by: string; at: string }[];
 }
 
 export interface IdeaRow {

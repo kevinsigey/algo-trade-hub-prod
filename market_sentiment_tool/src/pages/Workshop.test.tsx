@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
@@ -107,5 +107,81 @@ describe("Workshop pages", () => {
     });
     expect(screen.getByRole("heading", { name: "Admin only" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /workshop/i })).toHaveAttribute("href", "/workshop");
+  });
+});
+
+
+const PASS_RUN = { ...RUN, verdict: "PASS", result: { ...RUN.result, verdict: "PASS", headline: "Did what it claims on the years it hadn't seen." } };
+const IDEA = { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "", published_at: null, live_at: null, killed_at: null, size_pct: null };
+const openIdea = () =>
+  render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+const posts = (f: ReturnType<typeof serve>) =>
+  f.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([u, init]) => [String(u), (init as RequestInit).body]);
+
+describe("Workshop live-paper gate", () => {
+  it("shows why the gate is waiting and keeps Go live off", async () => {
+    serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/gate": { body: { status: "waiting", new_days: 40, needed: 63, claim: null, size_ok: true, reasons: ["waiting for data: 40 of 63 new trading days since the backtest"] } },
+    });
+    openIdea();
+    fireEvent.change(await screen.findByLabelText("Size (% of account)"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check the gate" }));
+    expect(await screen.findByText(/40 of 63 new trading days/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go live on paper" })).toBeDisabled();
+  });
+
+  it("goes live when the gate is clear", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/gate": { body: { status: "ready", new_days: 70, needed: 63, claim: { holds: true, label: "+2.0 pts/yr vs benchmark", days: 70 }, size_ok: true, reasons: [] } },
+      "/api/workshop/ideas/1/live": { body: { ...IDEA, live_at: "2026-11-02T15:00:00Z" } },
+    });
+    openIdea();
+    fireEvent.change(await screen.findByLabelText("Size (% of account)"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check the gate" }));
+    const go = await screen.findByRole("button", { name: "Go live on paper" });
+    await waitFor(() => expect(go).toBeEnabled());
+    fireEvent.click(go);
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/live"), JSON.stringify({ size_pct: 20 })]));
+  });
+
+  it("shows the order tag once live and asks before killing", async () => {
+    const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20 };
+    const shadow = { days: 3, since: "2026-11-03", as_of: "2026-11-05", state: "live", return_pct: 1.2, bench_return_pct: 0.4, claim: null, failing: false, curve: [] };
+    const f = serve({ "/api/workshop/ideas/1": { body: { idea: live, runs: [PASS_RUN], tag: "idea-1-", shadow } } });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    openIdea();
+    expect(await screen.findByText("idea-1-")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy tag" })).toBeInTheDocument();
+    expect(screen.getByText("+1.2%")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kill this idea" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(posts(f)).toEqual([]);
+  });
+
+  it("publishes to the Ideas record", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/publish": { body: { ...IDEA, published_at: "2026-11-01T00:00:00Z" } },
+    });
+    openIdea();
+    fireEvent.click(await screen.findByRole("button", { name: "Publish to the Ideas record" }));
+    await waitFor(() => expect(posts(f).map(([u]) => u)).toContainEqual(expect.stringContaining("/api/workshop/ideas/1/publish")));
+  });
+});
+
+describe("Workshop trade labels", () => {
+  it("relabels a fill to an idea", async () => {
+    const f = serve({
+      "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 1, latest_verdict: "PASS" }] },
+      "/api/workshop/fills": { body: { state: "live", fills: [{ order_id: "o-1", symbol: "GLD", side: "buy", qty: 10, price: 300, at: "2026-11-02T15:00:00Z", tag: null, idea_id: null, idea: "No idea yet (manual)", history: [] }] } },
+      "/api/workshop/labels": { body: {} },
+    });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    const pick = await screen.findByLabelText("Idea for GLD buy 10 on 2026-11-02");
+    fireEvent.change(pick, { target: { value: "1" } });
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
   });
 });
