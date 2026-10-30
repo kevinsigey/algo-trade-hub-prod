@@ -145,3 +145,18 @@ def test_nan_permutation_counts_against_the_idea():
     from tradehub.workshop.engine import p_value
     p, beats = p_value(1.0, np.array([0.0, np.nan, 0.5, np.nan]))
     assert p == pytest.approx((1 + 2) / 5) and beats == pytest.approx(50.0)
+
+
+def test_daily_frame_matches_run_test():
+    from tradehub.workshop.engine import claim_check, daily_frame
+    rng, spy, frame = market(1)
+    fred = {"DGS10": rates(rng)}
+    closes = pd.DataFrame({**frame, "AAA": prices(spy + rng.normal(0.0002, 0.004, N))}, index=IDX)
+    s = spec()
+    df = daily_frame(s, closes, fred)
+    assert list(df.columns) == ["ret", "on", "bench", "spy"] and df.index[0] == IDX[1]
+    out = run_test(s, closes, fred, variations=1, seed=7)
+    k = int(len(df) * (1 - s.unseen_fraction))
+    unseen = claim_check(s, df.iloc[k:])
+    assert unseen["value"] == pytest.approx(out["claim"]["unseen"]["value"])
+    assert unseen["holds"] == out["claim"]["unseen"]["holds"] and unseen["days"] == len(df) - k
