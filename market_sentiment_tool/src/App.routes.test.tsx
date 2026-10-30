@@ -139,6 +139,7 @@ function stubApi() {
     },
     "/api/shadow-performance": EMPTY_SHADOW,
     "/api/admin/me": { email: "kevin@example.com" },
+    "/api/ideas": [],
     "/api/portfolio": { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] },
   };
   const spy = vi.fn(async (input: RequestInfo | URL) => {
@@ -190,6 +191,13 @@ describe("the sidebar link and the route agree", () => {
 
     expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /models/i })).toHaveAttribute("href", "/models");
+  });
+
+  it("resolves /ideas to the public Ideas record", async () => {
+    await renderAppAt("/ideas");
+
+    expect(screen.getByRole("heading", { name: "Ideas", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^ideas$/i })).toHaveAttribute("href", "/ideas");
   });
 
   it("resolves /journal to the prediction journal", async () => {

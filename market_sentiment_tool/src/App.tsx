@@ -15,6 +15,8 @@ import Weather from "@/pages/Weather";
 import { NoOrdersBanner } from "@/components/NoOrdersBanner";
 import Portfolio from "@/pages/Portfolio";
 import ClosedTrades from "@/pages/ClosedTrades";
+import IdeaRecord from "@/pages/IdeaRecord";
+import Ideas from "@/pages/Ideas";
 import Login from "@/pages/Login";
 import Workshop from "@/pages/Workshop";
 import WorkshopIdea from "@/pages/WorkshopIdea";
@@ -22,7 +24,7 @@ import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -37,7 +39,7 @@ const Group = ({ label, children }: { label: string; children: React.ReactNode }
 /**
  * The nav itself, written once and shared by the desktop rail and the phone overlay.
  *
- * Three groups (Trading HQ spec §4.1): the public Portfolio, the public Predictions, and the operator
+ * Four groups (Trading HQ spec §4.1): the public Portfolio, Ideas and Predictions, and the operator
  * pages behind Kevin's login. Moved pages keep their URLs, so the shared global nav's links still work.
  *
  * `onNavigate` is the overlay's way of saying "the reader picked a page": the drawer closes, so a
@@ -67,6 +69,11 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
           <NavLink to="/portfolio/closed" className={linkClass}>
             <History className="w-5 h-5 text-slate-400" /> Closed trades
+          </NavLink>
+        </Group>
+        <Group label="Ideas">
+          <NavLink to="/ideas" className={linkClass}>
+            <Lightbulb className="w-5 h-5 text-amber-300" /> Ideas
           </NavLink>
         </Group>
         <Group label="Predictions">
@@ -269,6 +276,8 @@ function App() {
               Predictions overview. */}
           <Route path="/" element={<Portfolio />} />
           <Route path="/portfolio/closed" element={<ClosedTrades />} />
+          <Route path="/ideas" element={<Ideas />} />
+          <Route path="/ideas/:id" element={<IdeaRecord />} />
           <Route path="/predictions" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />

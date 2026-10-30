@@ -467,7 +467,7 @@ def _live_spec(supabase, idea: dict) -> IdeaSpec:
 def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     found = _found(supabase, idea_id)
     idea = found["idea"]
-    shadow = (shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea_id), date.today())
+    shadow = (shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea_id), _today())
               if idea.get("live_at") else None)
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow}
 
@@ -562,6 +562,59 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation)
     return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
                                      result)
+
+
+# ── Trading HQ Ideas record (step 3): public, published ideas only, fails and kills included. ──
+def _today() -> date:
+    return date.today()
+
+
+def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
+    latest = runs[-1] if runs else None
+    status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else "backtest"
+    live = None
+    if idea.get("live_at"):
+        live = shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea["id"]),
+                              _today())
+        if idea.get("killed_at"):
+            live["state"] = "killed"  # the record ended on purpose; not stale
+    return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
+            "claim": latest["spec"]["claim"] if latest else None,
+            "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
+            "live_at": idea.get("live_at"), "killed_at": idea.get("killed_at"), "live": live}
+
+
+@app.get("/api/ideas", tags=["Ideas"])
+def get_ideas(supabase=Depends(get_supabase)):
+    out = []
+    for idea in workshop_store.published_ideas(supabase):
+        row = _public_idea(supabase, idea, workshop_store.get_idea(supabase, idea["id"])["runs"])
+        if row["live"]:
+            row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
+        out.append(row)
+    return out
+
+
+@app.get("/api/ideas/{idea_id}", tags=["Ideas"])
+def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None or not found["idea"].get("published_at"):
+        raise HTTPException(status_code=404, detail="no such idea")  # private and missing look the same
+    from tradehub.portfolio import service
+
+    row = _public_idea(supabase, found["idea"], found["runs"])
+    row["plain_words"] = found["idea"]["plain_words"]
+    row["shadow"] = row.pop("live")
+    row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
+                    "headline": r["result"].get("headline"), "p": (r["result"].get("shuffle") or {}).get("p"),
+                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"]["claim"]}
+                   for r in found["runs"]]
+    try:
+        trades = service.closed(supabase)["trades"]
+    except Exception:  # noqa: BLE001 -- trades are context; the record stands without them
+        trades = []
+    row["trades"] = [t for t in trades if t["idea"] == found["idea"]["title"]]
+    return row
 
 
 @app.get("/api/portfolio/closed", tags=["Portfolio"])
