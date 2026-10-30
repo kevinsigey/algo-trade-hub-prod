@@ -75,7 +75,7 @@ export interface GateResult {
   status: "ready" | "waiting" | "fails";
   new_days: number;
   needed: number;
-  claim: { holds: boolean; label: string; days: number } | null;
+  claim: { holds: boolean | null; label: string; days: number } | null;
   size_ok: boolean | null;
   reasons: string[];
 }
@@ -161,7 +161,7 @@ export interface ShadowSummary {
   state: "waiting" | "live" | "stale" | "killed";
   return_pct: number | null;
   bench_return_pct: number | null;
-  claim: { holds: boolean; label: string; days: number } | null;
+  claim: { holds: boolean | null; label: string; days: number } | null;
   failing: boolean;
   curve?: { t: string; idea: number; bench: number }[];
 }

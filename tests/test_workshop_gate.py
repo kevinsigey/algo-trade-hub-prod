@@ -47,3 +47,13 @@ def test_gate_size():
     assert any("30%" in r and "25%" in r for r in over["reasons"])
     none = gate_check(PAIR, frame(0.0, 0.002, 100), END, None)
     assert none["size_ok"] is None and none["status"] != "ready"
+
+
+WHEN = IdeaSpec(title="AAA beats SPY when rates rise", hold=["AAA"], otherwise="SPY", claim="beats_benchmark_when",
+                when={"source": "fred", "series": "DGS10", "measure": "change", "op": ">", "threshold": 0.25})
+
+
+def test_condition_absent_on_new_data_waits_instead_of_failing():
+    # Review finding 7: no condition days in the new data is "not judged yet", not a failed claim.
+    out = gate_check(WHEN, frame(0.0, 0.002, 100).assign(on=False), END, 20)
+    assert out["status"] == "waiting" and any("condition" in r for r in out["reasons"])

@@ -39,3 +39,10 @@ def test_no_rows_long_after_go_live_is_stale():
     fresh = shadow_summary(SPEC, [], today=date(2026, 11, 4), live_day=date(2026, 11, 2))
     late = shadow_summary(SPEC, [], today=date(2026, 11, 9), live_day=date(2026, 11, 2))
     assert fresh["state"] == "waiting" and late["state"] == "stale"
+
+
+def test_condition_absent_is_not_failing():
+    when = IdeaSpec(title="AAA when rates rise", hold=["AAA"], otherwise="SPY", claim="beats_benchmark_when",
+                    when={"source": "fred", "series": "DGS10", "measure": "change", "op": ">", "threshold": 0.25})
+    out = shadow_summary(when, [{**r, "on": False} for r in rows(70, -0.002)], today=date(2027, 1, 12))
+    assert out["failing"] is False and out["claim"]["holds"] is None

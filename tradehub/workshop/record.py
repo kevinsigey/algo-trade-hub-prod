@@ -34,7 +34,7 @@ def shadow_summary(spec: IdeaSpec, rows: list[dict], today: date, live_day: date
         "state": "stale" if late > STALE_WEEKDAYS else "live",
         "return_pct": (idea[-1] - 1) * 100, "bench_return_pct": (bench[-1] - 1) * 100,
         "claim": None if claim is None else {k: claim[k] for k in ("holds", "label", "days")},
-        "failing": claim is not None and not claim["holds"],
+        "failing": claim is not None and claim["holds"] is False,
         "curve": [{"t": r["day"], "idea": (i - 1) * 100, "bench": (b - 1) * 100}
                   for r, i, b in zip(rows, idea, bench, strict=True)],
     }

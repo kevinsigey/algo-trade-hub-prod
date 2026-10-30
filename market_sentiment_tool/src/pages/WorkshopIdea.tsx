@@ -274,7 +274,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
           </div>
           {gate && (
             <ul className="mt-2 space-y-1 text-sm">
-              {gate.claim && <li className={gate.claim.holds ? "text-emerald-300" : "text-rose-300"}>New data: {gate.claim.label}</li>}
+              {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
               {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
               {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the paper record.</li>}
             </ul>

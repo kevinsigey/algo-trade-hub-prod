@@ -167,7 +167,8 @@ def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
     """The claim on any span of daily_frame rows (gate recheck, paper record)."""
     holds, value, label = _claim(spec.claim, rows["ret"].to_numpy(), rows["bench"].to_numpy(),
                                  rows["spy"].to_numpy(), rows["on"].to_numpy(dtype=bool))
-    return {"holds": bool(holds), "value": value, "label": label, "days": len(rows)}
+    judged = math.isfinite(value)  # e.g. the condition never held on these days: nothing to judge yet
+    return {"holds": bool(holds) if judged else None, "value": value, "label": label, "days": len(rows)}
 
 
 def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: float | None) -> dict:
@@ -184,13 +185,15 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
         reasons.insert(0, f"waiting for data: {len(new)} of {MIN_GATE_DAYS} new trading days since the backtest")
     else:
         claim = _clean(claim_check(spec, new.iloc[-GATE_WINDOW:]))
-        if not claim["holds"]:
+        if claim["holds"] is None:
+            reasons.append(f"waiting for data: the claim can't be judged on the new data yet ({claim['label']})")
+        elif not claim["holds"]:
             reasons.append(f"the claim did not hold on the new data ({claim['label']})")
     if size_ok is None:
         reasons.append("enter a size")
-    if size_ok is False or (claim is not None and not claim["holds"]):
+    if size_ok is False or (claim is not None and claim["holds"] is False):
         status = "fails"
-    elif claim is None or size_ok is None:
+    elif claim is None or claim["holds"] is None or size_ok is None:
         status = "waiting"
     else:
         status = "ready"
