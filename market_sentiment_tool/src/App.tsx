@@ -17,7 +17,7 @@ import Portfolio from "@/pages/Portfolio";
 import ClosedTrades from "@/pages/ClosedTrades";
 import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
-import Login from "@/pages/Login";
+import Login, { RecoveryRedirect } from "@/pages/Login";
 import Workshop from "@/pages/Workshop";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -269,6 +269,7 @@ function Guarded({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <BrowserRouter>
+      <RecoveryRedirect />
       <AppShell>
         <Guarded>
         <Routes>

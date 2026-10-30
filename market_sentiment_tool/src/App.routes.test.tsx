@@ -14,7 +14,12 @@ import type { ShadowPerformanceResponse } from "@/lib/shadowPerformance";
 // The operator pages (/scoreboard, /models) sit behind the admin gate, so the stub carries a session
 // and `/api/admin/me` answers 200 below: these tests are about the routes, the gate has its own file.
 vi.mock("@/lib/supabase", () => ({
-  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "jwt" } } }) } },
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: { access_token: "jwt" } } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
+  },
 }));
 
 /**
