@@ -123,9 +123,7 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 if not cid.startswith(mine):
                     view[symbol] = view.get(symbol, 0.0) + value
             if closing:
-                if not held:
-                    continue
-                rows = close_out(idea["id"], held, last_px, day)
+                rows = close_out(idea["id"], held, last_px, day) if held else []
             else:
                 prices_frame = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start,
                                                    bars_fn=bars)
@@ -148,9 +146,13 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
             protecting = [o for o in pending
                           if (o.get("client_order_id") or "").startswith(f"idea-{idea['id']}-stop-")]
             cancels = []
-            if protecting and any(r["status"] == "send" and r["kind"] == "close" for r in rows):
-                # Alpaca holds the shares for the resting stop: it has to go before the close can.
-                cancels = [_cancel(o, cancel, "closing the position") for o in protecting]
+            if protecting and (not held or any(r["status"] == "send" and r["kind"] == "close" for r in rows)):
+                # No shares behind a stop means it would OPEN a position if it triggered; a close needs the shares.
+                cancels = [_cancel(o, cancel, "closing the position" if held else "no shares to protect")
+                           for o in protecting]
+            if any(c.get("filled") for c in cancels):  # the stop already sold: selling again would open a short
+                rows = [{**r, "status": "skip", "reason": "the protective stop filled first"} if r["kind"] == "close"
+                        else r for r in rows]
             done = cancels + [_send(r, submit) for r in rows]
             for r in done:
                 if r["status"] == "sent" and "price" in r:  # later ideas see this run's orders in the 25% check

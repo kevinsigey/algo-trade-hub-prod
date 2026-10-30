@@ -105,3 +105,19 @@ def test_protective_order_matches_the_exits():
     resting = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "stop", "stop_price": "209.00",
                "order_class": "simple", "client_order_id": "idea-3-stop-20261030-GLD-sl"}
     assert signature(resting) == signature(sl)
+
+
+def test_signature_reads_alpacas_resting_shapes():
+    # Step 5 B review I2/I3: a correct resting OCO or trailing stop must match, or it's torn down every day.
+    from tradehub.portfolio.autotrade import protective, signature
+    from tradehub.workshop.spec import Exits
+    oco = protective(3, Exits(stop_loss_pct=5, take_profit_pct=10), "GLD", 25, 200.0, DAY)
+    resting_oco = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "limit", "order_class": "oco",
+                   "limit_price": "220", "stop_price": None, "client_order_id": oco["client_order_id"],
+                   "legs": [{"symbol": "GLD", "qty": "25", "side": "sell", "type": "stop", "stop_price": "190",
+                             "limit_price": None, "order_class": "oco"}]}
+    assert signature(resting_oco) == signature(oco)
+    tr = protective(3, Exits(trailing_pct=8), "GLD", 25, 200.0, DAY)
+    resting_tr = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "trailing_stop", "order_class": "simple",
+                  "trail_percent": "8", "stop_price": "193.2", "hwm": "210", "limit_price": None}
+    assert signature(resting_tr) == signature(tr)

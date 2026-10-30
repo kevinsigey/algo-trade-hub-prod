@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
+import time as clock
+from datetime import UTC, datetime, time, timedelta
 
 import requests
 
@@ -26,6 +27,8 @@ from tradehub.workshop.data import NY
 from tradehub.workshop.spec import IdeaSpec
 
 FAILS = (paper_orders.OrderRejected, AccountNotConnected, requests.RequestException)
+_sleep = clock.sleep
+DONE = ("canceled", "expired", "rejected")
 
 
 def _cancel(order: dict, cancel, why: str) -> dict:
@@ -33,7 +36,16 @@ def _cancel(order: dict, cancel, why: str) -> dict:
            "client_order_id": order["client_order_id"], "alpaca_order_id": order["id"]}
     try:
         cancel(order["id"], order["client_order_id"])
-        return {**row, "status": "sent", "reason": f"cancelled protective order: {why}"}
+        # Alpaca's DELETE only starts the cancel: the shares stay held until the order reads canceled.
+        for _ in range(20):
+            status = service.paper_get(f"/v2/orders/{order['id']}")["status"]
+            if status in DONE:
+                return {**row, "status": "sent", "reason": f"cancelled protective order: {why}"}
+            if status == "filled":
+                return {**row, "status": "already sent", "filled": True,
+                        "reason": "the protective order filled before it could be cancelled"}
+            _sleep(0.5)
+        return {**row, "status": "rejected", "reason": "cancel did not finish within 10 s"}
     except paper_orders.OrderGone:
         return {**row, "status": "already sent", "reason": "protective order already filled or cancelled"}
     except paper_orders.OrdersDisabled:
@@ -61,8 +73,12 @@ def _place(order: dict, submit) -> dict:
 def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.cancel) -> tuple[dict, dict]:
     day = now.astimezone(NY).date()
     try:
-        if not service.paper_get("/v2/calendar", {"start": str(day), "end": str(day)}):
+        today = service.paper_get("/v2/calendar", {"start": str(day), "end": str(day)})
+        if not today:
             return {"market": "closed"}, {}
+        hh, mm = (int(x) for x in str(today[0].get("open") or "09:30").split(":")[:2])
+        if now.astimezone(NY) < datetime.combine(day, time(hh, mm), NY) + timedelta(minutes=15):
+            return {"market": "not open yet"}, {}  # the opening orders must have filled before a stop goes on
         pending = service.paper_get("/v2/orders", {"status": "open", "limit": 500, "nested": "true"})
         fills = book.tag_fills(service._fills(), service._orders(), store.labels(supa),
                                service._titles(supa, public=False))
@@ -84,11 +100,14 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.
             if not closing and spec.exits.mode == "intraday":
                 leg = (spec.hold or spec.short)[0]
                 held, entry = costs.get(leg, {}).get(idea["id"], (0.0, 0.0))
-                want = protective(idea["id"], spec.exits, leg, held, entry, day)
+                want = protective(idea["id"], spec.exits, leg, held, entry, f"{now.astimezone(NY):%Y%m%d%H%M}")
             if want is not None and len(mine) == 1 and signature(mine[0]) == signature(want):
                 continue
+            busy = [o for o in pending if (o.get("client_order_id") or "").startswith(f"idea-{idea['id']}-auto-")]
+            if want is not None and busy:
+                continue  # its own rule order is still working: a stop now would be a second exit for the shares
             rows += [_cancel(o, cancel, "the idea is off" if closing else "position changed") for o in mine]
-            if want is not None:
+            if want is not None and all(r["status"] == "sent" for r in rows):  # only once the old one is gone
                 rows.append(_place(want, submit))
             store.log_orders(supa, idea["id"], str(day), rows)
             summary[idea["id"]] = {s: sum(r["status"] == s for r in rows) for s in
