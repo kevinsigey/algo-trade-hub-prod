@@ -93,3 +93,41 @@ def fred_series(series_id: str, start: date, *, fetch=fetch_fred_daily) -> pd.Se
         raise UnknownSymbol(f"{series_id} is not a daily series; weekly and monthly FRED series aren't supported yet "
                             "(their release dates aren't wired in, so a test could see numbers before they were public)")
     return s.rename(series_id)
+
+
+def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | None = None,
+         now: datetime | None = None) -> dict[str, pd.DataFrame]:
+    """Daily open/high/low/close per ticker (step 5 intraday exits), with the same last-complete-day cut and cache
+    rules as closes(). Cached as <T>.ohlc.csv, beside (never replacing) the closes cache."""
+    cutoff = last_complete_day(now or datetime.now(UTC))
+    env_dir = os.getenv("TRADEHUB_PRICE_CACHE")
+    cache_dir = cache_dir or (Path(env_dir) if env_dir else None)
+    out: dict[str, pd.DataFrame] = {}
+    missing = []
+    for t in dict.fromkeys(tickers):
+        path = cache_dir / f"{t}.ohlc.csv" if cache_dir else None
+        if path is not None and path.is_file():
+            hit = pd.read_csv(path, index_col=0, parse_dates=True)
+            if (not hit.empty and hit.index[0].date() <= start + timedelta(days=7)
+                    and hit.index[-1].date() >= _weekday_on_or_before(cutoff)):
+                out[t] = hit
+                continue
+        missing.append(t)
+    if missing:
+        if download is None:
+            import yfinance as yf
+            download = yf.download
+        raw = download(missing, start=start.isoformat(), auto_adjust=True, progress=False)
+        for t in missing:
+            if raw is None or raw.empty or ("Close", t) not in raw:
+                raise UnknownSymbol(f"no daily prices for {t}")
+            frame = pd.DataFrame({k.lower(): raw[(k, t)] for k in ("Open", "High", "Low", "Close")}).dropna()
+            frame.index = pd.DatetimeIndex(frame.index).tz_localize(None)
+            frame = frame[frame.index <= pd.Timestamp(cutoff)]
+            if frame.empty:
+                raise UnknownSymbol(f"no daily prices for {t}")
+            out[t] = frame
+            if cache_dir:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                frame.to_csv(cache_dir / f"{t}.ohlc.csv")
+    return {t: f[(f.index >= pd.Timestamp(start)) & (f.index <= pd.Timestamp(cutoff))] for t, f in out.items()}
