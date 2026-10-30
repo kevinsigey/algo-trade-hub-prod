@@ -860,6 +860,14 @@ def _fetch_all(supa, table: str, build, *, page: int = POSTGREST_CAP, cap: int |
             return rows[:cap]
 
 
+@app.get("/api/onchain", tags=["Crypto"])
+def get_onchain():
+    """Live BTC and ETH chain state from free public endpoints; fails soft per chain, cached 60 s."""
+    from tradehub.onchain import collect
+
+    return collect()
+
+
 @app.get("/api/sports-record", tags=["Sports"])
 def get_sports_record() -> dict[str, Any]:
     """Each sports predictor's own published record, normalised. Display only: nothing here is scored.
