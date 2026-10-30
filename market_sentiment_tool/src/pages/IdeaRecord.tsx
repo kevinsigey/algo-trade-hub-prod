@@ -47,6 +47,12 @@ export default function IdeaRecord() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Paper record since {data.live_at?.slice(0, 10)}</h2>
           <div className="mt-2"><PaperLine live={data.shadow} /></div>
           {data.shadow.claim && <p className="mt-1 text-sm text-slate-400">Last 3 months: {data.shadow.claim.label}</p>}
+          {(data.shadow.exits?.length ?? 0) > 0 && (
+            <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-slate-400">
+              Exits:
+              {data.shadow.exits?.map((e) => <span key={e.day} className="text-amber-300">{e.why} · {e.day}</span>)}
+            </p>
+          )}
           {curve.length > 1 && (
             <div className="mt-4 h-56">
               <ResponsiveContainer width="100%" height="100%">

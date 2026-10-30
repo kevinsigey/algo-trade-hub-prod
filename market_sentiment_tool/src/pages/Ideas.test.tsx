@@ -43,7 +43,7 @@ describe("Ideas record", () => {
   it("shows an idea's verdicts, paper record and tagged trades", async () => {
     serve({
       ...ROWS[1], plain_words: "Gold does better than stocks.",
-      shadow: { ...LIVE, curve: [{ t: "2026-11-03", idea: 0.1, bench: 0.2 }] },
+      shadow: { ...LIVE, curve: [{ t: "2026-11-03", idea: 0.1, bench: 0.2 }], exits: [{ day: "2026-11-05", why: "stop-loss" }] },
       runs: [{ variation: 1, verdict: "FAIL", created_at: "2026-10-30T00:00:00Z", headline: "Did not do what it claims.", p: 0.3, bar: 0.05, claim: "beats_benchmark" },
              { variation: 2, verdict: "PASS", created_at: "2026-10-31T00:00:00Z", headline: "Did what it claims on the years it hadn't seen.", p: 0.01, bar: 0.025, claim: "beats_benchmark" }],
       trades: [{ symbol: "GLD", qty: 10, entry_price: 300, exit_price: 310, pnl: 100, return_pct: 3.3, exited_at: "2026-11-10T15:00:00Z", held_days: 8, idea: "Gold beats SPY" }],
@@ -53,6 +53,7 @@ describe("Ideas record", () => {
     expect(screen.getByText("Did what it claims on the years it hadn't seen.")).toBeInTheDocument();
     expect(screen.getByText("GLD")).toBeInTheDocument();
     expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
+    expect(screen.getByText("stop-loss · 2026-11-05")).toBeInTheDocument();
   });
 
   it("says a live idea with no paper days is stale, not about to start", async () => {

@@ -207,3 +207,24 @@ def test_stale_prices_skip_the_idea(db, monkeypatch):
     sub = Submit()
     summary, failed = paper_orders_run.run(MORNING, db, submit=sub, closes=stale, fred=None)
     assert sub.calls == [] and "2026-10-30" in failed[1] and "2026-11-02" in failed[1]
+
+
+def test_a_stop_exit_closes_with_its_reason(db, monkeypatch):
+    live_idea(db, 1, spec={**SPEC, "exits": {"stop_loss_pct": 5}})
+
+    def crashed(tickers, start):
+        frame = closes(tickers, start).copy()
+        if "GLD" in frame:
+            frame["GLD"] = 300.0  # flat since 2020, so no earlier exit or cooldown...
+            frame.loc[frame.index[-1], "GLD"] = 240.0  # ...then -20% on the last close
+        return frame
+    fills = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
+              "transaction_time": "2026-10-28T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261028-GLD-open", "submitted_at": "t1"}]
+    positions = [{"symbol": "GLD", "qty": "66", "market_value": "15840", "current_price": "240"}]
+    monkeypatch.setattr(service, "paper_get", Alpaca(fills=fills, orders=orders, positions=positions))
+    sub = Submit()
+    summary, failed = paper_orders_run.run(MORNING, db, submit=sub, closes=crashed, fred=None)
+    assert failed == {}, failed
+    assert [(c[0], c[1], c[2]) for c in sub.calls] == [("GLD", "sell", 66)]
+    assert db.db["paper_orders"][0]["reason"] == "stop-loss 5% hit"

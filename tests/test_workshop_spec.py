@@ -74,3 +74,24 @@ def test_old_specs_still_load():
            "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": [], "when": None}
     s = IdeaSpec.model_validate(old)
     assert s.short == [] and s.execution.timing == "open"
+
+
+def test_exits_round_trip_and_bounds():
+    from tradehub.workshop.spec import IdeaSpec
+    s = IdeaSpec(title="Gold with stops", hold=["GLD"], claim="beats_benchmark",
+                 exits={"stop_loss_pct": 8, "trailing_pct": 12, "take_profit_pct": 25, "max_days": 60})
+    assert s.exits.stop_loss_pct == 8 and s.exits.max_days == 60 and s.exits.mode == "close" and s.exits.any()
+    assert not IdeaSpec(title="plain", hold=["GLD"], claim="beats_benchmark").exits.any()
+    for bad in ({"stop_loss_pct": 0}, {"stop_loss_pct": 95}, {"max_days": 0}, {"take_profit_pct": 2000}):
+        with pytest.raises(ValueError):
+            IdeaSpec(title="bad exit", hold=["GLD"], claim="beats_benchmark", exits=bad)
+
+
+def test_intraday_exits_need_a_single_leg():
+    from tradehub.workshop.spec import IdeaSpec
+    with pytest.raises(ValueError, match="not available yet"):  # review I3: nothing runs it until Part B ships
+        IdeaSpec(title="one leg", hold=[], short=["QQQ"], claim="beats_benchmark",
+                 exits={"stop_loss_pct": 5, "mode": "intraday"})
+    with pytest.raises(ValueError, match="one ticker"):
+        IdeaSpec(title="pair", hold=["GLD"], short=["SPY"], claim="beats_benchmark",
+                 exits={"stop_loss_pct": 5, "mode": "intraday"})

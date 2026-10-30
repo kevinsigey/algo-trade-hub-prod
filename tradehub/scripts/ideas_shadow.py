@@ -33,7 +33,7 @@ def _rows(idea: dict, supa, cutoff: date, closes, fred) -> list[dict]:
     frame = daily_frame(spec, prices, series)
     days = frame[(frame.index.date > after) & (frame.index.date <= cutoff)]
     return [{"day": str(d.date()), "ret": float(r.ret), "on": bool(r.on), "bench": float(r.bench),
-             "spy": float(r.spy)} for d, r in days.iterrows()]
+             "spy": float(r.spy), "exit": str(r.exit)} for d, r in days.iterrows()]
 
 
 def run(now: datetime, supa, *, closes=data.closes, fred=data.fred_series) -> tuple[dict[int, int], dict[int, str]]:

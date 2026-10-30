@@ -23,7 +23,7 @@ def shadow_summary(spec: IdeaSpec, rows: list[dict], today: date, live_day: date
     if not rows:
         stale = live_day is not None and _late(live_day, today) > STALE_WEEKDAYS
         return {"days": 0, "since": None, "as_of": None, "state": "stale" if stale else "waiting", "return_pct": None,
-                "bench_return_pct": None, "claim": None, "failing": False, "curve": []}
+                "bench_return_pct": None, "claim": None, "failing": False, "curve": [], "exits": []}
     frame = pd.DataFrame(rows)
     idea, bench = np.cumprod(1 + frame["ret"].to_numpy()), np.cumprod(1 + frame["bench"].to_numpy())
     as_of = date.fromisoformat(rows[-1]["day"])
@@ -35,6 +35,7 @@ def shadow_summary(spec: IdeaSpec, rows: list[dict], today: date, live_day: date
         "return_pct": (idea[-1] - 1) * 100, "bench_return_pct": (bench[-1] - 1) * 100,
         "claim": None if claim is None else {k: claim[k] for k in ("holds", "label", "days")},
         "failing": claim is not None and claim["holds"] is False,
+        "exits": [{"day": r["day"], "why": r["exit"]} for r in rows if r.get("exit")],
         "curve": [{"t": r["day"], "idea": (i - 1) * 100, "bench": (b - 1) * 100}
                   for r, i, b in zip(rows, idea, bench, strict=True)],
     }

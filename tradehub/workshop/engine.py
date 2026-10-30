@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from tradehub.workshop.spec import CASH, IdeaSpec
+from tradehub.workshop.spec import CASH, Exits, IdeaSpec
 
 DAYS = 252
 MIN_UNSEEN_DAYS = 504
@@ -28,6 +28,7 @@ CURVE_POINTS = 600
 MIN_GATE_DAYS = 63  # live-paper gate: ~3 months of data the backtest never saw (Kevin, 2026-10-30)
 GATE_WINDOW = 252  # ...judged on at most the most recent 12 months of it
 MAX_POSITION_PCT = 25
+EXIT_COOLDOWN = 21  # an idea with no condition has no fresh signal: back in after a month out (Kevin, 2026-10-30)
 CONTEXT = ("SPY", "QQQ", "IWM")
 HEADLINES = {
     "pass": "Did what it claims on the years it hadn't seen.",
@@ -153,6 +154,62 @@ def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
             rets["SPY"].to_numpy(), rets)
 
 
+def apply_exits(signal: np.ndarray, sleeve: np.ndarray, exits: Exits, cooldown: int | None, lag: int
+                ) -> tuple[np.ndarray, np.ndarray]:
+    """(held, exit_reason) per day: the rule's signal with the idea's exits applied, checked at each close.
+
+    An exit decided at the close of day i takes effect `lag` days later (1 for open/day orders, 2 for close orders,
+    the same lag a rule change gets). Afterwards the idea stays out until a fresh signal (the signal off for a day),
+    or, with no condition to give one, for `cooldown` days. A close-based exit can't cap a gap: the day's whole
+    move counts."""
+    n = len(signal)
+    held = np.zeros(n, dtype=bool)
+    why = np.full(n, "", dtype=object)
+    in_pos = stopped = False
+    value = best = 1.0
+    days = left = 0
+    exit_from = None
+    for i in range(n):
+        want = bool(signal[i])
+        if exit_from is not None and i >= exit_from:
+            in_pos, stopped, left, exit_from = False, True, cooldown or 0, None
+        if stopped:
+            if cooldown is None:
+                stopped = want  # a day with the signal off ends it: the next "on" is fresh
+            elif left == 0:
+                stopped = False
+            else:
+                left -= 1
+        on = want and not stopped
+        if not on:
+            in_pos, exit_from = False, None
+            continue
+        if not in_pos:
+            in_pos, value, best, days = True, 1.0, 1.0, 0
+        held[i] = True
+        value *= 1 + sleeve[i]
+        best, days = max(best, value), days + 1
+        if exit_from is None:
+            if exits.stop_loss_pct is not None and value <= 1 - exits.stop_loss_pct / 100:
+                why[i] = "stop-loss"
+            elif exits.trailing_pct is not None and value <= best * (1 - exits.trailing_pct / 100):
+                why[i] = "trailing"
+            elif exits.take_profit_pct is not None and value >= 1 + exits.take_profit_pct / 100:
+                why[i] = "take-profit"
+            elif exits.max_days is not None and days >= exits.max_days:
+                why[i] = "time"
+            if why[i]:
+                exit_from = i + lag
+    return held, why
+
+
+def _held(spec: IdeaSpec, signal: np.ndarray, sleeve: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if not spec.exits.any():
+        return signal, np.full(len(signal), "", dtype=object)
+    lag = 2 if spec.execution.timing == "close" else 1
+    return apply_exits(signal, sleeve, spec.exits, None if spec.when is not None else EXIT_COOLDOWN, lag)
+
+
 def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
     switches = np.concatenate([[False], m[1:] != m[:-1]])
     return np.where(m, held, other) - cost * switches
@@ -161,24 +218,34 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
 def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
     """Per trading day: the idea's return after costs, whether the condition held, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
-    return pd.DataFrame({"ret": _build(mask, held, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s},
-                        index=idx)
+    position, why = _held(spec, mask, held)
+    return pd.DataFrame({"ret": _build(position, held, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
+                         "exit": why}, index=idx)
 
 
-def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
+def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> tuple[dict[str, float], str]:
     """Signed weights for the holding the order placed this morning establishes, from data up to the last close.
 
     Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
     engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
-    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short)))
-    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
     ahead = 2 if spec.execution.timing == "close" else 1
+    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
+                              + [spec.benchmark, "SPY"]))
+    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)  # drop gaps exactly as _legs does
     extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
-    padded = pd.concat([frame, pd.DataFrame(index=extra, columns=frame.columns, dtype=float)]).ffill()
-    if bool(condition_mask(spec, padded, fred).iloc[-1]):
+    padded = pd.concat([frame, frame.iloc[[-1] * ahead].set_axis(extra)])  # phantom days copy the last close
+    _, mask, held, *_ = _legs(spec, padded, fred)
+    position, why = _held(spec, mask, held)  # exits too: the morning after a stop, the idea is out
+    if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
-        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}
-    return {} if spec.otherwise == CASH else {spec.otherwise: 1.0}
+        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}, ""
+    # The reason names an exit only when the exit is what keeps it flat: the rule itself still says hold.
+    reason = next((w for w in why[::-1] if w), "") if bool(mask[-1]) else ""
+    return ({} if spec.otherwise == CASH else {spec.otherwise: 1.0}), reason
+
+
+def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
+    return target_and_reason(spec, closes, fred)[0]
 
 
 def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
@@ -227,7 +294,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
         return _build(m, h, other, cost)
 
-    r = build(mask)
+    r = build(_held(spec, mask, held)[0])
     n = len(r)
     k = int(n * (1 - spec.unseen_fraction))
     built, unseen = slice(0, k), slice(k, n)
@@ -257,8 +324,9 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
         perm = np.empty(permutations)
         for i in range(permutations):
             shifted = np.roll(mu, int(rng.integers(MIN_CONDITION_DAYS, n_u - MIN_CONDITION_DAYS)))
-            sw = np.concatenate([[False], shifted[1:] != shifted[:-1]])
-            rp = np.where(shifted, hu, other[unseen]) - cost * sw
+            pos = _held(spec, shifted, hu)[0]  # random timing goes through the same exits
+            sw = np.concatenate([[False], pos[1:] != pos[:-1]])
+            rp = np.where(pos, hu, other[unseen]) - cost * sw
             perm[i] = _claim(kind, rp, bu, su, shifted)[1]
         p, beats = p_value(actual, perm)
     else:

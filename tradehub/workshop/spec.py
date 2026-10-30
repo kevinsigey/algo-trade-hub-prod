@@ -47,6 +47,21 @@ class Execution(BaseModel):
     limit_offset_bps: float = Field(0, ge=0, le=500)
 
 
+class Exits(BaseModel):
+    """Step 5: when an idea gets out regardless of its rule. None = off. Measured on the idea's whole sleeve
+    (close mode) or, for a single-leg idea, by real stop orders during the day (intraday mode)."""
+    model_config = ConfigDict(extra="forbid")
+
+    stop_loss_pct: float | None = Field(None, gt=0, le=90)
+    trailing_pct: float | None = Field(None, gt=0, le=90)
+    take_profit_pct: float | None = Field(None, gt=0, le=1000)
+    max_days: int | None = Field(None, ge=1, le=756)
+    mode: Literal["close", "intraday"] = "close"
+
+    def any(self) -> bool:
+        return any(v is not None for v in (self.stop_loss_pct, self.trailing_pct, self.take_profit_pct, self.max_days))
+
+
 class IdeaSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +77,7 @@ class IdeaSpec(BaseModel):
     unseen_fraction: float = Field(0.3, ge=0.1, le=0.5)
     assumptions: list[str] = []
     execution: Execution = Field(default_factory=Execution)
+    exits: Exits = Field(default_factory=Exits)
 
     @field_validator("hold", "short")
     @classmethod
@@ -86,6 +102,10 @@ class IdeaSpec(BaseModel):
             raise ValueError("hold or short needs at least one ticker")
         if set(self.hold) & set(self.short):
             raise ValueError("a ticker can't be both held and shorted")
+        if self.exits.mode == "intraday" and len(self.hold) + len(self.short) != 1:
+            raise ValueError("intraday stops are for an idea with exactly one ticker (one hold or one short)")
+        if self.exits.mode == "intraday":  # ponytail: lifted when step 5 Part B (real stop orders) ships
+            raise ValueError("intraday stops are not available yet: exits are checked at each close for now")
         if self.claim == "beats_benchmark_when" and self.when is None:
             raise ValueError("beats_benchmark_when needs a 'when' condition")
         if self.benchmark == CASH:

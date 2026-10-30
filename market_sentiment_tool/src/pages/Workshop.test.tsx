@@ -226,3 +226,23 @@ describe("Workshop automatic paper orders", () => {
     await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/auto"), JSON.stringify({ on: true })]));
   });
 });
+
+
+describe("Workshop editor: exits", () => {
+  it("posts the exits with the run, and only offers intraday for one ticker", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Gold", plain_words: "Gold with a stop", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } },
+      "/api/workshop/ideas/2/runs": { body: RUN },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Stop-loss %"), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("Trailing stop %"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Max days held"), { target: { value: "60" } });
+    expect(screen.getByRole("option", { name: /During the day/ })).toBeDisabled();  // not until Part B ships
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
+    const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
+    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "close" });
+  });
+});

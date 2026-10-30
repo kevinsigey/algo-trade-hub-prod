@@ -26,7 +26,8 @@ SYSTEM = (
     "not pin down goes in assumptions as one short sentence, for example \"rates rising = 10-year yield up more "
     "than 0.25 points over 3 months\". Tickers the idea bets against go in short (hold stays the long side; either may be "
     "empty, not both). Order execution defaults to a market order at the open; use timing close only when the idea "
-    "says so (it fills a day later), and a limit order only when it names a price discipline. Never invent results. "
+    "says so (it fills a day later), and a limit order only when it names a price discipline. Exits (stop-loss %, "
+    "trailing stop %, take-profit %, max days held) only when the idea names them. Never invent results. "
     "Reply with JSON only."
 )
 
