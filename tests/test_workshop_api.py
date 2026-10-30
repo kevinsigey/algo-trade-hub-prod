@@ -135,4 +135,9 @@ def test_missing_idea_is_404(api):
 
 def test_fred_start_reaches_back_for_the_lookback(api):
     from tradehub.api.main import _fred_start
-    assert _fred_start(date(2006, 1, 3)) == date(2003, 1, 3)
+    assert _fred_start(date(2006, 1, 3)) <= date(2003, 1, 3)
+
+
+def test_fred_start_survives_feb_29():
+    from tradehub.api.main import _fred_start
+    assert _fred_start(date(2008, 2, 29)) < date(2005, 3, 1)

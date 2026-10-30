@@ -75,4 +75,9 @@ def fred_series(series_id: str, start: date, *, fetch=fetch_fred_daily) -> pd.Se
         raise UnknownSymbol(f"no FRED data for {series_id}")
     s = pd.Series(values, dtype=float).sort_index()
     s.index = pd.DatetimeIndex(s.index)
+    # ponytail: only daily series until first-release dates (ALFRED) are wired in. A weekly or monthly value is
+    # dated by its period but published days to weeks later, so using it by its date would leak the future.
+    if len(s) > 2 and s.index.to_series().diff().dt.days.median() > 4:
+        raise UnknownSymbol(f"{series_id} is not a daily series; weekly and monthly FRED series aren't supported yet "
+                            "(their release dates aren't wired in, so a test could see numbers before they were public)")
     return s.rename(series_id)

@@ -58,3 +58,13 @@ def test_fred_http_error_is_unknown_symbol_but_missing_key_is_not():
         raise RuntimeError("FRED_API_KEY is not set; the journal's daily series need the keyed FRED API")
     with pytest.raises(RuntimeError, match="FRED_API_KEY"):
         fred_series("DGS10", date(2020, 1, 1), fetch=nokey)
+
+
+def test_non_daily_fred_series_is_refused():
+    # Review finding 1: a monthly series is published weeks after its observation date; using it by that date leaks.
+    monthly = {date(2020, m, 1): float(m) for m in range(1, 13)}
+    with pytest.raises(UnknownSymbol, match="daily"):
+        fred_series("UNRATE", date(2020, 1, 1), fetch=lambda sid, start: monthly)
+    weekly = {date(2020, 1, 4) + __import__("datetime").timedelta(days=7 * i): 1.0 for i in range(20)}
+    with pytest.raises(UnknownSymbol, match="daily"):
+        fred_series("ICSA", date(2020, 1, 1), fetch=lambda sid, start: weekly)

@@ -14,7 +14,7 @@ Then visit: http://localhost:8000/docs  (Swagger UI — auto-generated)
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -428,7 +428,7 @@ class _RunIn(BaseModel):
 
 def _fred_start(start: date) -> date:
     """FRED reads reach 3 years before the test start, so a lookback (max 756 trading days) is filled on day one."""
-    return start.replace(year=start.year - 3)
+    return start - timedelta(days=3 * 366)
 
 
 @app.post("/api/workshop/draft", tags=["Workshop"])

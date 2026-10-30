@@ -5,7 +5,8 @@ Pure: daily closes and FRED series in, a verdict dict out. Rules (spec 2026-10-2
 - the claim is judged on the unseen span (the last `unseen_fraction` of the common range);
 - the shuffle test runs on the unseen span only. A rule with a condition gets random timing (the condition
   mask circularly shifted). A rule with no condition has no timing to shuffle, so it gets a paired sign-flip
-  test of its daily returns against the series its claim compares with;
+  test of the claim's own per-day quantity (log excess return, down-day excess, or downside variance), whose
+  null is exactly symmetric -- flipping raw return differences would add volatility drag the idea never paid;
 - PASS needs the claim to hold on unseen years AND p < 0.05 / variations.
 """
 
@@ -101,6 +102,24 @@ def _claim(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray, mask: np.ndar
     return (v > 0 and gap >= -2), v, f"worst drop {dd_r:.0f}% vs {dd_b:.0f}%; return {gap:+.1f} pts/yr"
 
 
+def _signflip_terms(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Per-day terms whose mean is the claim's test statistic; under the null each term is symmetric about 0."""
+    if kind == "ballast":
+        down = s < 0
+        return (r - s)[down]
+    if kind == "smoother_ride":
+        return np.minimum(b, 0) ** 2 - np.minimum(r, 0) ** 2
+    return np.log1p(r) - np.log1p(b)  # beats_benchmark
+
+
+def p_value(actual: float, perm: np.ndarray) -> tuple[float, float]:
+    """One-sided shuffle p and the share of shuffles beaten. A NaN shuffle counts AGAINST the idea."""
+    if not math.isfinite(actual):
+        return 1.0, 0.0
+    perm = np.nan_to_num(perm, nan=np.inf)
+    return (1 + int(np.sum(perm >= actual))) / (1 + len(perm)), 100 * float(np.sum(perm < actual)) / len(perm)
+
+
 def verdict_of(holds: bool, p: float, bar: float) -> str:
     return "PASS" if holds and p < bar else "FAIL"
 
@@ -159,23 +178,18 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
 
     rng = np.random.default_rng(seed)
     ru, bu, su, mu, hu = r[unseen], b[unseen], s[unseen], mask[unseen], held[unseen]
-    ref = su if kind == "ballast" else bu
-    perm = np.empty(permutations)
-    for i in range(permutations):
-        if spec.when is not None:
+    if spec.when is not None:
+        perm = np.empty(permutations)
+        for i in range(permutations):
             shifted = np.roll(mu, int(rng.integers(MIN_CONDITION_DAYS, n_u - MIN_CONDITION_DAYS)))
             sw = np.concatenate([[False], shifted[1:] != shifted[:-1]])
             rp = np.where(shifted, hu, other[unseen]) - cost * sw
             perm[i] = _claim(kind, rp, bu, su, shifted)[1]
-        else:
-            signs = rng.choice((-1.0, 1.0), size=n_u)
-            perm[i] = _claim(kind, ref + signs * (ru - ref), bu, su, mu)[1]
-    perm = np.nan_to_num(perm, nan=-np.inf)
-    if math.isfinite(actual):
-        p = (1 + int(np.sum(perm >= actual))) / (1 + permutations)
-        beats = 100 * float(np.sum(perm < actual)) / permutations
+        p, beats = p_value(actual, perm)
     else:
-        p, beats = 1.0, 0.0
+        terms = _signflip_terms(kind, ru, bu, su)
+        signs = rng.choice((-1.0, 1.0), size=(permutations, len(terms)))
+        p, beats = p_value(float(np.mean(terms)) if len(terms) else math.nan, (signs * terms).mean(axis=1))
 
     verdict = verdict_of(on_u[0], p, bar)
     if verdict == "PASS":

@@ -125,3 +125,23 @@ def test_same_seed_same_result_and_curve_downsampled():
     assert len(a["curve"]) <= 600 and a["curve"][-1]["t"] == a["data_end"]
     assert [c["name"] for c in a["context"]] == ["Idea", "SPY", "QQQ", "IWM"]
     assert a["periods"]["of"] == 5 and a["variations"] == 1
+
+
+def test_signflip_null_is_centred_for_a_low_vol_hold():
+    # Review finding 2: hold grows at exactly the benchmark's geometric rate, at almost no volatility. The claim
+    # is a coin flip, so the shuffle must sit near the middle, not hand the idea an easy "beats chance".
+    rng = np.random.default_rng(11)
+    spy = rng.normal(0.0003, 0.025, N)
+    k = int((N - 1) * 0.7) + 1  # the unseen span starts here (one row is lost to pct_change)
+    flat = np.full(N, np.expm1(np.mean(np.log1p(spy[k:]))))  # exactly SPY's growth on the unseen years
+    closes = pd.DataFrame({"SPY": prices(spy), "QQQ": prices(spy), "IWM": prices(spy), "AAA": prices(flat)}, index=IDX)
+    s = IdeaSpec(title="calm asset", hold=["AAA"], claim="beats_benchmark")
+    out = run_test(s, closes, {}, variations=1, seed=5, permutations=400)
+    assert 35 < out["shuffle"]["beats_pct"] < 65
+    assert out["verdict"] != "PASS"
+
+
+def test_nan_permutation_counts_against_the_idea():
+    from tradehub.workshop.engine import p_value
+    p, beats = p_value(1.0, np.array([0.0, np.nan, 0.5, np.nan]))
+    assert p == pytest.approx((1 + 2) / 5) and beats == pytest.approx(50.0)
