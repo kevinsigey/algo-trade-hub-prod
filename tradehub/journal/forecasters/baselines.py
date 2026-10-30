@@ -237,7 +237,8 @@ def build_baselines(spx_closes: Closes, wave2: Mapping[str, Closes],
     """
     out: list[Forecaster] = []
     for family, closes in [("spx", spx_closes), *wave2.items()]:
-        settle = settle_spx if family == "spx" else (lambda t, n, c=closes: settle_daily(t, n, c))
+        settle = ((lambda t, n, c=closes: settle_spx(t, n, c)) if family == "spx"
+                  else (lambda t, n, c=closes: settle_daily(t, n, c)))
         out += [DirectionBaseline(closes, family, kind,
                                   is_session=is_target_day if family == "eurusd" else is_session,
                                   settle=settle)
