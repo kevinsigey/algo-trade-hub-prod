@@ -29,7 +29,7 @@ def _row(idea_id: int, symbol: str, qty: float, kind: str, price: float, day: da
     if ex.order_type == "limit":
         move = ex.limit_offset_bps / 1e4
         limit = round(price * (1 - move if side == "buy" else 1 + move), 2 if price >= 1 else 4)
-    return {"symbol": symbol, "side": side, "qty": int(abs(qty)), "kind": kind,
+    return {"symbol": symbol, "side": side, "qty": int(abs(qty)), "kind": kind, "price": price,
             "client_order_id": f"idea-{idea_id}-auto-{day:%Y%m%d}-{symbol}-{kind}", "order_type": ex.order_type,
             "time_in_force": TIF[ex.timing], "limit_price": limit, "status": status, "reason": reason}
 
