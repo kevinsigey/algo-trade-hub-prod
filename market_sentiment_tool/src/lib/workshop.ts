@@ -209,6 +209,7 @@ export interface ShadowSummary {
   claim: { holds: boolean | null; label: string; days: number } | null;
   failing: boolean;
   curve?: { t: string; idea: number; bench: number }[];
+  exits?: { day: string; why: string }[];
 }
 
 export interface PublicIdea {

@@ -46,3 +46,10 @@ def test_condition_absent_is_not_failing():
                     when={"source": "fred", "series": "DGS10", "measure": "change", "op": ">", "threshold": 0.25})
     out = shadow_summary(when, [{**r, "on": False} for r in rows(70, -0.002)], today=date(2027, 1, 12))
     assert out["failing"] is False and out["claim"]["holds"] is None
+
+
+def test_exits_are_listed_on_the_record():
+    days = rows(5, 0.0)
+    days[2]["exit"] = "stop-loss"
+    out = shadow_summary(SPEC, days, today=date(2026, 11, 7))
+    assert out["exits"] == [{"day": days[2]["day"], "why": "stop-loss"}]

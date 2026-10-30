@@ -55,8 +55,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 31 | `20261030000002_workshop.sql` |
 | 32 | `20261031000001_ideas_live.sql` |
 | 33 | `20261031000002_paper_orders.sql` |
+| 34 | `20261031000003_shadow_exit.sql` |
 
-**Watermark: `20261031000002_paper_orders.sql`**
+**Watermark: `20261031000003_shadow_exit.sql`**
 
 ## How to record a new one
 

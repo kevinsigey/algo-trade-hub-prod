@@ -107,3 +107,21 @@ def test_one_broken_idea_does_not_stop_the_others(db):
     db.db["ideas"][1].update({"live_at": "2026-11-02T15:00:00+00:00", "live_run_id": 2, "size_pct": 10})
     added, failed = ideas_shadow.run(evening("2026-11-04"), db, closes=fake_closes(prices()), fred=None)
     assert added == {1: 2} and list(failed) == [2] and "GONE" in failed[2]
+
+
+def test_catch_up_records_the_same_exit_day_as_the_backtest(db):
+    # Step 5 review focus 3: a stop inside a 5-day catch-up lands on the backtest's day, with entry kept.
+    from tradehub.workshop.engine import daily_frame
+    from tradehub.workshop.spec import IdeaSpec
+    frame = prices()
+    frame.loc[pd.Timestamp("2026-11-05"), "AAA"] = frame.loc[pd.Timestamp("2026-11-04"), "AAA"] * 0.9
+    frame.loc[pd.Timestamp("2026-11-06"):, "AAA"] = frame.loc[pd.Timestamp("2026-11-05"), "AAA"]
+    spec = {**SPEC, "exits": {"stop_loss_pct": 5}}
+    db.db["idea_runs"][0]["spec"] = spec
+    _run(evening("2026-11-10"), db, closes=fake_closes(frame), fred=None)
+    got = {r["day"]: (r["exit"], r["ret"]) for r in store.shadow_days(db, 1)}
+    want = daily_frame(IdeaSpec.model_validate(spec), frame, {})
+    assert (want["exit"] != "").sum() > 3  # the path really has exits in it
+    assert len(got) == 6
+    for day, (why, ret) in got.items():
+        assert why == want.loc[pd.Timestamp(day), "exit"] and ret == pytest.approx(want.loc[pd.Timestamp(day), "ret"])

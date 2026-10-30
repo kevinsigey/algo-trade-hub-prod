@@ -22,7 +22,7 @@ from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_out, plan
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
-from tradehub.workshop.engine import target_today, tickers_for
+from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_today, tickers_for
 from tradehub.workshop.spec import IdeaSpec
 from tradehub.scripts.ideas_shadow import FRED_LEAD
 
@@ -40,6 +40,20 @@ def _send(row: dict, submit) -> dict:
         return {**row, "status": "already sent", "reason": "sent earlier this morning"}
     except (paper_orders.OrderRejected, AccountNotConnected, requests.RequestException) as exc:
         return {**row, "status": "rejected", "reason": str(exc)[:200]}
+
+
+def _exit_reason(spec: IdeaSpec, prices_frame, series) -> str:
+    """Why the idea is out, when an exit did it: the latest exit in the last month of its rule path."""
+    if not spec.exits.any():
+        return ""
+    recent = [w for w in daily_frame(spec, prices_frame, series)["exit"].iloc[-EXIT_COOLDOWN - 2:] if w]
+    if not recent:
+        return ""
+    e, why = spec.exits, recent[-1]
+    if why == "time":
+        return f"time stop: {e.max_days} days held"
+    pct = {"stop-loss": e.stop_loss_pct, "trailing": e.trailing_pct, "take-profit": e.take_profit_pct}[why]
+    return f"{why.replace('trailing', 'trailing stop')} {pct:g}% hit"
 
 
 class StalePrices(Exception):
@@ -103,9 +117,12 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 series = ({spec.when.series: fred(spec.when.series, spec.start - FRED_LEAD)}
                           if spec.when and spec.when.source == "fred" else {})
                 weights = target_today(spec, prices_frame, series)
+                exit_reason = _exit_reason(spec, prices_frame, series)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
                 rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,
                             spec.execution)
+            if not closing and exit_reason:
+                rows = [{**r, "reason": r["reason"] or exit_reason} if r["kind"] == "close" else r for r in rows]
             done = [_send(r, submit) for r in rows]
             for r in done:
                 if r["status"] == "sent":  # later ideas see this run's orders in the 25% check
