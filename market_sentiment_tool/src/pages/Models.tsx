@@ -4,6 +4,7 @@ import { Chip, type Tone } from "@/components/Chip";
 import { GateBadge } from "@/components/GateBadge";
 import { SettledBars } from "@/components/SettledBars";
 import { Stat } from "@/components/Stat";
+import SportsRecord from "@/components/SportsRecord";
 import { buildApiUrl } from "@/lib/api";
 import {
   brierPair,
@@ -96,17 +97,26 @@ export default function Models() {
       .catch((err) => setError(err instanceof Error ? err.message : "Unknown error"));
   }, []);
 
+  // The sports records come from their own endpoint, so they stay up when the scoreboard is slow or down.
   if (error) {
     return (
-      <div className="p-8">
+      <div className="mx-auto max-w-5xl space-y-10 p-8">
         <div className="rounded-lg border border-rose-900 bg-rose-950/30 p-4 text-sm text-rose-200">
           <p className="font-semibold">Models unavailable</p>
           <p className="mt-1 text-rose-300/80">{error}</p>
         </div>
+        <SportsRecord />
       </div>
     );
   }
-  if (!data) return <div className="p-8 text-slate-400">Loading models…</div>;
+  if (!data) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-10 p-8">
+        <div className="text-slate-400">Loading models…</div>
+        <SportsRecord />
+      </div>
+    );
+  }
 
   const entries = data.catalogue?.entries ?? [];
   const count = (status: EngineStatus) => entries.filter((e) => e.status === status).length;
@@ -169,6 +179,8 @@ export default function Models() {
       )}
 
       <p className="text-sm"><a href="/scoreboard" className="text-emerald-400 hover:underline">Full backtest detail</a></p>
+
+      <SportsRecord />
     </div>
   );
 }
