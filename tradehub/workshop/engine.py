@@ -140,11 +140,31 @@ def _clean(x):
     return x
 
 
-def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
-    """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
+def _frame(spec: IdeaSpec, closes: pd.DataFrame) -> pd.DataFrame:
+    """The rows the rule runs on: from the start date, dropping any day a rule ticker has no close."""
     rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
                               + [spec.benchmark, "SPY"]))
-    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
+    return closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
+
+
+def _legbars(spec: IdeaSpec, closes: pd.DataFrame) -> dict | None:
+    """For intraday exits: the single leg's daily open/high/low/close and prior close, aligned with the returns."""
+    if spec.exits.mode != "intraday" or not spec.exits.any():
+        return None
+    leg = (spec.hold or spec.short)[0]
+    cols = [f"{leg}.open", f"{leg}.high", f"{leg}.low"]
+    if any(c not in closes for c in cols):
+        raise ValueError(f"intraday exits need daily bars for {leg} (open/high/low)")
+    frame = _frame(spec, closes)
+    filled = frame[cols].fillna({c: frame[leg] for c in cols})  # a missing bar part reads as the close
+    return {"open": filled[cols[0]].to_numpy()[1:], "high": filled[cols[1]].to_numpy()[1:],
+            "low": filled[cols[2]].to_numpy()[1:], "close": frame[leg].to_numpy()[1:],
+            "prev": frame[leg].to_numpy()[:-1], "side": 1 if spec.hold else -1}
+
+
+def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
+    """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
+    frame = _frame(spec, closes)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
     # Equal weight across every leg; a short leg earns -r (rebalanced daily, borrow cost inside cost_bps).
@@ -203,11 +223,85 @@ def apply_exits(signal: np.ndarray, sleeve: np.ndarray, exits: Exits, cooldown: 
     return held, why
 
 
-def _held(spec: IdeaSpec, signal: np.ndarray, sleeve: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def apply_exits_intraday(signal: np.ndarray, b: dict[str, np.ndarray], side: int, exits: Exits,
+                         cooldown: int | None, lag: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(held, exit_reason, exit_day_return) for a one-ticker idea whose stops are real orders during the day.
+
+    `b` holds the leg's daily open/high/low/close and `prev` (the prior close) aligned with the signal. Entry is
+    the prior close. A stop (fixed or trailing, whichever is tighter) fills at the stop, or at the open when the
+    day gaps through it; a take-profit likewise. If one day touches both, the stop is assumed to come first. The
+    exit day earns prior close -> fill and the idea is out from the next day. The trailing high-water mark is the
+    best daily high before today. Time stops stay close-based (decided at the close, out after `lag`). Re-entry
+    rules are apply_exits'."""
+    n = len(signal)
+    held = np.zeros(n, dtype=bool)
+    why = np.full(n, "", dtype=object)
+    ret = np.full(n, np.nan)
+    in_pos = stopped = False
+    entry = hwm = 0.0
+    days = left = 0
+    exit_from = None
+    for i in range(n):
+        want = bool(signal[i])
+        if exit_from is not None and i >= exit_from:
+            in_pos, stopped, left, exit_from = False, True, cooldown or 0, None
+        if stopped:
+            if cooldown is None:
+                stopped = want
+            elif left == 0:
+                stopped = False
+            else:
+                left -= 1
+        if not (want and not stopped):
+            in_pos, exit_from = False, None
+            continue
+        if not in_pos:
+            in_pos, entry, hwm, days = True, b["prev"][i], b["prev"][i], 0
+        held[i] = True
+        days += 1
+        o, hi, lo, prev = b["open"][i], b["high"][i], b["low"][i], b["prev"][i]
+        stops = []
+        if exits.stop_loss_pct is not None:
+            stops.append((entry * (1 - side * exits.stop_loss_pct / 100), "stop-loss"))
+        if exits.trailing_pct is not None:
+            stops.append((hwm * (1 - side * exits.trailing_pct / 100), "trailing"))
+        fill = None
+        if stops:
+            level, kind = (max if side > 0 else min)(stops, key=lambda x: x[0])  # the tighter one binds
+            if side * (o - level) <= 0:
+                fill = (o, kind)
+            elif side * ((lo if side > 0 else hi) - level) <= 0:
+                fill = (level, kind)
+        if fill is None and exits.take_profit_pct is not None:
+            target = entry * (1 + side * exits.take_profit_pct / 100)
+            if side * (o - target) >= 0:
+                fill = (o, "take-profit")
+            elif side * ((hi if side > 0 else lo) - target) >= 0:
+                fill = (target, "take-profit")
+        hwm = max(hwm, hi) if side > 0 else min(hwm, lo)
+        if fill is not None and exit_from is None:
+            ret[i] = side * (fill[0] / prev - 1)
+            why[i] = fill[1]
+            exit_from = i + 1  # out from tomorrow: the stop order already sold
+        elif exit_from is None and exits.max_days is not None and days >= exits.max_days:
+            why[i] = "time"
+            exit_from = i + lag
+    return held, why, ret
+
+
+def _held(spec: IdeaSpec, signal: np.ndarray, sleeve: np.ndarray, legbars: dict | None = None
+          ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(position, exit_reason, sleeve) with the idea's exits applied. Intraday exits replace the exit day's sleeve
+    return with the fill (prior close -> stop/target price)."""
     if not spec.exits.any():
-        return signal, np.full(len(signal), "", dtype=object)
+        return signal, np.full(len(signal), "", dtype=object), sleeve
     lag = 2 if spec.execution.timing == "close" else 1
-    return apply_exits(signal, sleeve, spec.exits, None if spec.when is not None else EXIT_COOLDOWN, lag)
+    cooldown = None if spec.when is not None else EXIT_COOLDOWN
+    if legbars is None:
+        position, why = apply_exits(signal, sleeve, spec.exits, cooldown, lag)
+        return position, why, sleeve
+    position, why, fill = apply_exits_intraday(signal, legbars, legbars["side"], spec.exits, cooldown, lag)
+    return position, why, np.where(np.isnan(fill), sleeve, fill)
 
 
 def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
@@ -218,8 +312,8 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
 def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
     """Per trading day: the idea's return after costs, whether the condition held, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
-    position, why = _held(spec, mask, held)
-    return pd.DataFrame({"ret": _build(position, held, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
+    position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes))
+    return pd.DataFrame({"ret": _build(position, sleeve, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
                          "exit": why}, index=idx)
 
 
@@ -229,13 +323,15 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
     Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
     engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
     ahead = 2 if spec.execution.timing == "close" else 1
-    rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
-                              + [spec.benchmark, "SPY"]))
-    frame = closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)  # drop gaps exactly as _legs does
+    frame = _frame(spec, closes)  # drop gaps exactly as _legs does
     extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
     padded = pd.concat([frame, frame.iloc[[-1] * ahead].set_axis(extra)])  # phantom days copy the last close
+    for leg in list(spec.hold) + list(spec.short):  # ...as flat bars, so a phantom day can't trip an intraday stop
+        for part in ("open", "high", "low"):
+            if f"{leg}.{part}" in padded:
+                padded.loc[extra, f"{leg}.{part}"] = frame[leg].iloc[-1]
     _, mask, held, *_ = _legs(spec, padded, fred)
-    position, why = _held(spec, mask, held)  # exits too: the morning after a stop, the idea is out
+    position, why, _ = _held(spec, mask, held, _legbars(spec, padded))  # the morning after a stop, it's out
     if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
         return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}, ""
@@ -294,7 +390,9 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
         return _build(m, h, other, cost)
 
-    r = build(_held(spec, mask, held)[0])
+    legbars = _legbars(spec, closes)
+    position, _, sleeve = _held(spec, mask, held, legbars)
+    r = build(position, sleeve)
     n = len(r)
     k = int(n * (1 - spec.unseen_fraction))
     built, unseen = slice(0, k), slice(k, n)
@@ -320,13 +418,14 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
 
     rng = np.random.default_rng(seed)
     ru, bu, su, mu, hu = r[unseen], b[unseen], s[unseen], mask[unseen], held[unseen]
+    lb_u = None if legbars is None else {k: (v[unseen] if isinstance(v, np.ndarray) else v) for k, v in legbars.items()}
     if spec.when is not None:
         perm = np.empty(permutations)
         for i in range(permutations):
             shifted = np.roll(mu, int(rng.integers(MIN_CONDITION_DAYS, n_u - MIN_CONDITION_DAYS)))
-            pos = _held(spec, shifted, hu)[0]  # random timing goes through the same exits
+            pos, _, hp = _held(spec, shifted, hu, lb_u)  # random timing goes through the same exits
             sw = np.concatenate([[False], pos[1:] != pos[:-1]])
-            rp = np.where(pos, hu, other[unseen]) - cost * sw
+            rp = np.where(pos, hp, other[unseen]) - cost * sw
             perm[i] = _claim(kind, rp, bu, su, shifted)[1]
         p, beats = p_value(actual, perm)
     else:

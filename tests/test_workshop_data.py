@@ -109,3 +109,16 @@ def test_bars_columns_cut_and_cache(tmp_path):
     assert len(calls) == 1
     with pytest.raises(UnknownSymbol, match="XYZ"):
         bars(["XYZ"], date(2020, 1, 1), download=lambda *a, **k: pd.DataFrame(), now=friday_morning)
+
+
+def test_with_rule_bars_only_for_intraday_exits():
+    from tradehub.workshop.data import with_rule_bars
+    from tradehub.workshop.spec import IdeaSpec
+    prices = pd.DataFrame({"GLD": [1.0, 2.0]}, index=pd.bdate_range("2020-01-02", periods=2))
+    plain = IdeaSpec(title="gold", hold=["GLD"], claim="beats_benchmark", exits={"stop_loss_pct": 5})
+    assert with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda *a: 1 / 0) is prices
+    plain.exits.mode = "intraday"
+    got = with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda t, s: {
+        "GLD": pd.DataFrame({"open": [1.0, 2.0], "high": [1.1, 2.2], "low": [0.9, 1.8], "close": [1.0, 2.0]},
+                            index=prices.index)})
+    assert list(got.columns) == ["GLD", "GLD.open", "GLD.high", "GLD.low"]

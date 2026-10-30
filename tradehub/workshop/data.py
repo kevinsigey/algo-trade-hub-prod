@@ -131,3 +131,17 @@ def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | No
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 frame.to_csv(cache_dir / f"{t}.ohlc.csv")
     return {t: f[(f.index >= pd.Timestamp(start)) & (f.index <= pd.Timestamp(cutoff))] for t, f in out.items()}
+
+
+def add_bars(closes: pd.DataFrame, bars_by_ticker: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Closes plus <T>.open / <T>.high / <T>.low columns, the shape the engine reads for intraday exits."""
+    extra = {f"{t}.{k}": b[k] for t, b in bars_by_ticker.items() for k in ("open", "high", "low")}
+    return closes.join(pd.DataFrame(extra), how="left")
+
+
+def with_rule_bars(spec, prices: pd.DataFrame, start: date, *, bars_fn=None) -> pd.DataFrame:
+    """Attach the leg's daily bars when the idea's exits run during the day; otherwise return prices unchanged."""
+    if spec.exits.mode != "intraday" or not spec.exits.any():
+        return prices
+    leg = (spec.hold or spec.short)[0]
+    return add_bars(prices, (bars_fn or bars)([leg], start))
