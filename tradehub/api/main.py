@@ -565,10 +565,34 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
 
 
 @app.get("/api/portfolio/closed", tags=["Portfolio"])
-def get_portfolio_closed():
+def get_portfolio_closed(supabase=Depends(get_supabase)):
     from tradehub.portfolio import service
 
-    return service.closed()
+    return service.closed(supabase)
+
+
+@app.get("/api/workshop/fills", tags=["Workshop"])
+def workshop_fills(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """Kevin's paper fills, newest first, each with its idea and its full relabel history (tag first)."""
+    from tradehub.portfolio import book, service
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    try:
+        fills, client_ids = service.tagged_fills(supabase, public=False)
+    except AccountNotConnected:
+        return {"state": "not_connected", "fills": []}
+    history = workshop_store.label_history(supabase)
+    out = []
+    for f in sorted(fills, key=lambda f: f["transaction_time"], reverse=True)[:200]:
+        tag = client_ids.get(f.get("order_id")) or None
+        prev, steps = book.tag_id(tag), []
+        for h in history.get(f.get("order_id"), []):
+            steps.append({"from": prev, "to": h["idea_id"], "by": h["by"], "at": h["at"]})
+            prev = h["idea_id"]
+        out.append({"order_id": f.get("order_id"), "symbol": f["symbol"], "side": f["side"], "qty": float(f["qty"]),
+                    "price": float(f["price"]), "at": f["transaction_time"], "tag": tag, "idea_id": f["idea_id"],
+                    "idea": f["idea"], "history": steps})
+    return {"state": "live", "fills": out}
 
 
 # ════════════════════════════════════════════════════════════════════════════

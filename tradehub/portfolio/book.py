@@ -7,32 +7,64 @@ Alpaca sends numbers as strings, so everything goes through float().
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from collections import defaultdict, deque
 from datetime import datetime
 
-# Every position is manual until ideas exist (Trading HQ step 3 attributes them by client_order_id tag).
+# A fill belongs to an idea by its order's client_order_id tag (`idea-<id>-...`) or a later relabel (spec §4.6).
 MANUAL = "No idea yet (manual)"
+TAG = re.compile(r"^idea-(\d+)-")
+
+
+def tag_id(client_order_id: str | None) -> int | None:
+    m = TAG.match(client_order_id or "")
+    return int(m.group(1)) if m else None
+
+
+def tag_fills(fills: list[dict], client_ids: dict[str, str], labels: dict[str, int | None],
+              titles: dict[int, str]) -> list[dict]:
+    """Add `idea_id` and `idea` (title) to each fill. A relabel beats the tag; an id not in `titles` is manual."""
+    out = []
+    for f in fills:
+        order = f.get("order_id")
+        wanted = labels[order] if order in labels else tag_id(client_ids.get(order))
+        idea_id = wanted if wanted in titles else None
+        out.append({**f, "idea_id": idea_id, "idea": titles[idea_id] if idea_id is not None else MANUAL})
+    return out
 
 
 def _pct(new: float, old: float) -> float:
     return (new / old - 1) * 100
 
 
-def positions_view(account: dict, positions: list[dict]) -> list[dict]:
+def _split(qty: float, lots: dict[str, float]) -> list[tuple[str, float]]:
+    """Shares per idea for one position: open lots on the same side, scaled down if they exceed the position."""
+    same = {idea: q for idea, q in lots.items() if q and (q > 0) == (qty > 0) and idea != MANUAL}
+    covered = sum(same.values())
+    scale = qty / covered if abs(covered) > abs(qty) else 1.0
+    parts = [(idea, q * scale) for idea, q in same.items()]
+    rest = qty - sum(q for _, q in parts)
+    return parts + ([(MANUAL, rest)] if abs(rest) > 1e-9 else [])
+
+
+def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str, dict[str, float]] | None = None
+                   ) -> list[dict]:
     equity = float(account["equity"])
     rows = []
     for p in positions:
-        value = float(p["market_value"])
-        rows.append({
-            "symbol": p["symbol"],
-            "qty": float(p["qty"]),
-            "side": p.get("side", "long"),
-            "market_value": value,
-            "pct_of_book": abs(value) / equity * 100 if equity else None,
-            "unrealized_pl": float(p["unrealized_pl"]),
-            "idea": MANUAL,
-        })
+        qty, value, pl = float(p["qty"]), float(p["market_value"]), float(p["unrealized_pl"])
+        for idea, part in _split(qty, (open_by_idea or {}).get(p["symbol"], {})) if qty else [(MANUAL, qty)]:
+            share = part / qty if qty else 1.0
+            rows.append({
+                "symbol": p["symbol"],
+                "qty": part,
+                "side": p.get("side", "long"),
+                "market_value": value * share,
+                "pct_of_book": abs(value * share) / equity * 100 if equity else None,
+                "unrealized_pl": pl * share,
+                "idea": idea,
+            })
     cash = float(account["cash"])
     rows.append({"symbol": "Cash", "qty": None, "side": None, "market_value": cash,
                  "pct_of_book": cash / equity * 100 if equity else None, "unrealized_pl": None, "idea": None})
@@ -103,9 +135,10 @@ def _day(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
-def closed_trades(fills: list[dict]) -> list[dict]:
-    """FIFO round trips from Alpaca FILL activities. Long trades have qty > 0, shorts qty < 0."""
-    lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time]
+def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
+    """FIFO round trips from Alpaca FILL activities, plus the lots still open. Longs qty > 0, shorts qty < 0.
+    A trade carries the idea of the lot that opened it."""
+    lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time, idea]
     trades = []
     for f in sorted(fills, key=lambda f: f["transaction_time"]):
         qty = float(f["qty"]) * (1 if f["side"] == "buy" else -1)
@@ -119,15 +152,29 @@ def closed_trades(fills: list[dict]) -> list[dict]:
                 "symbol": f["symbol"], "qty": signed, "entry_price": lot[1], "exit_price": price,
                 "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed,
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
-                "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": MANUAL,
+                "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],
             })
             lot[0] -= signed
             qty += signed
             if not lot[0]:
                 book.popleft()
         if qty:
-            book.append([qty, price, at])
-    return trades
+            book.append([qty, price, at, f.get("idea", MANUAL)])
+    return trades, lots
+
+
+def closed_trades(fills: list[dict]) -> list[dict]:
+    return _fifo(fills)[0]
+
+
+def open_lots(fills: list[dict]) -> dict[str, dict[str, float]]:
+    """Open signed quantity per symbol per idea."""
+    out: dict[str, dict[str, float]] = {}
+    for symbol, book in _fifo(fills)[1].items():
+        for qty, _, _, idea in book:
+            out.setdefault(symbol, {})
+            out[symbol][idea] = out[symbol].get(idea, 0.0) + qty
+    return {s: v for s, v in out.items() if v}
 
 
 def win_rate(trades: list[dict]) -> float | None:

@@ -15,9 +15,11 @@ from datetime import UTC, datetime
 
 from tradehub.portfolio import book
 from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_price, paper_get
+from tradehub.workshop import store as workshop_store
 
 SNAPSHOTS = "portfolio_snapshots"
 FILL_PAGE = 100
+ORDER_PAGE = 500
 
 
 def read_snapshots(supa, account_number: str | None) -> list[dict]:
@@ -55,6 +57,40 @@ def _fills() -> list[dict]:
     return fills
 
 
+def _orders() -> dict[str, str]:
+    """order id -> client_order_id, for every order on the paper account (GET only)."""
+    out: dict[str, str] = {}
+    params: dict = {"status": "all", "direction": "asc", "limit": ORDER_PAGE}
+    for _ in range(20):  # ponytail: 10,000 orders cap
+        page = paper_get("/v2/orders", params)
+        out.update({o["id"]: o.get("client_order_id") or "" for o in page})
+        if len(page) < ORDER_PAGE:
+            break
+        params = {**params, "after": page[-1]["submitted_at"]}
+    return out
+
+
+def _titles(supa, public: bool) -> dict[int, str]:
+    rows = supa.table("ideas").select("id,title,published_at").execute().data
+    return {r["id"]: r["title"] for r in rows if r.get("published_at") or not public}
+
+
+def tagged_fills(supa, public: bool = True) -> tuple[list[dict], dict[str, str]]:
+    """Fills with their idea. Public views name published ideas only; anything else reads as manual."""
+    fills = _fills()
+    try:
+        client_ids = _orders()
+    except AccountNotConnected:
+        raise
+    except Exception:  # noqa: BLE001 -- no order map: fills stay unattributed rather than the page failing
+        client_ids = {}
+    try:
+        labels, titles = workshop_store.labels(supa), _titles(supa, public)
+    except Exception:  # noqa: BLE001
+        labels, titles = {}, {}
+    return book.tag_fills(fills, client_ids, labels, titles), client_ids
+
+
 def portfolio(supa, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     try:
@@ -80,10 +116,11 @@ def portfolio(supa, now: datetime | None = None) -> dict:
     except Exception:  # noqa: BLE001 -- no SPY price: the curve ends at the last snapshot
         pass
     try:
-        trades = book.closed_trades(_fills())
+        fills = tagged_fills(supa)[0]
+        trades, lots = book.closed_trades(fills), book.open_lots(fills)
     except Exception:  # noqa: BLE001
-        trades = None
-    rows = book.positions_view(account, positions)
+        trades, lots = None, None
+    rows = book.positions_view(account, positions, lots)
     score = book.scoreboard(snaps)
     score["equity"] = float(account["equity"])
     return {
@@ -97,10 +134,10 @@ def portfolio(supa, now: datetime | None = None) -> dict:
     }
 
 
-def closed(now: datetime | None = None) -> dict:
+def closed(supa, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     try:
-        trades = book.closed_trades(_fills())
+        trades = book.closed_trades(tagged_fills(supa)[0])
     except AccountNotConnected:
         return {"state": "not_connected", "as_of": None, "trades": []}
     except Exception:  # noqa: BLE001

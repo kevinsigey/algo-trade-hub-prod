@@ -35,8 +35,8 @@ class FakeQuery:
         return self
 
     def execute(self):
-        rows = [r for r in self.store.get(self.table, []) if all(r[c] == v for c, v in self.filters)]
-        rows.sort(key=lambda r: r[getattr(self, "col", "taken_at")])
+        rows = [r for r in self.store.get(self.table, []) if all(r.get(c) == v for c, v in self.filters)]
+        rows.sort(key=lambda r: r.get(getattr(self, "col", "taken_at")) or "")
         data = rows[self.lo:self.hi + 1] if hasattr(self, "lo") else rows
         return type("R", (), {"data": data})()
 
@@ -57,10 +57,10 @@ ACCOUNT = {"account_number": "PA2", "equity": "104820", "cash": "41200"}
 POSITIONS = [{"symbol": "GLD", "qty": "60", "side": "long", "market_value": "21900", "unrealized_pl": "640"}]
 
 
-def alpaca(account=ACCOUNT, positions=POSITIONS, fills=()):
+def alpaca(account=ACCOUNT, positions=POSITIONS, fills=(), orders=()):
     def fake(path, params=None):
         return {"/v2/account": account, "/v2/positions": positions,
-                "/v2/account/activities/FILL": list(fills)}[path]
+                "/v2/account/activities/FILL": list(fills), "/v2/orders": list(orders)}[path]
     return fake
 
 
@@ -174,3 +174,81 @@ def test_snapshot_job_skips_when_not_connected_or_closed(monkeypatch):
     assert portfolio_snapshot.main(MONDAY_10_CT, supa) == 0
     assert portfolio_snapshot.main(datetime(2026, 11, 1, 16, 0, tzinfo=UTC), supa) == 0  # Sunday
     assert supa.store["portfolio_snapshots"] == []
+
+
+IDEAS = [{"id": 1, "title": "Gold when rates rise", "published_at": "2026-11-01T00:00:00Z"},
+         {"id": 2, "title": "Secret idea", "published_at": None}]
+TAGGED_FILLS = [
+    {"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "40", "price": "300",
+     "transaction_time": "2026-11-02T15:00:00Z"},
+    {"id": "f2", "order_id": "b", "symbol": "GLD", "side": "buy", "qty": "20", "price": "301",
+     "transaction_time": "2026-11-02T16:00:00Z"},
+]
+ORDERS = [{"id": "a", "client_order_id": "idea-1-001", "submitted_at": "2026-11-02T15:00:00Z"},
+          {"id": "b", "client_order_id": "idea-2-001", "submitted_at": "2026-11-02T16:00:00Z"}]
+
+
+def test_portfolio_attributes_to_published_ideas_only(client_with, monkeypatch):
+    supa = FakeSupabase()
+    supa.store["ideas"] = list(IDEAS)
+    monkeypatch.setattr(service, "paper_get", alpaca(fills=TAGGED_FILLS, orders=ORDERS))
+    r = client_with(supa).get("/api/portfolio")
+    gld = {p["idea"]: p["qty"] for p in r.json()["positions"] if p["symbol"] == "GLD"}
+    assert gld == {"Gold when rates rise": 40.0, service.book.MANUAL: 20.0}
+    assert "Secret idea" not in r.text
+
+
+def test_relabel_moves_a_fill(client_with, monkeypatch):
+    supa = FakeSupabase()
+    supa.store["ideas"] = list(IDEAS)
+    supa.store["order_labels"] = [{"id": 1, "order_id": "a", "idea_id": None, "by": "k", "at": "t"}]
+    monkeypatch.setattr(service, "paper_get", alpaca(fills=TAGGED_FILLS, orders=ORDERS))
+    gld = [p["idea"] for p in client_with(supa).get("/api/portfolio").json()["positions"] if p["symbol"] == "GLD"]
+    assert gld == [service.book.MANUAL]
+
+
+def test_closed_trades_get_ideas(client_with, monkeypatch):
+    supa = FakeSupabase()
+    supa.store["ideas"] = list(IDEAS)
+    fills = TAGGED_FILLS[:1] + [{"id": "f3", "order_id": "c", "symbol": "GLD", "side": "sell", "qty": "40",
+                                 "price": "310", "transaction_time": "2026-11-04T15:00:00Z"}]
+    monkeypatch.setattr(service, "paper_get", alpaca(fills=fills, orders=ORDERS))
+    trades = client_with(supa).get("/api/portfolio/closed").json()["trades"]
+    assert [t["idea"] for t in trades] == ["Gold when rates rise"]
+
+
+def test_order_paging_follows_after(monkeypatch):
+    seen = []
+
+    def fake(path, params=None):
+        seen.append(dict(params))
+        if "after" not in params:
+            return [{"id": str(i), "client_order_id": f"c{i}", "submitted_at": f"t{i:03d}"} for i in range(500)]
+        return [{"id": "x", "client_order_id": "cx", "submitted_at": "t999"}]
+    monkeypatch.setattr(service, "paper_get", fake)
+    out = service._orders()
+    assert len(out) == 501 and seen[1]["after"] == "t499" and seen[0]["status"] == "all"
+
+
+def test_admin_fills_list_shows_history(client_with, monkeypatch):
+    from tradehub.api import admin
+    supa = FakeSupabase()
+    supa.store["ideas"] = list(IDEAS)
+    supa.store["order_labels"] = [{"id": 1, "order_id": "a", "idea_id": 2, "by": "k", "at": "t1"}]
+    monkeypatch.setattr(service, "paper_get", alpaca(fills=TAGGED_FILLS, orders=ORDERS))
+    c = client_with(supa)
+    assert c.get("/api/workshop/fills").status_code == 401
+    main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
+    rows = c.get("/api/workshop/fills").json()["fills"]
+    assert [r["order_id"] for r in rows] == ["b", "a"]
+    a = rows[1]
+    assert a["idea_id"] == 2 and a["idea"] == "Secret idea" and a["tag"] == "idea-1-001"
+    assert a["history"] == [{"from": 1, "to": 2, "by": "k", "at": "t1"}]
+
+
+def test_admin_fills_not_connected(client_with, monkeypatch):
+    from tradehub.api import admin
+    monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
+    c = client_with(FakeSupabase())
+    main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
+    assert c.get("/api/workshop/fills").json() == {"state": "not_connected", "fills": []}
