@@ -91,6 +91,13 @@ describe("Workshop pages", () => {
     expect(screen.getByDisplayValue("Bonds")).toBeInTheDocument();
   });
 
+  it("never sends the session to a path built from a non-numeric id", async () => {
+    const f = serve({});
+    render(<MemoryRouter initialEntries={["/workshop/..%2F..%2Fadmin%2Fme"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("No such idea.")).toBeInTheDocument();
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it("is admin only", async () => {
     session.token = null;
     serve({ "/api/portfolio": { body: { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] } } });

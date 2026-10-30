@@ -214,7 +214,10 @@ export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) =
 }
 
 export default function WorkshopIdea() {
-  const { id } = useParams();
+  // Only a numeric id ever reaches a URL: the requests below carry Kevin's session token, so a crafted link
+  // must not be able to point them at another API path.
+  const raw = useParams().id ?? "";
+  const id = /^\d+$/.test(raw) ? raw : null;
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<{ idea: Idea; runs: Run[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -222,10 +225,13 @@ export default function WorkshopIdea() {
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
 
-  const load = useCallback(
-    () => adminJson<{ idea: Idea; runs: Run[] }>(`/api/workshop/ideas/${id}`).then(setData).catch((e: Error) => setError(e.message)),
-    [id],
-  );
+  const load = useCallback(() => {
+    if (id === null) {
+      setError("No such idea.");
+      return Promise.resolve();
+    }
+    return adminJson<{ idea: Idea; runs: Run[] }>(`/api/workshop/ideas/${id}`).then(setData).catch((e: Error) => setError(e.message));
+  }, [id]);
   useEffect(() => {
     load();
   }, [load]);
@@ -247,6 +253,7 @@ export default function WorkshopIdea() {
   }, [data, params, draft, drafting, setParams]);
 
   const run = async (spec: IdeaSpec) => {
+    if (id === null) return;
     setRunning(true);
     setError(null);
     try {
