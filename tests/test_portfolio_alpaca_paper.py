@@ -73,3 +73,18 @@ def test_no_live_trading_host_anywhere_in_tradehub():
 def test_module_only_issues_gets():
     src = Path("tradehub/portfolio/alpaca_paper.py").read_text()
     assert not re.search(r"\.(post|patch|put|delete)\(", src)
+
+
+def test_only_paper_orders_module_writes_to_alpaca():
+    # Step 4: exactly one module may send anything but a GET to Alpaca, and it is the paper-only order path.
+    # A file that can reach Alpaca names its host (or imports PAPER_BASE / the paper helpers).
+    reaches = re.compile(r"alpaca\.markets|PAPER_BASE|DATA_BASE|alpaca_paper")
+    writers = [p for p in Path("tradehub").rglob("*.py")
+               if reaches.search(p.read_text()) and re.search(r"(?<!@app)\.(post|patch|put|delete)\(", p.read_text())]
+    assert [str(p) for p in writers] == ["tradehub/portfolio/paper_orders.py"]
+
+
+def test_paper_orders_posts_only_new_orders_to_the_paper_host():
+    src = Path("tradehub/portfolio/paper_orders.py").read_text()
+    assert len(re.findall(r"\.post\(", src)) == 1 and not re.search(r"\.(patch|put|delete)\(", src)
+    assert '"/v2/orders"' in src and "PAPER_BASE" in src and "https://" not in src
