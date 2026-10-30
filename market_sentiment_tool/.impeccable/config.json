@@ -11,6 +11,24 @@
         ],
         "createdAt": "2026-10-30T06:12:08.020Z",
         "reason": "Claude: near-black slate-950 label on emerald-500 button is ~9:1 contrast, not gray-on-color"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/pages/Workshop.tsx"
+        ],
+        "createdAt": "2026-10-30T07:14:34.920Z",
+        "reason": "Claude: near-black slate-950 label on emerald-500 button (~9:1), same as Login.tsx"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/pages/WorkshopIdea.tsx"
+        ],
+        "createdAt": "2026-10-30T07:14:34.962Z",
+        "reason": "Claude: near-black slate-950 label on emerald-500 button (~9:1), same as Login.tsx"
       }
     ]
   }
