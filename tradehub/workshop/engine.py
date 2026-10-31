@@ -29,6 +29,7 @@ CURVE_POINTS = 600
 MIN_GATE_DAYS = 63  # live-paper gate: ~3 months of data the backtest never saw (Kevin, 2026-10-30)
 GATE_WINDOW = 252  # ...judged on at most the most recent 12 months of it
 MAX_POSITION_PCT = 25
+COVERAGE_GAP = pd.Timedelta(days=365)  # analyst data: a hole this long means coverage hadn't really started
 EXIT_COOLDOWN = 21  # an idea with no condition has no fresh signal: back in after a month out (Kevin, 2026-10-30)
 CONTEXT = ("SPY", "QQQ", "IWM")
 HEADLINES = {
@@ -196,7 +197,13 @@ def _frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> pd
         if c.source == "analyst":
             acts = (fred or {})[f"{c.series}@analyst"]
             dated = acts.index[acts["target"].notna()] if c.measure == "target_upside" else acts.index
-            start = max(start, dated.min().normalize()) if len(dated) else pd.Timestamp.max
+            if not len(dated):
+                start = pd.Timestamp.max
+                continue
+            d = dated.sort_values()
+            gaps = np.flatnonzero((d[1:] - d[:-1]) > COVERAGE_GAP)
+            # Coverage begins after the last year-long hole (AAPL: one 2012 row, then nothing until 2019).
+            start = max(start, d[gaps[-1] + 1 if len(gaps) else 0].normalize())
     return closes[closes.index >= start].dropna(subset=rule)
 
 

@@ -99,3 +99,30 @@ def test_actions_after_the_last_complete_day_are_dropped():
     a = analyst("AAA", fetch=lambda t: yf_frame([("2021-06-01 10:00", "up", 0), ("2021-06-02 10:00", "down", 0)]),
                 now=datetime(2021, 6, 2, 15, tzinfo=UTC))  # 11:00 New York on the 2nd: the 2nd isn't complete
     assert list(a["action"]) == ["up"] and a.index[0].date() == date(2021, 6, 1)
+
+
+def test_coverage_starts_after_the_last_long_gap():
+    # Review: AAPL has one 2012 row, then nothing until 2019; those empty years must not count as "out" days.
+    idx = pd.bdate_range("2012-01-02", "2020-12-31")
+    rng = np.random.default_rng(1)
+    closes = pd.DataFrame({t: 100 * np.cumprod(1 + rng.normal(0, 0.01, len(idx))) for t in ("SPY", "QQQ", "IWM", "AAA")},
+                          index=idx)
+    a = actions([("2012-09-12 11:00", "main", 0), ("2019-03-04 10:00", "up", 0), ("2019-06-03 10:00", "down", 0)])
+    s = IdeaSpec(title="AAA on upgrades", hold=["AAA"], claim="beats_benchmark", start="2012-01-03",
+                 rules={"enter": {"conditions": [{"source": "analyst", "series": "AAA", "measure": "net_upgrades",
+                                                  "lookback_days": 63, "op": ">", "threshold": 0}]}})
+    assert daily_frame(s, closes, {"AAA@analyst": a}).index[0] >= pd.Timestamp("2019-03-04")
+
+
+def test_a_failed_fetch_uses_the_cached_actions(tmp_path):
+    # Review: a Yahoo hiccup (empty frame or an error) must not read as "an ETF" when yesterday's cache exists.
+    rows = [("2020-01-07 13:00", "up", 0)]
+    analyst("AAA", fetch=lambda t: yf_frame(rows), cache_dir=tmp_path, now=datetime(2021, 6, 1, 22, tzinfo=UTC))
+    today = datetime(2021, 6, 2, 22, tzinfo=UTC)
+    assert list(analyst("AAA", fetch=lambda t: pd.DataFrame(), cache_dir=tmp_path, now=today)["action"]) == ["up"]
+
+    def boom(t):
+        raise RuntimeError("429 Too Many Requests")
+    assert list(analyst("AAA", fetch=boom, cache_dir=tmp_path, now=today)["action"]) == ["up"]
+    with pytest.raises(UnknownSymbol, match="Yahoo unavailable"):
+        analyst("BBB", fetch=boom, cache_dir=tmp_path, now=today)

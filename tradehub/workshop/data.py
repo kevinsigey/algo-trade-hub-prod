@@ -165,20 +165,20 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
     env_dir = os.getenv("TRADEHUB_PRICE_CACHE")
     cache_dir = cache_dir or (Path(env_dir) if env_dir else None)
     path = cache_dir / f"{ticker}.analyst.csv" if cache_dir else None
-    if path is not None and path.is_file():
-        hit = pd.read_csv(path, index_col=0, parse_dates=True)
-        if not hit.empty and str(hit["as_of"].iloc[0]) == cutoff.isoformat():
-            return hit[["action", "target"]]
+    hit = pd.read_csv(path, index_col=0, parse_dates=True) if path is not None and path.is_file() else None
+    if hit is not None and not hit.empty and str(hit["as_of"].iloc[0]) == cutoff.isoformat():
+        return hit[["action", "target"]]
     if fetch is None:
         import yfinance as yf
         fetch = lambda t: yf.Ticker(t).upgrades_downgrades  # noqa: E731
-    none = UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none)")
     try:
         raw = fetch(ticker)
-    except Exception as exc:  # yfinance raises (HTTP 404 "No fundamentals data") for funds
-        raise none from exc
+    except Exception:  # yfinance logs a 404 and returns nothing for funds; a rate limit can raise
+        raw = None
     if raw is None or len(raw) == 0 or "Action" not in raw:
-        raise none
+        if hit is not None and not hit.empty:  # Yahoo is down or rate-limiting: yesterday's actions still hold
+            return hit[["action", "target"]]
+        raise UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none, or Yahoo unavailable)")
     idx = pd.DatetimeIndex(raw.index)
     idx = idx.tz_localize(None) if idx.tz is not None else idx
     target = pd.to_numeric(raw.get("currentPriceTarget"), errors="coerce") if "currentPriceTarget" in raw else None
@@ -187,7 +187,7 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
                          index=idx).sort_index()
     frame = frame[frame["action"].isin(ACTIONS) & (frame.index < pd.Timestamp(cutoff + timedelta(days=1)))]
     if frame.empty:
-        raise none
+        raise UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none)")
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
         frame.assign(as_of=cutoff.isoformat()).to_csv(path)
