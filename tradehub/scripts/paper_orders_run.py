@@ -51,9 +51,10 @@ def _exit_text(spec: IdeaSpec, why: str) -> str:
     e = spec.exits
     if why == "time":
         return f"time stop: {e.max_days} days held"
-    pct = {"stop-loss": e.stop_loss_pct, "trailing": e.trailing_pct, "take-profit": e.take_profit_pct}[why]
+    pct = {"stop-loss": e.stop_loss_pct, "trailing": e.trailing_pct, "take-profit": e.take_profit_pct}.get(why)
+    if pct is None and why not in ("", "time"):
+        return ""
     return f"{why.replace('trailing', 'trailing stop')} {pct:g}% hit"
-
 
 def _stopped_out(idea_id: int, spec: IdeaSpec, fills: list[dict], client_ids: dict[str, str], prices_frame,
                  series) -> str:
@@ -76,7 +77,7 @@ class StalePrices(Exception):
 
 
 def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, fred=data.fred_series,
-        bars=data.bars, cancel=paper_orders.cancel
+        bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel
         ) -> tuple[dict, dict[int, str]]:
     day = now.astimezone(NY).date()
     try:
@@ -130,8 +131,10 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 last = prices_frame.dropna(subset=list(spec.hold) + list(spec.short)).index[-1].date()
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
-                series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred)
+                series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred, analyst_fn=analyst)
                 weights, why = target_and_reason(spec, prices_frame, series)
+                if why == "no data":  # no rows to judge: flatten, no exit to name
+                    why = ""
                 exit_reason = _exit_text(spec, why)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
                 rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,

@@ -139,7 +139,7 @@ def _claim(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray, mask: np.ndar
         return v > 0, v, f"{v:+.1f} pts/yr vs benchmark"
     if kind == "beats_benchmark_when":
         if not mask.any():
-            return False, math.nan, "condition never held"
+            return False, math.nan, "the rule was never in"
         v = float(np.mean(r[mask] - b[mask]) * DAYS * 100)
         return v > 0, v, f"{v:+.1f} pts/yr vs benchmark while the rule was in"
     if kind == "ballast":
@@ -395,6 +395,8 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
     engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
     ahead = 2 if spec.execution.timing == "close" else 1
     frame = _frame(spec, closes, fred)  # drop gaps exactly as _legs does
+    if frame.empty:
+        return {}, "no data"
     extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
     padded = pd.concat([frame, frame.iloc[[-1] * ahead].set_axis(extra)])  # phantom days copy the last close
     for leg in list(spec.hold) + list(spec.short):  # ...as flat bars, so a phantom day can't trip an intraday stop

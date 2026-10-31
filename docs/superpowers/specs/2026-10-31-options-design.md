@@ -109,7 +109,7 @@ Option legs sit beside the existing hold/short and rules. Each leg has:
 
 - **"Something else" in your answer:** which play did you mean? Iron condors, calendars, and the wheel (sell puts,
   then covered calls once assigned) all fit this design.
-- Is a 2-leg cap fine for v1? Iron condors need 4 legs and would come after.
+- ~~Is a 2-leg cap fine for v1?~~ **Yes (Kevin, 2026-10-31): 2 legs for now.** Iron condors (4 legs) come after.
 
 ## 6. Not in scope
 

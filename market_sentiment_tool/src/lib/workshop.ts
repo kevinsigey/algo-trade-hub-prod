@@ -46,8 +46,8 @@ export const MEASURES: { value: Measure; label: string; hint: string; sources: S
   { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", sources: P },
   { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", sources: P },
   { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", sources: P },
-  { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N days", sources: ["analyst"] },
-  { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N days is above the price", sources: ["analyst"] },
+  { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N trading days", sources: ["analyst"] },
+  { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N trading days is above the price", sources: ["analyst"] },
 ];
 
 export interface Execution {
@@ -291,8 +291,8 @@ export function conditionText(c: Condition | null): string {
     case "vs_low": return zero && op === "<" ? `${s} new ${n}-day low` : `${s} % vs prior ${n}-day low ${op} ${t}`;
     case "volatility": return `${s} ${n}-day volatility (%/yr) ${op} ${t}`;
     case "vs_vwap": return `${s} % vs ${n}-day VWAP ${op} ${t}`;
-    case "net_upgrades": return `${s} analyst upgrades minus downgrades over ${n} days ${op} ${t}`;
-    case "target_upside": return `${s} analyst target upside (%, last ${n} days) ${op} ${t}`;
+    case "net_upgrades": return `${s} analyst upgrades minus downgrades over ${n} trading days ${op} ${t}`;
+    case "target_upside": return `${s} analyst target upside (%, last ${n} trading days) ${op} ${t}`;
   }
 }
 

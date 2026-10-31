@@ -291,6 +291,22 @@ def test_a_stop_resting_on_no_shares_is_cancelled_in_the_morning(db, monkeypatch
     assert log[0] == ("cancel", "r1")
 
 
+def test_analyst_rule_calls_analyst(db, monkeypatch):
+    spec = {**SPEC, "rules": {"enter": {"conditions": [{"source": "analyst", "series": "GLD", "measure": "net_upgrades",
+                                                         "lookback_days": 5, "op": ">", "threshold": 0}]}}}
+    live_idea(db, 1, spec=spec)
+    seen = []
+
+    def fake_analyst(ticker):
+        seen.append(ticker)
+        return pd.DataFrame({"action": ["up"], "target": [float("nan")]},
+                            index=pd.DatetimeIndex([pd.Timestamp("2020-01-02")]))
+    monkeypatch.setattr(service, "paper_get", Alpaca())
+    sub = Submit()
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, analyst=fake_analyst)
+    assert seen == ["GLD"]
+
+
 def test_if_the_stop_filled_while_cancelling_the_close_is_not_sent(db, monkeypatch):
     # Review I4: the stop sold the shares between the decision and the cancel; selling again would open a short.
     from tradehub.scripts import paper_orders_protect
@@ -312,3 +328,12 @@ def test_if_the_stop_filled_while_cancelling_the_close_is_not_sent(db, monkeypat
     paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, bars=flat_bars, cancel=lambda *a: None)
     assert sub.calls == []
     assert any("filled" in (r["reason"] or "") for r in db.db["paper_orders"])
+
+
+def test_a_rule_with_no_rows_is_flat_not_a_failure(db, monkeypatch):
+    # CodeRabbit #201: target_and_reason's "no data" must not reach _exit_text as an exit name.
+    live_idea(db, 1)
+    monkeypatch.setattr(paper_orders_run, "target_and_reason", lambda spec, prices, fred: ({}, "no data"))
+    monkeypatch.setattr(service, "paper_get", Alpaca())
+    summary, failed = paper_orders_run.run(MORNING, db, submit=Submit(), closes=closes, fred=None)
+    assert failed == {}

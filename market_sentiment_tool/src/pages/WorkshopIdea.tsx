@@ -55,7 +55,10 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
     if (key === "source" && !MEASURES.some((m) => m.value === next.measure && m.sources.includes(next.source)))
       next.measure = MEASURES.find((m) => m.sources.includes(next.source))!.value;
     // A default slow average only when the measure becomes a cross; the server checks slow > fast.
-    if (key === "measure") next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
+    if (key === "measure") {
+      next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
+      if (next.measure === "macd") next.lookback_days = Math.max(1, Number(next.lookback_days) || 1);
+    }
     onChange(next);
   };
   return (
@@ -78,9 +81,13 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
             ))}
           </select>
         </Field>
-        <Field label={c.measure === "sma_cross" ? "Fast average (days)" : "Over (trading days)"}>
-          <input type="number" className={field} value={c.lookback_days} onChange={(e) => put("lookback_days", Number(e.target.value))} />
-        </Field>
+        {c.measure === "macd" ? (
+          <div className="flex items-end text-xs text-slate-400">MACD uses fixed 12/26/9</div>
+        ) : (
+          <Field label={c.measure === "sma_cross" ? "Fast average (days)" : "Over (trading days)"}>
+            <input type="number" className={field} value={c.lookback_days} onChange={(e) => put("lookback_days", Number(e.target.value))} />
+          </Field>
+        )}
         {c.measure === "sma_cross" && (
           <Field label="Slow average (days)">
             <input type="number" className={field} value={c.slow_days ?? ""} onChange={(e) => put("slow_days", Number(e.target.value))} />

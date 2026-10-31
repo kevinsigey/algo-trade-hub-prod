@@ -56,4 +56,4 @@ WHEN = IdeaSpec(title="AAA beats SPY when rates rise", hold=["AAA"], otherwise="
 def test_condition_absent_on_new_data_waits_instead_of_failing():
     # Review finding 7: no condition days in the new data is "not judged yet", not a failed claim.
     out = gate_check(WHEN, frame(0.0, 0.002, 100).assign(on=False), END, 20)
-    assert out["status"] == "waiting" and any("condition" in r for r in out["reasons"])
+    assert out["status"] == "waiting" and any("the rule was never in" in r for r in out["reasons"])
