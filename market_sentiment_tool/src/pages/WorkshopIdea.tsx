@@ -360,7 +360,12 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
   const [data, setData] = useState<RunAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const base = `/api/workshop/ideas/${ideaId}/runs/${run.id}`;
+  useEffect(() => {
+    setData(null);
+    setError(null);
+  }, [run.id]);
   const load = async () => {
     setBusy(true);
     setError(null);
@@ -372,13 +377,23 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
       setBusy(false);
     }
   };
-  const download = () => adminDownload(`${base}/daily.csv`, `idea-${ideaId}-run-${run.id}-daily.csv`).catch((e) => setError(e.message));
+  const download = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      await adminDownload(`${base}/daily.csv`, `idea-${ideaId}-run-${run.id}-daily.csv`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
   const split = run.result.split_date;
   return (
     <div className="mt-4">
       <div className="flex flex-wrap gap-2">
         {!data && <button type="button" className={button} disabled={busy} onClick={load}>{busy ? "Loading…" : "Year by year"}</button>}
-        <button type="button" className={button} onClick={download}>Download daily data (CSV)</button>
+        <button type="button" className={button} disabled={downloading} onClick={download}>{downloading ? "Downloading…" : "Download daily data (CSV)"}</button>
       </div>
       {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
       {data && (
@@ -392,7 +407,7 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
                   <YAxis tickFormatter={(v: number) => v.toFixed(0)} stroke="#64748b" fontSize={11} width={40} />
                   <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b" }} formatter={(v: number) => [`${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} pts`, "excess"]} />
                   <ReferenceLine y={0} stroke="#475569" />
-                  {split && <ReferenceLine x={data.rolling.find((p) => p.t >= split)?.t} stroke="#94a3b8" strokeDasharray="3 3" />}
+                  {split && data.rolling.length > 0 && split >= data.rolling[0].t && split <= data.rolling[data.rolling.length - 1].t && <ReferenceLine x={data.rolling.find((p) => p.t >= split)?.t} stroke="#94a3b8" strokeDasharray="3 3" />}
                   <Line type="monotone" dataKey="excess" stroke="#fbbf24" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -409,8 +424,8 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
               </thead>
               <tbody>
                 {data.years.map((y) => (
-                  <tr key={y.year} className={`border-t border-slate-800/80 ${split && String(y.year) >= split.slice(0, 4) ? "bg-slate-900/60" : ""}`}>
-                    <td className="py-1 text-slate-300">{y.year}</td>
+                  <tr key={y.year} className={`border-t border-slate-800/80 ${split && String(y.year) > split.slice(0, 4) ? "bg-slate-900/60" : ""}`}>
+                    <td className="py-1 text-slate-300">{y.year}{split && String(y.year) === split.slice(0, 4) ? <span className="ml-1 text-xs text-slate-500">split</span> : null}</td>
                     <td className="py-1 text-right text-slate-200">{pct(y.idea)}</td>
                     <td className="py-1 text-right text-slate-400">{pct(y.bench)}</td>
                     <td className={`py-1 text-right ${y.excess >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{`${y.excess >= 0 ? "+" : "−"}${Math.abs(y.excess).toFixed(1)}`}</td>

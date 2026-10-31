@@ -452,6 +452,24 @@ describe("Workshop portfolio ideas", () => {
   });
 });
 
+describe("Workshop deeper look polish", () => {
+  it("labels the split year in the year table", async () => {
+    const ANALYSIS = {
+      data_end: "2026-10-29",
+      years: [
+        { year: 2018, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 },
+        { year: 2019, idea: 3, bench: 2, excess: 1, days_in: 60, idea_in: 3 },
+        { year: 2020, idea: 4, bench: 2, excess: 2, days_in: 70, idea_in: 4 },
+      ],
+      rolling: [{ t: "2018-01-03", excess: 1 }, { t: "2020-10-29", excess: 2 }],
+    };
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: ANALYSIS } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByText("split")).toBeInTheDocument();
+  });
+});
+
 describe("Workshop macd and analyst wording", () => {
   it("hides the days field for macd and shows the fixed text", () => {
     render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [{ source: "price", series: "SPY", measure: "macd", lookback_days: 0, slow_days: null, op: ">", threshold: 0 }] }, exit: null } } as never} onRun={vi.fn()} busy={false} />);
@@ -473,5 +491,28 @@ describe("Workshop MACD days", () => {
     fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "macd" } });
     fireEvent.click(screen.getByRole("button", { name: "Run it" }));
     expect(onRun.mock.calls[0][0].rules.enter.conditions[0].lookback_days).toBe(1);
+  });
+});
+
+describe("Workshop deeper look polish (review)", () => {
+  it("disables the download while it runs and says when it failed", async () => {
+    let finish: (r: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => { finish = res; })));
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download daily data (CSV)" }));
+    expect(await screen.findByRole("button", { name: "Downloading…" })).toBeDisabled();
+    finish(new Response("nope", { status: 500 }));
+    expect(await screen.findByText("Download failed (500)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download daily data (CSV)" })).not.toBeDisabled();
+  });
+
+  it("forgets the loaded years when the run changes", async () => {
+    serve({ "/api/workshop/ideas/1/runs/": { body: { data_end: "2026-10-29", years: [{ year: 2023, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 }], rolling: [] } } });
+    const { rerender } = render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByRole("row", { name: /2023/ })).toBeInTheDocument();
+    rerender(<MemoryRouter><VerdictCard ideaId="1" run={{ ...RUN, id: 2 } as never} onVary={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.queryByRole("row", { name: /2023/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Year by year" })).toBeInTheDocument();
   });
 });
