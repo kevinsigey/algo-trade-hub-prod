@@ -97,6 +97,37 @@ export interface IdeaSpec {
   assumptions: string[];
 }
 
+/** An event study (earnings, FOMC/CPI/jobs days, price gaps), measured the IB Python Models way. */
+export interface EventSpec {
+  kind: "event";
+  title: string;
+  tickers: string[];
+  event: "earnings" | "fomc" | "cpi" | "jobs" | "gap";
+  when: "all" | "beat" | "miss" | "up" | "down";
+  gap_pct: number;
+  window: "reaction" | "drift_1_3" | "drift_1_5" | "drift_1_10";
+  direction: "up" | "down";
+  benchmark: string;
+  start: string;
+  unseen_fraction: number;
+  assumptions: string[];
+}
+
+export const EVENT_LABELS: Record<EventSpec["event"], string> = {
+  earnings: "Earnings prints", fomc: "FOMC statement days", cpi: "CPI release days", jobs: "Jobs report days", gap: "Price gaps",
+};
+export const WINDOW_LABELS: Record<EventSpec["window"], string> = {
+  reaction: "The reaction day", drift_1_3: "Days +1 to +3", drift_1_5: "Days +1 to +5", drift_1_10: "Days +1 to +10",
+};
+
+export function isEvent(spec: unknown): spec is EventSpec {
+  return (spec as { kind?: string } | null)?.kind === "event";
+}
+
+export interface EventRow {
+  date: string; ticker: string; surprise: number | null; ar0: number; car_1_3: number; car_1_5: number; car_1_10: number; pre_5: number;
+}
+
 export interface RunResult {
   verdict: Verdict;
   headline: string;
@@ -111,6 +142,9 @@ export interface RunResult {
   variations: number;
   context: { name: string; built_cagr: number | null; unseen_cagr: number | null; unseen_max_dd: number | null }[];
   curve: { t: string; idea: number; benchmark: number }[];
+  n_events?: number;
+  per_ticker?: { ticker: string; n: number; mean: number; shrunk: number; weight: number; t: number }[];
+  events?: EventRow[];
 }
 
 export interface Run {
