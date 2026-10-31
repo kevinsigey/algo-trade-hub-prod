@@ -41,7 +41,7 @@ def test_every_route_needs_admin():
 def test_draft_without_key_is_424_with_template(api, monkeypatch):
     c, _, _ = api
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    r = c.post("/api/workshop/draft", json={"text": "gold beats stocks when rates rise"})
+    r = c.post("/api/workshop/draft", json={"text": "my cat likes the sunshine"})  # no play fits, no key
     assert r.status_code == 424
     body = r.json()
     assert body["reason"] == "no_key" and body["template"]["claim"] == "beats_benchmark"
@@ -51,8 +51,22 @@ def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
     monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    monkeypatch.setattr(main, "playbook_draft", lambda text: None)  # no play fits: the free-form draft writes it
     r = c.post("/api/workshop/draft", json={"text": "gold"})
     assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
+    assert r.json()["play"] is None
+
+
+def test_draft_matches_a_play_first(api, monkeypatch):
+    c, _, _ = api
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(main, "draft_spec", lambda text: 1 / 0)
+    r = c.post("/api/workshop/draft", json={"text": "Oil as a ballast against the fall of the S&P or general index"})
+    body = r.json()
+    assert r.status_code == 200 and body["model"] == "playbook" and body["spec"]["hold"] == ["USO"]
+    assert body["play"]["id"] == "hedge_when_market_falls" and body["play"]["why"]
+    assert {a["id"] for a in body["alternatives"]} == {"ballast_basket", "commodity_trend"}
+    assert all(a["spec"]["title"] for a in body["alternatives"])
 
 
 def test_two_runs_are_variations_1_and_2(api):
@@ -312,3 +326,11 @@ def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
     assert got["drift_pts"] == pytest.approx(-12.0)
     header = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv").text.splitlines()[0]
     assert header.startswith("date,rule_on,held,idea_ret,")
+
+
+def test_draft_from_scratch_skips_the_playbook(api, monkeypatch):
+    c, _, _ = api
+    from tradehub.workshop.spec import IdeaSpec
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down", "free": True})
+    assert r.status_code == 200 and r.json()["play"] is None and r.json()["model"] == "x/y:free"

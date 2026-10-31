@@ -408,3 +408,28 @@ describe("Workshop deeper look review fixes", () => {
     expect(f.mock.calls.filter(([u]) => String(u).includes("/api/workshop/tickers"))).toHaveLength(1);
   });
 });
+
+describe("Workshop playbook", () => {
+  const hedge = { ...SPEC, title: "Oil as a ballast", hold: ["USO"], when: undefined, rules: null };
+  const basket = { ...SPEC, title: "Oil as a ballast", hold: ["XLV", "XLP", "XLU", "MA"], when: undefined, rules: null, claim: "ballast" };
+  const DRAFT = {
+    spec: hedge, model: "playbook",
+    play: { id: "hedge_when_market_falls", name: "Hold it while the market falls", summary: "Hold the asset only after SPY has fallen.", source: "Ideas #3/#5", why: ["fall of the s&p"] },
+    alternatives: [{ id: "ballast_basket", name: "Ballast basket", summary: "Always hold a low-volatility basket.", source: "Strategy HQ v5.0", why: ["ballast"], spec: basket }],
+  };
+
+  it("shows the matched play and switches to a close alternative", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Oil ballast", plain_words: "Oil as a ballast against the fall of the S&P", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: DRAFT },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Hold it while the market falls")).toBeInTheDocument();
+    expect(screen.getByText(/fall of the s&p/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("USO")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use Ballast basket instead" }));
+    expect(await screen.findByDisplayValue("XLV, XLP, XLU, MA")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Write it from scratch" }));
+    await waitFor(() => expect(posts(f).some(([u, b]) => String(u).includes("/api/workshop/draft") && JSON.parse(String(b)).free === true)).toBe(true));
+  });
+});

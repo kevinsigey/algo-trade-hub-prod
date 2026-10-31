@@ -38,6 +38,7 @@ from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes 
     analyst as workshop_analyst, fred_series as workshop_fred, rule_series, ticker_info as workshop_ticker_info, \
     with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
+from tradehub.workshop.playbook import draft as playbook_draft
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, tickers_for
 from tradehub.workshop.data import NY
@@ -420,6 +421,7 @@ def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
 # ── Trading HQ Workshop (step 2): Kevin-only. Plain words -> draft -> Kevin confirms -> run -> verdict. ──
 class _DraftIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    free: bool = False  # skip the playbook: the AI writes the whole spec
 
 
 class _IdeaIn(BaseModel):
@@ -439,12 +441,19 @@ def _fred_start(start: date) -> date:
 
 @app.post("/api/workshop/draft", tags=["Workshop"])
 def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
+    d = None if body.free else playbook_draft(body.text)  # a known play first; the AI only picks among the matches
+    if d is not None:
+        def play(x):
+            return {"id": x.play.id, "name": x.play.name, "summary": x.play.summary, "source": x.play.source,
+                    "why": list(x.why)}
+        return {"spec": d.spec.model_dump(mode="json"), "model": d.model, "play": play(d),
+                "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives]}
     try:
         spec, model = draft_spec(body.text)
     except DraftUnavailable as exc:
         return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
                                                       "template": blank_spec()})
-    return {"spec": spec.model_dump(mode="json"), "model": model}
+    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": []}
 
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])

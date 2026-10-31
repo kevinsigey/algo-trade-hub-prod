@@ -24,6 +24,8 @@ import {
   type Exits,
   type GateResult,
   type Group,
+  type DraftResponse,
+  type PlayMatch,
   type Rules,
   type RunAnalysis,
   type TickerNames,
@@ -619,7 +621,7 @@ export default function WorkshopIdea() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string } | null>(null);
+  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"] } | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -634,21 +636,34 @@ export default function WorkshopIdea() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    if (!data || params.get("draft") !== "1" || draft || drafting) return;
+  const requestDraft = useCallback((text: string, title: string, free = false) => {
     setDrafting(true);
-    adminJson<{ spec: IdeaSpec; model: string }>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text: data.idea.plain_words }) })
-      .then((d) => setDraft({ spec: d.spec, model: d.model }))
+    adminJson<DraftResponse>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text, free }) })
+      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
-        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
+        if (template) setDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
         else setError(e instanceof Error ? e.message : "Draft failed");
       })
       .finally(() => {
         setDrafting(false);
         setParams({}, { replace: true });
       });
-  }, [data, params, draft, drafting, setParams]);
+  }, [setParams]);
+
+  useEffect(() => {
+    if (!data || params.get("draft") !== "1" || draft || drafting) return;
+    requestDraft(data.idea.plain_words, data.idea.title);
+  }, [data, params, draft, drafting, requestDraft]);
+
+  /** Swap the draft for one of the other plays the words matched. */
+  const switchPlay = (alt: DraftResponse["alternatives"][number]) => {
+    if (!draft?.play) return;
+    const { spec: current } = draft;
+    const others = (draft.alternatives ?? []).filter((a) => a.id !== alt.id);
+    const { spec, ...play } = alt;
+    setDraft({ spec, model: "playbook", play, alternatives: [...others, { ...draft.play, spec: current }] });
+  };
 
   const run = async (spec: IdeaSpec) => {
     if (id === null) return;
@@ -677,6 +692,25 @@ export default function WorkshopIdea() {
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
         </p>
+      )}
+      {draft?.play && data && (
+        <section className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm" aria-label="Matched play">
+          <div className="text-xs uppercase tracking-wide text-emerald-300">Matched play</div>
+          <div className="mt-1 font-semibold text-white">{draft.play.name}</div>
+          <p className="mt-0.5 text-slate-300">{draft.play.summary}</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Matched on: {draft.play.why.map((w) => `“${w}”`).join(", ")} · from {draft.play.source}
+            {draft.model && draft.model !== "playbook" ? ` · picked by ${draft.model}` : " · picked by word match"}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(draft.alternatives ?? []).map((a) => (
+              <button key={a.id} type="button" className={button} onClick={() => switchPlay(a)}>Use {a.name} instead</button>
+            ))}
+            <button type="button" className={button} disabled={drafting} onClick={() => { setDraft(null); requestDraft(data.idea.plain_words, data.idea.title, true); }}>
+              Write it from scratch
+            </button>
+          </div>
+        </section>
       )}
       {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} />}
       {data && data.runs.length === 0 && !draft && !drafting && (

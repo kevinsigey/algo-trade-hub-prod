@@ -214,6 +214,22 @@ export interface RunAnalysis {
   rolling: { t: string; excess: number }[];
 }
 
+/** The playbook play the draft was matched to, and why (the words that matched). */
+export interface PlayMatch {
+  id: string;
+  name: string;
+  summary: string;
+  source: string;
+  why: string[];
+}
+
+export interface DraftResponse {
+  spec: IdeaSpec;
+  model: string;
+  play: PlayMatch | null;
+  alternatives: (PlayMatch & { spec: IdeaSpec })[];
+}
+
 export type TickerNames = Record<string, { name: string; kind: string } | null>;
 
 /** A Workshop request, signed with Kevin's session. Errors carry the server's detail and parsed body. */
