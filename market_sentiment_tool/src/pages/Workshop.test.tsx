@@ -452,6 +452,24 @@ describe("Workshop portfolio ideas", () => {
   });
 });
 
+describe("Workshop deeper look polish", () => {
+  it("labels the split year in the year table", async () => {
+    const ANALYSIS = {
+      data_end: "2026-10-29",
+      years: [
+        { year: 2018, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 },
+        { year: 2019, idea: 3, bench: 2, excess: 1, days_in: 60, idea_in: 3 },
+        { year: 2020, idea: 4, bench: 2, excess: 2, days_in: 70, idea_in: 4 },
+      ],
+      rolling: [{ t: "2018-01-03", excess: 1 }, { t: "2020-10-29", excess: 2 }],
+    };
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: ANALYSIS } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByText("split")).toBeInTheDocument();
+  });
+});
+
 describe("Workshop macd and analyst wording", () => {
   it("hides the days field for macd and shows the fixed text", () => {
     render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [{ source: "price", series: "SPY", measure: "macd", lookback_days: 0, slow_days: null, op: ">", threshold: 0 }] }, exit: null } } as never} onRun={vi.fn()} busy={false} />);
