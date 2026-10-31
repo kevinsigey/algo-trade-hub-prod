@@ -97,3 +97,21 @@ def test_close_plays_come_back_as_alternatives(monkeypatch):
     assert out.play.id == "hedge_when_market_falls"
     assert {a.play.id for a in out.alternatives} == {"ballast_basket", "commodity_trend"}
     assert all(isinstance(a.spec, IdeaSpec) for a in out.alternatives)
+
+
+def test_slot_values_that_break_the_spec_fall_back_to_defaults(monkeypatch):
+    # Self-review: "200/50" (fast longer than slow) or an AI pick like it must not 500 the draft.
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    out = playbook.draft("SPY 200/50 moving average cross")
+    c = out.spec.rules.enter.conditions[0]
+    assert out.play.id == "trend_following" and (c.lookback_days, c.slow_days) == (50, 200)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    out = playbook.draft("SPY golden cross", post=lambda *a, **k: _reply({"play": "trend_following",
+                                                                          "values": {"fast": 150, "slow": 100}}))
+    c = out.spec.rules.enter.conditions[0]
+    assert (c.lookback_days, c.slow_days) == (50, 200)
+
+
+def test_a_day_ma_is_a_moving_average_not_mastercard():
+    assert playbook.tickers_in("hold SPY while it is above its 200-day MA") == ["SPY"]
+    assert playbook.tickers_in("hold XLV and MA as ballast") == ["XLV", "MA"]

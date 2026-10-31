@@ -35,13 +35,20 @@ NOT_TICKERS = {"VIX", "FED", "FOMC", "CPI", "GDP", "RSI", "MACD", "SMA", "EMA", 
                "EPS", "PE", "ATH", "YOY", "QOQ", "OK", "TO", "IN", "ON", "AT", "OF", "IT", "IS", "BE", "VWAP", "DMA"}
 
 
-def tickers_in(text: str) -> list[str]:
-    """Tickers the words name, in order: $TICKER or a capitalised 2-5 letter word, and plain names (gold -> GLD)."""
-    found: list[tuple[int, str]] = []
+def _capitalised(text: str) -> list[tuple[int, str]]:
+    """$TICKER, or a capitalised 2-5 letter word that isn't jargon ("200-day MA" is a moving average, not Mastercard)."""
+    out = []
     for m in re.finditer(r"\$([A-Za-z][A-Za-z.\-]{0,9})|\b([A-Z]{2,5})\b", text):
         sym = (m.group(1) or m.group(2)).upper()
-        if m.group(1) or sym not in NOT_TICKERS:
-            found.append((m.start(), sym))
+        if m.group(2) and (sym in NOT_TICKERS or (sym == "MA" and re.search(r"(\d|day)[- ]?$", text[:m.start()]))):
+            continue
+        out.append((m.start(), sym))
+    return out
+
+
+def tickers_in(text: str) -> list[str]:
+    """Tickers the words name, in order: $TICKER or a capitalised 2-5 letter word, and plain names (gold -> GLD)."""
+    found = _capitalised(text)
     low = text.lower()
     for pattern, sym in NAMES:
         for m in re.finditer(pattern, low):
@@ -52,8 +59,7 @@ def tickers_in(text: str) -> list[str]:
 
 
 def _explicit(text: str) -> list[str]:
-    return [s for s in (m.group(1) or m.group(2) for m in re.finditer(r"\$([A-Za-z][A-Za-z.\-]{0,9})|\b([A-Z]{2,5})\b",
-                                                                       text)) if s.upper() not in NOT_TICKERS or s.islower()]
+    return [s for _, s in _capitalised(text)]
 
 
 # ---- slots ----
@@ -350,6 +356,16 @@ def fill(play: Play, text: str) -> dict:
     return values
 
 
+def _safe_build(play_id: str, tries: list[dict], title: str) -> IdeaSpec | None:
+    """The first of these value sets that makes a valid spec (words or the AI can pick, e.g., fast > slow)."""
+    for values in tries:
+        try:
+            return build(play_id, values, title)
+        except ValueError:  # pydantic's ValidationError is a ValueError
+            continue
+    return None
+
+
 def build(play_id: str, values: dict, title: str) -> IdeaSpec:
     play = BY_ID[play_id]
     v = {s.name: s.default for s in play.slots} | {k: x for k, x in values.items() if k in {s.name for s in play.slots}}
@@ -423,6 +439,6 @@ def draft(text: str, *, post=requests.post, top: int = 3) -> Drafted | None:
                     values[s.name] = s.coerce(ai_values[s.name])
     title = _title(text)
     why = next(m.why for m in cands if m.play.id == chosen)
-    alts = [Drafted(m.play, build(m.play.id, filled[m.play.id], title), "playbook", m.why)
-            for m in cands if m.play.id != chosen]
-    return Drafted(BY_ID[chosen], build(chosen, values, title), model, why, alts)
+    alts = [Drafted(m.play, spec, "playbook", m.why) for m in cands if m.play.id != chosen
+            for spec in [_safe_build(m.play.id, [filled[m.play.id], {}], title)] if spec is not None]
+    return Drafted(BY_ID[chosen], _safe_build(chosen, [values, filled[chosen], {}], title), model, why, alts)
