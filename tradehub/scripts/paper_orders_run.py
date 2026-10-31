@@ -137,7 +137,8 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                     why = ""
                 exit_reason = _exit_text(spec, why)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
-                rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,                            spec.execution)
+                rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,
+                            spec.execution)
                 waiting_out = _stopped_out(idea["id"], spec, fills, client_ids, prices_frame, series)
                 if waiting_out:  # a real stop sold it: no buying back until the rule gives a fresh signal
                     rows = [{**r, "status": "skip", "reason": waiting_out} if r["kind"] == "open" else r

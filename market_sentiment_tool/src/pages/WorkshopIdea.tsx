@@ -58,7 +58,8 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
     if (key === "measure") {
       next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
       if (next.measure === "macd") next.lookback_days = Math.max(1, Number(next.lookback_days) || 1);
-    }    onChange(next);
+    }
+    onChange(next);
   };
   return (
     <div className="mt-3 rounded-lg border border-slate-800 p-3">

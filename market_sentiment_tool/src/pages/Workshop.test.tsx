@@ -344,7 +344,8 @@ describe("Workshop analyst rules (step 6 Part B)", () => {
     open();
     expect(screen.getByText("Data from ~2019, stocks only (no ETFs).")).toBeInTheDocument();
     expect(conditionText({ source: "analyst", series: "AAPL", measure: "net_upgrades", lookback_days: 63, op: ">", threshold: 0 } as never))
-      .toBe("AAPL analyst upgrades minus downgrades over 63 trading days > 0");  });
+      .toBe("AAPL analyst upgrades minus downgrades over 63 trading days > 0");
+  });
 });
 
 describe("Workshop deeper look", () => {
@@ -461,5 +462,16 @@ describe("Workshop macd and analyst wording", () => {
   it("says analyst measures use trading days", () => {
     expect(conditionText({ source: "analyst", series: "AAPL", measure: "target_upside", lookback_days: 5, op: ">", threshold: 0 } as never))
       .toBe("AAPL analyst target upside (%, last 5 trading days) > 0");
+  });
+});
+
+describe("Workshop MACD days", () => {
+  it("saves a valid days value when MACD hides the field", () => {
+    const onRun = vi.fn();
+    const rsi = { source: "price", series: "SPY", measure: "rsi", lookback_days: 0, slow_days: null, op: "<", threshold: 30 };
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [rsi] }, exit: null } } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "macd" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0].lookback_days).toBe(1);
   });
 });

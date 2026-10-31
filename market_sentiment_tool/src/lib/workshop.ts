@@ -292,7 +292,8 @@ export function conditionText(c: Condition | null): string {
     case "volatility": return `${s} ${n}-day volatility (%/yr) ${op} ${t}`;
     case "vs_vwap": return `${s} % vs ${n}-day VWAP ${op} ${t}`;
     case "net_upgrades": return `${s} analyst upgrades minus downgrades over ${n} trading days ${op} ${t}`;
-    case "target_upside": return `${s} analyst target upside (%, last ${n} trading days) ${op} ${t}`;  }
+    case "target_upside": return `${s} analyst target upside (%, last ${n} trading days) ${op} ${t}`;
+  }
 }
 
 /** A spec's rules, reading a legacy `when` the way the server does. */
