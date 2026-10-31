@@ -122,7 +122,8 @@ def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | No
         for t in missing:
             if raw is None or raw.empty or ("Close", t) not in raw:
                 raise UnknownSymbol(f"no daily prices for {t}")
-            frame = pd.DataFrame({k.lower(): raw[(k, t)] for k in ("Open", "High", "Low", "Close", "Volume")}).dropna()
+            frame = pd.DataFrame({k.lower(): raw[(k, t)] for k in ("Open", "High", "Low", "Close", "Volume")})
+            frame = frame.dropna(subset=["open", "high", "low", "close"])  # a missing volume only blanks VWAP
             frame.index = pd.DatetimeIndex(frame.index).tz_localize(None)
             frame = frame[frame.index <= pd.Timestamp(cutoff)]
             if frame.empty:

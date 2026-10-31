@@ -199,7 +199,7 @@ export async function adminJson<T>(path: string, init: RequestInit = {}): Promis
   }
   if (!response.ok) {
     const detail = body?.detail;
-    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? "That draft has a field the test can't use." : `Request failed (${response.status})`;
+    const message = typeof detail === "string" ? detail : Array.isArray(detail) ? `That draft has a field the test can't use: ${String(detail[0]?.msg ?? "").replace(/^Value error, /, "")}` : `Request failed (${response.status})`;
     throw new ApiError(message, response.status, body);
   }
   return body as T;

@@ -306,3 +306,23 @@ describe("Workshop rules (step 6)", () => {
     expect(sent.rules.exit.conditions).toHaveLength(1);
   });
 });
+
+describe("Workshop review fixes (step 6)", () => {
+  it("lets Kevin type a slow average shorter than 200", () => {
+    const cross = { source: "price", series: "SPY", measure: "sma_cross", lookback_days: 50, slow_days: 200, op: ">", threshold: 0 };
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [cross] }, exit: null } } as never} onRun={onRun} busy={false} />);
+    const slow = screen.getByLabelText("Slow average (days)");
+    fireEvent.change(slow, { target: { value: "1" } });
+    expect(slow).toHaveValue(1); // mid-typing, not rewritten to 200
+    for (const v of ["15", "150"]) fireEvent.change(slow, { target: { value: v } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0].slow_days).toBe(150);
+  });
+
+  it("shows the server's reason for a rejected rule", async () => {
+    serve({ "/api/workshop/ideas/1/runs": { status: 422, body: { detail: [{ loc: ["body"], msg: "Value error, sma_cross needs slow_days longer than lookback_days", type: "value_error" }] } } });
+    const { adminJson } = await import("@/lib/workshop");
+    await expect(adminJson("/api/workshop/ideas/1/runs", { method: "POST", body: "{}" })).rejects.toThrow("sma_cross needs slow_days longer than lookback_days");
+  });
+});

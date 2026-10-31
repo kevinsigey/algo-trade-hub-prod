@@ -48,8 +48,8 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
   const put = <K extends keyof Condition>(key: K, value: Condition[K]) => {
     const next = { ...c, [key]: value };
     if (key === "source" && !MEASURES.some((m) => m.value === next.measure && (next.source === "price" || m.fred))) next.measure = "level";
-    if (next.measure === "sma_cross" && !(next.slow_days && next.slow_days > next.lookback_days)) next.slow_days = Math.max(200, next.lookback_days + 1);
-    if (next.measure !== "sma_cross") next.slow_days = null;
+    // A default slow average only when the measure becomes a cross; the server checks slow > fast.
+    if (key === "measure") next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
     onChange(next);
   };
   return (
@@ -90,7 +90,11 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
         </Field>
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-        <span>{hint}</span>
+        {c.measure === "sma_cross" && (c.slow_days ?? 0) <= c.lookback_days ? (
+          <span className="text-amber-300">The slow average needs more days than the fast one.</span>
+        ) : (
+          <span>{hint}</span>
+        )}
         {onRemove && (
           <button type="button" aria-label={`Remove ${label}`} className="text-slate-400 hover:text-red-300" onClick={onRemove}>Remove</button>
         )}

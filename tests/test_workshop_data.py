@@ -150,3 +150,16 @@ def test_vwap_rule_gets_bars():
                 for t in tickers}
     got = with_rule_bars(s, prices, date(2020, 1, 1), bars_fn=fn)
     assert asked == [["GLD", "SPY"]] and "SPY.volume" in got and "GLD.open" in got
+
+
+def test_missing_volume_keeps_the_bar(tmp_path):
+    # Review: a NaN volume must not drop a day's open/high/low (an intraday stop would be skipped).
+    from tradehub.workshop.data import bars
+    base = fake_bars([])
+
+    def download(tickers, **kw):
+        df = base(tickers, **kw)
+        df.loc[IDX[2], ("Volume", tickers[0])] = float("nan")
+        return df
+    out = bars(["SPY"], date(2020, 1, 1), download=download, now=datetime(2020, 1, 10, 15, tzinfo=UTC))["SPY"]
+    assert IDX[2] in out.index and pd.isna(out.loc[IDX[2], "volume"])
