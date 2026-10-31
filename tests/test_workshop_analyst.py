@@ -7,9 +7,8 @@ import pytest
 
 from tradehub.workshop import signals
 from tradehub.workshop.data import UnknownSymbol, analyst
-from tradehub.workshop.engine import condition_mask, daily_frame
+from tradehub.workshop.engine import condition_mask, daily_frame, target_and_reason
 from tradehub.workshop.spec import IdeaSpec
-
 IDX = pd.bdate_range("2020-01-06", periods=300)
 
 
@@ -136,6 +135,12 @@ def test_actions_just_before_the_start_still_count():
     net = signals.analyst_measure(a, IDX, "net_upgrades", 5)
     assert up.iloc[0] == pytest.approx(50.0) and net.iloc[0] == 1
     assert np.isnan(up.iloc[3]) and net.iloc[3] == 0  # aged out of the 5-day window
+
+
+def test_target_with_no_rows_is_flat():
+    a = actions([("2020-01-07 13:00", "main", 0.0), ("2020-01-08 13:00", "up", 0.0)])
+    spec = _spec(measure="target_upside")
+    assert target_and_reason(spec, market(), {"AAA@analyst": a}) == ({}, "no data")
 
 
 def test_analyst_cache_written_atomically(tmp_path, monkeypatch):

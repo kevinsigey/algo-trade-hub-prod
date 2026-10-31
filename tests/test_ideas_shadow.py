@@ -137,3 +137,18 @@ def test_intraday_ideas_read_daily_bars(db):
         return {t: pd.DataFrame({"open": f[t], "high": f[t], "low": f[t], "close": f[t]}) for t in tickers}
     added, failed = ideas_shadow.run(evening("2026-11-04"), db, closes=fake_closes(prices()), fred=None, bars=bars)
     assert failed == {} and added == {1: 2} and seen == [("AAA",)]
+
+
+def test_analyst_rule_calls_analyst(db):
+    spec = {"title": "AAA upgrades", "hold": ["AAA"], "claim": "beats_benchmark", "start": "2024-01-02",
+            "rules": {"enter": {"conditions": [{"source": "analyst", "series": "AAA", "measure": "net_upgrades",
+                                               "lookback_days": 5, "op": ">", "threshold": 0}]}}}
+    db.db["idea_runs"][0]["spec"] = spec
+    seen = []
+
+    def fake_analyst(ticker):
+        seen.append(ticker)
+        return pd.DataFrame({"action": ["up"], "target": [float("nan")]},
+                            index=pd.DatetimeIndex([pd.Timestamp("2024-01-02")]))
+    _run(evening("2026-11-04"), db, closes=fake_closes(prices()), fred=None, analyst=fake_analyst)
+    assert seen == ["AAA"]

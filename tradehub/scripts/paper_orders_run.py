@@ -76,7 +76,7 @@ class StalePrices(Exception):
 
 
 def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, fred=data.fred_series,
-        bars=data.bars, cancel=paper_orders.cancel
+        bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel
         ) -> tuple[dict, dict[int, str]]:
     day = now.astimezone(NY).date()
     try:
@@ -130,7 +130,7 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 last = prices_frame.dropna(subset=list(spec.hold) + list(spec.short)).index[-1].date()
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
-                series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred)
+                series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred, analyst_fn=analyst)
                 weights, why = target_and_reason(spec, prices_frame, series)
                 exit_reason = _exit_text(spec, why)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
