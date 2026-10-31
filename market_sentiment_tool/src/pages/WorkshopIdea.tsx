@@ -313,7 +313,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         type="button"
         onClick={() => onRun(spec)}
         disabled={busy}
-        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50"
       >
         {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} {busy ? "Testing…" : "Run it"}
       </button>
@@ -543,7 +543,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
             </label>
             <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
             <button type="button" disabled={busy || gate?.status !== "ready"} onClick={goLive}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
               Go live on paper
             </button>
           </div>
