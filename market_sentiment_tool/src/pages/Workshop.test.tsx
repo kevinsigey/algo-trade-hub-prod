@@ -431,6 +431,9 @@ describe("Workshop playbook", () => {
     expect(await screen.findByDisplayValue("XLV, XLP, XLU, MA")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Write it from scratch" }));
     await waitFor(() => expect(posts(f).some(([u, b]) => String(u).includes("/api/workshop/draft") && JSON.parse(String(b)).free === true)).toBe(true));
+  });
+});
+
 describe("Workshop portfolio ideas", () => {
   it("tests the idea inside a portfolio when asked", () => {
     const onRun = vi.fn();
