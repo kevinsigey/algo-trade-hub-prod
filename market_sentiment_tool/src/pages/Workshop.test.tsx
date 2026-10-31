@@ -564,3 +564,24 @@ describe("Workshop: my own event dates", () => {
       { ticker: "GOOGL", date: "2026-07-22", surprise: 214.1 }, { ticker: "XOM", date: "2026-04-29", surprise: -3.5 }]);
   });
 });
+
+describe("Workshop event review fixes", () => {
+  it("switching to my own dates drops the old tickers", () => {
+    const onRun = vi.fn();
+    const EV = { kind: "event", title: "XOM beats", tickers: ["XOM"], event: "earnings", when: "beat", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EV as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Event"), { target: { value: "custom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].tickers).toEqual([]);
+  });
+
+  it("shows a dash for a missing event count and the server's marks", () => {
+    const run = { ...RUN, id: 11, verdict: "NOT ENOUGH DATA",
+      spec: { kind: "event", title: "x", tickers: ["XOM"], event: "earnings", when: "all", gap_pct: 5, window: "drift_1_5",
+              direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] },
+      result: { ...RUN.result, kind: "event", claim: null, shuffle: null, t_test: null, periods: null, reason: "only 4 events", context: [], curve: [] } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/· — events/)).toBeInTheDocument();
+  });
+});

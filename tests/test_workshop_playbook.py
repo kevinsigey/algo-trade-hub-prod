@@ -11,7 +11,8 @@ from tradehub.workshop.spec import IdeaSpec
 def test_every_play_builds_a_valid_spec_from_its_defaults(play):
     spec = playbook.build(play.id, {}, "A play built from its defaults")
     from tradehub.workshop.events import EventSpec
-    assert isinstance(spec, (IdeaSpec, EventSpec)) and spec.title == "A play built from its defaults"
+    want = EventSpec if play.id in ("earnings_drift", "macro_event_day", "gap_bounce") else IdeaSpec
+    assert type(spec) is want and spec.title == "A play built from its defaults"
 
 
 WORDS = [

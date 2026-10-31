@@ -395,9 +395,10 @@ def test_public_pages_cope_with_a_published_event_study(api, monkeypatch):
     monkeypatch.setattr(main, "workshop_earnings", lambda t: "e")
     monkeypatch.setattr(main, "run_event_test", lambda *a, **k: {**RESULT, "verdict": "PASS"})
     idea = c.post("/api/workshop/ideas", json={"title": "XOM beats", "plain_words": "xom"}).json()
-    c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": EVENT})
-    c.post(f"/api/workshop/ideas/{idea['id']}/publish")
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": EVENT}).status_code == 200
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/publish").status_code == 200
     listed = TestClient(main.app).get("/api/ideas")
-    assert listed.status_code == 200
+    assert listed.status_code == 200 and listed.json()[0]["claim"] is None
     record = TestClient(main.app).get(f"/api/ideas/{idea['id']}")
-    assert record.status_code in (200, 404)  # 404 only if publishing needs more than a run
+    assert record.status_code == 200
+    assert all(r["claim"] is None for r in record.json()["runs"])

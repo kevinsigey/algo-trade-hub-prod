@@ -187,7 +187,9 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
     col, words = WINDOWS[spec.window]
     sign = 1.0 if spec.direction == "up" else -1.0
     n = len(rows)
-    k = int(n * (1 - spec.unseen_fraction))
+    # Split between days, not rows: every ticker's event on one day sits on the same side of the split.
+    ud = rows["day"].drop_duplicates().to_numpy()
+    k = int(np.searchsorted(rows["day"].to_numpy(), ud[int(len(ud) * (1 - spec.unseen_fraction))])) if len(ud) else 0
     bar = 0.05 / variations
     base = {"kind": "event", "variations": variations, "n_events": n,
             "split_date": str(rows["day"].iloc[k].date()) if n > k else None,
@@ -210,34 +212,38 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
         return v > 0, v, (f"{sign * v:+.2f}% average move vs {spec.benchmark} over {words}, {len(x)} events")
     on_b, on_u = claim(signed[:k]), claim(signed[k:])
 
-    # Random dates: the same window on non-event days of the unseen span, same count per ticker.
+    # Random dates: the same window on non-event days of the unseen span. One random day is drawn per event DAY and
+    # used for every ticker that had an event that day, so a shared calendar (FOMC/CPI/jobs) keeps its same-day
+    # dependence across tickers (drawing each ticker on its own would make the null too narrow).
     rng = np.random.default_rng(seed)
     frame = closes[closes.index >= pd.Timestamp(spec.start)]
     r = frame.pct_change()
     unseen = rows.iloc[k:]
-    lo = unseen["day"].min()
-    pools = []
-    for t, cnt in unseen["ticker"].value_counts().items():
-        bench = 0.0 if t == spec.benchmark else r[spec.benchmark]
-        w = _windows((r[t] - bench).to_numpy(dtype=float))[col]
-        ok = (frame.index >= lo) & ~frame.index.isin(rows.loc[rows["ticker"] == t, "day"]) & ~np.isnan(w)
-        pools.append((sign * w[ok], int(cnt)))
-    perm = np.array([np.mean(np.concatenate([rng.choice(p, size=c, replace=True) for p, c in pools if len(p)]))
-                     for _ in range(permutations)])
+    names = list(dict.fromkeys(unseen["ticker"]))
+    W = np.vstack([sign * _windows((r[t] - (0.0 if t == spec.benchmark else r[spec.benchmark])).to_numpy(dtype=float))[col]
+                   for t in names])
+    event_days = frame.index.isin(rows["day"])
+    pool = np.flatnonzero((frame.index >= unseen["day"].min()) & ~event_days & ~np.all(np.isnan(W), axis=0))
+    day_codes, day_of_row = np.unique(unseen["day"].to_numpy(), return_inverse=True)
+    t_of_row = np.array([names.index(t) for t in unseen["ticker"]])
+    picks = rng.choice(pool, size=(permutations, len(day_codes)), replace=True)
+    perm = np.nanmean(W[t_of_row[None, :], picks[:, day_of_row]], axis=1)
     p, beats = p_value(on_u[1], perm)
     verdict = verdict_of(on_u[0], p, bar)
     headline = (HEADLINES["pass"] if verdict == "PASS" else HEADLINES["chance"] if on_u[0]
                 else HEADLINES["overfit"] if on_b[0] else HEADLINES["fail"])
     t = stats.ttest_1samp(signed[k:], 0.0, alternative="greater")
     chunks = np.array_split(signed, 5)
+    held = int(sum(float(np.mean(c)) > 0 for c in chunks if len(c)))
     per = shrink(rows.assign(x=rows[col]), "x").sort_values("n", ascending=False)
     return _clean({
         **base, "verdict": verdict, "headline": headline, "reason": None,
         "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
                   "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
         "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
-                    "method": "random dates"},
-        "t_test": {"mean_daily_diff": float(np.mean(signed[k:])), "t": float(t.statistic), "p": float(t.pvalue)},
-        "periods": {"held": int(sum(float(np.mean(c)) > 0 for c in chunks if len(c))), "of": 5},
+                    "method": "random dates", "holds": bool(p < bar)},
+        "t_test": {"mean_daily_diff": float(np.mean(signed[k:])), "t": float(t.statistic), "p": float(t.pvalue),
+                   "holds": bool(t.pvalue < 0.05)},
+        "periods": {"held": held, "of": 5, "holds": True if held >= 4 else False if held <= 1 else None},
         "per_ticker": per.to_dict("records"), "context": [], "curve": [],
     })

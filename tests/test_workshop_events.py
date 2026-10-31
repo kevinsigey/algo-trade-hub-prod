@@ -79,7 +79,7 @@ def test_a_planted_drift_passes():
 def test_noise_fails():
     closes = market(4)
     out = run_event_test(spec(), closes, _events(closes), variations=1, seed=1, permutations=500)
-    assert out["verdict"] != "PASS"
+    assert out["verdict"] == "FAIL"
 
 
 def test_misses_are_filtered_out_of_a_beat_claim():
@@ -159,3 +159,46 @@ def test_my_own_dates_need_rows_and_take_beat_or_miss():
 def test_a_notebook_table_with_many_tickers_keeps_them_all():
     rows = [{"ticker": f"T{i}", "date": "2020-01-06"} for i in range(14)]
     assert len(spec(event="custom", when="all", tickers=[], custom=rows).tickers) == 14
+
+
+def test_shared_event_days_are_drawn_together_in_the_random_dates():
+    # CodeRabbit #204 (Major): on a shared calendar (FOMC/CPI/jobs) every ticker moves on the same day, so the
+    # random-date null must draw ONE random day per event day for all tickers. Five identical tickers then give
+    # exactly the one-ticker p-value; drawing each ticker on its own would shrink it.
+    closes = market(8)
+    for i in range(1, 5):
+        closes[f"B{i}"] = closes["AAA"]
+    days = [pd.Timestamp(d) for d in IDX[30:-30:40]]
+    ev = {"*": pd.DataFrame({"time": days})}
+    one = run_event_test(spec(event="fomc", when="all", tickers=["AAA"]), closes, ev, variations=1, seed=5,
+                         permutations=400)
+    five = run_event_test(spec(event="fomc", when="all", tickers=["AAA", "B1", "B2", "B3", "B4"]), closes, ev,
+                          variations=1, seed=5, permutations=400)
+    assert five["claim"]["unseen"]["value"] == pytest.approx(one["claim"]["unseen"]["value"])
+    assert five["shuffle"]["p"] == pytest.approx(one["shuffle"]["p"])
+
+
+def test_result_carries_the_pass_marks():
+    days = IDX[30:-30:63]
+    closes = market(3, drift_after=0.006, events=days)
+    out = run_event_test(spec(), closes, _events(closes), variations=1, seed=1, permutations=300)
+    assert out["shuffle"]["holds"] is True and out["t_test"]["holds"] in (True, False)
+    assert out["periods"]["holds"] in (True, False, None)
+
+
+def test_earnings_without_a_surprise_column_still_loads():
+    from tradehub.workshop.data import earnings_dates
+    idx = pd.DatetimeIndex(["2026-07-31 16:30"]).tz_localize("America/New_York")
+    raw = pd.DataFrame({"EPS Estimate": [3.6], "Reported EPS": [3.5]}, index=idx)
+    got = earnings_dates("XOM", fetch=lambda t: raw, now=pd.Timestamp("2026-10-31 22:00", tz="UTC").to_pydatetime())
+    assert len(got) == 1 and got["surprise"].isna().all()
+
+
+def test_a_fred_outage_is_a_readable_error_not_a_crash():
+    from tradehub.workshop.data import UnknownSymbol, release_dates
+
+    def down(url, params, **kw):
+        raise RuntimeError("FRED 503 with api_key=secret")
+    with pytest.raises(UnknownSymbol) as exc:
+        release_dates(101, get_text=down, api_key="secret")
+    assert "secret" not in str(exc.value) and "FRED" in str(exc.value)

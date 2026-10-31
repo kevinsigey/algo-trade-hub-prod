@@ -224,6 +224,7 @@ function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun:
   const set = <K extends keyof EventSpec>(key: K, value: EventSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const setEvent = (event: EventSpec["event"]) => setSpec((s) => ({
     ...s, event, when: event === "gap" ? "down" : "all", window: event === "gap" && s.window === "reaction" ? "drift_1_5" : s.window,
+    tickers: event === "custom" ? [] : s.tickers, // the server takes the pasted rows' tickers only when this is empty
   }));
   return (
     <section className="mt-6 rounded-xl border border-slate-800 p-5">
@@ -558,7 +559,7 @@ function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; o
         <div className="min-w-0">
           <div className="text-lg font-semibold text-white">{r.headline}</div>
           <div className="text-xs text-slate-400">
-            Variation {run.variation} · Event study · {EVENT_LABELS[spec.event]}{spec.event === "earnings" && spec.when !== "all" ? ` (${spec.when}s)` : ""}{spec.event === "gap" ? ` (${spec.when} ${spec.gap_pct}%+)` : ""} · {spec.tickers.join(", ")} · {WINDOW_LABELS[spec.window]} {spec.direction} vs {spec.benchmark} · {r.n_events ?? 0} events
+            Variation {run.variation} · Event study · {EVENT_LABELS[spec.event]}{spec.event === "earnings" && spec.when !== "all" ? ` (${spec.when}s)` : ""}{spec.event === "gap" ? ` (${spec.when} ${spec.gap_pct}%+)` : ""} · {spec.tickers.join(", ")} · {WINDOW_LABELS[spec.window]} {spec.direction} vs {spec.benchmark} · {r.n_events ?? "—"} events
           </div>
         </div>
       </div>
@@ -568,9 +569,9 @@ function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; o
           <tbody className="divide-y divide-slate-800/80">
             <tr><td className="py-1.5 text-slate-300">On the events it was built on</td><td className="py-1.5 text-slate-400">{r.claim.built.label}</td><td><Mark ok={r.claim.built.holds} /></td></tr>
             <tr><td className="py-1.5 text-slate-300">On the newest events (unseen)</td><td className="py-1.5 text-slate-400">{r.claim.unseen.label}</td><td><Mark ok={r.claim.unseen.holds} /></td></tr>
-            <tr><td className="py-1.5 text-slate-300">Better than random dates</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} random dates · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.p < r.shuffle.bar} /></td></tr>
-            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, unseen events</td><td className="py-1.5 text-slate-400">t = {r.t_test.t.toFixed(2)} · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.p < 0.05} /></td></tr>}
-            {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each stretch of events</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.held >= 4 ? true : r.periods.held <= 1 ? false : null} /></td></tr>}
+            <tr><td className="py-1.5 text-slate-300">Better than random dates</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} random dates · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.holds ?? null} /></td></tr>
+            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, unseen events</td><td className="py-1.5 text-slate-400">t = {r.t_test.t.toFixed(2)} · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.holds ?? null} /></td></tr>}
+            {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each stretch of events</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.holds ?? null} /></td></tr>}
           </tbody>
         </table>
       )}

@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 
 from tradehub.data.fred_daily import fetch_fred_daily
@@ -264,7 +265,9 @@ def earnings_dates(ticker: str, *, fetch=None, cache_dir: Path | None = None, no
         raise UnknownSymbol(f"no earnings dates for {ticker} (ETFs and funds have none, or Yahoo unavailable)")
     idx = pd.DatetimeIndex(raw.index)
     idx = idx.tz_convert(NY).tz_localize(None) if idx.tz is not None else idx
-    frame = pd.DataFrame({"time": idx, "surprise": pd.to_numeric(raw.get("Surprise(%)"), errors="coerce").to_numpy(),
+    surprise = (pd.to_numeric(raw["Surprise(%)"], errors="coerce").to_numpy() if "Surprise(%)" in raw
+                else np.full(len(raw), np.nan))
+    frame = pd.DataFrame({"time": idx, "surprise": surprise,
                           "reported": pd.to_numeric(raw["Reported EPS"], errors="coerce").to_numpy()})
     frame = frame[frame["reported"].notna() & (frame["time"] < pd.Timestamp(cutoff + timedelta(days=1)))]
     frame = frame.sort_values("time").reset_index(drop=True)[["time", "surprise"]]
@@ -295,7 +298,10 @@ def release_dates(release_id: int, *, get_text=None, api_key: str | None = None)
     if not key:
         raise UnknownSymbol(f"{FRED_API_KEY_ENV} is not set; release calendars need the keyed FRED API")
     params = {"release_id": release_id, "file_type": "json", "api_key": key, "sort_order": "asc", "limit": 10000}
-    body = json.loads((get_text or default_get_text)(FRED_RELEASE_DATES, params, secret=key))
+    try:
+        body = json.loads((get_text or default_get_text)(FRED_RELEASE_DATES, params, secret=key))
+    except Exception as exc:  # noqa: BLE001 -- an outage or a bad body: a readable 422, never the key
+        raise UnknownSymbol(f"FRED release calendar {release_id} is unavailable right now; try again later") from exc
     days = sorted({d["date"] for d in body.get("release_dates", [])})
     if not days:
         raise UnknownSymbol(f"no release dates for FRED release {release_id}")

@@ -163,9 +163,9 @@ export interface RunResult {
   data_start: string | null;
   data_end: string | null;
   claim: { built: { holds: boolean; value: number | null; label: string }; unseen: { holds: boolean; value: number | null; label: string } } | null;
-  shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string } | null;
-  t_test: { mean_daily_diff: number; t: number; p: number } | null;
-  periods: { held: number; of: number } | null;
+  shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string; holds?: boolean } | null;
+  t_test: { mean_daily_diff: number; t: number; p: number; holds?: boolean } | null;
+  periods: { held: number; of: number; holds?: boolean | null } | null;
   variations: number;
   context: { name: string; built_cagr: number | null; unseen_cagr: number | null; unseen_max_dd: number | null }[];
   curve: { t: string; idea: number; benchmark: number }[];
