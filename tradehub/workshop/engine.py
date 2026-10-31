@@ -374,7 +374,7 @@ def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]
     idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
     return pd.DataFrame({"ret": _build(position, sleeve, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
-                         "exit": why}, index=idx)
+                         "exit": why, "held": position.astype(bool)}, index=idx)
 
 
 def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> tuple[dict[str, float], str]:
@@ -548,7 +548,7 @@ def analysis(frame: pd.DataFrame) -> dict:
     years = []
     for year, part in frame.groupby(frame.index.year):
         idea, bench = float((1 + part["ret"]).prod() - 1) * 100, float((1 + part["bench"]).prod() - 1) * 100
-        on = part["on"].astype(bool)
+        on = part["held" if "held" in part else "on"].astype(bool)  # held: the rule's days minus stopped-out ones
         years.append({"year": int(year), "idea": idea, "bench": bench, "excess": idea - bench,
                       "days_in": float(on.mean() * 100),
                       "idea_in": float((1 + part["ret"][on]).prod() - 1) * 100 if on.any() else None})

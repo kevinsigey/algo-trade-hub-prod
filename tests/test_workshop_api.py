@@ -274,7 +274,7 @@ def test_run_analysis_and_csv_stop_at_the_runs_data_end(api, monkeypatch):
     r = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     lines = r.text.strip().splitlines()
-    assert lines[0] == "date,in,idea_ret,bench_ret,spy_ret,exit,close_GLD,close_SPY"
+    assert lines[0] == "date,rule_on,held,idea_ret,bench_ret,spy_ret,exit,close_GLD,close_SPY"
     assert lines[-1].startswith("2026-10-29,1,")
     assert "attachment" in r.headers["content-disposition"]
 
@@ -295,3 +295,20 @@ def test_ticker_names(api, monkeypatch):
     r = c.get("/api/workshop/tickers", params={"symbols": "gold, GLD,NOPE"})
     assert r.json() == {"GOLD": names["GOLD"], "GLD": names["GLD"], "NOPE": None}
     assert c.get("/api/workshop/tickers", params={"symbols": ",".join(f"T{i}" for i in range(21))}).status_code == 422
+
+
+def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
+    # Review: the recompute uses today's data; say when it no longer matches what the verdict judged.
+    c, db, calls = api
+    frame, prices = _frame_and_prices()
+    frame["ret"] = 0.0
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: {**RESULT, "curve": [{"t": "2025-01-01", "idea": 0.0, "benchmark": 0.0},
+                                                                                {"t": "2026-10-29", "idea": 12.0, "benchmark": 0.0}]})
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    got = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").json()
+    assert got["drift_pts"] == pytest.approx(-12.0)
+    header = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv").text.splitlines()[0]
+    assert header.startswith("date,rule_on,held,idea_ret,")

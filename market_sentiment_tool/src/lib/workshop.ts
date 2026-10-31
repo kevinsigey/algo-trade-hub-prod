@@ -199,13 +199,17 @@ export async function adminDownload(path: string, filename: string): Promise<voi
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a); // Safari needs the link in the page, and the URL alive until the download starts
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** A run, year by year, plus the rolling 12-month excess return (the deeper look). */
 export interface RunAnalysis {
   data_end: string | null;
+  /** Recomputed total return minus the stored verdict's, in points; null when it can't be compared. */
+  drift_pts?: number | null;
   years: { year: number; idea: number; bench: number; excess: number; days_in: number; idea_in: number | null }[];
   rolling: { t: string; excess: number }[];
 }

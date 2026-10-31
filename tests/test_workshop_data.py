@@ -172,3 +172,14 @@ def test_ticker_info_names_the_kind_and_fails_soft():
     assert ticker_info("GLD", fetch=lambda t: info[t]) == {"name": "SPDR Gold Shares ETF", "kind": "ETF"}
     assert ticker_info("XX", fetch=lambda t: 1 / 0) is None
     assert ticker_info("YY", fetch=lambda t: {}) is None
+
+
+def test_ticker_info_does_not_remember_a_throttled_answer(monkeypatch):
+    from tradehub.workshop import data
+    answers = [{}, {"longName": "SPDR Gold Shares", "quoteType": "ETF"}]
+    calls = []
+    monkeypatch.setattr(data, "_yahoo_info", lambda t: (calls.append(t), answers[len(calls) - 1])[1])
+    data._NAMES.clear()
+    assert data.ticker_info("GLD") is None  # Yahoo's throttled stub has no name
+    assert data.ticker_info("GLD") == {"name": "SPDR Gold Shares", "kind": "ETF"}
+    assert data.ticker_info("GLD") == {"name": "SPDR Gold Shares", "kind": "ETF"} and len(calls) == 2  # now cached

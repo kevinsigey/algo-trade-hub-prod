@@ -588,28 +588,32 @@ def _run_frame(supabase, idea_id: int, run_id: int):
     frame = workshop_daily_frame(spec, prices, fred)
     if end:
         frame = frame[frame.index <= pd.Timestamp(end)]
-    return spec, frame, prices, end
+    return spec, frame, prices, end, run.get("result") or {}
 
 
 @app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/analysis", tags=["Workshop"])
 def workshop_run_analysis(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
                           supabase=Depends(get_supabase)):
-    _, frame, _, end = _run_frame(supabase, idea_id, run_id)
-    return {**workshop_analysis(frame), "data_end": end}
+    _, frame, _, end, stored = _run_frame(supabase, idea_id, run_id)
+    curve = stored.get("curve") or []
+    # Today's prices (dividend restatements, revised series) can differ from what the verdict judged: say by how much.
+    drift = float(((1 + frame["ret"]).prod() - 1) * 100 - curve[-1]["idea"]) if curve and len(frame) else None
+    return {**workshop_analysis(frame), "data_end": end, "drift_pts": drift}
 
 
 @app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/daily.csv", tags=["Workshop"])
 def workshop_run_csv(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
                      supabase=Depends(get_supabase)):
-    spec, frame, prices, _ = _run_frame(supabase, idea_id, run_id)
+    spec, frame, prices, _, _ = _run_frame(supabase, idea_id, run_id)
     legs = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != "CASH" else [])
                               + [spec.benchmark]))
-    out = pd.DataFrame({"in": frame["on"].astype(int), "idea_ret": frame["ret"], "bench_ret": frame["bench"],
+    out = pd.DataFrame({"rule_on": frame["on"].astype(int),
+                        "held": frame.get("held", frame["on"]).astype(int), "idea_ret": frame["ret"], "bench_ret": frame["bench"],
                         "spy_ret": frame["spy"], "exit": frame["exit"]}, index=frame.index)
     for t in legs:
         out[f"close_{t}"] = prices[t].reindex(frame.index)
     out.index = out.index.strftime("%Y-%m-%d")
-    return Response(out.to_csv(index_label="date", float_format="%.6g"), media_type="text/csv",
+    return Response(out.to_csv(index_label="date", float_format="%.8g"), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="idea-{idea_id}-run-{run_id}-daily.csv"'})
 
 
@@ -618,7 +622,9 @@ def workshop_tickers(symbols: str = Query(..., max_length=300), _admin: dict = D
     wanted = list(dict.fromkeys(s.strip().upper() for s in symbols.split(",") if s.strip()))
     if len(wanted) > 20:
         raise HTTPException(status_code=422, detail="at most 20 tickers")
-    return {t: workshop_ticker_info(t) for t in wanted}
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:  # Yahoo's .info is slow; look them up side by side
+        return dict(zip(wanted, pool.map(workshop_ticker_info, wanted)))
 
 
 @app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])

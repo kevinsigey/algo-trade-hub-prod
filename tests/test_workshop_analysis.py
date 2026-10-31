@@ -45,3 +45,27 @@ def test_a_year_never_in_has_no_return_while_in():
 
 def test_short_history_has_no_rolling():
     assert analysis(frame(100))["rolling"] == []
+
+
+def test_days_in_counts_held_days_not_rule_days():
+    # Review: after a stop the rule can still be on while the idea is out; "days in" means held.
+    f = frame(260)
+    f["on"] = True
+    f["held"] = f.index.month <= 6
+    y = analysis(f)["years"][0]
+    part = f[f.index.year == 2020]
+    assert y["days_in"] == pytest.approx(part.held.mean() * 100)
+    assert y["idea_in"] == pytest.approx(((1 + part.ret[part.held]).prod() - 1) * 100)
+
+
+def test_daily_frame_has_the_held_position():
+    from tradehub.workshop.engine import daily_frame
+    from tradehub.workshop.spec import IdeaSpec
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2015-01-02", periods=900)
+    closes = pd.DataFrame({t: 100 * np.cumprod(1 + rng.normal(0, 0.02, len(idx))) for t in ("SPY", "QQQ", "IWM", "AAA")},
+                          index=idx)
+    s = IdeaSpec(title="AAA with a stop", hold=["AAA"], claim="beats_benchmark", start="2015-01-02",
+                 exits={"stop_loss_pct": 3})
+    df = daily_frame(s, closes, {})
+    assert df["on"].all() and not df["held"].all() and (df["held"] <= df["on"]).all()

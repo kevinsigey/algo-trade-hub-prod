@@ -3,7 +3,6 @@ VPS) and FRED series (the keyed fetcher the journal uses). Fetchers are injectab
 
 from __future__ import annotations
 
-import functools
 import os
 import tempfile
 from datetime import UTC, date, datetime, timedelta
@@ -215,7 +214,9 @@ def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
 KINDS = {"EQUITY": "stock", "ETF": "ETF", "MUTUALFUND": "fund", "INDEX": "index", "CRYPTOCURRENCY": "crypto"}
 
 
-@functools.lru_cache(maxsize=512)
+_NAMES: dict[str, dict] = {}  # only real answers are kept: a throttled Yahoo stub must not stick
+
+
 def _yahoo_info(ticker: str) -> dict:
     import yfinance as yf
     return yf.Ticker(ticker).info
@@ -223,6 +224,8 @@ def _yahoo_info(ticker: str) -> dict:
 
 def ticker_info(ticker: str, *, fetch=None) -> dict | None:
     """What a ticker actually is ({name, kind}), so "GOLD" (a stock) isn't mistaken for gold. None if unknown."""
+    if fetch is None and ticker in _NAMES:
+        return _NAMES[ticker]
     try:
         info = (fetch or _yahoo_info)(ticker) or {}
     except Exception:
@@ -231,4 +234,7 @@ def ticker_info(ticker: str, *, fetch=None) -> dict | None:
     if not name:
         return None
     kind = info.get("quoteType") or ""
-    return {"name": name, "kind": KINDS.get(kind, kind.lower() or "unknown")}
+    out = {"name": name, "kind": KINDS.get(kind, kind.lower() or "unknown")}
+    if fetch is None and len(_NAMES) < 512:
+        _NAMES[ticker] = out
+    return out

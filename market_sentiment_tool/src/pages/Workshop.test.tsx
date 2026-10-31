@@ -388,3 +388,23 @@ describe("Workshop deeper look", () => {
     expect(await screen.findByText("GOLD: Gold.com, Inc. (stock)")).toBeInTheDocument();
   });
 });
+
+describe("Workshop deeper look review fixes", () => {
+  it("warns when today's data no longer matches the stored verdict", async () => {
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: { data_end: "2026-10-29", years: [], rolling: [], drift_pts: -12.4 } } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByText(/differs from the verdict by −12.4 pts/)).toBeInTheDocument();
+  });
+
+  it("remembers ticker names instead of asking again", async () => {
+    const f = serve({ "/api/workshop/tickers": { body: { QQQ: { name: "Invesco QQQ Trust", kind: "ETF" }, SPY: { name: "SPDR S&P 500 ETF", kind: "ETF" } } } });
+    const spec = { ...SPEC, hold: ["QQQ"], when: undefined, rules: null } as never;
+    const first = render(<DraftEditor initial={spec} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("QQQ: Invesco QQQ Trust (ETF)")).toBeInTheDocument();
+    first.unmount();
+    render(<DraftEditor initial={spec} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("QQQ: Invesco QQQ Trust (ETF)")).toBeInTheDocument();
+    expect(f.mock.calls.filter(([u]) => String(u).includes("/api/workshop/tickers"))).toHaveLength(1);
+  });
+});

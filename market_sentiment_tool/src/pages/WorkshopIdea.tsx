@@ -165,15 +165,27 @@ function RulesEditor({ rules, onChange }: { rules: Rules | null; onChange: (r: R
 }
 
 /** What each ticker really is ("GOLD" is a stock, not gold), looked up as Kevin types. Fails quietly. */
+const knownTickers: TickerNames = {}; // answers kept for the page's life, so retyping doesn't ask again
+
 function TickerNamesLine({ symbols }: { symbols: string[] }) {
-  const [names, setNames] = useState<TickerNames>({});
+  const [names, setNames] = useState<TickerNames>(() => ({ ...knownTickers }));
   const key = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => s && s !== "CASH"))].slice(0, 20).join(",");
   useEffect(() => {
-    if (!key) return;
+    const missing = key.split(",").filter((s) => s && !(s in knownTickers));
+    if (!missing.length) return;
+    let live = true;
     const t = setTimeout(() => {
-      adminJson<TickerNames>(`/api/workshop/tickers?symbols=${encodeURIComponent(key)}`).then(setNames).catch(() => setNames({}));
+      adminJson<TickerNames>(`/api/workshop/tickers?symbols=${encodeURIComponent(missing.join(","))}`)
+        .then((got) => {
+          for (const [s, n] of Object.entries(got)) if (n) knownTickers[s] = n; // a miss may be Yahoo throttling: ask again later
+          if (live) setNames((old) => ({ ...old, ...got }));
+        })
+        .catch(() => undefined); // a failed lookup just shows nothing new
     }, 400);
-    return () => clearTimeout(t);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
   }, [key]);
   const shown = key.split(",").filter((s) => s && s in names);
   if (!shown.length) return null;
@@ -380,6 +392,11 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
               </tbody>
             </table>
             <p className="mt-1 text-xs text-slate-500">Shaded rows: unseen years. Recomputed from the run's spec, up to {data.data_end}.</p>
+            {data.drift_pts != null && Math.abs(data.drift_pts) >= 1 && (
+              <p className="mt-1 text-xs text-amber-300">
+                Today's data differs from the verdict by {data.drift_pts >= 0 ? "+" : "−"}{Math.abs(data.drift_pts).toFixed(1)} pts of total return (revised prices or series), so these rows may not match the card exactly.
+              </p>
+            )}
           </div>
         </>
       )}
