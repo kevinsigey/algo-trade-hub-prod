@@ -102,7 +102,8 @@ export interface EventSpec {
   kind: "event";
   title: string;
   tickers: string[];
-  event: "earnings" | "fomc" | "cpi" | "jobs" | "gap";
+  event: "earnings" | "fomc" | "cpi" | "jobs" | "gap" | "custom";
+  custom?: { ticker: string; date: string; surprise: number | null }[];
   when: "all" | "beat" | "miss" | "up" | "down";
   gap_pct: number;
   window: "reaction" | "drift_1_3" | "drift_1_5" | "drift_1_10";
@@ -115,10 +116,36 @@ export interface EventSpec {
 
 export const EVENT_LABELS: Record<EventSpec["event"], string> = {
   earnings: "Earnings prints", fomc: "FOMC statement days", cpi: "CPI release days", jobs: "Jobs report days", gap: "Price gaps",
+  custom: "My own dates (paste a table)",
 };
 export const WINDOW_LABELS: Record<EventSpec["window"], string> = {
   reaction: "The reaction day", drift_1_3: "Days +1 to +3", drift_1_5: "Days +1 to +5", drift_1_10: "Days +1 to +10",
 };
+
+/** Rows of a pasted event table: `ticker,date[,surprise]`, or a notebook CSV whose header names
+ *  ticker / report_date (or date) / surprise_pct (or surprise). Tabs or commas. Bad rows are skipped. */
+export function parseEventTable(text: string): { ticker: string; date: string; surprise: number | null }[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const cells = (l: string) => l.split(/[,\t]/).map((c) => c.trim());
+  const head = cells(lines[0]).map((c) => c.toLowerCase());
+  const named = head.includes("ticker");
+  const col = (names: string[], fallback: number) => {
+    const i = head.findIndex((h) => names.includes(h));
+    return named ? i : fallback;
+  };
+  const [ti, di, si] = [col(["ticker"], 0), col(["report_date", "date", "reaction_day", "event_date"], 1), col(["surprise_pct", "surprise"], 2)];
+  const out: { ticker: string; date: string; surprise: number | null }[] = [];
+  for (const line of named ? lines.slice(1) : lines) {
+    const c = cells(line);
+    const ticker = (c[ti] ?? "").toUpperCase();
+    const date = (c[di] ?? "").slice(0, 10);
+    if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(ticker) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const s = si >= 0 && c[si] !== undefined && c[si] !== "" ? Number(c[si]) : NaN;
+    out.push({ ticker, date, surprise: Number.isFinite(s) ? s : null });
+  }
+  return out;
+}
 
 export function isEvent(spec: unknown): spec is EventSpec {
   return (spec as { kind?: string } | null)?.kind === "event";

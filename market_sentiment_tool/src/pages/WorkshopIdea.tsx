@@ -16,6 +16,7 @@ import {
   adminDownload,
   adminJson,
   isEvent,
+  parseEventTable,
   claimLabel,
   MEASURES,
   rulesText,
@@ -219,6 +220,7 @@ export function DraftEditor(props: { initial: IdeaSpec; onRun: (s: IdeaSpec) => 
 
 function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<EventSpec>(initial as unknown as EventSpec);
+  const [pasted, setPasted] = useState(() => ((initial as unknown as EventSpec).custom ?? []).map((e) => [e.ticker, e.date, e.surprise ?? ""].join(",")).join("\n"));
   const set = <K extends keyof EventSpec>(key: K, value: EventSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const setEvent = (event: EventSpec["event"]) => setSpec((s) => ({
     ...s, event, when: event === "gap" ? "down" : "all", window: event === "gap" && s.window === "reaction" ? "drift_1_5" : s.window,
@@ -232,15 +234,24 @@ function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun:
         <Field label="Name">
           <input className={field} value={spec.title} onChange={(e) => set("title", e.target.value)} />
         </Field>
-        <Field label="Tickers (comma separated)">
-          <input className={field} value={spec.tickers.join(", ")} onChange={(e) => set("tickers", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+        <Field label={spec.event === "custom" ? "Tickers (from your table)" : "Tickers (comma separated)"}>
+          <input className={field} disabled={spec.event === "custom"} value={spec.event === "custom" ? [...new Set((spec.custom ?? []).map((e) => e.ticker))].join(", ") : spec.tickers.join(", ")} onChange={(e) => set("tickers", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
         </Field>
         <Field label="Event">
           <select className={field} value={spec.event} onChange={(e) => setEvent(e.target.value as EventSpec["event"])}>
             {(Object.keys(EVENT_LABELS) as EventSpec["event"][]).map((k) => <option key={k} value={k}>{EVENT_LABELS[k]}</option>)}
           </select>
         </Field>
-        {spec.event === "earnings" && (
+        {spec.event === "custom" && (
+          <div className="sm:col-span-2">
+            <Field label="Paste your events (ticker,date[,surprise] per line, or a notebook CSV with a header)">
+              <textarea className={`${field} h-28 font-mono text-xs`} value={pasted}
+                onChange={(e) => { setPasted(e.target.value); const rows = parseEventTable(e.target.value); setSpec((s) => ({ ...s, custom: rows, tickers: [] })); }} />
+            </Field>
+            <p className="mt-1 text-xs text-slate-400"><span>{(spec.custom ?? []).length} events read</span> · each date is taken as the reaction day (the first close that reflects it)</p>
+          </div>
+        )}
+        {(spec.event === "earnings" || spec.event === "custom") && (
           <Field label="Which prints">
             <select className={field} value={spec.when} onChange={(e) => set("when", e.target.value as EventSpec["when"])}>
               <option value="all">all prints</option>

@@ -33,13 +33,28 @@ MIN_EVENTS, MIN_UNSEEN_EVENTS = 20, 10
 COLUMNS = ("ar0", "car_1_3", "car_1_5", "car_1_10", "pre_5")
 
 
+class CustomEvent(BaseModel):
+    """One pasted event (e.g. a row of a notebook's event table). `date` is the reaction day itself."""
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str
+    date: date
+    surprise: float | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def _t(cls, v: str) -> str:
+        return _ticker(v)
+
+
 class EventSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["event"] = "event"
     title: str = Field(min_length=3, max_length=120)
-    tickers: list[str] = Field(min_length=1, max_length=10)
-    event: Literal["earnings", "fomc", "cpi", "jobs", "gap"]
+    tickers: list[str] = Field(default_factory=list, max_length=50)
+    event: Literal["earnings", "fomc", "cpi", "jobs", "gap", "custom"]
+    custom: list[CustomEvent] = Field(default_factory=list, max_length=3000)  # "My own dates"
     when: Literal["all", "beat", "miss", "up", "down"] = "all"  # earnings: all/beat/miss; gap: up/down
     gap_pct: float = Field(5, ge=1, le=50)  # a gap = a day's move vs SPY at least this big, in %
     window: Literal["reaction", "drift_1_3", "drift_1_5", "drift_1_10"] = "drift_1_5"
@@ -61,6 +76,15 @@ class EventSpec(BaseModel):
 
     @model_validator(mode="after")
     def _fits(self) -> EventSpec:
+        if self.event == "custom":
+            if not self.custom:
+                raise ValueError("'My own dates' needs at least one ticker,date row")
+            if not self.tickers:
+                self.tickers = list(dict.fromkeys(e.ticker for e in self.custom))[:50]
+            if self.when not in ("all", "beat", "miss"):
+                raise ValueError("pasted dates take when = all, beat or miss (by the surprise column)")
+        elif not self.tickers:
+            raise ValueError("an event study needs at least one ticker")
         if self.event == "gap":
             if self.when not in ("up", "down"):
                 raise ValueError("a gap event needs when = up or down")
@@ -134,10 +158,15 @@ def _event_rows(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.Data
             hit = ar <= -spec.gap_pct if spec.when == "down" else ar >= spec.gap_pct
             ev = pd.DataFrame({"day": days[hit.fillna(False).to_numpy()], "surprise": np.nan})
         else:
-            src = events.get(t, events.get("*"))
+            if spec.event == "custom":  # the pasted dates are reaction days: midnight maps to that day
+                mine = [e for e in spec.custom if e.ticker == t]
+                src = pd.DataFrame({"time": [pd.Timestamp(e.date) for e in mine],
+                                    "surprise": [np.nan if e.surprise is None else e.surprise for e in mine]})
+            else:
+                src = events.get(t, events.get("*"))
             if src is None or src.empty:
                 continue
-            if spec.event == "earnings" and spec.when != "all":
+            if spec.event in ("earnings", "custom") and spec.when != "all":
                 keep = src["surprise"] > 0 if spec.when == "beat" else src["surprise"] < 0
                 src = src[keep.fillna(False)]
             ev = pd.DataFrame({"day": [reaction_day(pd.Timestamp(x), days) for x in src["time"]],

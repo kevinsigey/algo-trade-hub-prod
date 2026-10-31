@@ -135,3 +135,27 @@ def test_release_dates_from_fred():
     got = release_dates(101, get_text=get_text, api_key="k")
     assert seen["release_id"] == 101 and seen["url"].endswith("/fred/release/dates")
     assert list(got["time"]) == [pd.Timestamp("2026-09-17"), pd.Timestamp("2026-10-29")]
+
+
+def test_my_own_dates_are_measured_and_judged_like_any_event():
+    days = IDX[30:-30:63]
+    closes = market(7, drift_after=0.006, events=days)
+    s = spec(event="custom", when="all", tickers=[],
+             custom=[{"ticker": "aaa", "date": str(d.date()), "surprise": 1.0} for d in days])
+    assert s.tickers == ["AAA"]  # tickers come from the pasted rows
+    out = run_event_test(s, closes, {}, variations=1, seed=1, permutations=300)
+    assert out["n_events"] == len(days) and out["verdict"] == "PASS"
+    assert out["events"][0]["date"] == str(days[0].date())  # a pasted date is the reaction day itself
+
+
+def test_my_own_dates_need_rows_and_take_beat_or_miss():
+    with pytest.raises(ValueError, match="dates"):
+        spec(event="custom", when="all", tickers=["AAA"], custom=[])
+    s = spec(event="custom", when="miss", tickers=[], custom=[{"ticker": "AAA", "date": "2020-01-06", "surprise": -2},
+                                                              {"ticker": "AAA", "date": "2020-04-06", "surprise": 3}])
+    assert s.when == "miss" and len(s.custom) == 2
+
+
+def test_a_notebook_table_with_many_tickers_keeps_them_all():
+    rows = [{"ticker": f"T{i}", "date": "2020-01-06"} for i in range(14)]
+    assert len(spec(event="custom", when="all", tickers=[], custom=rows).tickers) == 14

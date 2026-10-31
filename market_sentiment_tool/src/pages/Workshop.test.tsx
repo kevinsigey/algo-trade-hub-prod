@@ -549,3 +549,18 @@ describe("Workshop event studies", () => {
     expect(screen.getByRole("button", { name: "Download events (CSV)" })).toBeInTheDocument();
   });
 });
+
+describe("Workshop: my own event dates", () => {
+  it("reads a pasted notebook event table", () => {
+    const onRun = vi.fn();
+    const EVD = { kind: "event", title: "My earnings table", tickers: [], event: "custom", custom: [], when: "all", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EVD as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText(/Paste your events/), { target: { value:
+      "ticker,report_date,fall,surprise_pct,beat\nGOOGL,2026-07-22,False,214.1,True\nxom,2026-04-29,False,-3.5,False\n" } });
+    expect(screen.getByText("2 events read")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].custom).toEqual([
+      { ticker: "GOOGL", date: "2026-07-22", surprise: 214.1 }, { ticker: "XOM", date: "2026-04-29", surprise: -3.5 }]);
+  });
+});
