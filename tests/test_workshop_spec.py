@@ -50,7 +50,7 @@ def test_schema_is_closed():
 
 def test_blank_template():
     b = blank_spec()
-    assert b["title"] == "" and b["hold"] == [] and b["claim"] == "beats_benchmark" and b["when"] is None
+    assert b["title"] == "" and b["hold"] == [] and b["claim"] == "beats_benchmark" and b["rules"] is None
 
 
 def test_short_legs_and_execution():
@@ -100,3 +100,54 @@ def test_intraday_exits_need_a_single_leg():
     with pytest.raises(ValueError, match="one ticker"):
         IdeaSpec(title="pair", hold=["GLD"], short=["SPY"], claim="beats_benchmark",
                  exits={"stop_loss_pct": 5, "mode": "intraday"})
+
+
+PRICE = {"source": "price", "series": "SPY", "measure": "rsi", "lookback_days": 14, "op": "<", "threshold": 30}
+
+
+def test_legacy_when_becomes_rules():
+    s = IdeaSpec.model_validate(GOLD)
+    assert s.rules.enter.mode == "all" and s.rules.exit is None
+    assert s.rules.enter.conditions[0].model_dump() == {**GOLD["when"], "slow_days": None}
+    assert "when" not in s.model_dump()
+
+
+def test_when_and_rules_refused():
+    with pytest.raises(ValidationError, match="both"):
+        IdeaSpec.model_validate({**GOLD, "rules": {"enter": {"conditions": [PRICE]}}})
+
+
+def test_cross_needs_slow_gt_fast():
+    cross = {**PRICE, "measure": "sma_cross", "lookback_days": 50, "op": ">", "threshold": 0}
+    IdeaSpec(title="SPY golden cross", hold=["SPY"], claim="beats_benchmark",
+             rules={"enter": {"conditions": [{**cross, "slow_days": 200}]}})
+    for slow in (None, 50, 20):
+        with pytest.raises(ValidationError, match="slow"):
+            IdeaSpec(title="SPY golden cross", hold=["SPY"], claim="beats_benchmark",
+                     rules={"enter": {"conditions": [{**cross, "slow_days": slow}]}})
+
+
+def test_measure_source_matrix():
+    def spec(c):
+        return IdeaSpec(title="matrix", hold=["SPY"], claim="beats_benchmark", rules={"enter": {"conditions": [c]}})
+    spec(PRICE)
+    spec({**PRICE, "source": "fred", "series": "DGS10", "measure": "vs_sma"})
+    for bad in ({**PRICE, "source": "fred", "measure": "vs_vwap"}, {**PRICE, "measure": "net_upgrades"},
+                {**PRICE, "source": "analyst", "measure": "net_upgrades"}):
+        with pytest.raises(ValidationError):
+            spec(bad)
+
+
+def test_group_size_1_to_5():
+    for n in (0, 6):
+        with pytest.raises(ValidationError):
+            IdeaSpec(title="sizes", hold=["SPY"], claim="beats_benchmark",
+                     rules={"enter": {"mode": "any", "conditions": [PRICE] * n}})
+    IdeaSpec(title="sizes", hold=["SPY"], claim="beats_benchmark", rules={"enter": {"conditions": [PRICE] * 5}})
+
+
+def test_spec_roundtrip_dump():
+    s = IdeaSpec(title="RSI dip", hold=["SPY"], claim="beats_benchmark",
+                 rules={"enter": {"conditions": [PRICE]},
+                        "exit": {"mode": "any", "conditions": [{**PRICE, "op": ">", "threshold": 60}]}})
+    assert IdeaSpec.model_validate(s.model_dump(mode="json")) == s
