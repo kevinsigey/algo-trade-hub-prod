@@ -93,7 +93,7 @@ def test_condition_never_true_is_not_enough_data():
     closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX)
     s = spec(when={**WHEN, "threshold": 1e9})
     out = run_test(s, closes, {"DGS10": rates(rng)}, variations=1, seed=1)
-    assert out["verdict"] == "NOT ENOUGH DATA" and "condition" in out["reason"]
+    assert out["verdict"] == "NOT ENOUGH DATA" and "rule was in" in out["reason"]
 
 
 def test_bonferroni_bar():

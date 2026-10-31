@@ -22,10 +22,12 @@ def _ticker(value: str) -> str:
 class Condition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["fred", "price"]
+    source: Literal["fred", "price", "analyst"]
     series: str = Field(min_length=1, max_length=30)
-    measure: Literal["level", "change", "pct_change"]
+    measure: Literal["level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
+                     "volatility", "vs_vwap", "net_upgrades", "target_upside"]
     lookback_days: int = Field(63, ge=1, le=756)
+    slow_days: int | None = Field(None, ge=2, le=756)  # sma_cross only: the slow average; lookback_days is the fast one
     op: Literal[">", "<"]
     threshold: float
 
@@ -36,6 +38,40 @@ class Condition(BaseModel):
         if not re.match(r"^[A-Z0-9][A-Z0-9.\-_]{0,29}$", v):
             raise ValueError(f"not a series id: {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def _fits(self) -> Condition:
+        if self.source == "analyst":
+            raise ValueError("analyst signals arrive in Part B")
+        if self.measure not in MEASURES[self.source]:
+            raise ValueError(f"{self.measure} can't be measured on a {self.source} series")
+        if self.measure == "sma_cross" and (self.slow_days is None or self.slow_days <= self.lookback_days):
+            raise ValueError("sma_cross needs slow_days longer than lookback_days")
+        return self
+
+
+MEASURES = {
+    "fred": {"level", "change", "pct_change", "vs_sma", "volatility"},
+    "price": {"level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
+              "volatility", "vs_vwap"},
+    "analyst": {"net_upgrades", "target_upside"},
+}
+
+
+class Group(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["all", "any"] = "all"
+    conditions: list[Condition] = Field(min_length=1, max_length=5)
+
+
+class Rules(BaseModel):
+    """Step 6: in when `enter` holds; with an `exit` group, stay in until `exit` holds (exit wins a tie).
+    Without one, in only while `enter` holds."""
+    model_config = ConfigDict(extra="forbid")
+
+    enter: Group
+    exit: Group | None = None
 
 
 class Execution(BaseModel):
@@ -68,7 +104,7 @@ class IdeaSpec(BaseModel):
     title: str = Field(min_length=3, max_length=120)
     hold: list[str] = Field(default_factory=list, max_length=5)
     short: list[str] = Field(default_factory=list, max_length=5)
-    when: Condition | None = None
+    rules: Rules | None = None
     otherwise: str = CASH
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
     benchmark: str = "SPY"
@@ -96,6 +132,19 @@ class IdeaSpec(BaseModel):
             raise ValueError("start must be between 1995-01-01 and yesterday")
         return v
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_when(cls, data):
+        # Steps 2-5 stored one `when` condition; it is a one-condition buy rule with no sell rule.
+        if isinstance(data, dict) and "when" in data:
+            data = dict(data)
+            when = data.pop("when")
+            if when is not None:
+                if data.get("rules") is not None:
+                    raise ValueError("give either 'when' or 'rules', not both")
+                data["rules"] = {"enter": {"mode": "all", "conditions": [when]}}
+        return data
+
     @model_validator(mode="after")
     def _claim_needs_condition(self) -> IdeaSpec:
         if not self.hold and not self.short:
@@ -111,8 +160,8 @@ class IdeaSpec(BaseModel):
                                  "for one resting exit); a stop and a take-profit can, as one-cancels-other")
             if not (e.stop_loss_pct or e.trailing_pct or e.take_profit_pct):
                 raise ValueError("intraday mode needs a price exit (stop-loss, trailing or take-profit)")
-        if self.claim == "beats_benchmark_when" and self.when is None:
-            raise ValueError("beats_benchmark_when needs a 'when' condition")
+        if self.claim == "beats_benchmark_when" and self.rules is None:
+            raise ValueError("beats_benchmark_when needs a buy rule")
         if self.benchmark == CASH:
             raise ValueError("the benchmark must be a ticker")
         return self
@@ -120,5 +169,5 @@ class IdeaSpec(BaseModel):
 
 def blank_spec() -> dict:
     """The hand-fill template: what the form starts from when the AI cannot draft."""
-    return {"title": "", "hold": [], "short": [], "when": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
+    return {"title": "", "hold": [], "short": [], "rules": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
             "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": []}

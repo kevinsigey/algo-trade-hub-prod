@@ -36,7 +36,7 @@ from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
     fred_series as workshop_fred, with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
-from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, run_test, tickers_for
+from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, rule_series_ids, run_test, tickers_for
 from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
 from tradehub.workshop.spec import IdeaSpec, blank_spec
@@ -516,8 +516,7 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
     try:
         prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
                                 bars_fn=workshop_bars)
-        fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
-                if spec.when is not None and spec.when.source == "fred" else {})
+        fred = {i: workshop_fred(i, _fred_start(spec.start)) for i in rule_series_ids(spec)}
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     frame = workshop_daily_frame(spec, prices, fred)
@@ -580,8 +579,7 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     try:
         prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
                                 bars_fn=workshop_bars)
-        fred = ({spec.when.series: workshop_fred(spec.when.series, _fred_start(spec.start))}
-                if spec.when is not None and spec.when.source == "fred" else {})
+        fred = {i: workshop_fred(i, _fred_start(spec.start)) for i in rule_series_ids(spec)}
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     variation = len(found["runs"]) + 1

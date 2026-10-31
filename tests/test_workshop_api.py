@@ -225,3 +225,13 @@ def test_intraday_run_fetches_daily_bars(api, monkeypatch):
             "exits": {"stop_loss_pct": 5, "mode": "intraday"}}
     assert c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": spec}).status_code == 200
     assert seen == [("GLD",)]
+
+
+def test_rule_with_two_fred_ids_fetches_both(api):
+    c, _, calls = api
+    two = {**{k: v for k, v in SPEC.items() if k != "when"},
+           "rules": {"enter": {"mode": "any", "conditions": [
+               SPEC["when"], {"source": "fred", "series": "T10Y2Y", "measure": "level", "op": "<", "threshold": 0}]}}}
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": two})
+    assert r.status_code == 200 and calls[0]["fred"] == {"DGS10": "series", "T10Y2Y": "series"}

@@ -78,3 +78,10 @@ def test_refusal(key):
         with pytest.raises(DraftUnavailable) as e:
             draft_spec("x", post=FakePost(r))
         assert e.value.reason == "refused"
+
+
+def test_draft_prompt_mentions_rules():
+    from tradehub.workshop.draft import SYSTEM
+    for word in ("rules", "enter", "exit", "all", "any", "sma_cross", "rsi", "macd", "vs_vwap", "12/26/9"):
+        assert word in SYSTEM, word
+    assert "while a condition holds" not in SYSTEM

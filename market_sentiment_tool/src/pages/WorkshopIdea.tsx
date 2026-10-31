@@ -13,20 +13,24 @@ import {
   ORDER_OPTIONS,
   adminJson,
   claimLabel,
-  conditionText,
+  MEASURES,
+  rulesText,
+  specRules,
   verdictTone,
   type Claim,
   type Condition,
   type Execution,
   type Exits,
   type GateResult,
+  type Group,
+  type Rules,
   type IdeaDetail,
   type IdeaSpec,
   type Run,
 } from "@/lib/workshop";
 
 const field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-white focus:border-emerald-400 focus:outline-none";
-const DEFAULT_CONDITION: Condition = { source: "fred", series: "DGS10", measure: "change", lookback_days: 63, op: ">", threshold: 0.25 };
+const DEFAULT_CONDITION: Condition = { source: "fred", series: "DGS10", measure: "change", lookback_days: 63, slow_days: null, op: ">", threshold: 0.25 };
 const pct = (v: number | null | undefined, digits = 1) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}%`);
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -38,9 +42,127 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: string; onChange: (c: Condition) => void; onRemove?: () => void }) {
+  const options = MEASURES.filter((m) => c.source === "price" || m.fred);
+  const hint = MEASURES.find((m) => m.value === c.measure)?.hint;
+  const put = <K extends keyof Condition>(key: K, value: Condition[K]) => {
+    const next = { ...c, [key]: value };
+    if (key === "source" && !MEASURES.some((m) => m.value === next.measure && (next.source === "price" || m.fred))) next.measure = "level";
+    // A default slow average only when the measure becomes a cross; the server checks slow > fast.
+    if (key === "measure") next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
+    onChange(next);
+  };
+  return (
+    <div className="mt-3 rounded-lg border border-slate-800 p-3">
+      <div className="grid gap-3 sm:grid-cols-7">
+        <Field label="Source">
+          <select className={field} value={c.source} onChange={(e) => put("source", e.target.value as Condition["source"])}>
+            <option value="fred">FRED series</option>
+            <option value="price">Price</option>
+          </select>
+        </Field>
+        <Field label="Series / ticker">
+          <input className={field} value={c.series} onChange={(e) => put("series", e.target.value)} />
+        </Field>
+        <Field label="Measure">
+          <select className={field} value={c.measure} onChange={(e) => put("measure", e.target.value as Condition["measure"])}>
+            {options.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label={c.measure === "sma_cross" ? "Fast average (days)" : "Over (trading days)"}>
+          <input type="number" className={field} value={c.lookback_days} onChange={(e) => put("lookback_days", Number(e.target.value))} />
+        </Field>
+        {c.measure === "sma_cross" && (
+          <Field label="Slow average (days)">
+            <input type="number" className={field} value={c.slow_days ?? ""} onChange={(e) => put("slow_days", Number(e.target.value))} />
+          </Field>
+        )}
+        <Field label="Is">
+          <select className={field} value={c.op} onChange={(e) => put("op", e.target.value as Condition["op"])}>
+            <option value=">">above</option>
+            <option value="<">below</option>
+          </select>
+        </Field>
+        <Field label="Threshold">
+          <input type="number" step="any" className={field} value={c.threshold} onChange={(e) => put("threshold", Number(e.target.value))} />
+        </Field>
+      </div>
+      <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+        {c.measure === "sma_cross" && (c.slow_days ?? 0) <= c.lookback_days ? (
+          <span className="text-amber-300">The slow average needs more days than the fast one.</span>
+        ) : (
+          <span>{hint}</span>
+        )}
+        {onRemove && (
+          <button type="button" aria-label={`Remove ${label}`} className="text-slate-400 hover:text-red-300" onClick={onRemove}>Remove</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GroupEditor({ side, group, onChange }: { side: "buy" | "sell"; group: Group; onChange: (g: Group) => void }) {
+  const title = side === "buy" ? "Buy when" : "Sell when";
+  return (
+    <div className="mt-3">
+      <label className="flex items-center gap-2 text-sm text-slate-300">
+        {title}
+        <select aria-label={title} className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-white" value={group.mode}
+          onChange={(e) => onChange({ ...group, mode: e.target.value as Group["mode"] })}>
+          <option value="all">all of these hold</option>
+          <option value="any">any of these holds</option>
+        </select>
+      </label>
+      {group.conditions.map((c, i) => (
+        <ConditionRow key={i} c={c} label={`${side} condition ${i + 1}`}
+          onChange={(next) => onChange({ ...group, conditions: group.conditions.map((x, j) => (j === i ? next : x)) })}
+          onRemove={group.conditions.length > 1 ? () => onChange({ ...group, conditions: group.conditions.filter((_, j) => j !== i) }) : undefined} />
+      ))}
+      {group.conditions.length < 5 && (
+        <button type="button" className="mt-2 text-sm text-emerald-300 hover:text-emerald-200"
+          onClick={() => onChange({ ...group, conditions: [...group.conditions, group.conditions[group.conditions.length - 1]] })}>
+          Add a {side} condition
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Step 6: buy-when and sell-when rules. Each side is all-of or any-of up to 5 conditions. */
+function RulesEditor({ rules, onChange }: { rules: Rules | null; onChange: (r: Rules | null) => void }) {
+  const fresh: Group = { mode: "all", conditions: [DEFAULT_CONDITION] };
+  return (
+    <div className="mt-4">
+      <label className="flex items-center gap-2 text-sm text-slate-300">
+        <input type="checkbox" checked={rules !== null} onChange={(e) => onChange(e.target.checked ? { enter: fresh, exit: null } : null)} />
+        Buy only when a rule holds
+      </label>
+      {rules && (
+        <>
+          <GroupEditor side="buy" group={rules.enter} onChange={(enter) => onChange({ ...rules, enter })} />
+          <label className="mt-4 flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={rules.exit !== null} onChange={(e) => onChange({ ...rules, exit: e.target.checked ? { ...fresh, conditions: [{ ...DEFAULT_CONDITION, op: "<" }] } : null })} />
+            Sell when its own rule holds
+          </label>
+          {rules.exit ? (
+            <GroupEditor side="sell" group={rules.exit} onChange={(exit) => onChange({ ...rules, exit })} />
+          ) : (
+            <p className="mt-1 text-xs text-slate-500">Sells when the buy rule stops holding.</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** The draft, as a form. Nothing runs until Kevin presses Run it. */
 export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
-  const [spec, setSpec] = useState<IdeaSpec>(initial);
+  const [spec, setSpec] = useState<IdeaSpec>(() => {
+    const { when: _legacy, ...rest } = initial; // a stored steps 2-5 spec: its one condition becomes the buy rule
+    return { ...rest, rules: specRules(initial) };
+  });
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const exec = spec.execution ?? DEFAULT_EXECUTION;
   const exits = spec.exits ?? NO_EXITS;
@@ -54,8 +176,6 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
       const ex = next.exits ?? NO_EXITS;
       return n !== 1 && ex.mode === "intraday" ? { ...next, exits: { ...ex, mode: "close" } } : next;
     });
-  const setWhen = <K extends keyof Condition>(key: K, value: Condition[K]) =>
-    setSpec((s) => ({ ...s, when: { ...(s.when ?? DEFAULT_CONDITION), [key]: value } }));
 
   return (
     <section className="mt-6 rounded-xl border border-slate-800 p-5">
@@ -83,42 +203,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         </Field>
       </div>
 
-      <label className="mt-4 flex items-center gap-2 text-sm text-slate-300">
-        <input type="checkbox" checked={spec.when !== null} onChange={(e) => set("when", e.target.checked ? spec.when ?? DEFAULT_CONDITION : null)} />
-        Only while a condition holds
-      </label>
-      {spec.when && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-6">
-          <Field label="Source">
-            <select className={field} value={spec.when.source} onChange={(e) => setWhen("source", e.target.value as Condition["source"])}>
-              <option value="fred">FRED series</option>
-              <option value="price">Price</option>
-            </select>
-          </Field>
-          <Field label="Series / ticker">
-            <input className={field} value={spec.when.series} onChange={(e) => setWhen("series", e.target.value)} />
-          </Field>
-          <Field label="Measure">
-            <select className={field} value={spec.when.measure} onChange={(e) => setWhen("measure", e.target.value as Condition["measure"])}>
-              <option value="level">level</option>
-              <option value="change">change</option>
-              <option value="pct_change">% change</option>
-            </select>
-          </Field>
-          <Field label="Over (trading days)">
-            <input type="number" className={field} value={spec.when.lookback_days} onChange={(e) => setWhen("lookback_days", Number(e.target.value))} />
-          </Field>
-          <Field label="Is">
-            <select className={field} value={spec.when.op} onChange={(e) => setWhen("op", e.target.value as Condition["op"])}>
-              <option value=">">above</option>
-              <option value="<">below</option>
-            </select>
-          </Field>
-          <Field label="Threshold">
-            <input type="number" step="any" className={field} value={spec.when.threshold} onChange={(e) => setWhen("threshold", Number(e.target.value))} />
-          </Field>
-        </div>
-      )}
+      <RulesEditor rules={spec.rules} onChange={(rules) => set("rules", rules)} />
 
       <div className="mt-4 grid gap-4 sm:grid-cols-4">
         <Field label="Compared with">
@@ -208,7 +293,7 @@ export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) =
         <div className="min-w-0">
           <div className="text-lg font-semibold text-white">{r.headline}</div>
           <div className="text-xs text-slate-400">
-            Variation {run.variation} · {run.spec.hold.join(", ")} {conditionText(run.spec.when) === "always" ? "always" : `while ${conditionText(run.spec.when)}`} · {claimLabel(run.spec.claim)}
+            Variation {run.variation} · {run.spec.hold.join(", ")} {rulesText(run.spec)} · {claimLabel(run.spec.claim)}
           </div>
         </div>
       </div>

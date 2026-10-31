@@ -87,11 +87,12 @@ def test_todays_partial_bar_is_never_returned_or_cached(tmp_path):
 def fake_bars(calls):
     def download(tickers, start=None, auto_adjust=True, progress=False):
         calls.append(list(tickers))
-        cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close"], tickers])
+        cols = pd.MultiIndex.from_product([["Open", "High", "Low", "Close", "Volume"], tickers])
         df = pd.DataFrame(1.0, index=IDX, columns=cols)
         for t in tickers:
             base = pd.Series(range(100, 100 + len(IDX)), index=IDX, dtype=float)
             df[("Open", t)], df[("High", t)], df[("Low", t)], df[("Close", t)] = base, base + 2, base - 2, base + 1
+            df[("Volume", t)] = 1000.0
         return df
     return download
 
@@ -102,9 +103,9 @@ def test_bars_columns_cut_and_cache(tmp_path):
     friday_morning = datetime(2020, 1, 10, 15, tzinfo=UTC)
     out = bars(["SPY"], date(2020, 1, 1), download=fake_bars(calls), cache_dir=tmp_path, now=friday_morning)
     spy = out["SPY"]
-    assert list(spy.columns) == ["open", "high", "low", "close"] and spy.index[-1] == pd.Timestamp("2020-01-09")
+    assert list(spy.columns) == ["open", "high", "low", "close", "volume"] and spy.index[-1] == pd.Timestamp("2020-01-09")
     assert spy["high"].iloc[0] == spy["open"].iloc[0] + 2
-    assert (tmp_path / "SPY.ohlc.csv").exists() and not (tmp_path / "SPY.csv").exists()
+    assert (tmp_path / "SPY.ohlcv.csv").exists() and not (tmp_path / "SPY.csv").exists()
     bars(["SPY"], date(2020, 1, 1), download=fake_bars(calls), cache_dir=tmp_path, now=friday_morning)
     assert len(calls) == 1
     with pytest.raises(UnknownSymbol, match="XYZ"):
@@ -119,6 +120,46 @@ def test_with_rule_bars_only_for_intraday_exits():
     assert with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda *a: 1 / 0) is prices
     plain.exits.mode = "intraday"
     got = with_rule_bars(plain, prices, date(2020, 1, 1), bars_fn=lambda t, s: {
-        "GLD": pd.DataFrame({"open": [1.0, 2.0], "high": [1.1, 2.2], "low": [0.9, 1.8], "close": [1.0, 2.0]},
+        "GLD": pd.DataFrame({"open": [1.0, 2.0], "high": [1.1, 2.2], "low": [0.9, 1.8], "close": [1.0, 2.0],
+                             "volume": [5.0, 6.0]},
                             index=prices.index)})
-    assert list(got.columns) == ["GLD", "GLD.open", "GLD.high", "GLD.low"]
+    assert list(got.columns) == ["GLD", "GLD.open", "GLD.high", "GLD.low", "GLD.volume"]
+
+
+def test_old_ohlc_cache_ignored(tmp_path):
+    from tradehub.workshop.data import bars
+    pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=IDX).to_csv(tmp_path / "SPY.ohlc.csv")
+    calls = []
+    out = bars(["SPY"], date(2020, 1, 1), download=fake_bars(calls), cache_dir=tmp_path,
+               now=datetime(2020, 1, 10, 15, tzinfo=UTC))
+    assert calls == [["SPY"]] and "volume" in out["SPY"]
+
+
+def test_vwap_rule_gets_bars():
+    from tradehub.workshop.data import with_rule_bars
+    from tradehub.workshop.spec import IdeaSpec
+    prices = pd.DataFrame({"GLD": [1.0, 2.0], "SPY": [3.0, 4.0]}, index=pd.bdate_range("2020-01-02", periods=2))
+    vwap = {"source": "price", "series": "SPY", "measure": "vs_vwap", "lookback_days": 5, "op": ">", "threshold": 0}
+    s = IdeaSpec(title="gold on SPY vwap", hold=["GLD"], claim="beats_benchmark", rules={"enter": {"conditions": [vwap]}},
+                 exits={"stop_loss_pct": 5, "mode": "intraday"})
+    asked = []
+
+    def fn(tickers, start):
+        asked.append(list(tickers))
+        return {t: pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 9.0}, index=prices.index)
+                for t in tickers}
+    got = with_rule_bars(s, prices, date(2020, 1, 1), bars_fn=fn)
+    assert asked == [["GLD", "SPY"]] and "SPY.volume" in got and "GLD.open" in got
+
+
+def test_missing_volume_keeps_the_bar(tmp_path):
+    # Review: a NaN volume must not drop a day's open/high/low (an intraday stop would be skipped).
+    from tradehub.workshop.data import bars
+    base = fake_bars([])
+
+    def download(tickers, **kw):
+        df = base(tickers, **kw)
+        df.loc[IDX[2], ("Volume", tickers[0])] = float("nan")
+        return df
+    out = bars(["SPY"], date(2020, 1, 1), download=download, now=datetime(2020, 1, 10, 15, tzinfo=UTC))["SPY"]
+    assert IDX[2] in out.index and pd.isna(out.loc[IDX[2], "volume"])

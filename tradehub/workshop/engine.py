@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from tradehub.workshop.spec import CASH, Exits, IdeaSpec
+from tradehub.workshop import signals
+from tradehub.workshop.spec import CASH, Condition, Exits, Group, IdeaSpec
 
 DAYS = 252
 MIN_UNSEEN_DAYS = 504
@@ -42,34 +43,69 @@ HEADLINES = {
 def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
-    if spec.when and spec.when.source == "price":
-        needed.append(spec.when.series)
+    needed += [c.series for c in _conditions(spec) if c.source == "price"]
     return list(dict.fromkeys(needed + list(CONTEXT)))
 
 
-def _measure(values: pd.Series, how: str, lookback: int) -> pd.Series:
-    if how == "level":
-        return values
-    if how == "change":
-        return values - values.shift(lookback)
-    return (values / values.shift(lookback) - 1) * 100
+def _conditions(spec: IdeaSpec) -> list[Condition]:
+    if spec.rules is None:
+        return []
+    return list(spec.rules.enter.conditions) + (list(spec.rules.exit.conditions) if spec.rules.exit else [])
 
 
-def condition_mask(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
-    """True on day t when the condition held on information available at the close of t-1."""
+def rule_series_ids(spec: IdeaSpec) -> list[str]:
+    """The FRED ids the rule reads."""
+    return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "fred"))
+
+
+def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
+    """True on day t when the condition held on information available at the close of t-1 (FRED: t-2)."""
     idx = closes.index
-    if spec.when is None:
-        return pd.Series(True, index=idx)
-    c = spec.when
+    bars = None
     if c.source == "price":
         values, lag = closes[c.series], 1
+        if c.measure == "vs_vwap":
+            t = c.series
+            cols = {f"{t}.high": "high", f"{t}.low": "low", t: "close", f"{t}.volume": "volume"}
+            if any(k not in closes for k in cols):
+                raise ValueError(f"a VWAP rule needs daily bars with volume for {t}")
+            bars = closes[list(cols)].rename(columns=cols)
     else:
         raw = fred[c.series].sort_index()
         values, lag = raw.reindex(idx.union(raw.index)).ffill().reindex(idx), 2  # +1 day for publication
-    measured = _measure(values, c.measure, c.lookback_days)
+    measured = signals.measure(values, c.measure, c.lookback_days, slow=c.slow_days, bars=bars)
     hit = measured > c.threshold if c.op == ">" else measured < c.threshold
-    lag += 1 if spec.execution.timing == "close" else 0  # a market-on-close order fills a day after the decision
-    return (hit & measured.notna()).shift(lag, fill_value=False).astype(bool)
+    return (hit & measured.notna()).shift(lag, fill_value=False).astype(bool)  # missing value = false
+
+
+def _group(g: Group, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> np.ndarray:
+    hits = np.vstack([_hit(c, closes, fred).to_numpy() for c in g.conditions])
+    return hits.all(axis=0) if g.mode == "all" else hits.any(axis=0)
+
+
+def _hold_state(enter: np.ndarray, exit: np.ndarray) -> np.ndarray:
+    """In from a day `enter` holds until a day `exit` holds; exit wins a day both hold."""
+    out = np.zeros(len(enter), dtype=bool)
+    on = False
+    for i in range(len(enter)):
+        if exit[i]:
+            on = False
+        elif enter[i]:
+            on = True
+        out[i] = on
+    return out
+
+
+def condition_mask(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
+    """True on day t when the rule has the idea in, on information available before day t."""
+    idx = closes.index
+    if spec.rules is None:
+        return pd.Series(True, index=idx)
+    mask = _group(spec.rules.enter, closes, fred)
+    if spec.rules.exit is not None:
+        mask = _hold_state(mask, _group(spec.rules.exit, closes, fred))
+    lag = 1 if spec.execution.timing == "close" else 0  # a market-on-close order fills a day after the decision
+    return pd.Series(mask, index=idx).shift(lag, fill_value=False).astype(bool)
 
 
 def _cagr(r: np.ndarray) -> float:
@@ -93,7 +129,7 @@ def _claim(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray, mask: np.ndar
         if not mask.any():
             return False, math.nan, "condition never held"
         v = float(np.mean(r[mask] - b[mask]) * DAYS * 100)
-        return v > 0, v, f"{v:+.1f} pts/yr vs benchmark while the condition held"
+        return v > 0, v, f"{v:+.1f} pts/yr vs benchmark while the rule was in"
     if kind == "ballast":
         down = s < 0
         if not down.any():
@@ -296,7 +332,7 @@ def _held(spec: IdeaSpec, signal: np.ndarray, sleeve: np.ndarray, legbars: dict 
     if not spec.exits.any():
         return signal, np.full(len(signal), "", dtype=object), sleeve
     lag = 2 if spec.execution.timing == "close" else 1
-    cooldown = None if spec.when is not None else EXIT_COOLDOWN
+    cooldown = None if spec.rules is not None else EXIT_COOLDOWN
     if legbars is None:
         position, why = apply_exits(signal, sleeve, spec.exits, cooldown, lag)
         return position, why, sleeve
@@ -310,7 +346,7 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
 
 
 def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
-    """Per trading day: the idea's return after costs, whether the condition held, the benchmark's and SPY's."""
+    """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes))
     return pd.DataFrame({"ret": _build(position, sleeve, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
@@ -404,8 +440,8 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     n_u = n - k
     if n_u < MIN_UNSEEN_DAYS:
         reason = f"only {n_u} unseen trading days; at least {MIN_UNSEEN_DAYS} (2 years) are needed"
-    elif spec.when is not None and not (MIN_CONDITION_DAYS <= mask[unseen].sum() <= n_u - MIN_CONDITION_DAYS):
-        reason = (f"the condition held on {int(mask[unseen].sum())} of {n_u} unseen days; it needs at least "
+    elif spec.rules is not None and not (MIN_CONDITION_DAYS <= mask[unseen].sum() <= n_u - MIN_CONDITION_DAYS):
+        reason = (f"the rule was in on {int(mask[unseen].sum())} of {n_u} unseen days; it needs at least "
                   f"{MIN_CONDITION_DAYS} days on and off")
     if reason:
         return _clean({**base, "verdict": "NOT ENOUGH DATA", "headline": HEADLINES["nodata"], "reason": reason,
@@ -419,7 +455,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     rng = np.random.default_rng(seed)
     ru, bu, su, mu, hu = r[unseen], b[unseen], s[unseen], mask[unseen], held[unseen]
     lb_u = None if legbars is None else {k: (v[unseen] if isinstance(v, np.ndarray) else v) for k, v in legbars.items()}
-    if spec.when is not None:
+    if spec.rules is not None:
         perm = np.empty(permutations)
         for i in range(permutations):
             shifted = np.roll(mu, int(rng.integers(MIN_CONDITION_DAYS, n_u - MIN_CONDITION_DAYS)))
@@ -474,6 +510,6 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
         "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
                   "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
         "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
-                    "method": "random timing" if spec.when is not None else "sign-flip vs comparison"},
+                    "method": "random timing" if spec.rules is not None else "sign-flip vs comparison"},
         "t_test": t_test, "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
     })
