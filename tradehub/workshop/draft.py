@@ -21,13 +21,18 @@ MODEL = MODELS[0]
 SYSTEM = (
     "You turn one plain-words trading idea into a backtest spec. Use only daily ETF/stock tickers and FRED series ids "
     "you are confident exist. Pick the claim that matches what the idea says success is: beating the benchmark "
-    "overall (beats_benchmark), beating it only while a condition holds (beats_benchmark_when), protecting on SPY's "
+    "overall (beats_benchmark), beating it only while its rule has it in (beats_benchmark_when), protecting on SPY's "
     "down days (ballast), or a shallower worst drop at similar return (smoother_ride). Every choice the words do "
     "not pin down goes in assumptions as one short sentence, for example \"rates rising = 10-year yield up more "
     "than 0.25 points over 3 months\". Tickers the idea bets against go in short (hold stays the long side; either may be "
     "empty, not both). Order execution defaults to a market order at the open; use timing close only when the idea "
     "says so (it fills a day later), and a limit order only when it names a price discipline. Exits (stop-loss %, "
-    "trailing stop %, take-profit %, max days held) only when the idea names them. Never invent results. "
+    "trailing stop %, take-profit %, max days held) only when the idea names them. A timing idea goes in rules: "
+    "rules.enter is the buy-when group and the optional rules.exit the sell-when group (without one it sells when the "
+    "buy group stops holding); each group is all or any of 1-5 conditions. Measures: level, change, pct_change, "
+    "vs_sma, sma_cross (needs slow_days > lookback_days), rsi, macd (fixed 12/26/9; above 0 = bullish), vs_high / "
+    "vs_low (above 0 / below 0 = a new N-day high / low), volatility, vs_vwap; FRED series allow only level, change, "
+    "pct_change, vs_sma and volatility. Never invent results. "
     "Reply with JSON only."
 )
 

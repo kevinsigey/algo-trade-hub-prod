@@ -5,14 +5,44 @@ import { buildApiUrl } from "@/lib/api";
 export type Claim = "beats_benchmark" | "beats_benchmark_when" | "ballast" | "smoother_ride";
 export type Verdict = "PASS" | "FAIL" | "NOT ENOUGH DATA";
 
+export type Measure =
+  | "level" | "change" | "pct_change" | "vs_sma" | "sma_cross" | "rsi" | "macd" | "vs_high" | "vs_low" | "volatility" | "vs_vwap";
+
 export interface Condition {
   source: "fred" | "price";
   series: string;
-  measure: "level" | "change" | "pct_change";
+  measure: Measure;
   lookback_days: number;
+  slow_days?: number | null;
   op: ">" | "<";
   threshold: number;
 }
+
+export interface Group {
+  mode: "all" | "any";
+  conditions: Condition[];
+}
+
+/** Step 6: buy when `enter` holds; with `exit`, hold until `exit` holds (exit wins a tie). */
+export interface Rules {
+  enter: Group;
+  exit: Group | null;
+}
+
+/** Each measure: its menu label, the units hint, and which sources can use it. */
+export const MEASURES: { value: Measure; label: string; hint: string; fred: boolean }[] = [
+  { value: "level", label: "level", hint: "the value itself", fred: true },
+  { value: "change", label: "change", hint: "change over N days, in the series' own units", fred: true },
+  { value: "pct_change", label: "% change", hint: "% change over N days", fred: true },
+  { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", fred: true },
+  { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", fred: true },
+  { value: "sma_cross", label: "average cross", hint: "% the N-day average is above the slow average", fred: false },
+  { value: "rsi", label: "RSI", hint: "N-day RSI, 0-100 (below 30 = oversold)", fred: false },
+  { value: "macd", label: "MACD", hint: "MACD 12/26/9 minus its signal, % of price (above 0 = bullish)", fred: false },
+  { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", fred: false },
+  { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", fred: false },
+  { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", fred: false },
+];
 
 export interface Execution {
   order_type: "market" | "limit";
@@ -47,7 +77,9 @@ export interface IdeaSpec {
   short?: string[];
   execution?: Execution;
   exits?: Exits;
-  when: Condition | null;
+  rules: Rules | null;
+  /** Steps 2-5 runs stored one condition; the server reads it as a one-condition buy rule. */
+  when?: Condition | null;
   otherwise: string;
   claim: Claim;
   benchmark: string;
@@ -175,7 +207,7 @@ export async function adminJson<T>(path: string, init: RequestInit = {}): Promis
 
 const CLAIMS: Record<Claim, string> = {
   beats_benchmark: "Beats the benchmark after costs",
-  beats_benchmark_when: "Beats the benchmark while the condition holds",
+  beats_benchmark_when: "Beats the benchmark while the rule has it in",
   ballast: "Ballast: loses less than SPY on its down days and is up overall, or goes up when SPY falls",
   smoother_ride: "Smoother ride: a shallower worst drop at a similar return",
 };
@@ -194,8 +226,39 @@ export function verdictTone(v: Verdict | null): "ok" | "bad" | "flat" {
 
 export function conditionText(c: Condition | null): string {
   if (!c) return "always";
-  const what = c.measure === "level" ? c.series : `${c.series} ${c.measure === "change" ? "change" : "% change"} over ${c.lookback_days} trading days`;
-  return `${what} ${c.op} ${c.threshold}`;
+  const { series: s, lookback_days: n, op, threshold: t } = c;
+  const zero = t === 0;
+  switch (c.measure) {
+    case "level": return `${s} ${op} ${t}`;
+    case "change": return `${s} change over ${n} trading days ${op} ${t}`;
+    case "pct_change": return `${s} % change over ${n} trading days ${op} ${t}`;
+    case "vs_sma": return `${s} % vs its ${n}-day avg ${op} ${t}`;
+    case "sma_cross":
+      return zero ? `${s} ${n}-day avg ${op === ">" ? "above" : "below"} ${c.slow_days}-day avg` : `${s} ${n}-day avg vs ${c.slow_days}-day avg (%) ${op} ${t}`;
+    case "rsi": return `${s} RSI(${n}) ${op} ${t}`;
+    case "macd": return `${s} MACD (12/26/9) ${op} ${t}`;
+    case "vs_high": return zero && op === ">" ? `${s} new ${n}-day high` : `${s} % vs prior ${n}-day high ${op} ${t}`;
+    case "vs_low": return zero && op === "<" ? `${s} new ${n}-day low` : `${s} % vs prior ${n}-day low ${op} ${t}`;
+    case "volatility": return `${s} ${n}-day volatility (%/yr) ${op} ${t}`;
+    case "vs_vwap": return `${s} % vs ${n}-day VWAP ${op} ${t}`;
+  }
+}
+
+/** A spec's rules, reading a legacy `when` the way the server does. */
+export function specRules(spec: IdeaSpec): Rules | null {
+  if (spec.rules) return spec.rules;
+  return spec.when ? { enter: { mode: "all", conditions: [spec.when] }, exit: null } : null;
+}
+
+function groupText(g: Group): string {
+  const parts = g.conditions.map(conditionText).join(", ");
+  return g.conditions.length > 1 ? `${g.mode} of ${parts}` : parts;
+}
+
+export function rulesText(spec: IdeaSpec): string {
+  const r = specRules(spec);
+  if (!r) return "always";
+  return r.exit ? `buy when ${groupText(r.enter)}; sell when ${groupText(r.exit)}` : `while ${groupText(r.enter)}`;
 }
 
 /** A live idea's paper record (spec §4.6): the shadow track summed up, and the 3-month claim check. */

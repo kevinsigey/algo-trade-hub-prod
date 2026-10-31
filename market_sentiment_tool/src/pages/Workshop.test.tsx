@@ -3,9 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
-import { claimLabel, conditionText } from "@/lib/workshop";
+import { claimLabel, conditionText, rulesText } from "@/lib/workshop";
 import Workshop from "@/pages/Workshop";
-import WorkshopIdea from "@/pages/WorkshopIdea";
+import WorkshopIdea, { DraftEditor } from "@/pages/WorkshopIdea";
 
 const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
 vi.mock("@/lib/supabase", () => ({
@@ -258,5 +258,51 @@ describe("Workshop editor: intraday exits", () => {
     expect(await screen.findByRole("option", { name: /During the day/ })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Short (tickers, comma separated)"), { target: { value: "" } });
     expect(screen.getByRole("option", { name: /During the day/ })).toBeEnabled();
+  });
+});
+
+describe("Workshop rules (step 6)", () => {
+  it("renders rules text for legacy when", () => {
+    expect(rulesText(SPEC as never)).toBe("while DGS10 change over 63 trading days > 0.25");
+    expect(rulesText({ ...SPEC, when: undefined, rules: null } as never)).toBe("always");
+    const rsi = { source: "price", series: "XLE", measure: "rsi", lookback_days: 14, slow_days: null, op: "<", threshold: 30 };
+    const cross = { ...rsi, series: "SPY", measure: "sma_cross", lookback_days: 50, slow_days: 200, op: ">", threshold: 0 };
+    const high = { ...rsi, series: "QQQ", measure: "vs_high", lookback_days: 20, op: ">", threshold: 0 };
+    expect(conditionText(cross as never)).toBe("SPY 50-day avg above 200-day avg");
+    expect(conditionText(high as never)).toBe("QQQ new 20-day high");
+    expect(rulesText({ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [rsi, cross] }, exit: { mode: "any", conditions: [high] } } } as never))
+      .toBe("buy when all of XLE RSI(14) < 30, SPY 50-day avg above 200-day avg; sell when QQQ new 20-day high");
+  });
+
+  const editor = (onRun = vi.fn()) => {
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    return onRun;
+  };
+
+  it("adds and removes a condition", () => {
+    editor();
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Add a buy condition" }));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(2);
+    fireEvent.change(screen.getAllByLabelText("Source")[1], { target: { value: "price" } });
+    fireEvent.change(screen.getAllByLabelText("Measure")[1], { target: { value: "sma_cross" } });
+    expect(screen.getByLabelText("Slow average (days)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove buy condition 1" }));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(1);
+    expect(screen.getByText("Sells when the buy rule stops holding.")).toBeInTheDocument();
+  });
+
+  it("sell-when toggle adds exit group to the saved spec", () => {
+    const onRun = editor();
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.click(screen.getByLabelText("Sell when its own rule holds"));
+    fireEvent.change(screen.getByLabelText("Sell when"), { target: { value: "any" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    const sent = onRun.mock.calls[0][0];
+    expect(sent.when).toBeUndefined();
+    expect(sent.rules.enter.conditions).toHaveLength(1);
+    expect(sent.rules.exit.mode).toBe("any");
+    expect(sent.rules.exit.conditions).toHaveLength(1);
   });
 });
