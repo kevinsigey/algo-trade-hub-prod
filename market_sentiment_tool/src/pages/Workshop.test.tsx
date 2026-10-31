@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import App from "@/App";
 import { claimLabel, conditionText, rulesText } from "@/lib/workshop";
 import Workshop from "@/pages/Workshop";
-import WorkshopIdea, { DraftEditor } from "@/pages/WorkshopIdea";
+import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
 
 const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
 vi.mock("@/lib/supabase", () => ({
@@ -345,5 +345,46 @@ describe("Workshop analyst rules (step 6 Part B)", () => {
     expect(screen.getByText("Data from ~2019, stocks only (no ETFs).")).toBeInTheDocument();
     expect(conditionText({ source: "analyst", series: "AAPL", measure: "net_upgrades", lookback_days: 63, op: ">", threshold: 0 } as never))
       .toBe("AAPL analyst upgrades minus downgrades over 63 days > 0");
+  });
+});
+
+describe("Workshop deeper look", () => {
+  const ANALYSIS = {
+    data_end: "2026-10-29",
+    years: [
+      { year: 2022, idea: 30.1, bench: -18.2, excess: 48.3, days_in: 60, idea_in: 31.0 },
+      { year: 2023, idea: -20.2, bench: 26.2, excess: -46.4, days_in: 34, idea_in: -19.9 },
+    ],
+    rolling: [{ t: "2023-01-03", excess: 40 }, { t: "2026-10-29", excess: -10 }],
+  };
+
+  it("shows each year and the rolling 12-month excess", async () => {
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: ANALYSIS } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    const row = await screen.findByRole("row", { name: /2023/ });
+    expect(row).toHaveTextContent("−20.2%");
+    expect(row).toHaveTextContent("+26.2%");
+    expect(row).toHaveTextContent("−46.4");
+    expect(row).toHaveTextContent("34%");
+    expect(screen.getByLabelText("Rolling 12-month excess return")).toBeInTheDocument();
+  });
+
+  it("downloads the run's daily data with the session token", async () => {
+    const f = serve({ "/api/workshop/ideas/1/runs/1/daily.csv": { body: "date,in\n" } });
+    const created = vi.fn(() => "blob:x");
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download daily data (CSV)" }));
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    const [url, init] = f.mock.calls[0];
+    expect(String(url)).toContain("/api/workshop/ideas/1/runs/1/daily.csv");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
+  });
+
+  it("names each ticker so GOLD isn't mistaken for gold", async () => {
+    serve({ "/api/workshop/tickers": { body: { GOLD: { name: "Gold.com, Inc.", kind: "stock" }, SPY: { name: "SPDR S&P 500 ETF", kind: "ETF" } } } });
+    render(<DraftEditor initial={{ ...SPEC, hold: ["GOLD"], when: undefined, rules: null } as never} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("GOLD: Gold.com, Inc. (stock)")).toBeInTheDocument();
   });
 });

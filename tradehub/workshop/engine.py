@@ -537,3 +537,24 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
                     "method": "random timing" if spec.rules is not None else "sign-flip vs comparison"},
         "t_test": t_test, "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
     })
+
+
+ROLLING_DAYS = 252
+
+
+def analysis(frame: pd.DataFrame) -> dict:
+    """A deeper look at a daily_frame: each calendar year (idea vs benchmark, share of days in, the idea's return
+    on its in-days) and the rolling 12-month excess return, so a run shows when an edge appeared or stopped."""
+    years = []
+    for year, part in frame.groupby(frame.index.year):
+        idea, bench = float((1 + part["ret"]).prod() - 1) * 100, float((1 + part["bench"]).prod() - 1) * 100
+        on = part["on"].astype(bool)
+        years.append({"year": int(year), "idea": idea, "bench": bench, "excess": idea - bench,
+                      "days_in": float(on.mean() * 100),
+                      "idea_in": float((1 + part["ret"][on]).prod() - 1) * 100 if on.any() else None})
+    grow = lambda r: np.exp(np.log1p(r).rolling(ROLLING_DAYS).sum())  # noqa: E731
+    excess = ((grow(frame["ret"]) - grow(frame["bench"])) * 100).dropna()
+    step = max(1, math.ceil(len(excess) / CURVE_POINTS))
+    points = list(range(0, len(excess), step)) + ([len(excess) - 1] if len(excess) and (len(excess) - 1) % step else [])
+    return {"years": years, "rolling": [{"t": str(excess.index[i].date()), "excess": float(excess.iloc[i])}
+                                        for i in points]}

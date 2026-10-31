@@ -11,6 +11,7 @@ import {
   DEFAULT_EXECUTION,
   NO_EXITS,
   ORDER_OPTIONS,
+  adminDownload,
   adminJson,
   claimLabel,
   MEASURES,
@@ -24,6 +25,8 @@ import {
   type GateResult,
   type Group,
   type Rules,
+  type RunAnalysis,
+  type TickerNames,
   type IdeaDetail,
   type IdeaSpec,
   type Run,
@@ -161,6 +164,29 @@ function RulesEditor({ rules, onChange }: { rules: Rules | null; onChange: (r: R
   );
 }
 
+/** What each ticker really is ("GOLD" is a stock, not gold), looked up as Kevin types. Fails quietly. */
+function TickerNamesLine({ symbols }: { symbols: string[] }) {
+  const [names, setNames] = useState<TickerNames>({});
+  const key = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => s && s !== "CASH"))].slice(0, 20).join(",");
+  useEffect(() => {
+    if (!key) return;
+    const t = setTimeout(() => {
+      adminJson<TickerNames>(`/api/workshop/tickers?symbols=${encodeURIComponent(key)}`).then(setNames).catch(() => setNames({}));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [key]);
+  const shown = key.split(",").filter((s) => s && s in names);
+  if (!shown.length) return null;
+  return (
+    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400" aria-label="What each ticker is">
+      {shown.map((s) => {
+        const n = names[s];
+        return <li key={s} className={n ? "" : "text-amber-300"}>{n ? `${s}: ${n.name} (${n.kind})` : `${s}: not found`}</li>;
+      })}
+    </ul>
+  );
+}
+
 /** The draft, as a form. Nothing runs until Kevin presses Run it. */
 export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(() => {
@@ -206,6 +232,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
         </Field>
       </div>
+      <TickerNamesLine symbols={[...spec.hold, ...(spec.short ?? []), spec.otherwise, spec.benchmark]} />
 
       <RulesEditor rules={spec.rules} onChange={(rules) => set("rules", rules)} />
 
@@ -287,7 +314,80 @@ function Mark({ ok }: { ok: boolean | null }) {
   return ok ? <span className="text-emerald-400">✓</span> : <span className="text-rose-400">✗</span>;
 }
 
-export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) => void }) {
+/** Year by year, the rolling 12-month excess, and the raw daily data: why a run passed or failed, and when. */
+function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
+  const [data, setData] = useState<RunAnalysis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const base = `/api/workshop/ideas/${ideaId}/runs/${run.id}`;
+  const load = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setData(await adminJson<RunAnalysis>(`${base}/analysis`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load it.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const download = () => adminDownload(`${base}/daily.csv`, `idea-${ideaId}-run-${run.id}-daily.csv`).catch((e) => setError(e.message));
+  const split = run.result.split_date;
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap gap-2">
+        {!data && <button type="button" className={button} disabled={busy} onClick={load}>{busy ? "Loading…" : "Year by year"}</button>}
+        <button type="button" className={button} onClick={download}>Download daily data (CSV)</button>
+      </div>
+      {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
+      {data && (
+        <>
+          {data.rolling.length > 1 && (
+            <div className="mt-4 h-40" aria-label="Rolling 12-month excess return">
+              <div className="text-xs text-slate-400">Rolling 12 months: idea minus {run.spec.benchmark}, pts</div>
+              <ResponsiveContainer width="100%" height="90%">
+                <LineChart data={data.rolling} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <XAxis dataKey="t" tickFormatter={(t: string) => t.slice(0, 4)} stroke="#64748b" fontSize={11} minTickGap={40} />
+                  <YAxis tickFormatter={(v: number) => v.toFixed(0)} stroke="#64748b" fontSize={11} width={40} />
+                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b" }} formatter={(v: number) => [`${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} pts`, "excess"]} />
+                  <ReferenceLine y={0} stroke="#475569" />
+                  {split && <ReferenceLine x={data.rolling.find((p) => p.t >= split)?.t} stroke="#94a3b8" strokeDasharray="3 3" />}
+                  <Line type="monotone" dataKey="excess" stroke="#fbbf24" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[30rem] text-xs tabular-nums">
+              <thead className="text-left text-slate-400">
+                <tr>
+                  <th className="py-1 font-medium">Year</th><th className="py-1 text-right font-medium">Idea</th>
+                  <th className="py-1 text-right font-medium">{run.spec.benchmark}</th><th className="py-1 text-right font-medium">Excess, pts</th>
+                  <th className="py-1 text-right font-medium">Days in</th><th className="py-1 text-right font-medium">Idea while in</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.years.map((y) => (
+                  <tr key={y.year} className={`border-t border-slate-800/80 ${split && String(y.year) >= split.slice(0, 4) ? "bg-slate-900/60" : ""}`}>
+                    <td className="py-1 text-slate-300">{y.year}</td>
+                    <td className="py-1 text-right text-slate-200">{pct(y.idea)}</td>
+                    <td className="py-1 text-right text-slate-400">{pct(y.bench)}</td>
+                    <td className={`py-1 text-right ${y.excess >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{`${y.excess >= 0 ? "+" : "−"}${Math.abs(y.excess).toFixed(1)}`}</td>
+                    <td className="py-1 text-right text-slate-400">{y.days_in.toFixed(0)}%</td>
+                    <td className="py-1 text-right text-slate-400">{pct(y.idea_in)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1 text-xs text-slate-500">Shaded rows: unseen years. Recomputed from the run's spec, up to {data.data_end}.</p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function VerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
   const r = run.result;
   const tone = verdictTone(run.verdict);
   return (
@@ -353,6 +453,8 @@ export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) =
           </table>
         </div>
       )}
+
+      <DeeperLook ideaId={ideaId} run={run} />
 
       {run.spec.assumptions.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-xs text-slate-400">
@@ -566,7 +668,7 @@ export default function WorkshopIdea() {
         </button>
       )}
       {data && [...data.runs].reverse().map((r) => (
-        <VerdictCard key={r.id} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+        <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
       ))}
     </div>
   );

@@ -3,6 +3,7 @@ VPS) and FRED series (the keyed fetcher the journal uses). Fetchers are injectab
 
 from __future__ import annotations
 
+import functools
 import os
 import tempfile
 from datetime import UTC, date, datetime, timedelta
@@ -209,3 +210,25 @@ def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
     for t in analyst_tickers(spec):
         out[f"{t}@analyst"] = (analyst_fn or analyst)(t)
     return out
+
+
+KINDS = {"EQUITY": "stock", "ETF": "ETF", "MUTUALFUND": "fund", "INDEX": "index", "CRYPTOCURRENCY": "crypto"}
+
+
+@functools.lru_cache(maxsize=512)
+def _yahoo_info(ticker: str) -> dict:
+    import yfinance as yf
+    return yf.Ticker(ticker).info
+
+
+def ticker_info(ticker: str, *, fetch=None) -> dict | None:
+    """What a ticker actually is ({name, kind}), so "GOLD" (a stock) isn't mistaken for gold. None if unknown."""
+    try:
+        info = (fetch or _yahoo_info)(ticker) or {}
+    except Exception:
+        return None
+    name = info.get("longName") or info.get("shortName")
+    if not name:
+        return None
+    kind = info.get("quoteType") or ""
+    return {"name": name, "kind": KINDS.get(kind, kind.lower() or "unknown")}

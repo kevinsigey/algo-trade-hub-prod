@@ -190,6 +190,28 @@ export class ApiError extends Error {
   }
 }
 
+/** Save a signed-in file response (the run's daily CSV) to the browser's downloads. */
+export async function adminDownload(path: string, filename: string): Promise<void> {
+  const token = await sessionToken();
+  const response = await fetch(buildApiUrl(path), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) throw new ApiError(`Download failed (${response.status})`, response.status, null);
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** A run, year by year, plus the rolling 12-month excess return (the deeper look). */
+export interface RunAnalysis {
+  data_end: string | null;
+  years: { year: number; idea: number; bench: number; excess: number; days_in: number; idea_in: number | null }[];
+  rolling: { t: string; excess: number }[];
+}
+
+export type TickerNames = Record<string, { name: string; kind: string } | null>;
+
 /** A Workshop request, signed with Kevin's session. Errors carry the server's detail and parsed body. */
 export async function adminJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await sessionToken();

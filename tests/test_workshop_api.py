@@ -248,3 +248,50 @@ def test_analyst_rule_on_an_etf_is_422(api, monkeypatch):
     idea = c.post("/api/workshop/ideas", json={"title": "XLE", "plain_words": "xle"}).json()
     r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": etf})
     assert r.status_code == 422 and "ETFs" in r.json()["detail"] and calls == []
+
+
+def _frame_and_prices():
+    import numpy as np
+    import pandas as pd
+    idx = pd.bdate_range("2025-01-01", "2026-10-30")
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"ret": rng.normal(0, 0.01, len(idx)), "on": True, "bench": 0.0, "spy": 0.0, "exit": ""},
+                         index=idx)
+    prices = pd.DataFrame({t: 100.0 for t in ("GLD", "SPY", "QQQ", "IWM")}, index=idx)
+    return frame, prices
+
+
+def test_run_analysis_and_csv_stop_at_the_runs_data_end(api, monkeypatch):
+    c, db, _ = api
+    frame, prices = _frame_and_prices()
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    got = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").json()
+    assert [y["year"] for y in got["years"]] == [2025, 2026] and got["data_end"] == "2026-10-29"
+    assert got["rolling"][-1]["t"] == "2026-10-29"
+    r = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    lines = r.text.strip().splitlines()
+    assert lines[0] == "date,in,idea_ret,bench_ret,spy_ret,exit,close_GLD,close_SPY"
+    assert lines[-1].startswith("2026-10-29,1,")
+    assert "attachment" in r.headers["content-disposition"]
+
+
+def test_run_analysis_checks_the_run_belongs_to_the_idea(api):
+    c, _, _ = api
+    a = c.post("/api/workshop/ideas", json={"title": "Idea A", "plain_words": "a"}).json()
+    b = c.post("/api/workshop/ideas", json={"title": "Idea B", "plain_words": "b"}).json()
+    run = c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC}).json()
+    assert c.get(f"/api/workshop/ideas/{b['id']}/runs/{run['id']}/analysis").status_code == 404
+    assert c.get(f"/api/workshop/ideas/{a['id']}/runs/999/daily.csv").status_code == 404
+
+
+def test_ticker_names(api, monkeypatch):
+    c, _, _ = api
+    names = {"GOLD": {"name": "Gold.com, Inc.", "kind": "stock"}, "GLD": {"name": "SPDR Gold Shares", "kind": "ETF"}}
+    monkeypatch.setattr(main, "workshop_ticker_info", lambda t: names.get(t))
+    r = c.get("/api/workshop/tickers", params={"symbols": "gold, GLD,NOPE"})
+    assert r.json() == {"GOLD": names["GOLD"], "GLD": names["GLD"], "NOPE": None}
+    assert c.get("/api/workshop/tickers", params={"symbols": ",".join(f"T{i}" for i in range(21))}).status_code == 422

@@ -163,3 +163,12 @@ def test_missing_volume_keeps_the_bar(tmp_path):
         return df
     out = bars(["SPY"], date(2020, 1, 1), download=download, now=datetime(2020, 1, 10, 15, tzinfo=UTC))["SPY"]
     assert IDX[2] in out.index and pd.isna(out.loc[IDX[2], "volume"])
+
+
+def test_ticker_info_names_the_kind_and_fails_soft():
+    from tradehub.workshop.data import ticker_info
+    info = {"GOLD": {"longName": "Gold.com, Inc.", "quoteType": "EQUITY"}, "GLD": {"longName": "SPDR Gold Shares ETF", "quoteType": "ETF"}}
+    assert ticker_info("GOLD", fetch=lambda t: info[t]) == {"name": "Gold.com, Inc.", "kind": "stock"}
+    assert ticker_info("GLD", fetch=lambda t: info[t]) == {"name": "SPDR Gold Shares ETF", "kind": "ETF"}
+    assert ticker_info("XX", fetch=lambda t: 1 / 0) is None
+    assert ticker_info("YY", fetch=lambda t: {}) is None
