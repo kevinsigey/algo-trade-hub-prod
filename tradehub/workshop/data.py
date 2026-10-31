@@ -190,7 +190,9 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
         raise UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none)")
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        frame.assign(as_of=cutoff.isoformat()).to_csv(path)
+        tmp = path.with_suffix(".csv.tmp")
+        frame.assign(as_of=cutoff.isoformat()).to_csv(tmp)
+        os.replace(tmp, path)  # the API and a job may read it at the same moment
     return frame
 
 

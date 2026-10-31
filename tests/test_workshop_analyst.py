@@ -126,3 +126,23 @@ def test_a_failed_fetch_uses_the_cached_actions(tmp_path):
     assert list(analyst("AAA", fetch=boom, cache_dir=tmp_path, now=today)["action"]) == ["up"]
     with pytest.raises(UnknownSymbol, match="Yahoo unavailable"):
         analyst("BBB", fetch=boom, cache_dir=tmp_path, now=today)
+
+
+def test_actions_just_before_the_start_still_count():
+    # CodeRabbit/review: a target set 3 trading days before the first test day is inside a 5-day window.
+    a = actions([("2020-01-01 13:00", "up", 150.0)])  # Wednesday before IDX starts (Mon 2020-01-06)
+    close = pd.Series(100.0, index=IDX)
+    up = signals.analyst_measure(a, IDX, "target_upside", 5, close=close)
+    net = signals.analyst_measure(a, IDX, "net_upgrades", 5)
+    assert up.iloc[0] == pytest.approx(50.0) and net.iloc[0] == 1
+    assert np.isnan(up.iloc[3]) and net.iloc[3] == 0  # aged out of the 5-day window
+
+
+def test_analyst_cache_written_atomically(tmp_path, monkeypatch):
+    import os
+    replaced = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (replaced.append((str(a), str(b))), real(a, b))[1])
+    analyst("AAA", fetch=lambda t: yf_frame([("2020-01-07 13:00", "up", 0)]), cache_dir=tmp_path,
+            now=datetime(2021, 6, 1, 22, tzinfo=UTC))
+    assert replaced and replaced[0][1].endswith("AAA.analyst.csv") and list(tmp_path.iterdir()) == [tmp_path / "AAA.analyst.csv"]
