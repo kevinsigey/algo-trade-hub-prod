@@ -35,9 +35,11 @@ from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
-    analyst as workshop_analyst, fred_series as workshop_fred, rule_series, ticker_info as workshop_ticker_info, \
+    analyst as workshop_analyst, earnings_dates as workshop_earnings, fred_series as workshop_fred, \
+    release_dates as workshop_release_dates, rule_series, ticker_info as workshop_ticker_info, \
     with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
+from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
 from tradehub.workshop.playbook import draft as playbook_draft
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, tickers_for
@@ -521,6 +523,9 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
     """The live-paper gate on the idea's latest run, recomputed from fresh prices every time it is asked."""
     runs = _found(supabase, idea_id)["runs"]
     latest = runs[-1] if runs else None
+    if latest is not None and (latest.get("spec") or {}).get("kind") == "event":
+        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+                "reasons": ["event studies are research only for now: they don't trade on paper"]}, None
     if latest is None or latest["verdict"] != "PASS":
         return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
                 "reasons": ["the latest run did not PASS"]}, None
@@ -586,6 +591,8 @@ def _run_frame(supabase, idea_id: int, run_id: int):
     run = workshop_store.get_run(supabase, run_id)
     if run is None or run.get("idea_id") != idea_id:
         raise HTTPException(status_code=404, detail="no such run")
+    if (run.get("spec") or {}).get("kind") == "event":
+        raise HTTPException(status_code=422, detail="the deeper look is for rule ideas; an event study lists its events")
     spec = IdeaSpec.model_validate(run["spec"])
     try:
         prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
@@ -613,6 +620,12 @@ def workshop_run_analysis(idea_id: int, run_id: int, _admin: dict = Depends(admi
 @app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/daily.csv", tags=["Workshop"])
 def workshop_run_csv(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
                      supabase=Depends(get_supabase)):
+    run = workshop_store.get_run(supabase, run_id)
+    if run is not None and run.get("idea_id") == idea_id and (run.get("spec") or {}).get("kind") == "event":
+        cols = ["date", "ticker", "surprise", "ar0", "car_1_3", "car_1_5", "car_1_10", "pre_5"]
+        table = pd.DataFrame((run.get("result") or {}).get("events") or [], columns=cols)
+        return Response(table.to_csv(index=False, float_format="%.6g"), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="idea-{idea_id}-run-{run_id}-events.csv"'})
     spec, frame, prices, _, _ = _run_frame(supabase, idea_id, run_id)
     legs = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != "CASH" else [])
                               + [spec.benchmark]))
@@ -634,6 +647,35 @@ def workshop_tickers(symbols: str = Query(..., max_length=300), _admin: dict = D
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=8) as pool:  # Yahoo's .info is slow; look them up side by side
         return dict(zip(wanted, pool.map(workshop_ticker_info, wanted)))
+
+
+class _EventRunIn(BaseModel):
+    spec: EventSpec
+    draft_model: str | None = None
+
+
+@app.post("/api/workshop/ideas/{idea_id}/event-runs", tags=["Workshop"])
+def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    """An event study (earnings, FOMC/CPI/jobs days, price gaps), judged like a rule idea but on events."""
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    spec = body.spec
+    try:
+        closes = workshop_closes(list(dict.fromkeys(spec.tickers + [spec.benchmark])), spec.start - timedelta(days=30))
+        if spec.event == "earnings":
+            events = {t: workshop_earnings(t) for t in spec.tickers}
+        elif spec.event in RELEASES:
+            events = {"*": workshop_release_dates(RELEASES[spec.event])}
+        else:
+            events = {}
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    variation = len(found["runs"]) + 1
+    result = run_event_test(spec, closes, events, variations=variation, seed=idea_id * 1000 + variation)
+    return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
+                                     result)
 
 
 @app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])
@@ -669,7 +711,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
         if idea.get("killed_at"):
             live["state"] = "killed"  # the record ended on purpose; not stale
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
-            "claim": latest["spec"]["claim"] if latest else None,
+            "claim": latest["spec"].get("claim") if latest else None,
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "killed_at": idea.get("killed_at"), "live": live}
 
@@ -697,7 +739,7 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
     row["shadow"] = row.pop("live")
     row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
                     "headline": r["result"].get("headline"), "p": (r["result"].get("shuffle") or {}).get("p"),
-                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"]["claim"]}
+                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"].get("claim")}
                    for r in found["runs"]]
     try:
         trades = service.closed(supabase)["trades"]

@@ -11,8 +11,12 @@ import {
   DEFAULT_EXECUTION,
   NO_EXITS,
   ORDER_OPTIONS,
+  EVENT_LABELS,
+  WINDOW_LABELS,
   adminDownload,
   adminJson,
+  isEvent,
+  parseEventTable,
   claimLabel,
   MEASURES,
   rulesText,
@@ -25,6 +29,7 @@ import {
   type GateResult,
   type Group,
   type DraftResponse,
+  type EventSpec,
   type PlayMatch,
   type Rules,
   type RunAnalysis,
@@ -208,8 +213,95 @@ function TickerNamesLine({ symbols }: { symbols: string[] }) {
   );
 }
 
-/** The draft, as a form. Nothing runs until Kevin presses Run it. */
-export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+/** The draft, as a form. Nothing runs until Kevin presses Run it. An event study gets its own form. */
+export function DraftEditor(props: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+  return isEvent(props.initial) ? <EventEditor {...props} /> : <RuleEditor {...props} />;
+}
+
+function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+  const [spec, setSpec] = useState<EventSpec>(initial as unknown as EventSpec);
+  const [pasted, setPasted] = useState(() => ((initial as unknown as EventSpec).custom ?? []).map((e) => [e.ticker, e.date, e.surprise ?? ""].join(",")).join("\n"));
+  const set = <K extends keyof EventSpec>(key: K, value: EventSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
+  const setEvent = (event: EventSpec["event"]) => setSpec((s) => ({
+    ...s, event, when: event === "gap" ? "down" : "all", window: event === "gap" && s.window === "reaction" ? "drift_1_5" : s.window,
+    tickers: event === "custom" ? [] : s.tickers, // the server takes the pasted rows' tickers only when this is empty
+  }));
+  return (
+    <section className="mt-6 rounded-xl border border-slate-800 p-5">
+      <h2 className="text-base font-semibold text-white">Event study</h2>
+      <p className="mt-1 text-xs text-slate-400">Each event: the move vs {spec.benchmark} on the reaction day, then days +1 to +10. Judged on the newest events, against random dates.</p>
+      {note && <p className="mt-1 text-sm text-amber-300">{note}</p>}
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Field label="Name">
+          <input className={field} value={spec.title} onChange={(e) => set("title", e.target.value)} />
+        </Field>
+        <Field label={spec.event === "custom" ? "Tickers (from your table)" : "Tickers (comma separated)"}>
+          <input className={field} disabled={spec.event === "custom"} value={spec.event === "custom" ? [...new Set((spec.custom ?? []).map((e) => e.ticker))].join(", ") : spec.tickers.join(", ")} onChange={(e) => set("tickers", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+        </Field>
+        <Field label="Event">
+          <select className={field} value={spec.event} onChange={(e) => setEvent(e.target.value as EventSpec["event"])}>
+            {(Object.keys(EVENT_LABELS) as EventSpec["event"][]).map((k) => <option key={k} value={k}>{EVENT_LABELS[k]}</option>)}
+          </select>
+        </Field>
+        {spec.event === "custom" && (
+          <div className="sm:col-span-2">
+            <Field label="Paste your events (ticker,date[,surprise] per line, or a notebook CSV with a header)">
+              <textarea className={`${field} h-28 font-mono text-xs`} value={pasted}
+                onChange={(e) => { setPasted(e.target.value); const rows = parseEventTable(e.target.value); setSpec((s) => ({ ...s, custom: rows, tickers: [] })); }} />
+            </Field>
+            <p className="mt-1 text-xs text-slate-400"><span>{(spec.custom ?? []).length} events read</span> · each date is taken as the reaction day (the first close that reflects it)</p>
+          </div>
+        )}
+        {(spec.event === "earnings" || spec.event === "custom") && (
+          <Field label="Which prints">
+            <select className={field} value={spec.when} onChange={(e) => set("when", e.target.value as EventSpec["when"])}>
+              <option value="all">all prints</option>
+              <option value="beat">beats (EPS above estimate)</option>
+              <option value="miss">misses</option>
+            </select>
+          </Field>
+        )}
+        {spec.event === "gap" && (
+          <>
+            <Field label="Gap direction">
+              <select className={field} value={spec.when} onChange={(e) => set("when", e.target.value as EventSpec["when"])}>
+                <option value="down">down days</option>
+                <option value="up">up days</option>
+              </select>
+            </Field>
+            <Field label="Gap size vs SPY (%)">
+              <input type="number" className={field} value={spec.gap_pct} onChange={(e) => set("gap_pct", Number(e.target.value))} />
+            </Field>
+          </>
+        )}
+        <Field label="Which days count">
+          <select className={field} value={spec.window} onChange={(e) => set("window", e.target.value as EventSpec["window"])}>
+            {(Object.keys(WINDOW_LABELS) as EventSpec["window"][]).filter((w) => spec.event !== "gap" || w !== "reaction").map((w) => <option key={w} value={w}>{WINDOW_LABELS[w]}</option>)}
+          </select>
+        </Field>
+        <Field label="Claimed move">
+          <select className={field} value={spec.direction} onChange={(e) => set("direction", e.target.value as EventSpec["direction"])}>
+            <option value="up">up vs the benchmark</option>
+            <option value="down">down vs the benchmark</option>
+          </select>
+        </Field>
+        <Field label="Compared with">
+          <input className={field} value={spec.benchmark} onChange={(e) => set("benchmark", e.target.value)} />
+        </Field>
+        <Field label="Data from">
+          <input type="date" className={field} value={spec.start} onChange={(e) => set("start", e.target.value)} />
+        </Field>
+      </div>
+      {spec.event === "earnings" && <p className="mt-2 text-xs text-slate-500">Stocks only: ETFs have no earnings prints. Yahoo's dated prints go back about 12 years.</p>}
+      <button type="button" onClick={() => onRun(spec as unknown as IdeaSpec)} disabled={busy}
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
+        {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} {busy ? "Testing…" : "Run it"}
+      </button>
+    </section>
+  );
+}
+
+function RuleEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(() => {
     const { when: _legacy, ...rest } = initial; // a stored steps 2-5 spec: its one condition becomes the buy rule
     return { ...rest, rules: specRules(initial) };
@@ -448,7 +540,90 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
   );
 }
 
-export function VerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+export function VerdictCard(props: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+  return isEvent(props.run.spec) ? <EventVerdictCard {...props} /> : <RuleVerdictCard {...props} />;
+}
+
+const sgn = (v: number | null | undefined, d = 2) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}`);
+
+/** An event study's verdict: the claim on built vs unseen events, random dates, shrunk per-ticker means, events. */
+function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+  const r = run.result;
+  const spec = run.spec as unknown as EventSpec;
+  const [error, setError] = useState<string | null>(null);
+  const events = r.events ?? [];
+  return (
+    <article className="mt-6 rounded-xl border border-slate-800 p-5">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className={`rounded-lg border-2 px-4 py-1 text-2xl font-extrabold ${toneClass[verdictTone(run.verdict)]}`}>{run.verdict}</div>
+        <div className="min-w-0">
+          <div className="text-lg font-semibold text-white">{r.headline}</div>
+          <div className="text-xs text-slate-400">
+            Variation {run.variation} · Event study · {EVENT_LABELS[spec.event]}{spec.event === "earnings" && spec.when !== "all" ? ` (${spec.when}s)` : ""}{spec.event === "gap" ? ` (${spec.when} ${spec.gap_pct}%+)` : ""} · {spec.tickers.join(", ")} · {WINDOW_LABELS[spec.window]} {spec.direction} vs {spec.benchmark} · {r.n_events ?? "—"} events
+          </div>
+        </div>
+      </div>
+      {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
+      {r.claim && r.shuffle && (
+        <table className="mt-4 w-full text-sm">
+          <tbody className="divide-y divide-slate-800/80">
+            <tr><td className="py-1.5 text-slate-300">On the events it was built on</td><td className="py-1.5 text-slate-400">{r.claim.built.label}</td><td><Mark ok={r.claim.built.holds} /></td></tr>
+            <tr><td className="py-1.5 text-slate-300">On the newest events (unseen)</td><td className="py-1.5 text-slate-400">{r.claim.unseen.label}</td><td><Mark ok={r.claim.unseen.holds} /></td></tr>
+            <tr><td className="py-1.5 text-slate-300">Better than random dates</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} random dates · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.holds ?? null} /></td></tr>
+            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, unseen events</td><td className="py-1.5 text-slate-400">t = {r.t_test.t.toFixed(2)} · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.holds ?? null} /></td></tr>}
+            {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each stretch of events</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.holds ?? null} /></td></tr>}
+          </tbody>
+        </table>
+      )}
+      {(r.per_ticker ?? []).length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[28rem] text-xs tabular-nums">
+            <thead className="text-left text-slate-400">
+              <tr><th className="py-1 font-medium">Ticker</th><th className="py-1 text-right font-medium">Events</th><th className="py-1 text-right font-medium">Mean, %</th><th className="py-1 text-right font-medium">Shrunk, %</th><th className="py-1 text-right font-medium">Weight</th></tr>
+            </thead>
+            <tbody>
+              {(r.per_ticker ?? []).map((p) => (
+                <tr key={p.ticker} className="border-t border-slate-800/80">
+                  <td className="py-1 text-slate-300">{p.ticker}</td><td className="py-1 text-right text-slate-300">{p.n}</td>
+                  <td className="py-1 text-right text-slate-300">{sgn(p.mean)}</td><td className="py-1 text-right text-slate-200">{sgn(p.shrunk)}</td>
+                  <td className="py-1 text-right text-slate-400">{p.weight.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-slate-500">Shrunk = each ticker's mean pulled toward the pooled mean by how little evidence it has (Strategy HQ shrinkage).</p>
+        </div>
+      )}
+      {events.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[34rem] text-xs tabular-nums">
+            <thead className="text-left text-slate-400">
+              <tr><th className="py-1 font-medium">Date</th><th className="py-1 font-medium">Ticker</th><th className="py-1 text-right font-medium">Surprise</th><th className="py-1 text-right font-medium">Reaction</th><th className="py-1 text-right font-medium">+1..+3</th><th className="py-1 text-right font-medium">+1..+5</th><th className="py-1 text-right font-medium">+1..+10</th></tr>
+            </thead>
+            <tbody>
+              {events.slice(-15).reverse().map((e) => (
+                <tr key={`${e.date}-${e.ticker}`} className="border-t border-slate-800/80">
+                  <td className="py-1 text-slate-300">{e.date}</td><td className="py-1 text-slate-300">{e.ticker}</td>
+                  <td className="py-1 text-right text-slate-400">{e.surprise == null ? "—" : `${sgn(e.surprise, 1)}%`}</td>
+                  <td className="py-1 text-right text-slate-300">{sgn(e.ar0)}</td><td className="py-1 text-right text-slate-300">{sgn(e.car_1_3)}</td>
+                  <td className="py-1 text-right text-slate-300">{sgn(e.car_1_5)}</td><td className="py-1 text-right text-slate-300">{sgn(e.car_1_10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-slate-500">The latest 15 of {events.length} events; % vs {spec.benchmark}. The CSV has them all.</p>
+        </div>
+      )}
+      {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" className={button} onClick={() => adminDownload(`/api/workshop/ideas/${ideaId}/runs/${run.id}/daily.csv`, `idea-${ideaId}-run-${run.id}-events.csv`).catch((e) => setError(e instanceof Error ? e.message : "Download failed"))}>Download events (CSV)</button>
+        <button type="button" onClick={() => onVary(run.spec)} className={button}>Try a variation</button>
+      </div>
+    </article>
+  );
+}
+
+function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
   const r = run.result;
   const tone = verdictTone(run.verdict);
   return (
@@ -713,7 +888,8 @@ export default function WorkshopIdea() {
     setRunning(true);
     setError(null);
     try {
-      await adminJson<Run>(`/api/workshop/ideas/${id}/runs`, { method: "POST", body: JSON.stringify({ spec, draft_model: draft?.model ?? null }) });
+      const route = isEvent(spec) ? "event-runs" : "runs";
+      await adminJson<Run>(`/api/workshop/ideas/${id}/${route}`, { method: "POST", body: JSON.stringify({ spec, draft_model: draft?.model ?? null }) });
       setDraft(null);
       await load();
     } catch (e) {

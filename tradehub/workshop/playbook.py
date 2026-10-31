@@ -18,6 +18,7 @@ from typing import Any, Callable
 import requests
 
 from tradehub.workshop.draft import URL, _models
+from tradehub.workshop.events import EventSpec
 from tradehub.workshop.spec import TICKER, IdeaSpec
 
 # Plain names -> the instrument that actually tracks them ("GOLD" the ticker is a stock, Gold.com, not gold).
@@ -197,6 +198,27 @@ def _analyst(v):
             "rules": _rules([_c("analyst", t, v["measure"], v["days"], ">", v["threshold"])])}
 
 
+def _event(event_from: str | None = None):
+    def build(v):
+        out = {"kind": "event", "tickers": v["tickers"], "event": event_from or v["event"], "window": v["window"],
+               "direction": v["direction"]}
+        if "when" in v:
+            out["when"] = v["when"]
+        if "gap_pct" in v:
+            out["gap_pct"] = v["gap_pct"]
+        return out
+    return build
+
+
+UP = r"\b(up|rall\w*|ris\w*|gain\w*|higher|bounc\w*|rebound\w*|recover\w*|pop\w*)\b"
+DOWN = r"\b(down|fall\w*|drop\w*|lower|slid\w*|sink\w*|tank\w*|keeps? falling|follow[- ]?through)\b"
+WINDOW_FILLERS = ((r"\b(on the day|that day|reaction|day moves?)\b", lambda m: {"window": "reaction"}),
+                  (r"\b(next (few|3|three) days|days after)\b", lambda m: {"window": "drift_1_3"}),
+                  (r"\b(week after|next week|5 days)\b", lambda m: {"window": "drift_1_5"}),
+                  (r"\b(two weeks|2 weeks|10 days)\b", lambda m: {"window": "drift_1_10"}))
+WINDOW_SLOT = ("drift_1_5", ("reaction", "drift_1_3", "drift_1_5", "drift_1_10"), "which days count")
+
+
 def _hold(v):
     return {"hold": v["tickers"], "claim": v["claim"], "benchmark": v["benchmark"]}
 
@@ -304,6 +326,40 @@ PLAYS: tuple[Play, ...] = (
           C("claim", "beats_benchmark", CLAIMS, "what success means")),
          _analyst,
          fillers=((r"\b(price targets?|upside)\b", lambda m: {"measure": "target_upside", "threshold": 10.0}),)),
+    Play("earnings_drift", "Earnings reaction / drift",
+         "Event study: how the stock moves vs SPY on and after its earnings prints (beats, misses or all).",
+         "IB Python Models NB1 earnings event study",
+         ((r"\bearnings\b", 4), (r"\bprints?\b", 3), (r"\bbeats?\b", 2), (r"\bmiss(es)?\b", 2),
+          (r"\bguid(e|ance)\b", 2), (r"\bquarterly (report|results)\b", 3)),
+         (T("tickers", ["XOM"], "the stocks (not ETFs)"), C("when", "all", ("all", "beat", "miss"), "which prints"),
+          C("direction", "up", ("up", "down"), "the claimed move"), C("window", *WINDOW_SLOT)),
+         _event("earnings"),
+         fillers=((r"\bbeats?\b", lambda m: {"when": "beat"}), (r"\bmiss(es)?\b", lambda m: {"when": "miss"}),
+                  (DOWN, lambda m: {"direction": "down"}), (UP, lambda m: {"direction": "up"}), *WINDOW_FILLERS)),
+    Play("macro_event_day", "Fed / CPI / jobs days",
+         "Event study: how the ticker moves vs SPY (SPY itself: its own move) on and after FOMC, CPI or jobs days.",
+         "IB Python Models FOMC-day work; FRED release calendars",
+         ((r"\bfed (days?|decisions?|meetings?|announcements?)\b", 4), (r"\bfomc\b", 4), (r"\bcpi\b", 4),
+          (r"\b(jobs report|payrolls|nfp|employment report)\b", 4), (r"\binflation (report|print|data)\b", 3)),
+         (T("tickers", ["SPY"], "what to measure"), C("event", "fomc", ("fomc", "cpi", "jobs"), "which release"),
+          C("direction", "up", ("up", "down"), "the claimed move"), C("window", "reaction", WINDOW_SLOT[1], "which days count")),
+         _event(),
+         fillers=((r"\b(cpi|inflation (report|print|data))\b", lambda m: {"event": "cpi"}),
+                  (r"\b(jobs report|payrolls|nfp|employment report)\b", lambda m: {"event": "jobs"}),
+                  (DOWN, lambda m: {"direction": "down"}), (UP, lambda m: {"direction": "up"}), *WINDOW_FILLERS)),
+    Play("gap_bounce", "Gap bounce / follow-through",
+         "Event study: after a day the stock moves X% vs SPY, does it bounce or keep going over the next days?",
+         "quants.md Play 2 (overshoot bounce) / IB Python Models pattern files",
+         ((r"\bgap(s|ped)? (down|up)\b", 4), (r"\bgaps?\b", 2), (r"\bovershoot\w*\b", 3), (r"\bbounc\w*\b", 2),
+          (r"\brebound\w*\b", 2), (r"\bsell[- ]?offs?\b", 1)),
+         (T("tickers", ["SPY"], "the stocks"), C("when", "down", ("down", "up"), "gap direction"),
+          N("gap_pct", 5, 1, 50, "the day's move vs SPY, %"), C("direction", "up", ("up", "down"), "the claimed move after"),
+          C("window", "drift_1_5", ("drift_1_3", "drift_1_5", "drift_1_10"), "which days count")),
+         _event("gap"),
+         fillers=((r"\bgap(s|ped)? up\b", lambda m: {"when": "up", "direction": "down"}),
+                  (r"\b(\d{1,2})% (gap|drop|move)", lambda m: {"gap_pct": float(m.group(1))}),
+                  (r"\b(keeps? falling|follow[- ]?through|continu\w* lower)\b", lambda m: {"direction": "down"}),
+                  *WINDOW_FILLERS[1:])),
     Play("buy_and_hold", "Buy and hold",
          "Always hold it and see whether it beats the benchmark.",
          "baseline",
@@ -366,10 +422,11 @@ def _safe_build(play_id: str, tries: list[dict], title: str) -> IdeaSpec | None:
     return None
 
 
-def build(play_id: str, values: dict, title: str) -> IdeaSpec:
+def build(play_id: str, values: dict, title: str) -> IdeaSpec | EventSpec:
     play = BY_ID[play_id]
     v = {s.name: s.default for s in play.slots} | {k: x for k, x in values.items() if k in {s.name for s in play.slots}}
-    return IdeaSpec.model_validate({"title": title, **play.builder(v)})
+    body = {"title": title, **play.builder(v)}
+    return (EventSpec if body.get("kind") == "event" else IdeaSpec).model_validate(body)
 
 
 def _title(text: str) -> str:

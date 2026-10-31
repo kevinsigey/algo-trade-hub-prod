@@ -516,3 +516,72 @@ describe("Workshop deeper look polish (review)", () => {
     expect(screen.getByRole("button", { name: "Year by year" })).toBeInTheDocument();
   });
 });
+
+describe("Workshop event studies", () => {
+  const EV = { kind: "event", title: "XOM drifts up after beats", tickers: ["XOM"], event: "earnings", when: "beat", gap_pct: 5,
+    window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+  const EV_RUN = { ...RUN, id: 9, spec: EV, verdict: "FAIL", result: {
+    kind: "event", verdict: "FAIL", headline: "Did not do what it claims.", reason: null, split_date: "2023-01-27",
+    data_start: "2014-10-31", data_end: "2026-10-30", variations: 1, n_events: 30,
+    claim: { built: { holds: true, value: 0.4, label: "+0.40% average move vs SPY over days +1 to +5, 21 events" },
+             unseen: { holds: false, value: -0.2, label: "-0.20% average move vs SPY over days +1 to +5, 9 events" } },
+    shuffle: { beats_pct: 30, p: 0.7, bar: 0.05, permutations: 1000, seed: 1, method: "random dates" },
+    t_test: { mean_daily_diff: -0.2, t: -0.5, p: 0.69 }, periods: { held: 2, of: 5 }, context: [], curve: [],
+    per_ticker: [{ ticker: "XOM", n: 30, mean: 0.21, shrunk: 0.21, weight: 1, t: 0.6 }],
+    events: [{ date: "2026-10-30", ticker: "XOM", surprise: 4.9, ar0: 1.2, car_1_3: 0.4, car_1_5: -0.3, car_1_10: 0.1, pre_5: 0.2 }],
+  } };
+
+  it("edits an event study and runs it on the event route", async () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={EV as never} onRun={onRun} busy={false} />);
+    expect(screen.getByText("Event study")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Which prints"), { target: { value: "miss" } });
+    fireEvent.change(screen.getByLabelText("Claimed move"), { target: { value: "down" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0]).toMatchObject({ kind: "event", when: "miss", direction: "down", tickers: ["XOM"] });
+  });
+
+  it("shows an event verdict with the shrunk per-ticker table and the events", () => {
+    render(<MemoryRouter><VerdictCard ideaId="1" run={EV_RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/beats 30% of 1,000 random dates/)).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /XOM 30/ })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /2026-10-30/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download events (CSV)" })).toBeInTheDocument();
+  });
+});
+
+describe("Workshop: my own event dates", () => {
+  it("reads a pasted notebook event table", () => {
+    const onRun = vi.fn();
+    const EVD = { kind: "event", title: "My earnings table", tickers: [], event: "custom", custom: [], when: "all", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EVD as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText(/Paste your events/), { target: { value:
+      "ticker,report_date,fall,surprise_pct,beat\nGOOGL,2026-07-22,False,214.1,True\nxom,2026-04-29,False,-3.5,False\n" } });
+    expect(screen.getByText("2 events read")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].custom).toEqual([
+      { ticker: "GOOGL", date: "2026-07-22", surprise: 214.1 }, { ticker: "XOM", date: "2026-04-29", surprise: -3.5 }]);
+  });
+});
+
+describe("Workshop event review fixes", () => {
+  it("switching to my own dates drops the old tickers", () => {
+    const onRun = vi.fn();
+    const EV = { kind: "event", title: "XOM beats", tickers: ["XOM"], event: "earnings", when: "beat", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EV as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Event"), { target: { value: "custom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].tickers).toEqual([]);
+  });
+
+  it("shows a dash for a missing event count and the server's marks", () => {
+    const run = { ...RUN, id: 11, verdict: "NOT ENOUGH DATA",
+      spec: { kind: "event", title: "x", tickers: ["XOM"], event: "earnings", when: "all", gap_pct: 5, window: "drift_1_5",
+              direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] },
+      result: { ...RUN.result, kind: "event", claim: null, shuffle: null, t_test: null, periods: null, reason: "only 4 events", context: [], curve: [] } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/· — events/)).toBeInTheDocument();
+  });
+});

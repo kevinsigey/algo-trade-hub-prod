@@ -334,3 +334,71 @@ def test_draft_from_scratch_skips_the_playbook(api, monkeypatch):
     monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
     r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down", "free": True})
     assert r.status_code == 200 and r.json()["play"] is None and r.json()["model"] == "x/y:free"
+
+
+EVENT = {"kind": "event", "title": "XOM drifts up after beats", "tickers": ["XOM"], "event": "earnings", "when": "beat",
+         "window": "drift_1_5", "direction": "up"}
+
+
+def test_event_study_run_and_its_guards(api, monkeypatch):
+    c, db, _ = api
+    got = {}
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: ("closes", tuple(tickers)))
+    monkeypatch.setattr(main, "workshop_earnings", lambda t: f"earnings:{t}")
+
+    def fake_event_test(spec, closes, events, *, variations, seed):
+        got.update(closes=closes, events=events, variations=variations)
+        return {**RESULT, "kind": "event", "events": [{"date": "2026-10-30", "ticker": "XOM", "surprise": 4.9,
+                                                       "ar0": 1.0, "car_1_3": 0.5, "car_1_5": 0.7, "car_1_10": 0.9,
+                                                       "pre_5": -0.2}]}
+    monkeypatch.setattr(main, "run_event_test", fake_event_test)
+    idea = c.post("/api/workshop/ideas", json={"title": "XOM beats", "plain_words": "xom drifts up after beats"}).json()
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": EVENT})
+    assert r.status_code == 200 and r.json()["spec"]["kind"] == "event"
+    assert got["closes"] == ("closes", ("XOM", "SPY")) and got["events"] == {"XOM": "earnings:XOM"} and got["variations"] == 1
+    run = r.json()
+    # research only: the live gate refuses it, and the CSV is the event table
+    gate = c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()
+    assert gate["status"] == "fails" and "research" in gate["reasons"][0]
+    csv = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv").text.splitlines()
+    assert csv[0] == "date,ticker,surprise,ar0,car_1_3,car_1_5,car_1_10,pre_5" and csv[1].startswith("2026-10-30,XOM,4.9")
+    assert c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").status_code == 422
+
+
+def test_macro_event_days_come_from_fred_releases(api, monkeypatch):
+    c, _, _ = api
+    got = {}
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: "closes")
+    monkeypatch.setattr(main, "workshop_release_dates", lambda rid: f"release:{rid}")
+    monkeypatch.setattr(main, "run_event_test", lambda spec, closes, events, **k: (got.update(events=events), RESULT)[1])
+    idea = c.post("/api/workshop/ideas", json={"title": "Fed days", "plain_words": "spy on fed days"}).json()
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs",
+               json={"spec": {**EVENT, "tickers": ["SPY", "QQQ"], "event": "fomc", "when": "all"}})
+    assert r.status_code == 200 and got["events"] == {"*": "release:101"}
+
+
+def test_event_study_on_an_etf_earnings_is_422(api, monkeypatch):
+    c, _, _ = api
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: "closes")
+
+    def none(t):
+        raise UnknownSymbol(f"no earnings dates for {t} (ETFs and funds have none, or Yahoo unavailable)")
+    monkeypatch.setattr(main, "workshop_earnings", none)
+    idea = c.post("/api/workshop/ideas", json={"title": "XLE beats", "plain_words": "xle"}).json()
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": {**EVENT, "tickers": ["XLE"]}})
+    assert r.status_code == 422 and "XLE" in r.json()["detail"]
+
+
+def test_public_pages_cope_with_a_published_event_study(api, monkeypatch):
+    c, db, _ = api
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: "closes")
+    monkeypatch.setattr(main, "workshop_earnings", lambda t: "e")
+    monkeypatch.setattr(main, "run_event_test", lambda *a, **k: {**RESULT, "verdict": "PASS"})
+    idea = c.post("/api/workshop/ideas", json={"title": "XOM beats", "plain_words": "xom"}).json()
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": EVENT}).status_code == 200
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/publish").status_code == 200
+    listed = TestClient(main.app).get("/api/ideas")
+    assert listed.status_code == 200 and listed.json()[0]["claim"] is None
+    record = TestClient(main.app).get(f"/api/ideas/{idea['id']}")
+    assert record.status_code == 200
+    assert all(r["claim"] is None for r in record.json()["runs"])

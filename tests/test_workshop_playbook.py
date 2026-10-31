@@ -10,7 +10,9 @@ from tradehub.workshop.spec import IdeaSpec
 @pytest.mark.parametrize("play", playbook.PLAYS, ids=lambda p: p.id)
 def test_every_play_builds_a_valid_spec_from_its_defaults(play):
     spec = playbook.build(play.id, {}, "A play built from its defaults")
-    assert isinstance(spec, IdeaSpec) and spec.title == "A play built from its defaults"
+    from tradehub.workshop.events import EventSpec
+    want = EventSpec if play.id in ("earnings_drift", "macro_event_day", "gap_bounce") else IdeaSpec
+    assert type(spec) is want and spec.title == "A play built from its defaults"
 
 
 WORDS = [
@@ -115,3 +117,25 @@ def test_slot_values_that_break_the_spec_fall_back_to_defaults(monkeypatch):
 def test_a_day_ma_is_a_moving_average_not_mastercard():
     assert playbook.tickers_in("hold SPY while it is above its 200-day MA") == ["SPY"]
     assert playbook.tickers_in("hold XLV and MA as ballast") == ["XLV", "MA"]
+
+
+EVENT_WORDS = [
+    ("XOM drifts up after earnings beats", "earnings_drift",
+     {"event": "earnings", "when": "beat", "direction": "up", "tickers": ["XOM"]}),
+    ("CAH falls in the days after a miss on its print", "earnings_drift", {"when": "miss", "direction": "down"}),
+    ("SPY rallies on Fed days", "macro_event_day", {"event": "fomc", "tickers": ["SPY"], "window": "reaction"}),
+    ("QQQ drops in the week after a hot CPI report", "macro_event_day", {"event": "cpi", "tickers": ["QQQ"]}),
+    ("jobs report day moves for SPY", "macro_event_day", {"event": "jobs"}),
+    ("TWLO bounces after a gap down", "gap_bounce", {"event": "gap", "when": "down", "direction": "up", "tickers": ["TWLO"]}),
+]
+
+
+@pytest.mark.parametrize("text,play_id,want", EVENT_WORDS, ids=[w[1] + ":" + w[0][:18] for w in EVENT_WORDS])
+def test_event_words_draft_an_event_study(text, play_id, want, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    out = playbook.draft(text)
+    assert out.play.id == play_id, [(m.play.id, m.score) for m in playbook.match(text)]
+    spec = out.spec.model_dump()
+    assert spec["kind"] == "event"
+    for k, v in want.items():
+        assert spec[k] == v, (k, spec)
