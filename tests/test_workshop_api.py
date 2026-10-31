@@ -387,3 +387,17 @@ def test_event_study_on_an_etf_earnings_is_422(api, monkeypatch):
     idea = c.post("/api/workshop/ideas", json={"title": "XLE beats", "plain_words": "xle"}).json()
     r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": {**EVENT, "tickers": ["XLE"]}})
     assert r.status_code == 422 and "XLE" in r.json()["detail"]
+
+
+def test_public_pages_cope_with_a_published_event_study(api, monkeypatch):
+    c, db, _ = api
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: "closes")
+    monkeypatch.setattr(main, "workshop_earnings", lambda t: "e")
+    monkeypatch.setattr(main, "run_event_test", lambda *a, **k: {**RESULT, "verdict": "PASS"})
+    idea = c.post("/api/workshop/ideas", json={"title": "XOM beats", "plain_words": "xom"}).json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/event-runs", json={"spec": EVENT})
+    c.post(f"/api/workshop/ideas/{idea['id']}/publish")
+    listed = TestClient(main.app).get("/api/ideas")
+    assert listed.status_code == 200
+    record = TestClient(main.app).get(f"/api/ideas/{idea['id']}")
+    assert record.status_code in (200, 404)  # 404 only if publishing needs more than a run

@@ -711,7 +711,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
         if idea.get("killed_at"):
             live["state"] = "killed"  # the record ended on purpose; not stale
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
-            "claim": latest["spec"]["claim"] if latest else None,
+            "claim": latest["spec"].get("claim") if latest else None,
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "killed_at": idea.get("killed_at"), "live": live}
 
@@ -739,7 +739,7 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
     row["shadow"] = row.pop("live")
     row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
                     "headline": r["result"].get("headline"), "p": (r["result"].get("shuffle") or {}).get("p"),
-                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"]["claim"]}
+                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"].get("claim")}
                    for r in found["runs"]]
     try:
         trades = service.closed(supabase)["trades"]
