@@ -97,15 +97,16 @@ def fred_series(series_id: str, start: date, *, fetch=fetch_fred_daily) -> pd.Se
 
 def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | None = None,
          now: datetime | None = None) -> dict[str, pd.DataFrame]:
-    """Daily open/high/low/close per ticker (step 5 intraday exits), with the same last-complete-day cut and cache
-    rules as closes(). Cached as <T>.ohlc.csv, beside (never replacing) the closes cache."""
+    """Daily open/high/low/close/volume per ticker (intraday exits, VWAP rules), with the same last-complete-day cut
+    and cache rules as closes(). Cached as <T>.ohlcv.csv, beside (never replacing) the closes cache; the step 5
+    <T>.ohlc.csv (no volume) is ignored."""
     cutoff = last_complete_day(now or datetime.now(UTC))
     env_dir = os.getenv("TRADEHUB_PRICE_CACHE")
     cache_dir = cache_dir or (Path(env_dir) if env_dir else None)
     out: dict[str, pd.DataFrame] = {}
     missing = []
     for t in dict.fromkeys(tickers):
-        path = cache_dir / f"{t}.ohlc.csv" if cache_dir else None
+        path = cache_dir / f"{t}.ohlcv.csv" if cache_dir else None
         if path is not None and path.is_file():
             hit = pd.read_csv(path, index_col=0, parse_dates=True)
             if (not hit.empty and hit.index[0].date() <= start + timedelta(days=7)
@@ -121,7 +122,7 @@ def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | No
         for t in missing:
             if raw is None or raw.empty or ("Close", t) not in raw:
                 raise UnknownSymbol(f"no daily prices for {t}")
-            frame = pd.DataFrame({k.lower(): raw[(k, t)] for k in ("Open", "High", "Low", "Close")}).dropna()
+            frame = pd.DataFrame({k.lower(): raw[(k, t)] for k in ("Open", "High", "Low", "Close", "Volume")}).dropna()
             frame.index = pd.DatetimeIndex(frame.index).tz_localize(None)
             frame = frame[frame.index <= pd.Timestamp(cutoff)]
             if frame.empty:
@@ -129,19 +130,23 @@ def bars(tickers: list[str], start: date, *, download=None, cache_dir: Path | No
             out[t] = frame
             if cache_dir:
                 cache_dir.mkdir(parents=True, exist_ok=True)
-                frame.to_csv(cache_dir / f"{t}.ohlc.csv")
+                frame.to_csv(cache_dir / f"{t}.ohlcv.csv")
     return {t: f[(f.index >= pd.Timestamp(start)) & (f.index <= pd.Timestamp(cutoff))] for t, f in out.items()}
 
 
 def add_bars(closes: pd.DataFrame, bars_by_ticker: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Closes plus <T>.open / <T>.high / <T>.low columns, the shape the engine reads for intraday exits."""
-    extra = {f"{t}.{k}": b[k] for t, b in bars_by_ticker.items() for k in ("open", "high", "low")}
+    """Closes plus <T>.open / .high / .low / .volume columns, the shape the engine reads for bars."""
+    extra = {f"{t}.{k}": b[k] for t, b in bars_by_ticker.items() for k in ("open", "high", "low", "volume") if k in b}
     return closes.join(pd.DataFrame(extra), how="left")
 
 
 def with_rule_bars(spec, prices: pd.DataFrame, start: date, *, bars_fn=None) -> pd.DataFrame:
-    """Attach the leg's daily bars when the idea's exits run during the day; otherwise return prices unchanged."""
-    if spec.exits.mode != "intraday" or not spec.exits.any():
+    """Attach daily bars for the leg when the idea's exits run during the day, and for every VWAP rule's ticker;
+    otherwise return prices unchanged."""
+    need = [(spec.hold or spec.short)[0]] if spec.exits.mode == "intraday" and spec.exits.any() else []
+    if spec.rules is not None:
+        groups = [spec.rules.enter] + ([spec.rules.exit] if spec.rules.exit else [])
+        need += [c.series for g in groups for c in g.conditions if c.measure == "vs_vwap"]
+    if not need:
         return prices
-    leg = (spec.hold or spec.short)[0]
-    return add_bars(prices, (bars_fn or bars)([leg], start))
+    return add_bars(prices, (bars_fn or bars)(list(dict.fromkeys(need)), start))
