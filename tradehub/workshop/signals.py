@@ -53,3 +53,28 @@ def measure(values: pd.Series, how: str, lookback: int, *, slow: int | None = No
         vwap = (typical * bars["volume"]).rolling(n).sum() / bars["volume"].rolling(n).sum()
         return (values / vwap - 1) * 100
     raise ValueError(f"unknown measure {how!r}")
+
+
+def analyst_measure(actions: pd.DataFrame, idx: pd.DatetimeIndex, how: str, lookback: int, *,
+                    close: pd.Series | None = None) -> pd.Series:
+    """Analyst signals on trading days `idx`. Each action counts on the trading day it happened, or the next one.
+    net_upgrades: ups minus downs over the last N days. target_upside: (mean target set in the last N days / close
+    - 1) x 100, NaN when no target was set. Both NaN before the first action (the engine lags them 2 days)."""
+    pos = idx.searchsorted(actions.index.normalize(), side="left")
+    keep = (pos < len(idx)) & (actions.index.normalize() >= idx[0]) if len(idx) else pos < 0
+    acts, pos = actions[keep], pos[keep]
+    first = pos.min() if len(pos) else len(idx)
+    if how == "net_upgrades":
+        daily = np.zeros(len(idx))
+        np.add.at(daily, pos, (acts["action"] == "up").to_numpy(float) - (acts["action"] == "down").to_numpy(float))
+        out = pd.Series(daily, index=idx).rolling(lookback, min_periods=1).sum()
+    else:  # target_upside
+        has = acts["target"].notna().to_numpy()
+        total, count = np.zeros(len(idx)), np.zeros(len(idx))
+        np.add.at(total, pos[has], acts["target"].to_numpy()[has])
+        np.add.at(count, pos[has], 1.0)
+        n = pd.Series(count, index=idx).rolling(lookback, min_periods=1).sum()
+        mean = pd.Series(total, index=idx).rolling(lookback, min_periods=1).sum() / n.where(n > 0)
+        out = (mean / close.reindex(idx) - 1) * 100
+    out.iloc[:first] = np.nan
+    return out

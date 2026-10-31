@@ -41,8 +41,6 @@ class Condition(BaseModel):
 
     @model_validator(mode="after")
     def _fits(self) -> Condition:
-        if self.source == "analyst":
-            raise ValueError("analyst signals arrive in Part B")
         if self.measure not in MEASURES[self.source]:
             raise ValueError(f"{self.measure} can't be measured on a {self.source} series")
         if self.measure == "sma_cross" and (self.slow_days is None or self.slow_days <= self.lookback_days):

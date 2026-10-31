@@ -151,3 +151,53 @@ def with_rule_bars(spec, prices: pd.DataFrame, start: date, *, bars_fn=None) -> 
     if not need:
         return prices
     return add_bars(prices, (bars_fn or bars)(list(dict.fromkeys(need)), start))
+
+
+ACTIONS = ("up", "down", "main", "init", "reit")
+
+
+def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: datetime | None = None) -> pd.DataFrame:
+    """Dated analyst actions for a stock (yfinance upgrades_downgrades): index = tz-naive action time, columns
+    action (up/down/main/init/reit) and target (the price target set, NaN when none). Actions after the last
+    complete day are dropped; cached as <T>.analyst.csv and refetched once per new complete day.
+    ETFs and funds have none: UnknownSymbol."""
+    cutoff = last_complete_day(now or datetime.now(UTC))
+    env_dir = os.getenv("TRADEHUB_PRICE_CACHE")
+    cache_dir = cache_dir or (Path(env_dir) if env_dir else None)
+    path = cache_dir / f"{ticker}.analyst.csv" if cache_dir else None
+    if path is not None and path.is_file():
+        hit = pd.read_csv(path, index_col=0, parse_dates=True)
+        if not hit.empty and str(hit["as_of"].iloc[0]) == cutoff.isoformat():
+            return hit[["action", "target"]]
+    if fetch is None:
+        import yfinance as yf
+        fetch = lambda t: yf.Ticker(t).upgrades_downgrades  # noqa: E731
+    none = UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none)")
+    try:
+        raw = fetch(ticker)
+    except Exception as exc:  # yfinance raises (HTTP 404 "No fundamentals data") for funds
+        raise none from exc
+    if raw is None or len(raw) == 0 or "Action" not in raw:
+        raise none
+    idx = pd.DatetimeIndex(raw.index)
+    idx = idx.tz_localize(None) if idx.tz is not None else idx
+    target = pd.to_numeric(raw.get("currentPriceTarget"), errors="coerce") if "currentPriceTarget" in raw else None
+    frame = pd.DataFrame({"action": raw["Action"].astype(str).str.lower().to_numpy(),
+                          "target": target.where(target > 0).to_numpy() if target is not None else float("nan")},
+                         index=idx).sort_index()
+    frame = frame[frame["action"].isin(ACTIONS) & (frame.index < pd.Timestamp(cutoff + timedelta(days=1)))]
+    if frame.empty:
+        raise none
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        frame.assign(as_of=cutoff.isoformat()).to_csv(path)
+    return frame
+
+
+def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
+    """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst"."""
+    from tradehub.workshop.engine import analyst_tickers, rule_series_ids
+    out = {i: (fred or fred_series)(i, fred_start) for i in rule_series_ids(spec)}
+    for t in analyst_tickers(spec):
+        out[f"{t}@analyst"] = (analyst_fn or analyst)(t)
+    return out
