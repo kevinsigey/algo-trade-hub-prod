@@ -11,6 +11,7 @@ import {
   DEFAULT_EXECUTION,
   NO_EXITS,
   ORDER_OPTIONS,
+  adminDownload,
   adminJson,
   claimLabel,
   MEASURES,
@@ -23,7 +24,11 @@ import {
   type Exits,
   type GateResult,
   type Group,
+  type DraftResponse,
+  type PlayMatch,
   type Rules,
+  type RunAnalysis,
+  type TickerNames,
   type IdeaDetail,
   type IdeaSpec,
   type Run,
@@ -161,6 +166,41 @@ function RulesEditor({ rules, onChange }: { rules: Rules | null; onChange: (r: R
   );
 }
 
+/** What each ticker really is ("GOLD" is a stock, not gold), looked up as Kevin types. Fails quietly. */
+const knownTickers: TickerNames = {}; // answers kept for the page's life, so retyping doesn't ask again
+
+function TickerNamesLine({ symbols }: { symbols: string[] }) {
+  const [names, setNames] = useState<TickerNames>(() => ({ ...knownTickers }));
+  const key = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter((s) => s && s !== "CASH"))].slice(0, 20).join(",");
+  useEffect(() => {
+    const missing = key.split(",").filter((s) => s && !(s in knownTickers));
+    if (!missing.length) return;
+    let live = true;
+    const t = setTimeout(() => {
+      adminJson<TickerNames>(`/api/workshop/tickers?symbols=${encodeURIComponent(missing.join(","))}`)
+        .then((got) => {
+          for (const [s, n] of Object.entries(got)) if (n) knownTickers[s] = n; // a miss may be Yahoo throttling: ask again later
+          if (live) setNames((old) => ({ ...old, ...got }));
+        })
+        .catch(() => undefined); // a failed lookup just shows nothing new
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [key]);
+  const shown = key.split(",").filter((s) => s && s in names);
+  if (!shown.length) return null;
+  return (
+    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400" aria-label="What each ticker is">
+      {shown.map((s) => {
+        const n = names[s];
+        return <li key={s} className={n ? "" : "text-amber-300"}>{n ? `${s}: ${n.name} (${n.kind})` : `${s}: not found`}</li>;
+      })}
+    </ul>
+  );
+}
+
 /** The draft, as a form. Nothing runs until Kevin presses Run it. */
 export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(() => {
@@ -206,6 +246,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
         </Field>
       </div>
+      <TickerNamesLine symbols={[...spec.hold, ...(spec.short ?? []), spec.otherwise, spec.benchmark]} />
 
       <RulesEditor rules={spec.rules} onChange={(rules) => set("rules", rules)} />
 
@@ -274,7 +315,7 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
         type="button"
         onClick={() => onRun(spec)}
         disabled={busy}
-        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50"
       >
         {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} {busy ? "Testing…" : "Run it"}
       </button>
@@ -287,7 +328,85 @@ function Mark({ ok }: { ok: boolean | null }) {
   return ok ? <span className="text-emerald-400">✓</span> : <span className="text-rose-400">✗</span>;
 }
 
-export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) => void }) {
+/** Year by year, the rolling 12-month excess, and the raw daily data: why a run passed or failed, and when. */
+function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
+  const [data, setData] = useState<RunAnalysis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const base = `/api/workshop/ideas/${ideaId}/runs/${run.id}`;
+  const load = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setData(await adminJson<RunAnalysis>(`${base}/analysis`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load it.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const download = () => adminDownload(`${base}/daily.csv`, `idea-${ideaId}-run-${run.id}-daily.csv`).catch((e) => setError(e.message));
+  const split = run.result.split_date;
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap gap-2">
+        {!data && <button type="button" className={button} disabled={busy} onClick={load}>{busy ? "Loading…" : "Year by year"}</button>}
+        <button type="button" className={button} onClick={download}>Download daily data (CSV)</button>
+      </div>
+      {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
+      {data && (
+        <>
+          {data.rolling.length > 1 && (
+            <div className="mt-4 h-40" aria-label="Rolling 12-month excess return">
+              <div className="text-xs text-slate-400">Rolling 12 months: idea minus {run.spec.benchmark}, pts</div>
+              <ResponsiveContainer width="100%" height="90%">
+                <LineChart data={data.rolling} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                  <XAxis dataKey="t" tickFormatter={(t: string) => t.slice(0, 4)} stroke="#64748b" fontSize={11} minTickGap={40} />
+                  <YAxis tickFormatter={(v: number) => v.toFixed(0)} stroke="#64748b" fontSize={11} width={40} />
+                  <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b" }} formatter={(v: number) => [`${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} pts`, "excess"]} />
+                  <ReferenceLine y={0} stroke="#475569" />
+                  {split && <ReferenceLine x={data.rolling.find((p) => p.t >= split)?.t} stroke="#94a3b8" strokeDasharray="3 3" />}
+                  <Line type="monotone" dataKey="excess" stroke="#fbbf24" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[30rem] text-xs tabular-nums">
+              <thead className="text-left text-slate-400">
+                <tr>
+                  <th className="py-1 font-medium">Year</th><th className="py-1 text-right font-medium">Idea</th>
+                  <th className="py-1 text-right font-medium">{run.spec.benchmark}</th><th className="py-1 text-right font-medium">Excess, pts</th>
+                  <th className="py-1 text-right font-medium">Days in</th><th className="py-1 text-right font-medium">Idea while in</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.years.map((y) => (
+                  <tr key={y.year} className={`border-t border-slate-800/80 ${split && String(y.year) >= split.slice(0, 4) ? "bg-slate-900/60" : ""}`}>
+                    <td className="py-1 text-slate-300">{y.year}</td>
+                    <td className="py-1 text-right text-slate-200">{pct(y.idea)}</td>
+                    <td className="py-1 text-right text-slate-400">{pct(y.bench)}</td>
+                    <td className={`py-1 text-right ${y.excess >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{`${y.excess >= 0 ? "+" : "−"}${Math.abs(y.excess).toFixed(1)}`}</td>
+                    <td className="py-1 text-right text-slate-400">{y.days_in.toFixed(0)}%</td>
+                    <td className="py-1 text-right text-slate-400">{pct(y.idea_in)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1 text-xs text-slate-500">Shaded rows: unseen years. Recomputed from the run's spec, up to {data.data_end}.</p>
+            {data.drift_pts != null && Math.abs(data.drift_pts) >= 1 && (
+              <p className="mt-1 text-xs text-amber-300">
+                Today's data differs from the verdict by {data.drift_pts >= 0 ? "+" : "−"}{Math.abs(data.drift_pts).toFixed(1)} pts of total return (revised prices or series), so these rows may not match the card exactly.
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function VerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
   const r = run.result;
   const tone = verdictTone(run.verdict);
   return (
@@ -353,6 +472,8 @@ export function VerdictCard({ run, onVary }: { run: Run; onVary: (s: IdeaSpec) =
           </table>
         </div>
       )}
+
+      <DeeperLook ideaId={ideaId} run={run} />
 
       {run.spec.assumptions.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-xs text-slate-400">
@@ -424,7 +545,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
             </label>
             <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
             <button type="button" disabled={busy || gate?.status !== "ready"} onClick={goLive}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
               Go live on paper
             </button>
           </div>
@@ -500,7 +621,7 @@ export default function WorkshopIdea() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string } | null>(null);
+  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"] } | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -515,21 +636,34 @@ export default function WorkshopIdea() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    if (!data || params.get("draft") !== "1" || draft || drafting) return;
+  const requestDraft = useCallback((text: string, title: string, free = false) => {
     setDrafting(true);
-    adminJson<{ spec: IdeaSpec; model: string }>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text: data.idea.plain_words }) })
-      .then((d) => setDraft({ spec: d.spec, model: d.model }))
+    adminJson<DraftResponse>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text, free }) })
+      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
-        if (template) setDraft({ spec: { ...template, title: data.idea.title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
+        if (template) setDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
         else setError(e instanceof Error ? e.message : "Draft failed");
       })
       .finally(() => {
         setDrafting(false);
         setParams({}, { replace: true });
       });
-  }, [data, params, draft, drafting, setParams]);
+  }, [setParams]);
+
+  useEffect(() => {
+    if (!data || params.get("draft") !== "1" || draft || drafting) return;
+    requestDraft(data.idea.plain_words, data.idea.title);
+  }, [data, params, draft, drafting, requestDraft]);
+
+  /** Swap the draft for one of the other plays the words matched. */
+  const switchPlay = (alt: DraftResponse["alternatives"][number]) => {
+    if (!draft?.play) return;
+    const { spec: current } = draft;
+    const others = (draft.alternatives ?? []).filter((a) => a.id !== alt.id);
+    const { spec, ...play } = alt;
+    setDraft({ spec, model: "playbook", play, alternatives: [...others, { ...draft.play, spec: current }] });
+  };
 
   const run = async (spec: IdeaSpec) => {
     if (id === null) return;
@@ -559,6 +693,25 @@ export default function WorkshopIdea() {
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
         </p>
       )}
+      {draft?.play && data && (
+        <section className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm" aria-label="Matched play">
+          <div className="text-xs uppercase tracking-wide text-emerald-300">Matched play</div>
+          <div className="mt-1 font-semibold text-white">{draft.play.name}</div>
+          <p className="mt-0.5 text-slate-300">{draft.play.summary}</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Matched on: {draft.play.why.map((w) => `“${w}”`).join(", ")} · from {draft.play.source}
+            {draft.model && draft.model !== "playbook" ? ` · picked by ${draft.model}` : " · picked by word match"}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(draft.alternatives ?? []).map((a) => (
+              <button key={a.id} type="button" className={button} onClick={() => switchPlay(a)}>Use {a.name} instead</button>
+            ))}
+            <button type="button" className={button} disabled={drafting} onClick={() => { setDraft(null); requestDraft(data.idea.plain_words, data.idea.title, true); }}>
+              Write it from scratch
+            </button>
+          </div>
+        </section>
+      )}
       {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} />}
       {data && data.runs.length === 0 && !draft && !drafting && (
         <button type="button" onClick={() => setParams({ draft: "1" })} className="mt-6 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900">
@@ -566,7 +719,7 @@ export default function WorkshopIdea() {
         </button>
       )}
       {data && [...data.runs].reverse().map((r) => (
-        <VerdictCard key={r.id} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+        <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
       ))}
     </div>
   );

@@ -209,3 +209,32 @@ def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
     for t in analyst_tickers(spec):
         out[f"{t}@analyst"] = (analyst_fn or analyst)(t)
     return out
+
+
+KINDS = {"EQUITY": "stock", "ETF": "ETF", "MUTUALFUND": "fund", "INDEX": "index", "CRYPTOCURRENCY": "crypto"}
+
+
+_NAMES: dict[str, dict] = {}  # only real answers are kept: a throttled Yahoo stub must not stick
+
+
+def _yahoo_info(ticker: str) -> dict:
+    import yfinance as yf
+    return yf.Ticker(ticker).info
+
+
+def ticker_info(ticker: str, *, fetch=None) -> dict | None:
+    """What a ticker actually is ({name, kind}), so "GOLD" (a stock) isn't mistaken for gold. None if unknown."""
+    if fetch is None and ticker in _NAMES:
+        return _NAMES[ticker]
+    try:
+        info = (fetch or _yahoo_info)(ticker) or {}
+    except Exception:
+        return None
+    name = info.get("longName") or info.get("shortName")
+    if not name:
+        return None
+    kind = info.get("quoteType") or ""
+    out = {"name": name, "kind": KINDS.get(kind, kind.lower() or "unknown")}
+    if fetch is None and len(_NAMES) < 512:
+        _NAMES[ticker] = out
+    return out

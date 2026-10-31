@@ -190,6 +190,48 @@ export class ApiError extends Error {
   }
 }
 
+/** Save a signed-in file response (the run's daily CSV) to the browser's downloads. */
+export async function adminDownload(path: string, filename: string): Promise<void> {
+  const token = await sessionToken();
+  const response = await fetch(buildApiUrl(path), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) throw new ApiError(`Download failed (${response.status})`, response.status, null);
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a); // Safari needs the link in the page, and the URL alive until the download starts
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** A run, year by year, plus the rolling 12-month excess return (the deeper look). */
+export interface RunAnalysis {
+  data_end: string | null;
+  /** Recomputed total return minus the stored verdict's, in points; null when it can't be compared. */
+  drift_pts?: number | null;
+  years: { year: number; idea: number; bench: number; excess: number; days_in: number; idea_in: number | null }[];
+  rolling: { t: string; excess: number }[];
+}
+
+/** The playbook play the draft was matched to, and why (the words that matched). */
+export interface PlayMatch {
+  id: string;
+  name: string;
+  summary: string;
+  source: string;
+  why: string[];
+}
+
+export interface DraftResponse {
+  spec: IdeaSpec;
+  model: string;
+  play: PlayMatch | null;
+  alternatives: (PlayMatch & { spec: IdeaSpec })[];
+}
+
+export type TickerNames = Record<string, { name: string; kind: string } | null>;
+
 /** A Workshop request, signed with Kevin's session. Errors carry the server's detail and parsed body. */
 export async function adminJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await sessionToken();

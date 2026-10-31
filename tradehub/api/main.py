@@ -18,9 +18,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
+import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from tradehub.core.env import load_local_env
@@ -34,9 +35,12 @@ from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
-    analyst as workshop_analyst, fred_series as workshop_fred, rule_series, with_rule_bars
+    analyst as workshop_analyst, fred_series as workshop_fred, rule_series, ticker_info as workshop_ticker_info, \
+    with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
-from tradehub.workshop.engine import daily_frame as workshop_daily_frame, gate_check, run_test, tickers_for
+from tradehub.workshop.playbook import draft as playbook_draft
+from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
+    run_test, tickers_for
 from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
 from tradehub.workshop.spec import IdeaSpec, blank_spec
@@ -417,6 +421,7 @@ def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
 # ── Trading HQ Workshop (step 2): Kevin-only. Plain words -> draft -> Kevin confirms -> run -> verdict. ──
 class _DraftIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    free: bool = False  # skip the playbook: the AI writes the whole spec
 
 
 class _IdeaIn(BaseModel):
@@ -436,12 +441,19 @@ def _fred_start(start: date) -> date:
 
 @app.post("/api/workshop/draft", tags=["Workshop"])
 def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
+    d = None if body.free else playbook_draft(body.text)  # a known play first; the AI only picks among the matches
+    if d is not None:
+        def play(x):
+            return {"id": x.play.id, "name": x.play.name, "summary": x.play.summary, "source": x.play.source,
+                    "why": list(x.why)}
+        return {"spec": d.spec.model_dump(mode="json"), "model": d.model, "play": play(d),
+                "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives]}
     try:
         spec, model = draft_spec(body.text)
     except DraftUnavailable as exc:
         return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
                                                       "template": blank_spec()})
-    return {"spec": spec.model_dump(mode="json"), "model": model}
+    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": []}
 
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])
@@ -567,6 +579,61 @@ def workshop_label(body: _LabelIn, user: dict = Depends(admin.require_admin), su
     if body.idea_id is not None and workshop_store.get_idea(supabase, body.idea_id) is None:
         raise HTTPException(status_code=422, detail=f"no idea {body.idea_id}")
     return workshop_store.add_label(supabase, body.order_id, body.idea_id, user.get("email", "admin"))
+
+
+def _run_frame(supabase, idea_id: int, run_id: int):
+    """A stored run's spec and its daily frame, recomputed from its spec and cut at the run's own data_end."""
+    run = workshop_store.get_run(supabase, run_id)
+    if run is None or run.get("idea_id") != idea_id:
+        raise HTTPException(status_code=404, detail="no such run")
+    spec = IdeaSpec.model_validate(run["spec"])
+    try:
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    end = (run.get("result") or {}).get("data_end")
+    frame = workshop_daily_frame(spec, prices, fred)
+    if end:
+        frame = frame[frame.index <= pd.Timestamp(end)]
+    return spec, frame, prices, end, run.get("result") or {}
+
+
+@app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/analysis", tags=["Workshop"])
+def workshop_run_analysis(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
+                          supabase=Depends(get_supabase)):
+    _, frame, _, end, stored = _run_frame(supabase, idea_id, run_id)
+    curve = stored.get("curve") or []
+    # Today's prices (dividend restatements, revised series) can differ from what the verdict judged: say by how much.
+    drift = float(((1 + frame["ret"]).prod() - 1) * 100 - curve[-1]["idea"]) if curve and len(frame) else None
+    return {**workshop_analysis(frame), "data_end": end, "drift_pts": drift}
+
+
+@app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/daily.csv", tags=["Workshop"])
+def workshop_run_csv(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    spec, frame, prices, _, _ = _run_frame(supabase, idea_id, run_id)
+    legs = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != "CASH" else [])
+                              + [spec.benchmark]))
+    out = pd.DataFrame({"rule_on": frame["on"].astype(int),
+                        "held": frame.get("held", frame["on"]).astype(int), "idea_ret": frame["ret"], "bench_ret": frame["bench"],
+                        "spy_ret": frame["spy"], "exit": frame["exit"]}, index=frame.index)
+    for t in legs:
+        out[f"close_{t}"] = prices[t].reindex(frame.index)
+    out.index = out.index.strftime("%Y-%m-%d")
+    return Response(out.to_csv(index_label="date", float_format="%.8g"), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="idea-{idea_id}-run-{run_id}-daily.csv"'})
+
+
+@app.get("/api/workshop/tickers", tags=["Workshop"])
+def workshop_tickers(symbols: str = Query(..., max_length=300), _admin: dict = Depends(admin.require_admin)):
+    wanted = list(dict.fromkeys(s.strip().upper() for s in symbols.split(",") if s.strip()))
+    if len(wanted) > 20:
+        raise HTTPException(status_code=422, detail="at most 20 tickers")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:  # Yahoo's .info is slow; look them up side by side
+        return dict(zip(wanted, pool.map(workshop_ticker_info, wanted)))
 
 
 @app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])

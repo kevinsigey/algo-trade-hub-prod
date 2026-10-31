@@ -154,7 +154,7 @@ def test_daily_frame_matches_run_test():
     closes = pd.DataFrame({**frame, "AAA": prices(spy + rng.normal(0.0002, 0.004, N))}, index=IDX)
     s = spec()
     df = daily_frame(s, closes, fred)
-    assert list(df.columns) == ["ret", "on", "bench", "spy", "exit"] and df.index[0] == IDX[1]
+    assert list(df.columns) == ["ret", "on", "bench", "spy", "exit", "held"] and df.index[0] == IDX[1]
     out = run_test(s, closes, fred, variations=1, seed=7)
     k = int(len(df) * (1 - s.unseen_fraction))
     unseen = claim_check(s, df.iloc[k:])

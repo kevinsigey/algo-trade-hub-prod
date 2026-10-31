@@ -41,7 +41,7 @@ def test_every_route_needs_admin():
 def test_draft_without_key_is_424_with_template(api, monkeypatch):
     c, _, _ = api
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    r = c.post("/api/workshop/draft", json={"text": "gold beats stocks when rates rise"})
+    r = c.post("/api/workshop/draft", json={"text": "my cat likes the sunshine"})  # no play fits, no key
     assert r.status_code == 424
     body = r.json()
     assert body["reason"] == "no_key" and body["template"]["claim"] == "beats_benchmark"
@@ -51,8 +51,22 @@ def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
     monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    monkeypatch.setattr(main, "playbook_draft", lambda text: None)  # no play fits: the free-form draft writes it
     r = c.post("/api/workshop/draft", json={"text": "gold"})
     assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
+    assert r.json()["play"] is None
+
+
+def test_draft_matches_a_play_first(api, monkeypatch):
+    c, _, _ = api
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(main, "draft_spec", lambda text: 1 / 0)
+    r = c.post("/api/workshop/draft", json={"text": "Oil as a ballast against the fall of the S&P or general index"})
+    body = r.json()
+    assert r.status_code == 200 and body["model"] == "playbook" and body["spec"]["hold"] == ["USO"]
+    assert body["play"]["id"] == "hedge_when_market_falls" and body["play"]["why"]
+    assert {a["id"] for a in body["alternatives"]} == {"ballast_basket", "commodity_trend"}
+    assert all(a["spec"]["title"] for a in body["alternatives"])
 
 
 def test_two_runs_are_variations_1_and_2(api):
@@ -248,3 +262,75 @@ def test_analyst_rule_on_an_etf_is_422(api, monkeypatch):
     idea = c.post("/api/workshop/ideas", json={"title": "XLE", "plain_words": "xle"}).json()
     r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": etf})
     assert r.status_code == 422 and "ETFs" in r.json()["detail"] and calls == []
+
+
+def _frame_and_prices():
+    import numpy as np
+    import pandas as pd
+    idx = pd.bdate_range("2025-01-01", "2026-10-30")
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"ret": rng.normal(0, 0.01, len(idx)), "on": True, "bench": 0.0, "spy": 0.0, "exit": ""},
+                         index=idx)
+    prices = pd.DataFrame({t: 100.0 for t in ("GLD", "SPY", "QQQ", "IWM")}, index=idx)
+    return frame, prices
+
+
+def test_run_analysis_and_csv_stop_at_the_runs_data_end(api, monkeypatch):
+    c, db, _ = api
+    frame, prices = _frame_and_prices()
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    got = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").json()
+    assert [y["year"] for y in got["years"]] == [2025, 2026] and got["data_end"] == "2026-10-29"
+    assert got["rolling"][-1]["t"] == "2026-10-29"
+    r = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    lines = r.text.strip().splitlines()
+    assert lines[0] == "date,rule_on,held,idea_ret,bench_ret,spy_ret,exit,close_GLD,close_SPY"
+    assert lines[-1].startswith("2026-10-29,1,")
+    assert "attachment" in r.headers["content-disposition"]
+
+
+def test_run_analysis_checks_the_run_belongs_to_the_idea(api):
+    c, _, _ = api
+    a = c.post("/api/workshop/ideas", json={"title": "Idea A", "plain_words": "a"}).json()
+    b = c.post("/api/workshop/ideas", json={"title": "Idea B", "plain_words": "b"}).json()
+    run = c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC}).json()
+    assert c.get(f"/api/workshop/ideas/{b['id']}/runs/{run['id']}/analysis").status_code == 404
+    assert c.get(f"/api/workshop/ideas/{a['id']}/runs/999/daily.csv").status_code == 404
+
+
+def test_ticker_names(api, monkeypatch):
+    c, _, _ = api
+    names = {"GOLD": {"name": "Gold.com, Inc.", "kind": "stock"}, "GLD": {"name": "SPDR Gold Shares", "kind": "ETF"}}
+    monkeypatch.setattr(main, "workshop_ticker_info", lambda t: names.get(t))
+    r = c.get("/api/workshop/tickers", params={"symbols": "gold, GLD,NOPE"})
+    assert r.json() == {"GOLD": names["GOLD"], "GLD": names["GLD"], "NOPE": None}
+    assert c.get("/api/workshop/tickers", params={"symbols": ",".join(f"T{i}" for i in range(21))}).status_code == 422
+
+
+def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
+    # Review: the recompute uses today's data; say when it no longer matches what the verdict judged.
+    c, db, calls = api
+    frame, prices = _frame_and_prices()
+    frame["ret"] = 0.0
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: {**RESULT, "curve": [{"t": "2025-01-01", "idea": 0.0, "benchmark": 0.0},
+                                                                                {"t": "2026-10-29", "idea": 12.0, "benchmark": 0.0}]})
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    got = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").json()
+    assert got["drift_pts"] == pytest.approx(-12.0)
+    header = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/daily.csv").text.splitlines()[0]
+    assert header.startswith("date,rule_on,held,idea_ret,")
+
+
+def test_draft_from_scratch_skips_the_playbook(api, monkeypatch):
+    c, _, _ = api
+    from tradehub.workshop.spec import IdeaSpec
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down", "free": True})
+    assert r.status_code == 200 and r.json()["play"] is None and r.json()["model"] == "x/y:free"
