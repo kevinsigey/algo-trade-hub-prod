@@ -493,3 +493,26 @@ describe("Workshop MACD days", () => {
     expect(onRun.mock.calls[0][0].rules.enter.conditions[0].lookback_days).toBe(1);
   });
 });
+
+describe("Workshop deeper look polish (review)", () => {
+  it("disables the download while it runs and says when it failed", async () => {
+    let finish: (r: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => { finish = res; })));
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download daily data (CSV)" }));
+    expect(await screen.findByRole("button", { name: "Downloading…" })).toBeDisabled();
+    finish(new Response("nope", { status: 500 }));
+    expect(await screen.findByText("Download failed (500)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download daily data (CSV)" })).not.toBeDisabled();
+  });
+
+  it("forgets the loaded years when the run changes", async () => {
+    serve({ "/api/workshop/ideas/1/runs/": { body: { data_end: "2026-10-29", years: [{ year: 2023, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 }], rolling: [] } } });
+    const { rerender } = render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByRole("row", { name: /2023/ })).toBeInTheDocument();
+    rerender(<MemoryRouter><VerdictCard ideaId="1" run={{ ...RUN, id: 2 } as never} onVary={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.queryByRole("row", { name: /2023/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Year by year" })).toBeInTheDocument();
+  });
+});
