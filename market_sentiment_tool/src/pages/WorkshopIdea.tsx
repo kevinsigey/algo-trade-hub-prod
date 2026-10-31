@@ -93,7 +93,7 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
         {c.source === "analyst" ? (
-          <span className="text-amber-300">Analyst data: stocks only (ETFs have none), sparse before 2019. The test starts when the data does.</span>
+          <span className="text-amber-300">Data from ~2019, stocks only (no ETFs).</span>
         ) : c.measure === "sma_cross" && (c.slow_days ?? 0) <= c.lookback_days ? (
           <span className="text-amber-300">The slow average needs more days than the fast one.</span>
         ) : (

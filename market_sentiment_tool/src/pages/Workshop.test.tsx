@@ -342,7 +342,7 @@ describe("Workshop analyst rules (step 6 Part B)", () => {
 
   it("warns analyst data starts ~2019 and stocks only", () => {
     open();
-    expect(screen.getByText(/stocks only.*2019/i)).toBeInTheDocument();
+    expect(screen.getByText("Data from ~2019, stocks only (no ETFs).")).toBeInTheDocument();
     expect(conditionText({ source: "analyst", series: "AAPL", measure: "net_upgrades", lookback_days: 63, op: ">", threshold: 0 } as never))
       .toBe("AAPL analyst upgrades minus downgrades over 63 days > 0");
   });

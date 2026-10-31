@@ -146,3 +146,4 @@ def test_analyst_cache_written_atomically(tmp_path, monkeypatch):
     analyst("AAA", fetch=lambda t: yf_frame([("2020-01-07 13:00", "up", 0)]), cache_dir=tmp_path,
             now=datetime(2021, 6, 1, 22, tzinfo=UTC))
     assert replaced and replaced[0][1].endswith("AAA.analyst.csv") and list(tmp_path.iterdir()) == [tmp_path / "AAA.analyst.csv"]
+    assert replaced[0][0] != str(tmp_path / "AAA.analyst.csv.tmp")  # each writer gets its own temp file

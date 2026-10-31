@@ -4,6 +4,7 @@ VPS) and FRED series (the keyed fetcher the journal uses). Fetchers are injectab
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -190,9 +191,14 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
         raise UnknownSymbol(f"no analyst data for {ticker} (ETFs and funds have none)")
     if cache_dir:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".csv.tmp")
-        frame.assign(as_of=cutoff.isoformat()).to_csv(tmp)
-        os.replace(tmp, path)  # the API and a job may read it at the same moment
+        fd, tmp = tempfile.mkstemp(dir=cache_dir, prefix=f"{ticker}.", suffix=".tmp")
+        os.close(fd)
+        try:  # the API and a job may read or refresh it at the same moment
+            frame.assign(as_of=cutoff.isoformat()).to_csv(tmp)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     return frame
 
 
