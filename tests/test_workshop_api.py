@@ -235,3 +235,16 @@ def test_rule_with_two_fred_ids_fetches_both(api):
     idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
     r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": two})
     assert r.status_code == 200 and calls[0]["fred"] == {"DGS10": "series", "T10Y2Y": "series"}
+
+
+def test_analyst_rule_on_an_etf_is_422(api, monkeypatch):
+    def none(t):
+        raise UnknownSymbol(f"no analyst data for {t} (ETFs and funds have none)")
+    monkeypatch.setattr(main, "workshop_analyst", none)
+    etf = {"title": "XLE on upgrades", "hold": ["XLE"], "claim": "beats_benchmark",
+           "rules": {"enter": {"conditions": [{"source": "analyst", "series": "XLE", "measure": "net_upgrades",
+                                               "lookback_days": 63, "op": ">", "threshold": 0}]}}}
+    c, _, calls = api
+    idea = c.post("/api/workshop/ideas", json={"title": "XLE", "plain_words": "xle"}).json()
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": etf})
+    assert r.status_code == 422 and "ETFs" in r.json()["detail"] and calls == []

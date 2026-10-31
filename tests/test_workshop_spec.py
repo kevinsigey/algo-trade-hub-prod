@@ -132,8 +132,9 @@ def test_measure_source_matrix():
         return IdeaSpec(title="matrix", hold=["SPY"], claim="beats_benchmark", rules={"enter": {"conditions": [c]}})
     spec(PRICE)
     spec({**PRICE, "source": "fred", "series": "DGS10", "measure": "vs_sma"})
+    spec({**PRICE, "source": "analyst", "series": "AAPL", "measure": "net_upgrades"})
     for bad in ({**PRICE, "source": "fred", "measure": "vs_vwap"}, {**PRICE, "measure": "net_upgrades"},
-                {**PRICE, "source": "analyst", "measure": "net_upgrades"}):
+                {**PRICE, "source": "analyst", "measure": "rsi"}):
         with pytest.raises(ValidationError):
             spec(bad)
 

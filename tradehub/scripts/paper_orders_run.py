@@ -23,7 +23,7 @@ from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_out, plan
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
-from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, rule_series_ids, target_and_reason, tickers_for
+from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_and_reason, tickers_for
 from tradehub.workshop.spec import IdeaSpec
 from tradehub.scripts.ideas_shadow import FRED_LEAD
 from tradehub.scripts.paper_orders_protect import _cancel
@@ -130,7 +130,7 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 last = prices_frame.dropna(subset=list(spec.hold) + list(spec.short)).index[-1].date()
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
-                series = {i: fred(i, spec.start - FRED_LEAD) for i in rule_series_ids(spec)}
+                series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred)
                 weights, why = target_and_reason(spec, prices_frame, series)
                 exit_reason = _exit_text(spec, why)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}

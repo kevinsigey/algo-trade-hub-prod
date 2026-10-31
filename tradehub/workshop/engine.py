@@ -29,6 +29,7 @@ CURVE_POINTS = 600
 MIN_GATE_DAYS = 63  # live-paper gate: ~3 months of data the backtest never saw (Kevin, 2026-10-30)
 GATE_WINDOW = 252  # ...judged on at most the most recent 12 months of it
 MAX_POSITION_PCT = 25
+COVERAGE_GAP = pd.Timedelta(days=365)  # analyst data: a hole this long means coverage hadn't really started
 EXIT_COOLDOWN = 21  # an idea with no condition has no fresh signal: back in after a month out (Kevin, 2026-10-30)
 CONTEXT = ("SPY", "QQQ", "IWM")
 HEADLINES = {
@@ -43,7 +44,7 @@ HEADLINES = {
 def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
-    needed += [c.series for c in _conditions(spec) if c.source == "price"]
+    needed += [c.series for c in _conditions(spec) if c.source in ("price", "analyst")]  # target_upside reads the close
     return list(dict.fromkeys(needed + list(CONTEXT)))
 
 
@@ -58,6 +59,11 @@ def rule_series_ids(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "fred"))
 
 
+def analyst_tickers(spec: IdeaSpec) -> list[str]:
+    """The stocks whose analyst actions the rule reads."""
+    return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "analyst"))
+
+
 def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
     """True on day t when the condition held on information available at the close of t-1 (FRED: t-2)."""
     idx = closes.index
@@ -70,6 +76,11 @@ def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.S
             if any(k not in closes for k in cols):
                 raise ValueError(f"a VWAP rule needs daily bars with volume for {t}")
             bars = closes[list(cols)].rename(columns=cols)
+    elif c.source == "analyst":  # actions land during the day: one more day, like FRED
+        measured = signals.analyst_measure(fred[f"{c.series}@analyst"], idx, c.measure, c.lookback_days,
+                                           close=closes[c.series])
+        hit = measured > c.threshold if c.op == ">" else measured < c.threshold
+        return (hit & measured.notna()).shift(2, fill_value=False).astype(bool)
     else:
         raw = fred[c.series].sort_index()
         values, lag = raw.reindex(idx.union(raw.index)).ffill().reindex(idx), 2  # +1 day for publication
@@ -176,14 +187,27 @@ def _clean(x):
     return x
 
 
-def _frame(spec: IdeaSpec, closes: pd.DataFrame) -> pd.DataFrame:
-    """The rows the rule runs on: from the start date, dropping any day a rule ticker has no close."""
+def _frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> pd.DataFrame:
+    """The rows the rule runs on: from the start date (or the day analyst coverage begins, so years with no
+    analyst data don't count as "out" days), dropping any day a rule ticker has no close."""
     rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
                               + [spec.benchmark, "SPY"]))
-    return closes[closes.index >= pd.Timestamp(spec.start)].dropna(subset=rule)
+    start = pd.Timestamp(spec.start)
+    for c in _conditions(spec):
+        if c.source == "analyst":
+            acts = (fred or {})[f"{c.series}@analyst"]
+            dated = acts.index[acts["target"].notna()] if c.measure == "target_upside" else acts.index
+            if not len(dated):
+                start = pd.Timestamp.max
+                continue
+            d = dated.sort_values()
+            gaps = np.flatnonzero((d[1:] - d[:-1]) > COVERAGE_GAP)
+            # Coverage begins after the last year-long hole (AAPL: one 2012 row, then nothing until 2019).
+            start = max(start, d[gaps[-1] + 1 if len(gaps) else 0].normalize())
+    return closes[closes.index >= start].dropna(subset=rule)
 
 
-def _legbars(spec: IdeaSpec, closes: pd.DataFrame) -> dict | None:
+def _legbars(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> dict | None:
     """For intraday exits: the single leg's daily open/high/low/close and prior close, aligned with the returns."""
     if spec.exits.mode != "intraday" or not spec.exits.any():
         return None
@@ -191,7 +215,7 @@ def _legbars(spec: IdeaSpec, closes: pd.DataFrame) -> dict | None:
     cols = [f"{leg}.open", f"{leg}.high", f"{leg}.low"]
     if any(c not in closes for c in cols):
         raise ValueError(f"intraday exits need daily bars for {leg} (open/high/low)")
-    frame = _frame(spec, closes)
+    frame = _frame(spec, closes, fred)
     filled = frame[cols].fillna({c: frame[leg] for c in cols})  # a missing bar part reads as the close
     return {"open": filled[cols[0]].to_numpy()[1:], "high": filled[cols[1]].to_numpy()[1:],
             "low": filled[cols[2]].to_numpy()[1:], "close": frame[leg].to_numpy()[1:],
@@ -200,7 +224,7 @@ def _legbars(spec: IdeaSpec, closes: pd.DataFrame) -> dict | None:
 
 def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
     """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
-    frame = _frame(spec, closes)
+    frame = _frame(spec, closes, fred)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
     # Equal weight across every leg; a short leg earns -r (rebalanced daily, borrow cost inside cost_bps).
@@ -348,7 +372,7 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
 def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
     """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
-    position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes))
+    position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
     return pd.DataFrame({"ret": _build(position, sleeve, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
                          "exit": why}, index=idx)
 
@@ -359,7 +383,7 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
     Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
     engine's own condition_mask reads them, so the lag rules are exactly the backtest's."""
     ahead = 2 if spec.execution.timing == "close" else 1
-    frame = _frame(spec, closes)  # drop gaps exactly as _legs does
+    frame = _frame(spec, closes, fred)  # drop gaps exactly as _legs does
     extra = pd.bdate_range(frame.index[-1], periods=ahead + 1)[1:]
     padded = pd.concat([frame, frame.iloc[[-1] * ahead].set_axis(extra)])  # phantom days copy the last close
     for leg in list(spec.hold) + list(spec.short):  # ...as flat bars, so a phantom day can't trip an intraday stop
@@ -367,7 +391,7 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
             if f"{leg}.{part}" in padded:
                 padded.loc[extra, f"{leg}.{part}"] = frame[leg].iloc[-1]
     _, mask, held, *_ = _legs(spec, padded, fred)
-    position, why, _ = _held(spec, mask, held, _legbars(spec, padded))  # the morning after a stop, it's out
+    position, why, _ = _held(spec, mask, held, _legbars(spec, padded, fred))  # the morning after a stop, it's out
     if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
         return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}, ""
@@ -426,7 +450,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
         return _build(m, h, other, cost)
 
-    legbars = _legbars(spec, closes)
+    legbars = _legbars(spec, closes, fred)
     position, _, sleeve = _held(spec, mask, held, legbars)
     r = build(position, sleeve)
     n = len(r)

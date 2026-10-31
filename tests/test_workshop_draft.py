@@ -85,3 +85,9 @@ def test_draft_prompt_mentions_rules():
     for word in ("rules", "enter", "exit", "all", "any", "sma_cross", "rsi", "macd", "vs_vwap", "12/26/9"):
         assert word in SYSTEM, word
     assert "while a condition holds" not in SYSTEM
+
+
+def test_draft_prompt_mentions_analyst():
+    from tradehub.workshop.draft import SYSTEM
+    for word in ("analyst", "net_upgrades", "target_upside", "stocks only"):
+        assert word in SYSTEM, word

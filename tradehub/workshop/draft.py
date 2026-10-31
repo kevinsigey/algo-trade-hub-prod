@@ -32,7 +32,9 @@ SYSTEM = (
     "buy group stops holding); each group is all or any of 1-5 conditions. Measures: level, change, pct_change, "
     "vs_sma, sma_cross (needs slow_days > lookback_days), rsi, macd (fixed 12/26/9; above 0 = bullish), vs_high / "
     "vs_low (above 0 / below 0 = a new N-day high / low), volatility, vs_vwap; FRED series allow only level, change, "
-    "pct_change, vs_sma and volatility. Never invent results. "
+    "pct_change, vs_sma and volatility. source analyst (stocks only, no ETFs; data mostly from 2019) allows "
+    "net_upgrades (upgrades minus downgrades over N days) and target_upside (% the mean price target set in the last "
+    "N days is above the price). Never invent results. "
     "Reply with JSON only."
 )
 

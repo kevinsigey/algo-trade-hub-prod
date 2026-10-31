@@ -326,3 +326,24 @@ describe("Workshop review fixes (step 6)", () => {
     await expect(adminJson("/api/workshop/ideas/1/runs", { method: "POST", body: "{}" })).rejects.toThrow("sma_cross needs slow_days longer than lookback_days");
   });
 });
+
+describe("Workshop analyst rules (step 6 Part B)", () => {
+  const open = () => {
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={vi.fn()} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "analyst" } });
+  };
+
+  it("analyst source offers only analyst measures", () => {
+    open();
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(["net_upgrades", "target_upside"]);
+  });
+
+  it("warns analyst data starts ~2019 and stocks only", () => {
+    open();
+    expect(screen.getByText("Data from ~2019, stocks only (no ETFs).")).toBeInTheDocument();
+    expect(conditionText({ source: "analyst", series: "AAPL", measure: "net_upgrades", lookback_days: 63, op: ">", threshold: 0 } as never))
+      .toBe("AAPL analyst upgrades minus downgrades over 63 days > 0");
+  });
+});

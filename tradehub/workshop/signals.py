@@ -53,3 +53,36 @@ def measure(values: pd.Series, how: str, lookback: int, *, slow: int | None = No
         vwap = (typical * bars["volume"]).rolling(n).sum() / bars["volume"].rolling(n).sum()
         return (values / vwap - 1) * 100
     raise ValueError(f"unknown measure {how!r}")
+
+
+def analyst_measure(actions: pd.DataFrame, idx: pd.DatetimeIndex, how: str, lookback: int, *,
+                    close: pd.Series | None = None) -> pd.Series:
+    """Analyst signals on trading days `idx`. Each action counts on the trading day it happened, or the next one.
+    net_upgrades: ups minus downs over the last N days. target_upside: (mean target set in the last N days / close
+    - 1) x 100, NaN when no target was set. Both NaN before the first action (the engine lags them 2 days).
+    Actions shortly before idx[0] still count while inside the window (weekdays stand in for trading days there)."""
+    if len(idx) == 0:
+        return pd.Series(np.nan, index=idx)
+    early = actions.index.normalize()
+    early = early[early < idx[0]]
+    prefix = pd.bdate_range(max(early.min(), idx[0] - pd.Timedelta(days=2 * lookback + 14)), idx[0],
+                            inclusive="left") if len(early) else pd.DatetimeIndex([])
+    days = prefix.append(idx)
+    pos = days.searchsorted(actions.index.normalize(), side="left")
+    keep = (pos < len(days)) & (actions.index.normalize() >= days[0])
+    acts, pos = actions[keep], pos[keep]
+    first = pos.min() if len(pos) else len(days)
+    if how == "net_upgrades":
+        daily = np.zeros(len(days))
+        np.add.at(daily, pos, (acts["action"] == "up").to_numpy(float) - (acts["action"] == "down").to_numpy(float))
+        out = pd.Series(daily, index=days).rolling(lookback, min_periods=1).sum()
+    else:  # target_upside
+        has = acts["target"].notna().to_numpy()
+        total, count = np.zeros(len(days)), np.zeros(len(days))
+        np.add.at(total, pos[has], acts["target"].to_numpy()[has])
+        np.add.at(count, pos[has], 1.0)
+        n = pd.Series(count, index=days).rolling(lookback, min_periods=1).sum()
+        mean = pd.Series(total, index=days).rolling(lookback, min_periods=1).sum() / n.where(n > 0)
+        out = (mean / close.reindex(days) - 1) * 100
+    out.iloc[:first] = np.nan
+    return out.iloc[len(prefix):]
