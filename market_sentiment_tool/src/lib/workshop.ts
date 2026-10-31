@@ -83,6 +83,8 @@ export interface IdeaSpec {
   short?: string[];
   execution?: Execution;
   exits?: Exits;
+  /** Judge (and trade) the idea as `idea_share` of a portfolio whose rest is `core`, equal weight, daily. */
+  portfolio?: { core: string[]; idea_share: number } | null;
   rules: Rules | null;
   /** Steps 2-5 runs stored one condition; the server reads it as a one-condition buy rule. */
   when?: Condition | null;
