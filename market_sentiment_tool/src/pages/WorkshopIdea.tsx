@@ -250,6 +250,26 @@ export function DraftEditor({ initial, onRun, busy, note }: { initial: IdeaSpec;
 
       <RulesEditor rules={spec.rules} onChange={(rules) => set("rules", rules)} />
 
+      <label className="mt-4 flex items-center gap-2 text-sm text-slate-300">
+        <input type="checkbox" checked={!!spec.portfolio}
+          onChange={(e) => setSpec((s) => ({ ...s, portfolio: e.target.checked ? { core: ["SPY"], idea_share: 0.5 } : null,
+            exits: e.target.checked && s.exits?.mode === "intraday" ? { ...s.exits, mode: "close" } : s.exits }))} />
+        Test it inside a portfolio
+      </label>
+      {spec.portfolio && (
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <Field label="Core (tickers, equal weight)">
+            <input className={field} value={spec.portfolio.core.join(", ")}
+              onChange={(e) => set("portfolio", { ...spec.portfolio!, core: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })} />
+          </Field>
+          <Field label="Idea's share (%)">
+            <input type="number" min={10} max={90} className={field} value={Math.round(spec.portfolio.idea_share * 100)}
+              onChange={(e) => set("portfolio", { ...spec.portfolio!, idea_share: Number(e.target.value) / 100 })} />
+          </Field>
+          <p className="self-end text-xs text-slate-500">Each day the idea gets this share and the core the rest; judged against the benchmark below.</p>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-4 sm:grid-cols-4">
         <Field label="Compared with">
           <input className={field} value={spec.benchmark} onChange={(e) => set("benchmark", e.target.value)} />
@@ -417,6 +437,7 @@ export function VerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run;
           <div className="text-lg font-semibold text-white">{r.headline}</div>
           <div className="text-xs text-slate-400">
             Variation {run.variation} · {run.spec.hold.join(", ")} {rulesText(run.spec)} · {claimLabel(run.spec.claim)}
+            {run.spec.portfolio && ` · as ${Math.round(run.spec.portfolio.idea_share * 100)}% of a portfolio with ${run.spec.portfolio.core.join(", ")}`}
           </div>
         </div>
       </div>

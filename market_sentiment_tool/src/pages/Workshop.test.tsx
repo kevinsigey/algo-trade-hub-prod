@@ -433,3 +433,21 @@ describe("Workshop playbook", () => {
     await waitFor(() => expect(posts(f).some(([u, b]) => String(u).includes("/api/workshop/draft") && JSON.parse(String(b)).free === true)).toBe(true));
   });
 });
+
+describe("Workshop portfolio ideas", () => {
+  it("tests the idea inside a portfolio when asked", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Test it inside a portfolio"));
+    fireEvent.change(screen.getByLabelText("Core (tickers, equal weight)"), { target: { value: "SPY, TLT" } });
+    fireEvent.change(screen.getByLabelText("Idea's share (%)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].portfolio).toEqual({ core: ["SPY", "TLT"], idea_share: 0.3 });
+  });
+
+  it("says a run was judged as a portfolio", () => {
+    const run = { ...RUN, spec: { ...SPEC, portfolio: { core: ["SPY"], idea_share: 0.5 } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/as 50% of a portfolio with SPY/)).toBeInTheDocument();
+  });
+});

@@ -96,6 +96,20 @@ class Exits(BaseModel):
         return any(v is not None for v in (self.stop_loss_pct, self.trailing_pct, self.take_profit_pct, self.max_days))
 
 
+class Portfolio(BaseModel):
+    """Test the idea inside a portfolio (Kevin, 2026-10-31): each day `idea_share` of the money follows the idea and
+    the rest sits in `core` (equal weight), rebalanced daily. The blend is what gets judged and traded."""
+    model_config = ConfigDict(extra="forbid")
+
+    core: list[str] = Field(default_factory=lambda: ["SPY"], min_length=1, max_length=5)
+    idea_share: float = Field(0.5, ge=0.1, le=0.9)
+
+    @field_validator("core")
+    @classmethod
+    def _core(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(_ticker(t) for t in v))
+
+
 class IdeaSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -112,6 +126,7 @@ class IdeaSpec(BaseModel):
     assumptions: list[str] = []
     execution: Execution = Field(default_factory=Execution)
     exits: Exits = Field(default_factory=Exits)
+    portfolio: Portfolio | None = None
 
     @field_validator("hold", "short")
     @classmethod
@@ -151,6 +166,8 @@ class IdeaSpec(BaseModel):
             raise ValueError("a ticker can't be both held and shorted")
         if self.exits.mode == "intraday" and len(self.hold) + len(self.short) != 1:
             raise ValueError("intraday stops are for an idea with exactly one ticker (one hold or one short)")
+        if self.exits.mode == "intraday" and self.portfolio is not None:
+            raise ValueError("intraday stops are not for portfolio ideas (a stop would also sell the core's shares)")
         if self.exits.mode == "intraday":
             e = self.exits
             if e.trailing_pct and (e.stop_loss_pct or e.take_profit_pct):

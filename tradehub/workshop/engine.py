@@ -45,6 +45,7 @@ def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
     needed += [c.series for c in _conditions(spec) if c.source in ("price", "analyst")]  # target_upside reads the close
+    needed += list(spec.portfolio.core) if spec.portfolio else []
     return list(dict.fromkeys(needed + list(CONTEXT)))
 
 
@@ -191,7 +192,7 @@ def _frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> pd
     """The rows the rule runs on: from the start date (or the day analyst coverage begins, so years with no
     analyst data don't count as "out" days), dropping any day a rule ticker has no close."""
     rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
-                              + [spec.benchmark, "SPY"]))
+                              + [spec.benchmark, "SPY"] + (list(spec.portfolio.core) if spec.portfolio else [])))
     start = pd.Timestamp(spec.start)
     for c in _conditions(spec):
         if c.source == "analyst":
@@ -364,6 +365,15 @@ def _held(spec: IdeaSpec, signal: np.ndarray, sleeve: np.ndarray, legbars: dict 
     return position, why, np.where(np.isnan(fill), sleeve, fill)
 
 
+def _blend(spec: IdeaSpec, r: np.ndarray, rets: pd.DataFrame, rows: slice = slice(None)) -> np.ndarray:
+    """A portfolio idea's daily return: its share of the idea plus the rest in the core (equal weight, daily)."""
+    if spec.portfolio is None:
+        return r
+    core = rets[spec.portfolio.core].mean(axis=1).to_numpy()[rows]
+    w = spec.portfolio.idea_share
+    return w * r + (1 - w) * core
+
+
 def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
     switches = np.concatenate([[False], m[1:] != m[:-1]])
     return np.where(m, held, other) - cost * switches
@@ -371,10 +381,11 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
 
 def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
     """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
-    idx, mask, held, other, b, s, _ = _legs(spec, closes, fred)
+    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
-    return pd.DataFrame({"ret": _build(position, sleeve, other, spec.cost_bps / 1e4), "on": mask, "bench": b, "spy": s,
-                         "exit": why, "held": position.astype(bool)}, index=idx)
+    ret = _blend(spec, _build(position, sleeve, other, spec.cost_bps / 1e4), rets)
+    return pd.DataFrame({"ret": ret, "on": mask, "bench": b, "spy": s, "exit": why, "held": position.astype(bool)},
+                        index=idx)
 
 
 def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> tuple[dict[str, float], str]:
@@ -394,10 +405,21 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
     position, why, _ = _held(spec, mask, held, _legbars(spec, padded, fred))  # the morning after a stop, it's out
     if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
-        return {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}, ""
+        return _blend_weights(spec, {**{t: 1 / n for t in spec.hold}, **{t: -1 / n for t in spec.short}}), ""
     # The reason names an exit only when the exit is what keeps it flat: the rule itself still says hold.
     reason = next((w for w in why[::-1] if w), "") if bool(mask[-1]) else ""
-    return ({} if spec.otherwise == CASH else {spec.otherwise: 1.0}), reason
+    return _blend_weights(spec, {} if spec.otherwise == CASH else {spec.otherwise: 1.0}), reason
+
+
+def _blend_weights(spec: IdeaSpec, idea: dict[str, float]) -> dict[str, float]:
+    """The idea's weights scaled to its share, plus the core's share; a ticker in both adds up."""
+    if spec.portfolio is None:
+        return idea
+    w, core = spec.portfolio.idea_share, spec.portfolio.core
+    out = {t: w * v for t, v in idea.items()}
+    for t in core:
+        out[t] = out.get(t, 0.0) + (1 - w) / len(core)
+    return out
 
 
 def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
@@ -452,7 +474,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
 
     legbars = _legbars(spec, closes, fred)
     position, _, sleeve = _held(spec, mask, held, legbars)
-    r = build(position, sleeve)
+    r = _blend(spec, build(position, sleeve), rets)
     n = len(r)
     k = int(n * (1 - spec.unseen_fraction))
     built, unseen = slice(0, k), slice(k, n)
@@ -485,7 +507,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
             shifted = np.roll(mu, int(rng.integers(MIN_CONDITION_DAYS, n_u - MIN_CONDITION_DAYS)))
             pos, _, hp = _held(spec, shifted, hu, lb_u)  # random timing goes through the same exits
             sw = np.concatenate([[False], pos[1:] != pos[:-1]])
-            rp = np.where(pos, hp, other[unseen]) - cost * sw
+            rp = _blend(spec, np.where(pos, hp, other[unseen]) - cost * sw, rets, unseen)
             perm[i] = _claim(kind, rp, bu, su, shifted)[1]
         p, beats = p_value(actual, perm)
     else:
