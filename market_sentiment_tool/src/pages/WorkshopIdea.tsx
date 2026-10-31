@@ -43,11 +43,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: string; onChange: (c: Condition) => void; onRemove?: () => void }) {
-  const options = MEASURES.filter((m) => c.source === "price" || m.fred);
+  const options = MEASURES.filter((m) => m.sources.includes(c.source));
   const hint = MEASURES.find((m) => m.value === c.measure)?.hint;
   const put = <K extends keyof Condition>(key: K, value: Condition[K]) => {
     const next = { ...c, [key]: value };
-    if (key === "source" && !MEASURES.some((m) => m.value === next.measure && (next.source === "price" || m.fred))) next.measure = "level";
+    if (key === "source" && !MEASURES.some((m) => m.value === next.measure && m.sources.includes(next.source)))
+      next.measure = MEASURES.find((m) => m.sources.includes(next.source))!.value;
     // A default slow average only when the measure becomes a cross; the server checks slow > fast.
     if (key === "measure") next.slow_days = next.measure === "sma_cross" ? Math.max(200, next.lookback_days + 1) : null;
     onChange(next);
@@ -59,6 +60,7 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
           <select className={field} value={c.source} onChange={(e) => put("source", e.target.value as Condition["source"])}>
             <option value="fred">FRED series</option>
             <option value="price">Price</option>
+            <option value="analyst">Analyst (stocks)</option>
           </select>
         </Field>
         <Field label="Series / ticker">
@@ -90,7 +92,9 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
         </Field>
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-        {c.measure === "sma_cross" && (c.slow_days ?? 0) <= c.lookback_days ? (
+        {c.source === "analyst" ? (
+          <span className="text-amber-300">Data from ~2019, stocks only (no ETFs).</span>
+        ) : c.measure === "sma_cross" && (c.slow_days ?? 0) <= c.lookback_days ? (
           <span className="text-amber-300">The slow average needs more days than the fast one.</span>
         ) : (
           <span>{hint}</span>

@@ -6,10 +6,11 @@ export type Claim = "beats_benchmark" | "beats_benchmark_when" | "ballast" | "sm
 export type Verdict = "PASS" | "FAIL" | "NOT ENOUGH DATA";
 
 export type Measure =
-  | "level" | "change" | "pct_change" | "vs_sma" | "sma_cross" | "rsi" | "macd" | "vs_high" | "vs_low" | "volatility" | "vs_vwap";
+  | "level" | "change" | "pct_change" | "vs_sma" | "sma_cross" | "rsi" | "macd" | "vs_high" | "vs_low" | "volatility" | "vs_vwap"
+  | "net_upgrades" | "target_upside";
 
 export interface Condition {
-  source: "fred" | "price";
+  source: "fred" | "price" | "analyst";
   series: string;
   measure: Measure;
   lookback_days: number;
@@ -30,18 +31,23 @@ export interface Rules {
 }
 
 /** Each measure: its menu label, the units hint, and which sources can use it. */
-export const MEASURES: { value: Measure; label: string; hint: string; fred: boolean }[] = [
-  { value: "level", label: "level", hint: "the value itself", fred: true },
-  { value: "change", label: "change", hint: "change over N days, in the series' own units", fred: true },
-  { value: "pct_change", label: "% change", hint: "% change over N days", fred: true },
-  { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", fred: true },
-  { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", fred: true },
-  { value: "sma_cross", label: "average cross", hint: "% the N-day average is above the slow average", fred: false },
-  { value: "rsi", label: "RSI", hint: "N-day RSI, 0-100 (below 30 = oversold)", fred: false },
-  { value: "macd", label: "MACD", hint: "MACD 12/26/9 minus its signal, % of price (above 0 = bullish)", fred: false },
-  { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", fred: false },
-  { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", fred: false },
-  { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", fred: false },
+type Src = Condition["source"];
+const P: Src[] = ["price"];
+const FP: Src[] = ["fred", "price"];
+export const MEASURES: { value: Measure; label: string; hint: string; sources: Src[] }[] = [
+  { value: "level", label: "level", hint: "the value itself", sources: FP },
+  { value: "change", label: "change", hint: "change over N days, in the series' own units", sources: FP },
+  { value: "pct_change", label: "% change", hint: "% change over N days", sources: FP },
+  { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", sources: FP },
+  { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", sources: FP },
+  { value: "sma_cross", label: "average cross", hint: "% the N-day average is above the slow average", sources: P },
+  { value: "rsi", label: "RSI", hint: "N-day RSI, 0-100 (below 30 = oversold)", sources: P },
+  { value: "macd", label: "MACD", hint: "MACD 12/26/9 minus its signal, % of price (above 0 = bullish)", sources: P },
+  { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", sources: P },
+  { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", sources: P },
+  { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", sources: P },
+  { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N days", sources: ["analyst"] },
+  { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N days is above the price", sources: ["analyst"] },
 ];
 
 export interface Execution {
@@ -241,6 +247,8 @@ export function conditionText(c: Condition | null): string {
     case "vs_low": return zero && op === "<" ? `${s} new ${n}-day low` : `${s} % vs prior ${n}-day low ${op} ${t}`;
     case "volatility": return `${s} ${n}-day volatility (%/yr) ${op} ${t}`;
     case "vs_vwap": return `${s} % vs ${n}-day VWAP ${op} ${t}`;
+    case "net_upgrades": return `${s} analyst upgrades minus downgrades over ${n} days ${op} ${t}`;
+    case "target_upside": return `${s} analyst target upside (%, last ${n} days) ${op} ${t}`;
   }
 }
 
