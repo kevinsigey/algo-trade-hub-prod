@@ -23,7 +23,7 @@ from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_out, plan
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
-from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_and_reason, tickers_for
+from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, rule_series_ids, target_and_reason, tickers_for
 from tradehub.workshop.spec import IdeaSpec
 from tradehub.scripts.ideas_shadow import FRED_LEAD
 from tradehub.scripts.paper_orders_protect import _cancel
@@ -67,7 +67,7 @@ def _stopped_out(idea_id: int, spec: IdeaSpec, fills: list[dict], client_ids: di
     last = max(stops)
     after = daily_frame(spec, prices_frame, series)
     after = after[after.index > pd.Timestamp(last)]
-    fresh = (not after["on"].all()) if spec.when is not None else len(after) >= EXIT_COOLDOWN
+    fresh = (not after["on"].all()) if spec.rules is not None else len(after) >= EXIT_COOLDOWN
     return "" if fresh else f"stopped out on {last}; waiting for a fresh signal"
 
 
@@ -130,8 +130,7 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 last = prices_frame.dropna(subset=list(spec.hold) + list(spec.short)).index[-1].date()
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
-                series = ({spec.when.series: fred(spec.when.series, spec.start - FRED_LEAD)}
-                          if spec.when and spec.when.source == "fred" else {})
+                series = {i: fred(i, spec.start - FRED_LEAD) for i in rule_series_ids(spec)}
                 weights, why = target_and_reason(spec, prices_frame, series)
                 exit_reason = _exit_text(spec, why)
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}

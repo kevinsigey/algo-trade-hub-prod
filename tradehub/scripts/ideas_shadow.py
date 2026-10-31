@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime, timedelta
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.workshop import data, store
-from tradehub.workshop.engine import daily_frame, tickers_for
+from tradehub.workshop.engine import daily_frame, rule_series_ids, tickers_for
 from tradehub.workshop.spec import IdeaSpec
 
 from tradehub.workshop.data import NY, last_complete_day
@@ -28,8 +28,7 @@ def _rows(idea: dict, supa, cutoff: date, closes, fred, bars=None) -> list[dict]
     live_day = datetime.fromisoformat(idea["live_at"]).astimezone(NY).date()
     after = max([live_day] + [date.fromisoformat(r["day"]) for r in store.shadow_days(supa, idea["id"])])
     prices = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start, bars_fn=bars)
-    series = ({spec.when.series: fred(spec.when.series, spec.start - FRED_LEAD)}
-              if spec.when and spec.when.source == "fred" else {})
+    series = {i: fred(i, spec.start - FRED_LEAD) for i in rule_series_ids(spec)}
     frame = daily_frame(spec, prices, series)
     days = frame[(frame.index.date > after) & (frame.index.date <= cutoff)]
     return [{"day": str(d.date()), "ret": float(r.ret), "on": bool(r.on), "bench": float(r.bench),
