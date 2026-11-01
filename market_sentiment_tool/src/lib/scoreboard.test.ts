@@ -211,6 +211,25 @@ describe("brierVerdict", () => {
   it("falls back to unknown when a verdict arrives with no ratio behind it", () => {
     expect(brierVerdict({ ...behind, brier_ratio: null })).toMatch(/not measured|cannot/i);
   });
+
+  it("labels a comparison too early below 30 settled, whatever the ratio says", () => {
+    const earlyAhead = brierVerdict({ ...behind, market_verdict: "ahead", brier_ratio: 0.5, n_settled: 29 });
+    expect(earlyAhead).toMatch(/^Too early to say: 29 settled/);
+    expect(earlyAhead).not.toMatch(/ahead of the market/i);
+
+    const earlyBehind = brierVerdict({ ...behind, n_settled: 3 });
+    expect(earlyBehind).toMatch(/^Too early to say: 3 settled/);
+    expect(earlyBehind).not.toMatch(/— behind/);
+  });
+
+  it("reads the comparison as a verdict at exactly 30 settled", () => {
+    expect(brierVerdict({ ...behind, n_settled: 30 })).toMatch(/4\.29x the market's Brier — behind/);
+  });
+
+  it("does not invent a sample size when the settled count is absent", () => {
+    const verdict = brierVerdict({ ...behind, n_settled: null });
+    expect(verdict).toBe("Too early to say: the settled count was not recorded for this run.");
+  });
 });
 
 describe("settledBars -- TWO bars, never one", () => {

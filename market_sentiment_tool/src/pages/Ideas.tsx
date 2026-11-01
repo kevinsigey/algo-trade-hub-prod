@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
 import { useApi } from "@/hooks/usePaperPortfolio";
+import { EARLY_N } from "@/lib/sample";
 import { claimLabel, STATUS_LABEL, verdictTone, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
 import { toneClass } from "@/pages/Workshop";
 
@@ -21,7 +22,11 @@ export function PaperLine({ live }: { live: ShadowSummary }) {
         {live.days} days · as of {live.as_of}
         {live.state === "stale" && " · stale"}
       </span>
-      {live.failing && <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs text-rose-300">Claim failing on paper</span>}
+      {live.days < EARLY_N ? (
+        <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">Too early to say</span>
+      ) : live.failing ? (
+        <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs text-rose-300">Claim failing on paper</span>
+      ) : null}
     </div>
   );
 }

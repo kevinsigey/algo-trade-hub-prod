@@ -40,6 +40,15 @@ describe("Ideas record", () => {
     expect(screen.getByText(/as of 2027-02-12/)).toBeInTheDocument();
   });
 
+  it("labels a paper record too early below 30 days instead of calling its claim failing", async () => {
+    serve([{ ...ROWS[1], live: { ...LIVE, days: 12, return_pct: -2.4, bench_return_pct: 1.1, claim: null, failing: true } }]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText("Too early to say")).toBeInTheDocument();
+    expect(screen.getByText("−2.4%")).toBeInTheDocument();
+    expect(screen.getByText(/12 days/)).toBeInTheDocument();
+    expect(screen.queryByText("Claim failing on paper")).not.toBeInTheDocument();
+  });
+
   it("shows an idea's verdicts, paper record and tagged trades", async () => {
     serve({
       ...ROWS[1], plain_words: "Gold does better than stocks.",

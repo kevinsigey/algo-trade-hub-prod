@@ -5,6 +5,7 @@ import { adminJson } from "@/lib/workshop";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, Treemap, XAxis, YAxis } from "recharts";
 
+import StrategyHqStrip from "@/components/StrategyHqStrip";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   fmtPct,
@@ -104,6 +105,8 @@ export default function Portfolio() {
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
       <p className="mt-1 text-sm text-slate-400">A paper account, in full. Are we beating SPY?</p>
+
+      <StrategyHqStrip />
 
       {loading && (
         <div className="mt-8 flex items-center gap-2 text-slate-400">

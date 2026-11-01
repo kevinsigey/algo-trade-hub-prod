@@ -28,7 +28,13 @@
  * that -- "close", "competitive", a coloured delta that reads as near-parity. Gas sits at 4.29x the
  * market's Brier, which is not close, and a reader told otherwise cannot judge the engine. So
  * `brierVerdict` states the multiple and calls nothing close, and that is pinned by test.
+ *
+ * Phase-2 section 4.2 adds one presentation rule: below the shared `EARLY_N` settled count,
+ * `brierVerdict` labels the row "Too early to say" instead of wording the server's comparison as
+ * praise or blame. The server's `market_verdict` remains the only verdict; this rule only decides
+ * whether there is enough settled evidence to present it as one.
  */
+import { EARLY_N } from "@/lib/sample";
 
 /** What one run's Brier is against the market's. `not_comparable` is "nobody measured this". */
 export type MarketVerdict = "ahead" | "behind" | "level" | "not_comparable";
@@ -161,6 +167,12 @@ export function brierVerdict(row: ScoreboardRow): string {
   const ratio = row.brier_ratio;
   if (row.market_verdict === "not_comparable" || !isNumber(ratio)) {
     return "Not measured: no market Brier was recorded for this run.";
+  }
+  if (!isNumber(row.n_settled)) {
+    return "Too early to say: the settled count was not recorded for this run.";
+  }
+  if (row.n_settled < EARLY_N) {
+    return `Too early to say: ${formatCount(row.n_settled)} settled (minimum ${EARLY_N} before this comparison is read as a verdict).`;
   }
   if (row.market_verdict === "level") {
     return `Level with the market on Brier (ratio ${formatRatio(ratio)}).`;
