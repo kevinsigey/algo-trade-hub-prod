@@ -255,3 +255,14 @@ def test_recording_a_candidate_run_is_refused():
             check_recordable(name)
         assert "refusing to record" in str(excinfo.value)
     assert check_recordable("core") is None
+
+
+def test_feature_set_revision_is_the_core_plus_pay_rev_alone():
+    """Same discipline as ghost (§5.2): the revision candidate is graded on its own,
+    adds exactly one feature to the shipped core, and cannot be recorded."""
+    from tradehub.engines.labor import CORE_FEATURES
+    from tradehub.scripts.backtest_labor import check_recordable, feature_set
+
+    assert feature_set("revision") == CORE_FEATURES + ("pay_rev_3m",)
+    with pytest.raises(SystemExit):
+        check_recordable("revision")
