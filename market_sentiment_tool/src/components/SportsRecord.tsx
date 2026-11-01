@@ -5,7 +5,7 @@ import { getJson } from "@/lib/getJson";
 import type { JournalResponse, JournalScore } from "@/lib/journal";
 import { loadSportsRecord, type SportsRecordResponse, type SportsRecordSport, type SportsRecordRow } from "@/lib/sportsRecord";
 
-const SPORT_TITLES: Record<string, string> = {
+export const SPORT_TITLES: Record<string, string> = {
   nfl: "NFL",
   cfb: "College football",
   nba: "NBA",
@@ -71,7 +71,7 @@ function Row({ row, vs }: { row: SportsRecordRow; vs: string | null }) {
 const JOURNAL_SUFFIX: Record<string, string> = { moneyline: "", spread: "_spread", total: "_total" };
 
 /** NFL and college football only: the other three have no Kalshi feed yet. Numbers come from the server. */
-function vsLine(sport: string, market: string, scores: JournalScore[] | null): string | null {
+export function vsLine(sport: string, market: string, scores: JournalScore[] | null): string | null {
   // null = the journal is still loading or failed: say nothing rather than claim the market is unscored.
   if (scores === null) return null;
   if (sport !== "nfl" && sport !== "cfb") return null;
