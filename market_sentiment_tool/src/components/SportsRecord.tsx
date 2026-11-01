@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { gapText, verdict } from "@/components/LiveSkill";
+import { edgeOf, edgeText, statusOf } from "@/lib/league";
 import { getJson } from "@/lib/getJson";
 import type { JournalResponse, JournalScore } from "@/lib/journal";
 import { loadSportsRecord, type SportsRecordResponse, type SportsRecordSport, type SportsRecordRow } from "@/lib/sportsRecord";
@@ -79,10 +79,13 @@ function vsLine(sport: string, market: string, scores: JournalScore[] | null): s
   if (suffix === undefined) return null;
   const sc = scores.find((x) => x.forecaster === `sports_${sport}${suffix}` && x.baseline === "market" && x.gap != null);
   if (!sc) return "vs Kalshi price: not scored yet";
-  const g = sc.gap as number;
+  // League convention (PR #184): edge is the flipped gap, so positive reads ahead here
+  // exactly as it does in the journal league table. "early" (too few scored, or no
+  // standard error) keeps the old "No signal" wording rather than claiming a verdict.
+  const edge = edgeOf(sc);
   const se = sc.gap_se ?? null;
-  const v = verdict(g, se);
-  return `vs Kalshi price: ${gapText(g, se)} (${v === "ahead" ? "Ahead" : v === "behind" ? "Behind" : "No signal"})`;
+  const st = statusOf(edge, se, sc.n_settled);
+  return `vs Kalshi price: ${edgeText(edge, se)} (${st === "beating" ? "Ahead" : st === "behind" ? "Behind" : "No signal"})`;
 }
 
 function Card({ sport, scores }: { sport: SportsRecordSport; scores: JournalScore[] | null }) {
