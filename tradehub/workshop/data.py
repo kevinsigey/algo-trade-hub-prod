@@ -204,11 +204,39 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
 
 
 def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
-    """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst"."""
-    from tradehub.workshop.engine import analyst_tickers, rule_series_ids
-    out = {i: (fred or fred_series)(i, fred_start) for i in rule_series_ids(spec)}
+    """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst".
+    Option legs add their vol indexes and DTB3 (engine.option_series_ids)."""
+    from tradehub.workshop.engine import analyst_tickers, option_series_ids, rule_series_ids
+    ids = list(dict.fromkeys(rule_series_ids(spec) + option_series_ids(spec)))
+    out = {i: (fred or fred_series)(i, fred_start) for i in ids}
     for t in analyst_tickers(spec):
         out[f"{t}@analyst"] = (analyst_fn or analyst)(t)
+    return out
+
+
+def _yahoo_dividends(ticker: str) -> pd.Series:
+    import yfinance as yf
+    return yf.Ticker(ticker).dividends
+
+
+def div_yields(spec, closes: pd.DataFrame, *, fetch=None) -> dict[str, float]:
+    """Trailing-12-month dividend yield per option underlying: the year's dividends over
+    the test's last close. Best-effort -- a ticker Yahoo won't answer for prices at 0, and
+    the run is labelled model prices either way."""
+    if not spec.options:
+        return {}
+    out: dict[str, float] = {}
+    for u in dict.fromkeys(leg.underlying for leg in spec.options):
+        try:
+            divs = (fetch or _yahoo_dividends)(u)
+            idx = pd.DatetimeIndex(divs.index)
+            idx = idx.tz_localize(None) if idx.tz is not None else idx
+            amounts = pd.Series(pd.to_numeric(divs, errors="coerce").to_numpy(), index=idx).sort_index()
+            last_close = float(closes[u].dropna().iloc[-1])
+            cutoff = closes.index[-1] - pd.Timedelta(days=365)
+            out[u] = float(amounts[amounts.index > cutoff].sum()) / last_close if last_close > 0 else 0.0
+        except Exception:  # noqa: BLE001 -- a missing yield must not sink the run
+            out[u] = 0.0
     return out
 
 

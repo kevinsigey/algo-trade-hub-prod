@@ -66,7 +66,7 @@ def _stopped_out(idea_id: int, spec: IdeaSpec, fills: list[dict], client_ids: di
     if not stops:
         return ""
     last = max(stops)
-    after = daily_frame(spec, prices_frame, series)
+    after = daily_frame(spec, prices_frame, series, data.div_yields(spec, prices_frame))
     after = after[after.index > pd.Timestamp(last)]
     fresh = (not after["on"].all()) if spec.rules is not None else len(after) >= EXIT_COOLDOWN
     return "" if fresh else f"stopped out on {last}; waiting for a fresh signal"
@@ -132,7 +132,8 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 if last < prev_day:
                     raise StalePrices(f"prices end {last}, the last trading day was {prev_day}")
                 series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred, analyst_fn=analyst)
-                weights, why = target_and_reason(spec, prices_frame, series)
+                weights, why = target_and_reason(spec, prices_frame, series,
+                                                 data.div_yields(spec, prices_frame))
                 if why == "no data":  # no rows to judge: flatten, no exit to name
                     why = ""
                 exit_reason = _exit_text(spec, why)

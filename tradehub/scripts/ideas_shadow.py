@@ -29,7 +29,7 @@ def _rows(idea: dict, supa, cutoff: date, closes, fred, bars=None, analyst=None)
     after = max([live_day] + [date.fromisoformat(r["day"]) for r in store.shadow_days(supa, idea["id"])])
     prices = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start, bars_fn=bars)
     series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred, analyst_fn=analyst)
-    frame = daily_frame(spec, prices, series)
+    frame = daily_frame(spec, prices, series, data.div_yields(spec, prices))
     days = frame[(frame.index.date > after) & (frame.index.date <= cutoff)]
     return [{"day": str(d.date()), "ret": float(r.ret), "on": bool(r.on), "bench": float(r.bench),
              "spy": float(r.spy), "exit": str(r.exit)} for d, r in days.iterrows()]

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
-import { claimLabel, conditionText, rulesText } from "@/lib/workshop";
+import { claimLabel, conditionText, legText, rulesText } from "@/lib/workshop";
 import Workshop from "@/pages/Workshop";
 import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
 
@@ -636,6 +636,18 @@ describe("Workshop drafts: left-out tickers and saved drafts", () => {
     expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft"))).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Discard saved draft" }));
     expect(localStorage.getItem("workshop-draft-2")).toBeNull();
+  });
+});
+
+describe("Workshop option legs", () => {
+  it("edits a leg in the draft editor and runs with it; legText words it", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, hold: ["SPY"], options: [{ underlying: "SPY", kind: "put", side: "buy", strike_pct: 95, days_to_expiry: 60, roll_days_left: 20, qty_per_share: 1 }] } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Strike (% of spot at entry)"), { target: { value: "90" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].options[0]).toMatchObject({ underlying: "SPY", kind: "put", side: "buy", strike_pct: 90, days_to_expiry: 60, roll_days_left: 20 });
+    expect(legText({ underlying: "SPY", kind: "put", side: "buy", strike_pct: 90, days_to_expiry: 60, roll_days_left: 20, qty_per_share: 1 }))
+      .toBe("buy SPY put @ 90% of spot, 60d, roll at 20d left");
   });
 });
 

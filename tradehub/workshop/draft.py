@@ -46,7 +46,11 @@ SYSTEM = (
     "N days is above the price). source spread watches the log ratio of two equal-weight baskets, series "
     "written A+B/C+D (longs/shorts), with measures level, change, vs_sma, volatility, zscore (standard deviations "
     "from its N-day mean) and percentile (today's rank in the last N days, 0-100); zscore and percentile also work "
-    "on price and FRED series. Never invent results. "
+    "on price and FRED series. An idea may also carry option legs (options, at most 2): a bought call or put on a "
+    "signal, a sold call against held shares, a bought put under held shares, or a two-leg spread on one ticker. "
+    "strike_pct is the strike as a % of the price at entry (95 = 5% below); days_to_expiry 7-120; roll_days_left "
+    "rolls instead of expiring (0 = hold to expiry or the rule's exit). Never sell an option the held shares or a "
+    "bought leg do not cover. Never invent results. "
     "Reply with JSON only."
 )
 ENVELOPE_NOTE = (

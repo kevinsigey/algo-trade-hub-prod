@@ -108,6 +108,35 @@ class Exits(BaseModel):
         return any(v is not None for v in (self.stop_loss_pct, self.trailing_pct, self.take_profit_pct, self.max_days))
 
 
+class OptionLeg(BaseModel):
+    """One option leg (options design 2026-10-31, phase-2 §2.3). The strike is set at entry
+    as `strike_pct` of that day's close (95 = 5% below). The leg rides the idea's rules: in
+    when the enter group holds, out on the exit group or expiry, whichever first; re-entry
+    opens a fresh contract at that day's price. `roll_days_left` > 0 rolls into a fresh
+    contract instead of expiring. Priced with Black-Scholes model prices, never real
+    history -- every verdict on a spec with legs says so."""
+    model_config = ConfigDict(extra="forbid")
+
+    underlying: str
+    kind: Literal["call", "put"]
+    side: Literal["buy", "sell"]
+    strike_pct: float = Field(100, gt=0, le=300)
+    days_to_expiry: int = Field(30, ge=7, le=120)
+    roll_days_left: int = Field(0, ge=0, le=119)
+    qty_per_share: float = Field(1, gt=0, le=10)  # contracts per 100 shares of exposure; 1 = one per 100
+
+    @field_validator("underlying")
+    @classmethod
+    def _underlying(cls, v: str) -> str:
+        return _ticker(v)
+
+    @model_validator(mode="after")
+    def _roll_fits(self) -> OptionLeg:
+        if self.roll_days_left >= self.days_to_expiry:
+            raise ValueError("roll_days_left must be under days_to_expiry (or 0: hold to expiry)")
+        return self
+
+
 class Portfolio(BaseModel):
     """Test the idea inside a portfolio (Kevin, 2026-10-31): each day `idea_share` of the money follows the idea and
     the rest sits in `core` (equal weight), rebalanced daily. The blend is what gets judged and traded."""
@@ -141,6 +170,7 @@ class IdeaSpec(BaseModel):
     execution: Execution = Field(default_factory=Execution)
     exits: Exits = Field(default_factory=Exits)
     portfolio: Portfolio | None = None
+    options: list[OptionLeg] = Field(default_factory=list, max_length=2)  # 2-leg cap (Kevin, 2026-10-31)
 
     @field_validator("hold", "short")
     @classmethod
@@ -174,10 +204,25 @@ class IdeaSpec(BaseModel):
 
     @model_validator(mode="after")
     def _claim_needs_condition(self) -> IdeaSpec:
-        if not self.hold and not self.short:
-            raise ValueError("hold or short needs at least one ticker")
+        if not self.hold and not self.short and not self.options:
+            raise ValueError("the idea needs a position: a held or shorted ticker, or an option leg")
         if set(self.hold) & set(self.short):
             raise ValueError("a ticker can't be both held and shorted")
+        for leg in self.options:
+            if leg.underlying in self.short:
+                raise ValueError(f"option legs don't ride a shorted underlying ({leg.underlying}); "
+                                 "buy the put outright instead")
+            if leg.side == "sell" and leg.underlying not in self.hold:
+                cover = next((b for b in self.options
+                              if b.side == "buy" and b.underlying == leg.underlying and b.kind == leg.kind
+                              and (b.strike_pct >= leg.strike_pct if leg.kind == "put"
+                                   else b.strike_pct <= leg.strike_pct)), None)
+                if cover is None:
+                    raise ValueError(f"selling a {leg.kind} on {leg.underlying} needs cover: the shares held, "
+                                     "or a bought leg that covers it (no naked option selling)")
+        if self.options and self.exits.mode == "intraday":
+            raise ValueError("intraday stops price the stock during the day; option legs are priced at the "
+                             "close -- use close-mode exits with option legs")
         if self.exits.mode == "intraday" and len(self.hold) + len(self.short) != 1:
             raise ValueError("intraday stops are for an idea with exactly one ticker (one hold or one short)")
         if self.exits.mode == "intraday" and self.portfolio is not None:

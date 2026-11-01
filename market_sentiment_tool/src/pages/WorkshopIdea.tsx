@@ -14,6 +14,7 @@ import {
   EVENT_LABELS,
   WINDOW_LABELS,
   adminDownload,
+  legText,
   adminJson,
   isEvent,
   parseEventTable,
@@ -30,6 +31,7 @@ import {
   type Group,
   type DraftResponse,
   type SpecImport,
+  type OptionLeg,
   type EventSpec,
   type PlayMatch,
   type Rules,
@@ -320,6 +322,9 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
   const exec = spec.execution ?? DEFAULT_EXECUTION;
   const exits = spec.exits ?? NO_EXITS;
   const legs = spec.hold.length + (spec.short ?? []).length;
+  const optLegs = spec.options ?? [];
+  const setLeg = (i: number, patch: Partial<OptionLeg>) =>
+    set("options", optLegs.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const setExit = <K extends keyof Exits>(key: K, value: Exits[K]) => set("exits", { ...exits, [key]: value });
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const setLegs = (key: "hold" | "short", value: string[]) =>
@@ -358,6 +363,50 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
       <TickerNamesLine symbols={[...spec.hold, ...(spec.short ?? []), spec.otherwise, spec.benchmark]} />
 
       <RulesEditor rules={spec.rules} onChange={(rules) => set("rules", rules)} />
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-white">Option legs <span className="font-normal text-slate-400">(model-priced, max 2)</span></h3>
+          {optLegs.length < 2 && (
+            <button type="button" className={button} onClick={() => set("options", [...optLegs, { underlying: spec.hold[0] ?? "SPY", kind: "call", side: "buy", strike_pct: 100, days_to_expiry: 30, roll_days_left: 0, qty_per_share: 1 }])}>Add a leg</button>
+          )}
+        </div>
+        {optLegs.map((leg, i) => (
+          <div key={i} className="mt-2 grid gap-3 rounded-lg border border-slate-800 p-3 sm:grid-cols-4">
+            <Field label="Underlying">
+              <input className={field} value={leg.underlying} onChange={(e) => setLeg(i, { underlying: e.target.value.toUpperCase() })} />
+            </Field>
+            <Field label="Kind">
+              <select className={field} value={leg.kind} onChange={(e) => setLeg(i, { kind: e.target.value as OptionLeg["kind"] })}>
+                <option value="call">call</option>
+                <option value="put">put</option>
+              </select>
+            </Field>
+            <Field label="Side">
+              <select className={field} value={leg.side} onChange={(e) => setLeg(i, { side: e.target.value as OptionLeg["side"] })}>
+                <option value="buy">buy</option>
+                <option value="sell">sell</option>
+              </select>
+            </Field>
+            <Field label="Strike (% of spot at entry)">
+              <input className={field} type="number" value={leg.strike_pct} onChange={(e) => setLeg(i, { strike_pct: Number(e.target.value) })} />
+            </Field>
+            <Field label="Days to expiry">
+              <input className={field} type="number" value={leg.days_to_expiry} onChange={(e) => setLeg(i, { days_to_expiry: Number(e.target.value) })} />
+            </Field>
+            <Field label="Roll at days left (0 = never)">
+              <input className={field} type="number" value={leg.roll_days_left} onChange={(e) => setLeg(i, { roll_days_left: Number(e.target.value) })} />
+            </Field>
+            <Field label="Contracts per 100 shares">
+              <input className={field} type="number" value={leg.qty_per_share} onChange={(e) => setLeg(i, { qty_per_share: Number(e.target.value) })} />
+            </Field>
+            <div className="flex items-end">
+              <button type="button" className={button} onClick={() => set("options", optLegs.filter((_, j) => j !== i))}>Remove leg</button>
+            </div>
+          </div>
+        ))}
+        {optLegs.length > 0 && <p className="mt-1 text-xs text-slate-400">Priced with a Black-Scholes model, not real option history. A sold leg needs cover: the held shares, or a bought leg that covers it.</p>}
+      </div>
 
       <label className="mt-4 flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" checked={!!spec.portfolio}
@@ -653,6 +702,7 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
           <div className="text-lg font-semibold text-white">{r.headline}</div>
           <div className="text-xs text-slate-400">
             Variation {run.variation} · {run.spec.hold.join(", ")} {rulesText(run.spec)} · {claimLabel(run.spec.claim)}
+            {run.spec.options?.length ? ` · legs: ${run.spec.options.map(legText).join("; ")}` : ""}
             {run.spec.portfolio && ` · as ${Math.round(run.spec.portfolio.idea_share * 100)}% of a portfolio with ${run.spec.portfolio.core.join(", ")}`}
           </div>
         </div>
@@ -661,6 +711,9 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
       {(r.notes ?? []).map((n) => (
         <p key={n} className="mt-2 text-sm text-amber-200/90">{n}</p>
       ))}
+      {r.options?.legs?.length ? (
+        <p className="mt-2 text-sm text-slate-300">Model prices: {r.options.legs.map((l) => `${legText(l)} (vol: ${l.vol})`).join("; ")}</p>
+      ) : null}
 
       {r.curve.length > 1 && (
         <div className="mt-4 h-48" aria-label="Idea vs benchmark, cumulative">
@@ -812,6 +865,16 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
               {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the paper record.</li>}
             </ul>
           )}
+        </div>
+      )}
+
+      {(passed || idea.live_at) && (runs[runs.length - 1]?.spec.options?.length ?? 0) > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-white">Manual legs</h3>
+          <p className="mt-1 text-xs text-slate-400">The hub trades the shares. Option legs are yours to place yourself (paper) while the rule has the idea in, and to close when it goes out:</p>
+          <ul className="mt-1 list-inside list-disc text-sm text-slate-300">
+            {(runs[runs.length - 1]?.spec.options ?? []).map((l, i) => <li key={i}>{legText(l)}</li>)}
+          </ul>
         </div>
       )}
 

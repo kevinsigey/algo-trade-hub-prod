@@ -510,6 +510,7 @@ def used_tickers(spec) -> set[str]:
     if getattr(spec, "kind", None) == "event":
         return set(spec.tickers) | {spec.benchmark}
     used = set(spec.hold) | set(spec.short) | {spec.benchmark, spec.otherwise}
+    used |= {leg.underlying for leg in getattr(spec, "options", [])}
     used |= set(spec.portfolio.core) if spec.portfolio else set()
     if spec.rules is not None:
         groups = [spec.rules.enter] + ([spec.rules.exit] if spec.rules.exit else [])
