@@ -215,3 +215,14 @@ Below 20 pairs a station freezes with ens-v1's exact parameters and
 fitted=false. Rain keeps the plain member share in this step. Promotion
 to the map page's headline numbers is grade-gated (200 settled per
 family, Kevin's call), per the phase-3 spec.
+
+## Weather ens-v2 step 2: model weighting + wider shelf
+
+ens-v2 now reads its own pool (`MODELS_V2` = GEFS 0.25 + ECMWF IFS 0.25 +
+ICON EPS, in `tradehub/data/ensemble.py`; ens-v1's pool is unchanged --
+it is part of v1's frozen definition) and weights equally per model
+family (`ensemble_prob_by_model`): each model's member-share first, then
+the mean across models, so ECMWF's 51 members no longer outvote GEFS's
+31 by headcount. GEM was probed and rejected (single control run, not an
+ensemble). Payloads carry `weighting: equal_per_model` and
+`members_by_model`.

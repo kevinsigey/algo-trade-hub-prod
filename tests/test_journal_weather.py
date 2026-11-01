@@ -122,6 +122,15 @@ class Inputs(WeatherInputs):
         self.calls.append(("acis", sid))
         return self.acis
 
+    def members_v2(self, sid, today):
+        # ens-v2 (phase-3 §3.2) reads its own tagged pool; the fixture serves
+        # it the same payload, and no hindcast (so v2 freezes unfitted here).
+        from tradehub.data.ensemble import parse_members_tagged
+        return parse_members_tagged(self.ens)
+
+    def hindcast(self, sid, today):
+        return {}
+
 
 def _inputs():
     start = CLOSE - timedelta(hours=24)
