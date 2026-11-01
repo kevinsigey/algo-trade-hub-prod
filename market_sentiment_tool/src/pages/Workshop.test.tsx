@@ -642,6 +642,25 @@ describe("Workshop costs", () => {
   });
 });
 
+describe("Workshop walk-forward and data notes (critique L9)", () => {
+  it("shows the walk-forward summary, each fold in order, and the late-listing note", () => {
+    const run = { ...RUN, result: { ...RUN.result,
+      notes: ["NEWCO has no prices before 2015-08-04: every leg of this test starts then, so the years before it are not tested."],
+      walk_forward: { held: 3, of: 4, folds: [
+        { start: "2010-01-04", end: "2014-01-02", days: 1000, holds: true, value: 2.0, label: "+2.0 pts/yr", idea_cagr: 9.5, bench_cagr: 7.5 },
+        { start: "2014-01-03", end: "2018-01-02", days: 1000, holds: true, value: 1.0, label: "+1.0 pts/yr", idea_cagr: 8.0, bench_cagr: 7.0 },
+        { start: "2018-01-03", end: "2022-01-03", days: 1000, holds: false, value: -0.5, label: "-0.5 pts/yr", idea_cagr: 6.0, bench_cagr: 6.5 },
+        { start: "2022-01-04", end: "2026-01-02", days: 1000, holds: true, value: 0.7, label: "+0.7 pts/yr", idea_cagr: 7.2, bench_cagr: 6.5 },
+      ] } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText("Walk-forward, later stretches in order")).toBeInTheDocument();
+    expect(screen.getByText("3 of 4 held")).toBeInTheDocument();
+    expect(screen.getByText(/2010-01-04 → 2014-01-02/)).toBeInTheDocument();
+    expect(screen.getByText(/2022-01-04 → 2026-01-02/)).toBeInTheDocument();
+    expect(screen.getByText(/NEWCO has no prices before 2015-08-04/)).toBeInTheDocument();
+  });
+});
+
 describe("Workshop verdict clarity (critique L4)", () => {
   it("has a legend, a wrong-way note, a benchmark label and a chart caption", () => {
     const run = { ...RUN, result: { ...RUN.result, t_test: { mean_daily_diff: -0.07, t: -2.2, p: 0.026 } } };

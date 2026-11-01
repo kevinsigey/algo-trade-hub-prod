@@ -171,6 +171,11 @@ export interface RunResult {
   shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string; holds?: boolean } | null;
   t_test: { mean_daily_diff: number; t: number; p: number; holds?: boolean } | null;
   periods: { held: number; of: number; holds?: boolean | null } | null;
+  walk_forward?: {
+    folds: { start: string; end: string; days: number; holds: boolean | null; value: number | null; label: string; idea_cagr: number | null; bench_cagr: number | null }[];
+    held: number; of: number;
+  } | null;
+  notes?: string[];
   variations: number;
   context: { name: string; built_cagr: number | null; unseen_cagr: number | null; unseen_max_dd: number | null }[];
   curve: { t: string; idea: number; benchmark: number }[];
