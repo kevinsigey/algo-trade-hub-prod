@@ -1,6 +1,7 @@
 import { Activity, AlertTriangle, Loader2 } from "lucide-react";
 
 import { useHealth } from "@/hooks/useHealth";
+import { ct } from "@/lib/paperPortfolio";
 import {
   HEALTH_INTRO,
   familyRows,
@@ -120,7 +121,7 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
                 <div className="text-sm font-semibold text-slate-200">
                   {t.label} <span className="font-mono text-[11px] text-slate-500">({t.name})</span>
                 </div>
-                <div className="text-xs text-slate-500">{t.lastSuccess ?? "never"}</div>
+                <div className="text-xs text-slate-500">{t.lastSuccess ? ct(t.lastSuccess) : "never"}</div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className="text-sm tabular-nums text-slate-300">{t.age}</span>
@@ -169,7 +170,7 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
         </section>
       ) : null}
 
-      <p className="pb-6 text-xs text-slate-600">Generated {report.generated_at}</p>
+      <p className="pb-6 text-xs text-slate-600">Generated {ct(report.generated_at)}</p>
     </>
   );
 }

@@ -84,7 +84,7 @@ const ctTime = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
 });
 
-function ct(iso: string): string {
+export function ct(iso: string): string {
   const parts = Object.fromEntries(ctTime.formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
   return `${parts.hour}:${parts.minute} ${parts.dayPeriod} CT, ${parts.weekday} ${parts.month} ${parts.day}`;
 }
