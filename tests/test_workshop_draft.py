@@ -53,11 +53,14 @@ def key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_MODELS", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_DRAFT_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_DRAFT_MODEL", raising=False)
 
 
 def test_no_key_is_draft_unavailable(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     post = FakePost(reply("{}"))
     with pytest.raises(DraftUnavailable) as e:
         draft_spec("x", post=post)
@@ -143,6 +146,8 @@ def claude_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("ANTHROPIC_DRAFT_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_DRAFT_MODEL", raising=False)
 
 
 def test_claude_first_forced_schema(claude_key):
@@ -171,6 +176,85 @@ def test_claude_refusal_does_not_fall_back(claude_key):
     with pytest.raises(DraftUnavailable) as e:
         draft_spec("x", post=post)
     assert e.value.reason == "refused" and len(post.calls) == 1
+
+
+# --- Gemini first (Kevin's call 2026-11-01: no Anthropic key; free tier drafts) ---
+
+
+def gemini_reply(spec=SPEC, requested=(), unexpressed=(), finish="STOP", status=200, blocked=None):
+    def raise_for_status():
+        if status >= 400:
+            raise requests.HTTPError(f"{status} Client Error")
+    body = {"candidates": [{"finishReason": finish,
+                            "content": {"parts": [{"text": env_json(spec, requested, unexpressed)}]}}]}
+    if blocked:
+        body["promptFeedback"] = {"blockReason": blocked}
+    return SimpleNamespace(status_code=status, json=lambda: body, raise_for_status=raise_for_status)
+
+
+class TriPost:
+    """One post callable serving all three providers, so fallback order is observable."""
+
+    def __init__(self, gemini, anthropic, openrouter):
+        self.calls, self.gemini, self.anthropic, self.openrouter = [], gemini, anthropic, openrouter
+
+    def __call__(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        if "generativelanguage" in url:
+            return self.gemini
+        return self.anthropic if "anthropic" in url else self.openrouter
+
+
+@pytest.fixture
+def gemini_key(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("GEMINI_DRAFT_MODEL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
+def test_gemini_first_schema_shaped(gemini_key):
+    post = FakePost(gemini_reply(requested=["GLD"]))
+    spec, model, dropped, unexpressed = draft_spec("Gold does better when rates rise.", post=post)
+    assert spec == SPEC and model == "gemini-2.5-flash" and dropped == [] and unexpressed == []
+    url, kw = post.calls[0]
+    assert url == ("https://generativelanguage.googleapis.com/v1beta/models/"
+                   "gemini-2.5-flash:generateContent") and len(post.calls) == 1
+    assert kw["headers"]["x-goog-api-key"] == "test-gemini-key"
+    body = kw["json"]
+    assert body["generationConfig"]["responseJsonSchema"] == DraftEnvelope.model_json_schema()
+    assert body["generationConfig"]["responseMimeType"] == "application/json"
+    assert body["systemInstruction"]["parts"][0]["text"] == SYSTEM + ENVELOPE_NOTE
+
+
+def test_gemini_failure_falls_back_to_openrouter(gemini_key):
+    post = TriPost(gemini_reply(status=500), claude_reply(), reply(env_json(requested=["GLD"])))
+    spec, model, dropped, _ = draft_spec("Gold does better when rates rise.", post=post)
+    assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free" and dropped == []
+    assert [u.split("?")[0] for u, _ in post.calls] == [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "https://openrouter.ai/api/v1/chat/completions"]
+
+
+def test_gemini_refusal_does_not_fall_back(gemini_key):
+    post = TriPost(gemini_reply(blocked="SAFETY"), claude_reply(), reply(env_json()))
+    with pytest.raises(DraftUnavailable) as e:
+        draft_spec("x", post=post)
+    assert e.value.reason == "refused" and len(post.calls) == 1
+
+
+def test_gemini_beats_claude_when_both_keys_set(gemini_key, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    post = TriPost(gemini_reply(requested=["GLD"]), claude_reply(), reply(env_json()))
+    _, model, _, _ = draft_spec("Gold does better when rates rise.", post=post)
+    assert model == "gemini-2.5-flash" and len(post.calls) == 1
+
+
+def test_envelope_note_demands_capability_requests():
+    # Kevin's ask: a gap must come back scoped as the specific capability to add,
+    # not as a vague "unsupported" -- the format is pinned in the note itself.
+    assert "capability request" in ENVELOPE_NOTE and "needs <the specific capability" in ENVELOPE_NOTE
+    assert "intraday" in SYSTEM  # the daily-only limit is named so the model can scope against it
 
 
 # --- The anti-truncation envelope --------------------------------------------

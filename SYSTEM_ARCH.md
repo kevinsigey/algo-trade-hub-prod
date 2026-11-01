@@ -295,3 +295,16 @@ Journal settled-list grouping: SKIPPED BY DECISION -- the journal's
 league table is already grouped by forecaster family by design, and
 there is no separate flat settled list on the page to regroup; the
 per-forecaster detail lives in JournalDetail.
+
+## Drafter provider order: Gemini first (2026-11-01)
+
+Kevin's call: the Anthropic key is not available to this project, so the
+Workshop drafter's chain is now Gemini (free tier, GEMINI_API_KEY from AI
+Studio; the envelope schema rides as the response JSON schema and is still
+validated server-side) -> Claude where a key exists -> the OpenRouter free
+list. A refusal from any provider still stops the chain. `unexpressed` is
+now specified as a capability-request channel: each entry must name the
+specific capability the engine would need added, what the words asked for,
+and the closest stand-in drafted -- so a scoping gap arrives as a buildable
+request. Activation: set GEMINI_API_KEY via scripts/set-vps-secret.sh and
+forward it in the stack compose (beside ANTHROPIC_API_KEY).
