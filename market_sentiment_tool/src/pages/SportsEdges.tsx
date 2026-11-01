@@ -15,19 +15,45 @@ import { board, gapText, type SportsPick } from "@/lib/sportsPicks";
  */
 
 const PAGE = 200;
+const FETCH_TIMEOUT_MS = 15000;
 
 async function fetchAll(sport: string): Promise<SportsEdge[]> {
   const edges: SportsEdge[] = [];
-  for (let offset = 0; ; offset += PAGE) {
+  let offset = 0;
+  let total = Infinity;
+  while (edges.length < total) {
     const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
     if (sport) params.set("sport", sport);
-    const response = await fetch(buildApiUrl(`/api/sports-edges?${params}`));
-    const payload = await response.json();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(buildApiUrl(`/api/sports-edges?${params}`), { signal: controller.signal });
+    } catch (e) {
+      clearTimeout(timer);
+      if (e instanceof DOMException && e.name === "AbortError") {
+        throw new Error("Request timed out after 15 seconds");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
     const page = payload as SportsEdgesResponse;
-    edges.push(...page.edges);
-    if (edges.length >= page.total || page.edges.length === 0) return edges;
+    const rows = page.edges ?? [];
+    total = typeof page.total === "number" ? page.total : total;
+    if (rows.length === 0) break;
+    edges.push(...rows);
+    const step = rows.length > 0 ? rows.length : PAGE;
+    offset += step;
+    if (offset > 0 && rows.length < PAGE) {
+      // API returned a short page; stop unless total says more and rows kept coming.
+      if (edges.length >= total) break;
+    }
+    if (edges.length >= total) break;
   }
+  return edges;
 }
 
 const WHEN = new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });

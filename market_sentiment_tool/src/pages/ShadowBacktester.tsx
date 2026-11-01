@@ -247,6 +247,13 @@ export default function ShadowBacktester() {
           </header>
           <OnChainPulse />
           <Unavailable status={error.status} detail={error.message} errorCode={error.code} />
+          <button
+            type="button"
+            onClick={reload}
+            className="mt-4 rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300 hover:text-white"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );

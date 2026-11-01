@@ -292,6 +292,7 @@ function App() {
               which is the same collision wearing a hat. The page says what it is and links to the
               scoreboard instead. */}
           <Route path="/shadow" element={<ShadowBacktester />} />
+          <Route path="/crypto" element={<ShadowBacktester />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/models" element={<RequireAdmin><Models /></RequireAdmin>} />
           {/* The engine scoreboard, canonically at /scoreboard.
