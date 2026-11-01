@@ -115,6 +115,16 @@ def test_weighting_is_per_model_not_per_headcount():
     assert weighted == pytest.approx(0.50, abs=0.02)
 
 
+def test_registry_adds_a_blend_row_for_ens_v2_only():
+    from tradehub.journal.registry import FORECASTERS
+    blends = [(f.name, f.version) for f in FORECASTERS if f.name.endswith("_cautious")
+              and f.name.startswith("weather_")]
+    assert ("weather_high_cautious", "ens-v2+w25") in blends
+    assert ("weather_low_cautious", "ens-v2+w25") in blends
+    assert ("weather_rain_cautious", "ens-v2+w25") in blends
+    assert not any(v.startswith("ens-v1") for _n, v in blends)  # v1's record stays raw
+
+
 def test_registry_builds_v2_beside_v1():
     from tradehub.journal.forecasters.weather import build_weather
     names = [(f.name, getattr(f, "version", None)) for f in build_weather(FakeLive([]), _final("yes"),

@@ -226,3 +226,13 @@ the mean across models, so ECMWF's 51 members no longer outvote GEFS's
 31 by headcount. GEM was probed and rejected (single control run, not an
 ensemble). Payloads carry `weighting: equal_per_model` and
 `members_by_model`.
+
+## Weather ens-v2 step 3: the blend row
+
+The registry adds `MarketShrunk` wrappers over the ens-v2 weather
+forecasters only, so each family gains a `weather_*_cautious` scorecard at
+version "ens-v2+w25": probability = market + 0.25 * (ens-v2 - market) --
+the house's pre-registered shrink weight from `forecasters/shrunk.py`,
+set once and never tuned on journal results. It freezes beside the raw
+ens-v2 row as a pure function of it. ens-v1 gets no blend row; its record
+stays the raw one the phase-3 measurements were taken on.
