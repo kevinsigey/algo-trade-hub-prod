@@ -907,7 +907,8 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
 # three extra fences the form does not need: the TRADEHUB_MACHINE_ORDERS kill switch, the
 # per-key caps stored on the key, and a caller-supplied client_order_id the server namespaces
 # to ext-<key_id>-<caller> so a retry can never double-place and a machine can never mint an
-# idea-/manual-/protective id. Market orders only in v1; limit orders are step 5 (v1.1).
+# idea-/manual-/protective id. Market orders shipped in v1 (step 2); limit orders in v1.1
+# (step 5), their notional priced at the limit. Stops/GTC stay hub-internal throughout.
 class _MachineOrderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")  # protective shapes (stop_price, order_class…) 422 here
 
@@ -950,14 +951,21 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         refused("validation", 422, "side must be buy or sell")
     if body.time_in_force not in ("opg", "cls", "day"):
         refused("validation", 422, "time_in_force must be opg, cls or day")
-    if body.order_type != "market" or body.limit_price is not None:
-        refused("order_type", 422, "machine orders are market-only in v1; limit orders arrive in v1.1")
+    if body.order_type not in ("market", "limit"):
+        refused("order_type", 422, "machine orders are market or limit only")
+    if body.order_type == "limit" and body.limit_price is None:
+        refused("order_type", 422, "a limit order needs a limit_price")
+    if body.order_type == "market" and body.limit_price is not None:
+        refused("order_type", 422, "limit_price is for limit orders")
     if body.qty > int(key["max_qty"]):
         refused("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")
-    try:
-        price = latest_price(symbol)
-    except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
-        refused("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked")
+    if body.order_type == "limit":
+        price = body.limit_price  # the cap prices a limit at its limit (spec §1.4): no estimate involved
+    else:
+        try:
+            price = latest_price(symbol)
+        except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
+            refused("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked")
     if price * body.qty > float(key["max_notional"]):
         refused("max_notional", 429,
                 f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")
@@ -967,8 +975,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     client_order_id = f"ext-{key['id']}-{body.client_order_id}"
     try:
         order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
-                                    order_type="market", time_in_force=body.time_in_force,
-                                    limit_price=None)
+                                    order_type=body.order_type, time_in_force=body.time_in_force,
+                                    limit_price=body.limit_price if body.order_type == "limit" else None)
     except paper_orders.OrdersDisabled as exc:
         refused("paper_switch_off", 409, str(exc))
     except paper_orders.DuplicateOrder:
