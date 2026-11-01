@@ -207,3 +207,134 @@ def test_the_portfolio_read_needs_its_scope(api):
     client, db, _ = api
     headers = _key(db, scopes=("orders:place",))
     assert client.get("/api/v1/portfolio", headers=headers).status_code == 403
+
+
+# ── step 4: read/cancel, ownership from the audit trail ─────────────────────────
+
+BROKER_ORDER = {"id": "alpaca-1", "client_order_id": "ext-1-run-1", "symbol": "XLE",
+                "qty": "2", "side": "buy", "status": "new",
+                "submitted_at": "2026-11-01T12:00:01+00:00", "filled_avg_price": None}
+
+
+@pytest.fixture
+def api4(api, monkeypatch):
+    client, db, sent = api
+    cancels = []
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None: [BROKER_ORDER] if path == "/v2/orders" else {})
+    monkeypatch.setattr(paper_orders, "cancel_machine_order",
+                        lambda order_id, cid: cancels.append((order_id, cid)))
+    return client, db, sent, cancels
+
+
+def test_the_list_shows_only_the_calling_keys_orders(api4):
+    client, db, _, _ = api4
+    mine = _key(db)
+    theirs = _key(db)  # second key: id 2
+    assert _post(client, mine).status_code == 200
+    assert _post(client, theirs, client_order_id="run-9").status_code == 200
+    orders = client.get("/api/v1/orders", headers=mine).json()["orders"]
+    assert [o["client_order_id"] for o in orders] == ["ext-1-run-1"]
+    assert orders[0]["status"] == "new" and orders[0]["alpaca_order_id"] == "alpaca-1"
+    orders2 = client.get("/api/v1/orders", headers=theirs).json()["orders"]
+    assert [o["client_order_id"] for o in orders2] == ["ext-2-run-9"]
+    assert orders2[0]["status"] == "unknown"  # not in the broker window: stated, not hidden
+
+
+def test_the_list_pages_by_event_id(api4):
+    client, db, _, _ = api4
+    headers = _key(db)
+    for cid in ("p-1", "p-2", "p-3"):
+        assert _post(client, headers, client_order_id=cid).status_code == 200
+    page1 = client.get("/api/v1/orders", headers=headers, params={"limit": 2}).json()["orders"]
+    assert [o["client_order_id"] for o in page1] == ["ext-1-p-3", "ext-1-p-2"]
+    page2 = client.get("/api/v1/orders", headers=headers,
+                       params={"limit": 2, "before": page1[-1]["event_id"]}).json()["orders"]
+    assert [o["client_order_id"] for o in page2] == ["ext-1-p-1"]
+
+
+def test_get_one_accepts_caller_or_namespaced_id_and_404s_for_anyone_else(api4):
+    client, db, _, _ = api4
+    mine = _key(db)
+    theirs = _key(db)
+    assert _post(client, mine).status_code == 200
+    assert client.get("/api/v1/orders/run-1", headers=mine).status_code == 200
+    assert client.get("/api/v1/orders/ext-1-run-1", headers=mine).json()["status"] == "new"
+    assert client.get("/api/v1/orders/run-1", headers=theirs).status_code == 404
+    assert client.get("/api/v1/orders/never-placed", headers=mine).status_code == 404
+
+
+def test_cancel_happy_path_and_the_audit_says_so(api4):
+    client, db, _, cancels = api4
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    r = client.delete("/api/v1/orders/run-1", headers=headers)
+    assert r.status_code == 200 and r.json()["status"] == "cancelled"
+    assert cancels == [("alpaca-1", "ext-1-run-1")]
+    assert [e["outcome"] for e in _events(db)][-1] == "cancelled"
+
+
+def test_cancel_someone_elses_order_is_a_404_and_never_reaches_the_broker(api4):
+    client, db, _, cancels = api4
+    mine = _key(db)
+    theirs = _key(db)
+    assert _post(client, mine).status_code == 200
+    assert client.delete("/api/v1/orders/run-1", headers=theirs).status_code == 404
+    assert cancels == []
+
+
+def test_cancel_a_filled_order_is_a_409(api4, monkeypatch):
+    client, db, _, _ = api4
+
+    def gone(order_id, cid):
+        raise paper_orders.OrderGone(order_id)
+
+    monkeypatch.setattr(paper_orders, "cancel_machine_order", gone)
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    assert client.delete("/api/v1/orders/run-1", headers=headers).status_code == 409
+
+
+def test_cancels_work_with_the_kill_switch_off(api4, monkeypatch):
+    client, db, _, cancels = api4
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    monkeypatch.delenv("TRADEHUB_MACHINE_ORDERS")
+    assert client.delete("/api/v1/orders/run-1", headers=headers).status_code == 200
+    assert cancels == [("alpaca-1", "ext-1-run-1")]
+
+
+def test_read_routes_need_read_scope_and_delete_needs_place_scope(api4):
+    client, db, _, _ = api4
+    placer = _key(db, scopes=("orders:place",))
+    reader = _key(db, scopes=("orders:read",))
+    assert client.get("/api/v1/orders", headers=placer).status_code == 403
+    assert client.delete("/api/v1/orders/run-1", headers=reader).status_code == 403
+
+
+def test_cancel_machine_order_refuses_protective_ids(monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s3cr3t")
+
+    class Resp:
+        status_code = 204
+
+        def json(self):
+            return {}
+
+    with pytest.raises(ValueError):
+        paper_orders.cancel_machine_order("abc-123", "idea-4-stop-aaaaaaaaaaaa",
+                                          session=None)
+    # the ext- shape passes the guard and reaches the (faked) session
+    import tradehub.portfolio.paper_orders as po
+
+    calls = []
+
+    class Session:
+        def delete(self, url, headers=None, timeout=None):
+            calls.append(url)
+            return Resp()
+
+    po.cancel_machine_order("abc-123", "ext-1-run-1", session=Session())
+    assert calls and calls[0].endswith("/v2/orders/abc-123")

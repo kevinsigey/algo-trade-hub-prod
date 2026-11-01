@@ -77,6 +77,42 @@ def check_rate_limit(key: dict) -> None:
         raise HTTPException(status_code=429, detail="rate limit: 60 requests/minute per key")
 
 
+def namespace(key: dict, caller_id: str) -> str:
+    """The server-side id namespace (spec §1.3): ext-<key_id>-<caller value>."""
+    return f"ext-{key['id']}-{caller_id}"
+
+
+def resolve_caller_id(key: dict, value: str) -> str:
+    """Accept the id either as the caller supplied it or as the API returned it (namespaced);
+    ownership is checked against the namespaced form either way."""
+    return value if value.startswith(f"ext-{key['id']}-") else namespace(key, value)
+
+
+def placed_events(supa, key_id: int) -> list[dict]:
+    """This key's placement events, newest first: the audit trail doubles as the ownership
+    record for the read/cancel routes (spec §1.3) -- an order is yours iff your key placed it."""
+    rows = supa.table(machine_keys.EVENTS).select("*").eq("key_id", key_id) \
+        .eq("outcome", "placed").order("at", desc=True).execute().data
+    return [r for r in rows if r.get("client_order_id")]
+
+
+def owns_event(supa, key_id: int, namespaced_id: str) -> dict | None:
+    for event in placed_events(supa, key_id):
+        if event["client_order_id"] == namespaced_id:
+            return event
+    return None
+
+
+def broker_orders() -> dict[str, dict]:
+    """client_order_id -> the broker's order, over the newest 500 orders on the account.
+    An order older than that window reads as unknown status and cannot be cancelled through
+    the API -- a bounded v1 window, stated here rather than discovered in production."""
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    page = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500})
+    return {o["client_order_id"]: o for o in page if o.get("client_order_id")}
+
+
 def placed_today(supa, key_id: int, *, now: datetime | None = None) -> int:
     """Today's placements for the daily cap, counted from the audit trail itself (the ET
     trading day): the counter and the record are the same rows, so they cannot disagree."""
