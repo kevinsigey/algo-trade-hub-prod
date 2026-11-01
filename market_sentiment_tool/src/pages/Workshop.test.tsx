@@ -610,6 +610,23 @@ describe("Workshop event review fixes", () => {
   });
 });
 
+describe("Workshop news rules", () => {
+  it("offers the news source with exactly level, change and z-score, and runs the basket through", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "news" } });
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(["level", "change", "zscore"]);
+    fireEvent.change(screen.getByLabelText("Series / ticker"), { target: { value: "ENERGY" } });
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "zscore" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0]).toMatchObject({ source: "news", series: "ENERGY", measure: "zscore" });
+    expect(conditionText({ source: "news", series: "ENERGY", measure: "zscore", lookback_days: 20, op: "<", threshold: -1 } as never))
+      .toBe("ENERGY 20-day z-score < -1");
+  });
+});
+
 describe("Workshop spread rules", () => {
   it("offers a spread source with z-score and percentile, and words it plainly", () => {
     const onRun = vi.fn();

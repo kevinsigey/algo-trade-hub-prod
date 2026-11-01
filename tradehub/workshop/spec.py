@@ -22,7 +22,7 @@ def _ticker(value: str) -> str:
 class Condition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["fred", "price", "analyst", "spread"]
+    source: Literal["fred", "price", "analyst", "spread", "news"]
     series: str = Field(min_length=1, max_length=200)  # spread: "A+B/C+D", the log ratio of two equal-weight baskets
     measure: Literal["level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
                      "volatility", "vs_vwap", "net_upgrades", "target_upside", "zscore", "percentile"]
@@ -65,6 +65,10 @@ MEASURES = {
               "volatility", "vs_vwap", "zscore", "percentile"},
     "spread": {"level", "change", "vs_sma", "volatility", "zscore", "percentile"},
     "analyst": {"net_upgrades", "target_upside"},
+    # News tone (workshop/news.py): the basket's daily mean GDELT tone. Level is the
+    # tone itself (-100..+100), change its N-day move, zscore its distance from its
+    # N-day mean -- the three reads phase-2 §5.1 names.
+    "news": {"level", "change", "zscore"},
 }
 
 
