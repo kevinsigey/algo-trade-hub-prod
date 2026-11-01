@@ -21,6 +21,7 @@ from tradehub.journal.forecasters.gas import build_gas
 from tradehub.journal.forecasters.housing import HousingForecaster
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster, QuitsDirection, UnrateDirection
 from tradehub.journal.forecasters.news_tone import EnergyToneForecaster, xle_source
+from tradehub.journal.forecasters.oil import build_oil
 from tradehub.journal.forecasters.sentiment import SentimentMeter
 from tradehub.journal.forecasters.shrunk import MarketShrunk
 from tradehub.journal.forecasters.sports import SportsFeedForecaster, build_sports
@@ -73,6 +74,9 @@ FORECASTERS: list[Forecaster] = [
     *build_ercot(_LIVE),
     # AAA daily gasoline: the RBOB regression beside the Kalshi mid and a persistence baseline
     *build_gas(_LIVE),
+    # WTI daily crude (2026-11-01 audit: build): the CL=F regression beside the Kalshi mid
+    # and a persistence baseline
+    *build_oil(_LIVE),
 ]
 
 # plan 15: the market-linked models again, each pulled toward the Kalshi price (see forecasters/shrunk.py).
@@ -99,3 +103,9 @@ FORECASTERS += [CalibratedForecaster(f, get_client) for f in list(FORECASTERS)
 # phase-3 measurements were taken on.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if getattr(f, "version", None) == "ens-v2" and f.name.startswith("weather_")]
+
+# Oil (2026-11-01): the cautious row from day one -- the audit's note on gas was that it
+# never got one, so its only journal presence was the raw row that lost paired by ~11x.
+# Version-pinned to wti-v1 so a future wti-v2 does not silently inherit the blend.
+FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
+                if f.name == "oil_wti" and getattr(f, "version", None) == "wti-v1"]
