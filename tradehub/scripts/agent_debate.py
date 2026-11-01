@@ -13,11 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tradehub.agents import grader, importer, payload, runner, store  # noqa: E402
 from tradehub.workshop import data  # noqa: E402
