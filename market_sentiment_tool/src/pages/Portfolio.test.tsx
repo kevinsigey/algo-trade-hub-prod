@@ -6,6 +6,16 @@ import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
 import type { ClosedPayload, PortfolioPayload } from "@/lib/paperPortfolio";
 
+// Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: null } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
+  },
+}));
+
 function serve(body: unknown) {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
 }
