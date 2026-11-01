@@ -128,7 +128,11 @@ def test_no_sys_path_hacks_or_old_import_roots():
 
 def test_single_dependency_manifest():
     reqs = [f for f in tracked("*requirements*.txt") if not f.startswith(("archive/", "_attic/"))]
-    assert reqs == []
+    # One deliberate exception: the TradingAgents framework is fenced into its own venv
+    # (feed spec section 8), so its pin cannot live in the hub's pyproject without importing
+    # the framework's dependency tree into the hub environment. No other requirements file
+    # is allowed; the hub's own dependencies live only in pyproject.toml.
+    assert reqs == ["tradehub/agents/requirements.txt"]
     assert (REPO / "pyproject.toml").is_file()
 
 
