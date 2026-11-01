@@ -48,6 +48,11 @@ def measure(values: pd.Series, how: str, lookback: int, *, slow: int | None = No
         return (values / values.shift(1).rolling(n).min() - 1) * 100
     if how == "volatility":
         return values.pct_change().rolling(n).std() * np.sqrt(252) * 100
+    if how == "zscore":
+        roll = values.rolling(n)
+        return (values - roll.mean()) / roll.std(ddof=1)
+    if how == "percentile":  # today's rank in the last N values: % of them at or below today
+        return values.rolling(n).apply(lambda w: (w <= w[-1]).mean() * 100, raw=True)
     if how == "vs_vwap":
         typical = (bars["high"] + bars["low"] + bars["close"]) / 3
         vwap = (typical * bars["volume"]).rolling(n).sum() / bars["volume"].rolling(n).sum()

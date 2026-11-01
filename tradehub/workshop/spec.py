@@ -22,10 +22,10 @@ def _ticker(value: str) -> str:
 class Condition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["fred", "price", "analyst"]
-    series: str = Field(min_length=1, max_length=30)
+    source: Literal["fred", "price", "analyst", "spread"]
+    series: str = Field(min_length=1, max_length=200)  # spread: "A+B/C+D", the log ratio of two equal-weight baskets
     measure: Literal["level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
-                     "volatility", "vs_vwap", "net_upgrades", "target_upside"]
+                     "volatility", "vs_vwap", "net_upgrades", "target_upside", "zscore", "percentile"]
     lookback_days: int = Field(63, ge=1, le=756)
     slow_days: int | None = Field(None, ge=2, le=756)  # sma_cross only: the slow average; lookback_days is the fast one
     op: Literal[">", "<"]
@@ -34,13 +34,24 @@ class Condition(BaseModel):
     @field_validator("series")
     @classmethod
     def _series(cls, v: str) -> str:
-        v = v.strip().upper()
+        v = v.strip().upper().replace(" ", "")
+        if "/" in v or "+" in v:
+            sides = v.split("/")
+            if len(sides) != 2 or not all(sides):
+                raise ValueError(f"a spread is LONG+LEGS/SHORT+LEGS, e.g. RL+WSM/LULU+NKE: {v!r}")
+            for side in sides:
+                legs = side.split("+")
+                if not 1 <= len(legs) <= 10 or not all(TICKER.match(t) for t in legs):
+                    raise ValueError(f"not a spread of tickers: {v!r}")
+            return v
         if not re.match(r"^[A-Z0-9][A-Z0-9.\-_]{0,29}$", v):
             raise ValueError(f"not a series id: {v!r}")
         return v
 
     @model_validator(mode="after")
     def _fits(self) -> Condition:
+        if (self.source == "spread") != ("/" in self.series):
+            raise ValueError("a spread condition needs a spread series (A+B/C+D), and only a spread condition takes one")
         if self.measure not in MEASURES[self.source]:
             raise ValueError(f"{self.measure} can't be measured on a {self.source} series")
         if self.measure == "sma_cross" and (self.slow_days is None or self.slow_days <= self.lookback_days):
@@ -49,9 +60,10 @@ class Condition(BaseModel):
 
 
 MEASURES = {
-    "fred": {"level", "change", "pct_change", "vs_sma", "volatility"},
+    "fred": {"level", "change", "pct_change", "vs_sma", "volatility", "zscore", "percentile"},
     "price": {"level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
-              "volatility", "vs_vwap"},
+              "volatility", "vs_vwap", "zscore", "percentile"},
+    "spread": {"level", "change", "vs_sma", "volatility", "zscore", "percentile"},
     "analyst": {"net_upgrades", "target_upside"},
 }
 

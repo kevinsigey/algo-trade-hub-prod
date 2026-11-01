@@ -34,7 +34,10 @@ SYSTEM = (
     "vs_low (above 0 / below 0 = a new N-day high / low), volatility, vs_vwap; FRED series allow only level, change, "
     "pct_change, vs_sma and volatility. source analyst (stocks only, no ETFs; data mostly from 2019) allows "
     "net_upgrades (upgrades minus downgrades over N days) and target_upside (% the mean price target set in the last "
-    "N days is above the price). Never invent results. "
+    "N days is above the price). source spread watches the log ratio of two equal-weight baskets, series "
+    "written A+B/C+D (longs/shorts), with measures level, change, vs_sma, volatility, zscore (standard deviations "
+    "from its N-day mean) and percentile (today's rank in the last N days, 0-100); zscore and percentile also work "
+    "on price and FRED series. Never invent results. "
     "Reply with JSON only."
 )
 

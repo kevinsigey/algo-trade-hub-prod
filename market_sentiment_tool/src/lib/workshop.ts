@@ -7,10 +7,10 @@ export type Verdict = "PASS" | "FAIL" | "NOT ENOUGH DATA";
 
 export type Measure =
   | "level" | "change" | "pct_change" | "vs_sma" | "sma_cross" | "rsi" | "macd" | "vs_high" | "vs_low" | "volatility" | "vs_vwap"
-  | "net_upgrades" | "target_upside";
+  | "net_upgrades" | "target_upside" | "zscore" | "percentile";
 
 export interface Condition {
-  source: "fred" | "price" | "analyst";
+  source: "fred" | "price" | "analyst" | "spread";
   series: string;
   measure: Measure;
   lookback_days: number;
@@ -33,11 +33,12 @@ export interface Rules {
 /** Each measure: its menu label, the units hint, and which sources can use it. */
 type Src = Condition["source"];
 const P: Src[] = ["price"];
-const FP: Src[] = ["fred", "price"];
+const FP: Src[] = ["fred", "price", "spread"];
+const ANY: Src[] = ["fred", "price", "spread"];
 export const MEASURES: { value: Measure; label: string; hint: string; sources: Src[] }[] = [
   { value: "level", label: "level", hint: "the value itself", sources: FP },
   { value: "change", label: "change", hint: "change over N days, in the series' own units", sources: FP },
-  { value: "pct_change", label: "% change", hint: "% change over N days", sources: FP },
+  { value: "pct_change", label: "% change", hint: "% change over N days", sources: ["fred", "price"] },
   { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", sources: FP },
   { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", sources: FP },
   { value: "sma_cross", label: "average cross", hint: "% the N-day average is above the slow average", sources: P },
@@ -46,6 +47,8 @@ export const MEASURES: { value: Measure; label: string; hint: string; sources: S
   { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", sources: P },
   { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", sources: P },
   { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", sources: P },
+  { value: "zscore", label: "z-score", hint: "standard deviations from its N-day average (2 = stretched)", sources: ANY },
+  { value: "percentile", label: "percentile", hint: "today's rank among the last N days, 0-100 (95 = near the top)", sources: ANY },
   { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N trading days", sources: ["analyst"] },
   { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N trading days is above the price", sources: ["analyst"] },
 ];
@@ -343,7 +346,9 @@ export function conditionText(c: Condition | null): string {
   const { series: s, lookback_days: n, op, threshold: t } = c;
   const zero = t === 0;
   switch (c.measure) {
-    case "level": return `${s} ${op} ${t}`;
+    case "level": return c.source === "spread" ? `${s} spread ${op} ${t}` : `${s} ${op} ${t}`;
+    case "zscore": return `${s}${c.source === "spread" ? " spread" : ""} ${n}-day z-score ${op} ${t}`;
+    case "percentile": return `${s}${c.source === "spread" ? " spread" : ""} ${n}-day percentile ${op} ${t}`;
     case "change": return `${s} change over ${n} trading days ${op} ${t}`;
     case "pct_change": return `${s} % change over ${n} trading days ${op} ${t}`;
     case "vs_sma": return `${s} % vs its ${n}-day avg ${op} ${t}`;

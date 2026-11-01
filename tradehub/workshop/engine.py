@@ -13,6 +13,7 @@ Pure: daily closes and FRED series in, a verdict dict out. Rules (spec 2026-10-2
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 
 import numpy as np
@@ -45,6 +46,7 @@ def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
     needed += [c.series for c in _conditions(spec) if c.source in ("price", "analyst")]  # target_upside reads the close
+    needed += [t for c in _conditions(spec) if c.source == "spread" for t in re.split(r"[+/]", c.series)]
     needed += list(spec.portfolio.core) if spec.portfolio else []
     return list(dict.fromkeys(needed + list(CONTEXT)))
 
@@ -65,6 +67,12 @@ def analyst_tickers(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "analyst"))
 
 
+def spread_series(series: str, closes: pd.DataFrame) -> pd.Series:
+    """log(equal-weight geometric basket of the left legs) - log(same of the right legs), from daily closes."""
+    left, right = (side.split("+") for side in series.split("/"))
+    return np.log(closes[left]).mean(axis=1, skipna=False) - np.log(closes[right]).mean(axis=1, skipna=False)
+
+
 def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
     """True on day t when the condition held on information available at the close of t-1 (FRED: t-2)."""
     idx = closes.index
@@ -77,6 +85,8 @@ def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.S
             if any(k not in closes for k in cols):
                 raise ValueError(f"a VWAP rule needs daily bars with volume for {t}")
             bars = closes[list(cols)].rename(columns=cols)
+    elif c.source == "spread":
+        values, lag = spread_series(c.series, closes), 1
     elif c.source == "analyst":  # actions land during the day: one more day, like FRED
         measured = signals.analyst_measure(fred[f"{c.series}@analyst"], idx, c.measure, c.lookback_days,
                                            close=closes[c.series])
