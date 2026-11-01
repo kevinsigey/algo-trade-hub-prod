@@ -97,12 +97,12 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
     return response.json()
 
 
-def cancel(order_id: str, client_order_id: str, *, session=requests) -> None:
-    """Cancel one protective order the hub placed (stop tag only). Anything else is refused before any request."""
-    if not STOP_TAG.match(client_order_id or "") or not ORDER_ID.match(order_id or ""):
-        raise ValueError("only the hub's own stop orders can be cancelled")
-    if not orders_enabled():
-        raise OrdersDisabled("TRADEHUB_PAPER_ORDERS is off")
+EXT_TAG = re.compile(r"^ext-\d+-[A-Za-z0-9_-]+$")
+
+
+def _delete_order(order_id: str, *, session=requests) -> None:
+    """The module's one DELETE call site (a test counts them): every cancel path funnels
+    through here, after its own tag guard has decided the order is its to cancel."""
     response = session.delete(PAPER_BASE + f"/v2/orders/{order_id}", headers=_headers(), timeout=10)
     if response.status_code == 401:
         raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
@@ -110,3 +110,23 @@ def cancel(order_id: str, client_order_id: str, *, session=requests) -> None:
         raise OrderGone(order_id)
     if response.status_code >= 400:
         raise OrderRejected(f"HTTP {response.status_code}")
+
+
+def cancel_machine_order(order_id: str, client_order_id: str, *, session=requests) -> None:
+    """Cancel one machine-API order (ext- tag only): the machine door's counterpart to
+    cancel(). Each refuses the other's orders before any request, so neither path can be
+    talked into touching an order family it does not own."""
+    if not EXT_TAG.match(client_order_id or "") or not ORDER_ID.match(order_id or ""):
+        raise ValueError("only the machine API's own ext- orders can be cancelled this way")
+    if not orders_enabled():
+        raise OrdersDisabled("TRADEHUB_PAPER_ORDERS is off")
+    _delete_order(order_id, session=session)
+
+
+def cancel(order_id: str, client_order_id: str, *, session=requests) -> None:
+    """Cancel one protective order the hub placed (stop tag only). Anything else is refused before any request."""
+    if not STOP_TAG.match(client_order_id or "") or not ORDER_ID.match(order_id or ""):
+        raise ValueError("only the hub's own stop orders can be cancelled")
+    if not orders_enabled():
+        raise OrdersDisabled("TRADEHUB_PAPER_ORDERS is off")
+    _delete_order(order_id, session=session)

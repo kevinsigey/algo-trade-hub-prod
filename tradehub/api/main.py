@@ -1008,6 +1008,118 @@ def get_machine_portfolio(authorization: str | None = Header(None), supabase=Dep
     return payload
 
 
+# ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
+# audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
+# a 403 -- the API does not confirm the order exists.
+def _machine_order_view(event: dict, order: dict | None) -> dict:
+    if order is None:
+        return {"client_order_id": event["client_order_id"], "status": "unknown",
+                "event_id": event["id"], "placed_at": event["at"]}
+    return {"client_order_id": event["client_order_id"], "alpaca_order_id": order["id"],
+            "event_id": event["id"],
+            "symbol": order.get("symbol"), "qty": order.get("qty"), "side": order.get("side"),
+            "status": order.get("status"), "submitted_at": order.get("submitted_at"),
+            "filled_avg_price": order.get("filled_avg_price")}
+
+
+@app.get("/api/v1/orders", tags=["Machine API"])
+def list_machine_orders(limit: int = 50, before: int | None = None,
+                        authorization: str | None = Header(None), supabase=Depends(get_supabase)):
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders")
+    events = machine_api.placed_events(supabase, key["id"])
+    if before is not None:
+        events = [e for e in events if e["id"] < before]
+    page = events[: max(1, min(limit, 200))]
+    try:
+        broker = machine_api.broker_orders()
+        reachable = True
+    except AccountNotConnected:
+        broker, reachable = {}, False
+    machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders", "read")
+    return {"orders": [_machine_order_view(e, broker.get(e["client_order_id"])) for e in page],
+            "broker_reachable": reachable}
+
+
+@app.get("/api/v1/orders/{client_order_id}", tags=["Machine API"])
+def get_machine_order(client_order_id: str, authorization: str | None = Header(None),
+                      supabase=Depends(get_supabase)):
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/{id}")
+    namespaced = machine_api.resolve_caller_id(key, client_order_id)
+    event = machine_api.owns_event(supabase, key["id"], namespaced)
+    if event is None:
+        machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}",
+                                  "refused:ownership", client_order_id=namespaced)
+        raise HTTPException(status_code=404, detail="no such order")
+    try:
+        broker = machine_api.broker_orders()
+    except AccountNotConnected:
+        broker = {}
+    machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}", "read",
+                              client_order_id=namespaced)
+    return _machine_order_view(event, broker.get(namespaced))
+
+
+@app.delete("/api/v1/orders/{client_order_id}", tags=["Machine API"])
+def cancel_machine_order_route(client_order_id: str, authorization: str | None = Header(None),
+                               supabase=Depends(get_supabase)):
+    """Cancel one of this key's open orders. A cancel is not a placement: the kill switch
+    does not block it (a runaway key's orders must stay cancellable while the switch is off);
+    the paper-orders switch inside paper_orders still applies."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    route = "DELETE /api/v1/orders/{id}"
+    machine_api.require_scope(supabase, key, "orders:place", route)
+    namespaced = machine_api.resolve_caller_id(key, client_order_id)
+
+    def refused(outcome: str, status: int, detail: str):
+        machine_keys.record_event(supabase, key["id"], route, f"refused:{outcome}",
+                                  detail=detail, client_order_id=namespaced)
+        raise HTTPException(status_code=status, detail=detail)
+
+    if machine_api.owns_event(supabase, key["id"], namespaced) is None:
+        refused("ownership", 404, "no such order")
+    try:
+        broker = machine_api.broker_orders()
+    except AccountNotConnected:
+        refused("account", 424, "the paper account is not connected")
+    order = broker.get(namespaced)
+    if order is None:
+        refused("broker_missing", 404, "the order is not in the broker's recent window")
+    try:
+        paper_orders.cancel_machine_order(order["id"], namespaced)
+    except paper_orders.OrdersDisabled as exc:
+        refused("paper_switch_off", 409, str(exc))
+    except paper_orders.OrderGone:
+        refused("gone", 409, "the order already filled or was already cancelled")
+    except AccountNotConnected:
+        refused("account", 424, "the paper account is not connected")
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        refused("rejected", 422, str(exc))
+    machine_keys.record_event(supabase, key["id"], route, "cancelled",
+                              client_order_id=namespaced)
+    return {"client_order_id": namespaced, "status": "cancelled"}
+
+
 @app.get("/api/workshop/fills", tags=["Workshop"])
 def workshop_fills(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     """Kevin's paper fills, newest first, each with its idea and its full relabel history (tag first)."""
