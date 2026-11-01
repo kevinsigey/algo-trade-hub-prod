@@ -513,13 +513,41 @@ def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
         dropped = playbook_dropped(body.text, d.spec)
         return {"spec": d.spec.model_dump(mode="json"), "model": d.model, "play": play(d),
                 "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives],
-                "dropped": dropped}
+                "dropped": dropped, "unexpressed": []}
     try:
-        spec, model, dropped = draft_spec(body.text)
+        spec, model, dropped, unexpressed = draft_spec(body.text)
     except DraftUnavailable as exc:
         return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
                                                       "template": blank_spec()})
-    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": [], "dropped": dropped}
+    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": [],
+            "dropped": dropped, "unexpressed": unexpressed}
+
+
+class _ImportIn(BaseModel):
+    spec: dict[str, Any]
+    requested: list[str] = []
+    unexpressed: list[str] = []
+
+
+@app.post("/api/workshop/draft/import", tags=["Workshop"])
+def workshop_draft_import(body: _ImportIn, _admin: dict = Depends(admin.require_admin)):
+    """The second drafting door (spec §2.2): a full spec drafted out-of-band -- in practice
+    by Muse in a chat session with the conversation's full context -- is validated
+    against the same generated contract and returned as a draft for the same confirm
+    screen. Admin session only, and a draft is a draft: nothing runs until Kevin confirms
+    it through the ordinary Workshop flow."""
+    from pydantic import ValidationError
+
+    from tradehub.workshop.draft import check_imported
+    try:
+        spec = IdeaSpec.model_validate(body.spec)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        where = "/".join(str(p) for p in first["loc"]) or "spec"
+        raise HTTPException(422, detail=f"the spec does not fit the contract: {where}: {first['msg']}") from exc
+    dropped, unexpressed = check_imported(spec, body.requested, body.unexpressed)
+    return {"spec": spec.model_dump(mode="json"), "model": "import", "play": None, "alternatives": [],
+            "dropped": dropped, "unexpressed": unexpressed}
 
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])

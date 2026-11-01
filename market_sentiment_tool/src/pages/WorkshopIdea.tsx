@@ -29,6 +29,7 @@ import {
   type GateResult,
   type Group,
   type DraftResponse,
+  type SpecImport,
   type EventSpec,
   type PlayMatch,
   type Rules,
@@ -876,7 +877,9 @@ export default function WorkshopIdea() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"]; dropped?: string[] } | null>(null);
+  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"]; dropped?: string[]; unexpressed?: string[] } | null>(null);
+  const [importText, setImportText] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -894,7 +897,7 @@ export default function WorkshopIdea() {
   const requestDraft = useCallback((text: string, title: string, free = false) => {
     setDrafting(true);
     adminJson<DraftResponse>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text, free }) })
-      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives, dropped: d.dropped }))
+      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives, dropped: d.dropped, unexpressed: d.unexpressed }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
         if (template) setDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
@@ -925,6 +928,31 @@ export default function WorkshopIdea() {
       }
     } catch { void 0; }
   }, [data, draft, drafting, id]);
+
+  /** The import door (§2.2): paste a spec drafted in chat -- the envelope {spec, requested,
+   * unexpressed} or a bare spec -- and it lands on this same confirm screen as a draft. */
+  const importSpec = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importText);
+    } catch {
+      setError("That isn't valid JSON -- paste the whole spec object.");
+      return;
+    }
+    const obj = (parsed ?? {}) as Record<string, unknown>;
+    const payload: SpecImport = "spec" in obj
+      ? { spec: obj.spec as IdeaSpec, requested: (obj.requested as string[] | undefined) ?? [], unexpressed: (obj.unexpressed as string[] | undefined) ?? [] }
+      : { spec: parsed as IdeaSpec, requested: [], unexpressed: [] };
+    setDrafting(true);
+    setError(null);
+    adminJson<DraftResponse>("/api/workshop/draft/import", { method: "POST", body: JSON.stringify(payload) })
+      .then((d) => {
+        setDraft({ spec: d.spec, model: d.model, play: null, alternatives: [], dropped: d.dropped, unexpressed: d.unexpressed });
+        setImportOpen(false);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Import failed"))
+      .finally(() => setDrafting(false));
+  };
 
   /** Swap the draft for one of the other plays the words matched. */
   const switchPlay = (alt: DraftResponse["alternatives"][number]) => {
@@ -986,6 +1014,27 @@ export default function WorkshopIdea() {
       )}
       {draft?.dropped && draft.dropped.length > 0 && (
         <p className="mt-4 text-sm text-amber-300">The draft left out: {draft.dropped.join(", ")}. Add them back if you meant them.</p>
+      )}
+      {draft?.unexpressed && draft.unexpressed.length > 0 && (
+        <p className="mt-2 text-sm text-slate-300">The drafter couldn't express: {draft.unexpressed.join("; ")}</p>
+      )}
+      {data && !draft && !drafting && (
+        <div className="mt-6">
+          <button type="button" className="text-sm text-slate-400 underline decoration-dotted underline-offset-4 hover:text-slate-200" onClick={() => setImportOpen((v) => !v)}>
+            Import a spec drafted in chat
+          </button>
+          {importOpen && (
+            <div className="mt-3">
+              <label className="block text-xs uppercase tracking-wide text-slate-400" htmlFor="spec-import">Spec JSON (envelope or bare spec)</label>
+              <textarea id="spec-import" value={importText} onChange={(e) => setImportText(e.target.value)} rows={8}
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200"
+                placeholder='{"spec": {...}, "requested": ["XLE"], "unexpressed": []}' />
+              <div className="mt-2 flex justify-end">
+                <button type="button" className={button} disabled={!importText.trim()} onClick={importSpec}>Import as draft</button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
       {draft && (
         <div className="mt-4 flex justify-end">

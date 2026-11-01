@@ -50,7 +50,7 @@ def test_draft_without_key_is_424_with_template(api, monkeypatch):
 def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", []))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", [], []))
     monkeypatch.setattr(main, "playbook_draft", lambda text: None)  # no play fits: the free-form draft writes it
     r = c.post("/api/workshop/draft", json={"text": "gold"})
     assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
@@ -331,7 +331,7 @@ def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
 def test_draft_from_scratch_skips_the_playbook(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", []))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", [], []))
     r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down", "free": True})
     assert r.status_code == 200 and r.json()["play"] is None and r.json()["model"] == "x/y:free"
 

@@ -503,15 +503,21 @@ def draft(text: str, *, post=requests.post, top: int = 3) -> Drafted | None:
     return Drafted(BY_ID[chosen], built, model, why, alts, dropped_tickers(text, built))
 
 
-def dropped_tickers(text: str, spec) -> list[str]:
-    """Tickers the words name that the drafted spec never uses (as a leg, the benchmark, the fallback holding, a
-    portfolio core or a rule's series), so a draft that silently left one out can say so."""
+def used_tickers(spec) -> set[str]:
+    """Every ticker a spec actually uses: legs, benchmark, fallback holding, portfolio core
+    and rule series (spread baskets split out). The drafter's envelope check (§2.2) diffs
+    against this same set, so 'used' means one thing everywhere."""
     if getattr(spec, "kind", None) == "event":
-        used = set(spec.tickers) | {spec.benchmark}
-    else:
-        used = set(spec.hold) | set(spec.short) | {spec.benchmark, spec.otherwise}
-        used |= set(spec.portfolio.core) if spec.portfolio else set()
-        if spec.rules is not None:
-            groups = [spec.rules.enter] + ([spec.rules.exit] if spec.rules.exit else [])
-            used |= {t for g in groups for c in g.conditions for t in re.split(r"[+/]", c.series)}
-    return [t for t in tickers_in(text) if t not in used]
+        return set(spec.tickers) | {spec.benchmark}
+    used = set(spec.hold) | set(spec.short) | {spec.benchmark, spec.otherwise}
+    used |= set(spec.portfolio.core) if spec.portfolio else set()
+    if spec.rules is not None:
+        groups = [spec.rules.enter] + ([spec.rules.exit] if spec.rules.exit else [])
+        used |= {t for g in groups for c in g.conditions for t in re.split(r"[+/]", c.series)}
+    return used
+
+
+def dropped_tickers(text: str, spec) -> list[str]:
+    """Tickers the words name that the drafted spec never uses, so a draft that silently
+    left one out can say so."""
+    return [t for t in tickers_in(text) if t not in used_tickers(spec)]
