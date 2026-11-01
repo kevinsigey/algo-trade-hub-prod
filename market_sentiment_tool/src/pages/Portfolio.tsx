@@ -221,6 +221,119 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
           <PositionsTable rows={data.positions} />
         </div>
       </section>
+
+      <OrderForm />
     </>
+  );
+}
+
+const inputCls = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-white";
+const labelCls = "flex flex-col gap-1 text-xs text-slate-400";
+
+function OrderForm() {
+  const [signedIn, setSignedIn] = useState(false);
+  const [ideas, setIdeas] = useState<{ id: number; title: string }[]>([]);
+  const [symbol, setSymbol] = useState("");
+  const [qty, setQty] = useState("1");
+  const [side, setSide] = useState("buy");
+  const [orderType, setOrderType] = useState("market");
+  const [limitPrice, setLimitPrice] = useState("");
+  const [tif, setTif] = useState("day");
+  const [ideaId, setIdeaId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Signed-in only: /api/admin/me 401s for a visitor, and the form simply never appears.
+    adminJson<{ email: string }>("/api/admin/me")
+      .then(() => {
+        if (cancelled) return;
+        setSignedIn(true);
+        adminJson<{ id: number; title: string }[]>("/api/workshop/ideas")
+          .then((rows) => { if (!cancelled) setIdeas(rows); })
+          .catch(() => undefined);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!signedIn) return null;
+
+  async function place() {
+    setBusy(true);
+    setNote(null);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        symbol: symbol.trim().toUpperCase(), qty: Number(qty), side, order_type: orderType, time_in_force: tif,
+      };
+      if (orderType === "limit") body.limit_price = Number(limitPrice);
+      if (ideaId) body.idea_id = Number(ideaId);
+      const placed = await adminJson<{ client_order_id: string }>("/api/portfolio/orders", {
+        method: "POST", body: JSON.stringify(body),
+      });
+      setNote(`Order sent: ${side} ${qty} ${body.symbol as string} (${placed.client_order_id})`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Order failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-12">
+      <h2 className="text-lg font-semibold text-white">Place an order by hand</h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Paper account, market or limit. Tag it with an idea and it lands in that idea&apos;s order log.
+      </p>
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <label className={labelCls}>Symbol
+          <input aria-label="Symbol" className={inputCls} value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="XLE" />
+        </label>
+        <label className={labelCls}>Shares
+          <input aria-label="Shares" className={`${inputCls} w-24`} type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
+        </label>
+        <label className={labelCls}>Side
+          <select aria-label="Side" className={inputCls} value={side} onChange={(e) => setSide(e.target.value)}>
+            <option value="buy">Buy</option>
+            <option value="sell">Sell</option>
+          </select>
+        </label>
+        <label className={labelCls}>Type
+          <select aria-label="Type" className={inputCls} value={orderType} onChange={(e) => setOrderType(e.target.value)}>
+            <option value="market">Market</option>
+            <option value="limit">Limit</option>
+          </select>
+        </label>
+        {orderType === "limit" && (
+          <label className={labelCls}>Limit price
+            <input aria-label="Limit price" className={`${inputCls} w-28`} type="number" min={0} step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
+          </label>
+        )}
+        <label className={labelCls}>Time in force
+          <select aria-label="Time in force" className={inputCls} value={tif} onChange={(e) => setTif(e.target.value)}>
+            <option value="day">Day</option>
+            <option value="opg">At the open</option>
+            <option value="cls">At the close</option>
+          </select>
+        </label>
+        <label className={labelCls}>Idea (optional)
+          <select aria-label="Idea" className={inputCls} value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
+            <option value="">No idea</option>
+            {ideas.map((i) => <option key={i.id} value={i.id}>{i.title}</option>)}
+          </select>
+        </label>
+        <button type="button" disabled={busy || !symbol.trim()} onClick={place}
+          className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40">
+          {busy ? "Sending…" : "Place order"}
+        </button>
+      </div>
+      {note && <p className="mt-3 text-sm text-emerald-300">{note}</p>}
+      {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
+    </section>
   );
 }
