@@ -135,11 +135,33 @@ def test_protective_and_limit_shapes_die_at_the_schema(api):
     assert sent == []
 
 
-def test_a_limit_order_is_refused_until_v11(api):
+def test_a_limit_order_places_through_submit(api):
     client, db, sent = api
     headers = _key(db)
     r = _post(client, headers, order_type="limit", limit_price=50.0)
-    assert r.status_code == 422 and "v1.1" in r.json()["detail"]
+    assert r.status_code == 200
+    assert sent[0]["order_type"] == "limit" and sent[0]["limit_price"] == 50.0
+
+
+def test_a_limit_orders_notional_is_priced_at_its_limit_not_the_last_trade(api):
+    """The fixture's latest price is $100: 100 shares would pass the $25k cap at the last
+    trade ($10k) and must still refuse at the limit price ($300 x 100 = $30k)."""
+    client, db, sent = api
+    headers = _key(db, max_notional=25_000)
+    r = _post(client, headers, order_type="limit", limit_price=300.0, qty=100)
+    assert r.status_code == 429 and "max_notional" in r.json()["detail"] and sent == []
+    assert _post(client, headers, order_type="limit", limit_price=300.0, qty=10,
+                 client_order_id="run-2").status_code == 200
+
+
+def test_limit_and_market_shapes_still_refuse_cleanly(api):
+    client, db, sent = api
+    headers = _key(db)
+    assert _post(client, headers, order_type="limit").status_code == 422  # no limit_price
+    assert _post(client, headers, limit_price=50.0).status_code == 422  # price on a market order
+    assert _post(client, headers, order_type="stop").status_code == 422
+    assert _post(client, headers, order_type="limit", limit_price=50.0,
+                 time_in_force="gtc").status_code == 422  # GTC stays hub-internal
     assert sent == []
 
 
