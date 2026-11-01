@@ -607,3 +607,17 @@ describe("Workshop drafts: left-out tickers and saved drafts", () => {
     expect(localStorage.getItem("workshop-draft-2")).toBeNull();
   });
 });
+
+describe("Workshop costs", () => {
+  it("edits slippage, and borrow only when there is a short leg", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: ["QQQ"] } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Slippage per switch (bps)"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Short borrow (bps a year)"), { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0]).toMatchObject({ slippage_bps: 5, borrow_bps_yr: 300 });
+    cleanup();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: [] } as never} onRun={vi.fn()} busy={false} />);
+    expect(screen.queryByLabelText("Short borrow (bps a year)")).not.toBeInTheDocument();
+  });
+});

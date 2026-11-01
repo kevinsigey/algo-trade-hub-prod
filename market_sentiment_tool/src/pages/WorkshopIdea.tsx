@@ -384,6 +384,14 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
         <Field label="Cost per switch (bps)">
           <input type="number" className={field} value={spec.cost_bps} onChange={(e) => set("cost_bps", Number(e.target.value))} />
         </Field>
+        <Field label="Slippage per switch (bps)">
+          <input type="number" className={field} value={spec.slippage_bps ?? 0} onChange={(e) => set("slippage_bps", Number(e.target.value))} />
+        </Field>
+        {(spec.short ?? []).length > 0 && (
+          <Field label="Short borrow (bps a year)">
+            <input type="number" className={field} value={spec.borrow_bps_yr ?? 25} onChange={(e) => set("borrow_bps_yr", Number(e.target.value))} />
+          </Field>
+        )}
         <Field label="Data from">
           <input type="date" className={field} value={spec.start} onChange={(e) => set("start", e.target.value)} />
         </Field>

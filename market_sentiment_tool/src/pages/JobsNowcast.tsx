@@ -35,6 +35,9 @@ export default function JobsNowcast() {
       <header className="space-y-1">
         <h1 className="text-3xl font-bold tracking-tight text-white">Jobs nowcast vs Kalshi</h1>
         <p className="max-w-[680px] text-sm leading-relaxed text-slate-400">Our nowcast vs Kalshi's, one report at a time.</p>
+        {series === "payrolls" && summary.kalshiMae !== null && summary.nowcastMae !== null && summary.kalshiBrier !== null && summary.nowcastBrier !== null && summary.kalshiMae < summary.nowcastMae && summary.kalshiBrier < summary.nowcastBrier && (
+          <p className="text-sm font-medium text-amber-300">Kalshi was closer: typical miss {Math.round(summary.kalshiMae)}k vs ours {Math.round(summary.nowcastMae)}k</p>
+        )}
       </header>
 
       <NextRelease family="labor" title="Next jobs report" />
@@ -59,12 +62,12 @@ export default function JobsNowcast() {
             />
             <StatCard
               label="Our typical miss"
-              value={summary.nowcastMae !== null ? `${Math.round(summary.nowcastMae)}k jobs` : "—"}
+              value={summary.nowcastMae !== null ? (series === "unemployment" ? `${summary.nowcastMae.toFixed(1)} pts` : `${Math.round(summary.nowcastMae)}k jobs`) : "—"}
               sub="Mean abs error vs first BLS print"
             />
             <StatCard
               label="Kalshi's typical miss"
-              value={summary.kalshiMae !== null ? `${Math.round(summary.kalshiMae)}k jobs` : "—"}
+              value={summary.kalshiMae !== null ? (series === "unemployment" ? `${summary.kalshiMae.toFixed(1)} pts` : `${Math.round(summary.kalshiMae)}k jobs`) : "—"}
               sub="Mean abs error vs first BLS print"
             />
             <StatCard
@@ -111,22 +114,26 @@ export default function JobsNowcast() {
               <thead className="text-xs uppercase tracking-wider text-slate-500 bg-slate-950/50">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium">Month</th>
-                  <th className="px-4 py-2 text-right font-medium">Our nowcast ±σ</th>
+                  <th className="px-4 py-2 text-right font-medium" title="Our nowcast plus or minus sigma, the model's standard deviation (about 68% of outcomes)">Our nowcast ±σ (model std. dev.)</th>
                   <th className="px-4 py-2 text-right font-medium">Kalshi</th>
                   <th className="px-4 py-2 text-right font-medium">First print</th>
                 </tr>
               </thead>
               <tbody>
-                {[...rows].reverse().map((r) => (
-                  <tr key={r.reference_month} className="border-t border-slate-800 hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-2 font-mono text-slate-400">{r.reference_month.slice(0, 7)}</td>
+                {[...rows].reverse().map((r) => {
+                  const outside = r.nowcast_mu !== null && r.first_print !== null && r.nowcast_sigma !== null &&
+                    Math.abs(r.nowcast_mu - r.first_print) > r.nowcast_sigma;
+                  return (
+                  <tr key={r.reference_month} className={`border-t border-slate-800 hover:bg-slate-800/30 transition-colors ${outside ? "outside-sigma" : ""}`}>
+                    <td className="px-4 py-2 font-mono text-slate-400">{r.reference_month.slice(0, 7)}{outside ? <span className="ml-1 text-[10px] text-amber-300">outside ±σ</span> : null}</td>
                     <td className="px-4 py-2 text-right">
                       {formatValue(series, r.nowcast_mu)}{sigmaDisplay(series, r.nowcast_sigma)}
                     </td>
                     <td className="px-4 py-2 text-right">{formatValue(series, r.kalshi_mean_1h)}</td>
                     <td className="px-4 py-2 text-right font-semibold">{formatValue(series, r.first_print)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </section>

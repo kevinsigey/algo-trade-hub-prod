@@ -120,7 +120,9 @@ class IdeaSpec(BaseModel):
     otherwise: str = CASH
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
     benchmark: str = "SPY"
-    cost_bps: float = Field(10, ge=0, le=200)
+    cost_bps: float = Field(10, ge=0, le=200)  # commission per switch
+    slippage_bps: float = Field(0, ge=0, le=200)  # extra fill cost per switch, on top of cost_bps
+    borrow_bps_yr: float = Field(25, ge=0, le=5000)  # yearly fee to borrow a short leg, charged each day it is held
     start: date = date(2006, 1, 3)
     unseen_fraction: float = Field(0.3, ge=0.1, le=0.5)
     assumptions: list[str] = []
