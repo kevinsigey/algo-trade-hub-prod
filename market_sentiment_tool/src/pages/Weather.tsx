@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { AlertTriangle, CloudSun, Loader2 } from "lucide-react";
 
 import { useWeather } from "@/hooks/useWeather";
+import { buildApiUrl } from "@/lib/api";
 import {
   WEATHER_INTRO,
   formatOutcome,
@@ -148,7 +150,84 @@ export default function Weather() {
             </p>
           </>
         )}
+
+        <DegreeDaysPanel />
       </div>
     </div>
+  );
+}
+
+interface DegreeRow { hdd: number | null; cdd: number | null; hdd_anomaly: number | null; cdd_anomaly: number | null; share: number }
+interface DegreePanel {
+  week_end: string; as_of: string;
+  national: { hdd: number; cdd: number; hdd_anomaly: number | null; cdd_anomaly: number | null; population_covered_pct: number };
+  regions: Record<string, DegreeRow>;
+  missing_regions: string[];
+}
+
+const signed = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
+
+/** Degree-day demand (phase-2 section 5.3): the week's heating/cooling demand vs its
+ * 10-year normal -- the first link of the degree-day -> storage -> gas chain the
+ * engines trade on. Serves the weekly snapshot; an unbuilt snapshot says so. */
+function DegreeDaysPanel() {
+  const [panel, setPanel] = useState<DegreePanel | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  useEffect(() => {
+    fetch(buildApiUrl("/api/weather/degree-days"))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((body) => {
+        // Shape-guard the snapshot like every other panel: a malformed body is
+        // "unavailable", never a crash or a panel of invented numbers.
+        if (body && typeof body === "object" && body.national && body.regions) setPanel(body as DegreePanel);
+        else setUnavailable(true);
+      })
+      .catch(() => setUnavailable(true));
+  }, []);
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">
+        Degree-day demand
+      </h2>
+      {unavailable ? (
+        <p className="text-sm text-slate-500">
+          The weekly degree-day snapshot has not been built yet, so there is no demand read to show.
+        </p>
+      ) : !panel ? (
+        <p className="text-sm text-slate-500">Loading the demand snapshot…</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="US heating degree days" value={panel.national.hdd.toFixed(0)}
+              sub={`week ending ${panel.week_end}`} />
+            <Stat label="HDD vs 10-yr normal" value={signed(panel.national.hdd_anomaly)}
+              sub="population-weighted" />
+            <Stat label="US cooling degree days" value={panel.national.cdd.toFixed(0)} />
+            <Stat label="CDD vs 10-yr normal" value={signed(panel.national.cdd_anomaly)}
+              sub={`${panel.national.population_covered_pct}% of population covered`} />
+          </div>
+          <div className="mt-3 flex flex-col gap-2">
+            {Object.entries(panel.regions).map(([name, r]) => (
+              <div key={name} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
+                <div className="text-sm font-semibold text-slate-200">{name}</div>
+                <div className="flex items-center gap-4 text-sm tabular-nums text-slate-300">
+                  <span>HDD {r.hdd?.toFixed(0) ?? "—"} ({signed(r.hdd_anomaly)})</span>
+                  <span>CDD {r.cdd?.toFixed(0) ?? "—"} ({signed(r.cdd_anomaly)})</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {panel.missing_regions.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">
+              No read for {panel.missing_regions.join(", ")} this week -- omitted, not zero-filled.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-slate-600">
+            Base 65°F, Open-Meteo archive daily means, 2020 Census division shares. A cold surprise
+            (HDD above normal) is the first link toward a bigger Thursday storage draw.
+          </p>
+        </>
+      )}
+    </section>
   );
 }

@@ -101,3 +101,35 @@ describe("weather page", () => {
     await waitFor(() => expect(screen.getByText(/status 503/)).toBeTruthy());
   });
 });
+describe("degree-day demand panel", () => {
+  it("shows the national index and per-division reads from the snapshot", async () => {
+    const snapshot = {
+      week_end: "2026-10-31", as_of: "2026-11-01",
+      national: { hdd: 101, cdd: 3, hdd_anomaly: 12.5, cdd_anomaly: -1.5, population_covered_pct: 100 },
+      regions: { "New England": { hdd: 140, cdd: 0, hdd_anomaly: 20, cdd_anomaly: 0, share: 4.53 } },
+      missing_regions: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("degree-days") ? snapshot : { today: [], settled: [] };
+      return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body } as unknown as Response;
+    }));
+    render(<Weather />);
+    expect(await screen.findByText("Degree-day demand")).toBeTruthy();
+    expect(await screen.findByText("US heating degree days")).toBeTruthy();
+    expect(screen.getByText("+12.5")).toBeTruthy();
+    expect(screen.getByText("New England")).toBeTruthy();
+    expect(screen.getByText(/HDD 140/)).toBeTruthy();
+  });
+
+  it("says the snapshot is unbuilt instead of inventing numbers", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("degree-days"))
+        return { ok: false, status: 503, headers: { get: () => "application/json" }, json: async () => ({}) } as unknown as Response;
+      return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({ today: [], settled: [] }) } as unknown as Response;
+    }));
+    render(<Weather />);
+    expect(await screen.findByText(/snapshot has not been built yet/)).toBeTruthy();
+  });
+});
