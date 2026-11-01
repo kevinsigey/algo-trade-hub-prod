@@ -78,11 +78,5 @@ def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str, list[st
         spec = IdeaSpec.model_validate_json(content)
     except Exception as exc:  # noqa: BLE001
         raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
-    try:
-        from tradehub.workshop.playbook import tickers_in
-        named = tickers_in(text)
-    except Exception:  # noqa: BLE001 -- playbook is optional for this comparison
-        named = []
-    drafted = list(spec.hold) + list(spec.short or [])
-    dropped = [t for t in named if t not in set(drafted)]
-    return spec, data.get("model") or MODEL, dropped
+    from tradehub.workshop.playbook import dropped_tickers  # playbook imports draft: import here, not at the top
+    return spec, data.get("model") or MODEL, dropped_tickers(text, spec)

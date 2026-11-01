@@ -46,7 +46,7 @@ def test_request_shape_and_parse(key):
     post = FakePost(reply(SPEC.model_dump_json()))
     spec, model, dropped = draft_spec("Gold does better than stocks when rates are going up.", post=post)
     assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free"
-    assert dropped == ["SPY"]
+    assert dropped == []  # SPY ("stocks") is the benchmark, not a dropped leg
     url, kw = post.calls[0]
     assert url == "https://openrouter.ai/api/v1/chat/completions"
     assert kw["headers"]["Authorization"] == "Bearer test-key"

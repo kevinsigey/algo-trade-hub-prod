@@ -499,12 +499,19 @@ def draft(text: str, *, post=requests.post, top: int = 3) -> Drafted | None:
     why = next(m.why for m in cands if m.play.id == chosen)
     alts = [Drafted(m.play, spec, "playbook", m.why) for m in cands if m.play.id != chosen
             for spec in [_safe_build(m.play.id, [filled[m.play.id], {}], title)] if spec is not None]
-    _built = _safe_build(chosen, [values, filled[chosen], {}], title)
-    _dropped = []
-    if _built is not None:
-        if hasattr(_built, "hold"):
-            _drafted = list(_built.hold) + list(_built.short or [])
-        else:
-            _drafted = list(getattr(_built, "tickers", []) or [])
-        _dropped = [t for t in tickers_in(text) if t not in set(_drafted)]
-    return Drafted(BY_ID[chosen], _built, model, why, alts, _dropped)
+    built = _safe_build(chosen, [values, filled[chosen], {}], title)
+    return Drafted(BY_ID[chosen], built, model, why, alts, dropped_tickers(text, built))
+
+
+def dropped_tickers(text: str, spec) -> list[str]:
+    """Tickers the words name that the drafted spec never uses (as a leg, the benchmark, the fallback holding, a
+    portfolio core or a rule's series), so a draft that silently left one out can say so."""
+    if getattr(spec, "kind", None) == "event":
+        used = set(spec.tickers) | {spec.benchmark}
+    else:
+        used = set(spec.hold) | set(spec.short) | {spec.benchmark, spec.otherwise}
+        used |= set(spec.portfolio.core) if spec.portfolio else set()
+        if spec.rules is not None:
+            groups = [spec.rules.enter] + ([spec.rules.exit] if spec.rules.exit else [])
+            used |= {t for g in groups for c in g.conditions for t in re.split(r"[+/]", c.series)}
+    return [t for t in tickers_in(text) if t not in used]

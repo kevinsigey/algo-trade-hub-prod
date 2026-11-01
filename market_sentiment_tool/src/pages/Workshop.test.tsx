@@ -586,3 +586,24 @@ describe("Workshop event review fixes", () => {
     expect(screen.getByText(/· — events/)).toBeInTheDocument();
   });
 });
+
+describe("Workshop drafts: left-out tickers and saved drafts", () => {
+  const IDEA2 = { idea: { id: 2, title: "K-Shape", plain_words: "long RL WSM ABNB DG DLTR BJ MO", created_at: "" }, runs: [] };
+  const page = () => render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+
+  it("says which named tickers the draft left out", async () => {
+    serve({ "/api/workshop/ideas/2": { body: IDEA2 }, "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["RL", "WSM"], when: undefined, rules: null }, model: "x", play: null, alternatives: [], dropped: ["BJ", "MO"] } } });
+    page();
+    expect(await screen.findByText("The draft left out: BJ, MO. Add them back if you meant them.")).toBeInTheDocument();
+  });
+
+  it("restores a saved draft after a reload, and Discard drops it", async () => {
+    localStorage.setItem("workshop-draft-2", JSON.stringify({ ...SPEC, title: "Saved K-Shape", hold: ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"], when: undefined, rules: null }));
+    const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 } });
+    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByDisplayValue("RL, WSM, ABNB, DG, DLTR, BJ, MO")).toBeInTheDocument();
+    expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Discard saved draft" }));
+    expect(localStorage.getItem("workshop-draft-2")).toBeNull();
+  });
+});
