@@ -50,7 +50,7 @@ def _models() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()] or list(MODELS)
 
 
-def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str]:
+def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str, list[str]]:
     """(draft, the model id that wrote it)."""
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key:
@@ -78,4 +78,11 @@ def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str]:
         spec = IdeaSpec.model_validate_json(content)
     except Exception as exc:  # noqa: BLE001
         raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
-    return spec, data.get("model") or MODEL
+    try:
+        from tradehub.workshop.playbook import tickers_in
+        named = tickers_in(text)
+    except Exception:  # noqa: BLE001 -- playbook is optional for this comparison
+        named = []
+    drafted = list(spec.hold) + list(spec.short or [])
+    dropped = [t for t in named if t not in set(drafted)]
+    return spec, data.get("model") or MODEL, dropped

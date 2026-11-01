@@ -79,7 +79,7 @@ class Slot:
         """The value if it fits this slot, else None (the caller keeps what it had)."""
         try:
             if self.kind == "tickers":
-                vals = [str(v).strip().upper() for v in value][:5]
+                vals = [str(v).strip().upper() for v in value][:25]
                 return vals if vals and all(TICKER.match(v) for v in vals) else None
             if self.kind == "ticker":
                 v = str(value).strip().upper()
@@ -93,7 +93,7 @@ class Slot:
 
     def schema(self) -> dict:
         if self.kind == "tickers":
-            return {"type": "array", "items": {"type": "string"}, "maxItems": 5, "description": self.hint}
+            return {"type": "array", "items": {"type": "string"}, "maxItems": 25, "description": self.hint}
         if self.kind == "ticker":
             return {"type": "string", "description": self.hint}
         if self.kind in ("int", "num"):
@@ -399,7 +399,7 @@ def fill(play: Play, text: str) -> dict:
     picks = explicit or named
     for s in play.slots:
         if s.kind == "tickers" and picks:
-            values[s.name] = picks[:5]
+            values[s.name] = picks[:25]
         elif s.kind == "ticker" and s.name not in ("market", "benchmark") and picks:
             values[s.name] = picks[0]
     for pattern, f in play.fillers:
@@ -441,6 +441,7 @@ class Drafted:
     model: str
     why: tuple[str, ...]
     alternatives: list[Drafted] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
 
 
 PROMPT = ("You match one plain-words trading idea to the closest of the plays listed, or 'none' if no play fits what "
@@ -498,4 +499,12 @@ def draft(text: str, *, post=requests.post, top: int = 3) -> Drafted | None:
     why = next(m.why for m in cands if m.play.id == chosen)
     alts = [Drafted(m.play, spec, "playbook", m.why) for m in cands if m.play.id != chosen
             for spec in [_safe_build(m.play.id, [filled[m.play.id], {}], title)] if spec is not None]
-    return Drafted(BY_ID[chosen], _safe_build(chosen, [values, filled[chosen], {}], title), model, why, alts)
+    _built = _safe_build(chosen, [values, filled[chosen], {}], title)
+    _dropped = []
+    if _built is not None:
+        if hasattr(_built, "hold"):
+            _drafted = list(_built.hold) + list(_built.short or [])
+        else:
+            _drafted = list(getattr(_built, "tickers", []) or [])
+        _dropped = [t for t in tickers_in(text) if t not in set(_drafted)]
+    return Drafted(BY_ID[chosen], _built, model, why, alts, _dropped)

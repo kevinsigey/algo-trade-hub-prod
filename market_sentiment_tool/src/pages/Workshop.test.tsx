@@ -51,6 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   session.token = "jwt";
   window.history.pushState({}, "", "/");
+  try { localStorage.clear(); } catch { void 0; }
 });
 
 describe("workshop copy", () => {
