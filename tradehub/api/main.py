@@ -467,7 +467,15 @@ def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_adm
 
 @app.get("/api/workshop/ideas", tags=["Workshop"])
 def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
-    return workshop_store.list_ideas(supabase)
+    rows = workshop_store.list_ideas(supabase)
+    ideas = {i["id"]: i for i in supabase.table("ideas").select("*").execute().data or []}
+    for r in rows:
+        i = ideas.get(r["id"], {})
+        r["live_at"] = i.get("live_at")
+        r["killed_at"] = i.get("killed_at")
+        r["auto_orders"] = i.get("auto_orders")
+        r["size_pct"] = i.get("size_pct")
+    return rows
 
 
 def _found(supabase, idea_id: int) -> dict:
@@ -727,6 +735,27 @@ def get_ideas(supabase=Depends(get_supabase)):
             row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
         out.append(row)
     return out
+
+
+@app.get("/api/ideas/summary", tags=["Ideas"])
+def get_ideas_summary(supabase=Depends(get_supabase)):
+    runs = supabase.table("idea_runs").select("idea_id,variation,verdict").execute().data or []
+    latest: dict[int, tuple[int, str]] = {}
+    for r in runs:
+        iid = r["idea_id"]
+        if iid not in latest or r["variation"] > latest[iid][0]:
+            latest[iid] = (r["variation"], r["verdict"])
+    tested = passed = failed = not_enough = 0
+    for _, (_, verdict) in latest.items():
+        tested += 1
+        if verdict == "PASS":
+            passed += 1
+        elif verdict == "FAIL":
+            failed += 1
+        elif verdict == "NOT ENOUGH DATA":
+            not_enough += 1
+    published = len(workshop_store.published_ideas(supabase))
+    return {"tested": tested, "passed": passed, "failed": failed, "not_enough_data": not_enough, "published": published}
 
 
 @app.get("/api/ideas/{idea_id}", tags=["Ideas"])

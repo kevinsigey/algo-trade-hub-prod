@@ -33,7 +33,7 @@ describe("Portfolio", () => {
   it("says the account is not connected and shows no dollar figure", async () => {
     serve(payload({ state: "not_connected", as_of: null }));
     page(<Portfolio />);
-    expect(await screen.findByText("Account not connected")).toBeInTheDocument();
+    expect(await screen.findByText("Paper account not connected")).toBeInTheDocument();
     expect(screen.queryByText(/\$0/)).toBeNull();
   });
 
@@ -44,7 +44,7 @@ describe("Portfolio", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/^Pre-start test account/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Paper account · not traded yet/)).toBeInTheDocument();
     expect(screen.getAllByText("$100,000").length).toBe(2); // the Account figure and the Cash row
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("+0.0%")).toBeNull();
@@ -63,7 +63,7 @@ describe("Portfolio", () => {
     expect(await screen.findByText("+4.8%")).toBeInTheDocument();
     expect(screen.getByText("+2.7 pts")).toBeInTheDocument();
     expect(screen.getByText("58%")).toBeInTheDocument();
-    expect(screen.getByText("Live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
+    expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     expect(screen.getAllByText("No idea yet (manual)").length).toBe(2);
     expect(screen.getByText("Every position · 1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Closed trades/ })).toHaveAttribute("href", "/portfolio/closed");
