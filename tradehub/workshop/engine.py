@@ -483,6 +483,58 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
             "reasons": reasons}
 
 
+def _late_listing_notes(spec: IdeaSpec, closes: pd.DataFrame) -> list[str]:
+    """Say out loud when a leg's history starts long after the test's start date.
+
+    `_frame` drops any day a rule ticker has no close, so one late-listing leg (a recent IPO)
+    silently truncates the whole test: the "years it was built on" quietly become only the years
+    since that listing, and years of benchmark history are never tested at all. The truncation
+    itself is correct -- there are no prices to test -- but it must not be silent.
+    """
+    legs = list(dict.fromkeys(list(spec.hold) + list(spec.short)
+                              + ([spec.otherwise] if spec.otherwise != CASH else [])
+                              + [spec.benchmark]
+                              + (list(spec.portfolio.core) if spec.portfolio else [])))
+    start = pd.Timestamp(spec.start)
+    notes = []
+    for t in legs:
+        if t not in closes:
+            continue
+        first = closes[t].first_valid_index()
+        if first is not None and first > start + pd.Timedelta(days=30):
+            notes.append(f"{t} has no prices before {first.date()}: every leg of this test starts then, "
+                         "so the years before it are not tested.")
+    return notes
+
+
+def _walk_forward(spec: IdeaSpec, idx, r: np.ndarray, b: np.ndarray, s: np.ndarray, mask: np.ndarray) -> dict:
+    """The claim re-judged on each successive stretch of the timeline, in order.
+
+    The built/unseen split judges the claim once, on the final stretch. That cannot distinguish
+    an edge that held throughout from one that only ever worked in the last two years. Split the
+    timeline into five sequential folds, skip the first (that is the ground the idea was built
+    on), and judge the claim on each later fold with at least a quarter of trading days.
+    """
+    n = len(r)
+    folds = []
+    for chunk in np.array_split(np.arange(n), 5)[1:]:
+        if not len(chunk):
+            continue
+        days = len(chunk)
+        entry = {"start": str(idx[chunk[0]].date()), "end": str(idx[chunk[-1]].date()), "days": days,
+                 "holds": None, "value": None, "label": f"too short to judge ({days} days)",
+                 "idea_cagr": _cagr(r[chunk]), "bench_cagr": _cagr(b[chunk])}
+        if days >= MIN_GATE_DAYS:
+            holds, value, label = _claim(spec.claim, r[chunk], b[chunk], s[chunk], mask[chunk])
+            if math.isfinite(value):
+                entry.update({"holds": bool(holds), "value": value, "label": label})
+            else:
+                entry["label"] = label  # e.g. the condition never held on this stretch
+        folds.append(entry)
+    judged = [f for f in folds if f["holds"] is not None]
+    return {"folds": folds, "held": sum(1 for f in judged if f["holds"]), "of": len(judged)}
+
+
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
              permutations: int = 1000) -> dict:
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
@@ -500,6 +552,10 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     bar = 0.05 / variations
     base = {"variations": variations, "split_date": str(idx[k].date()) if n > k else None,
             "data_start": str(idx[0].date()) if n else None, "data_end": str(idx[-1].date()) if n else None}
+    # Computed before the not-enough-data return: a truncated or short history is exactly when
+    # the notes matter, and the walk-forward's "of 0" is itself the honest answer there.
+    notes = _late_listing_notes(spec, closes)
+    walk_forward = _walk_forward(spec, idx, r, b, s, mask)
 
     reason = None
     n_u = n - k
@@ -510,7 +566,8 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
                   f"{MIN_CONDITION_DAYS} days on and off")
     if reason:
         return _clean({**base, "verdict": "NOT ENOUGH DATA", "headline": HEADLINES["nodata"], "reason": reason,
-                       "claim": None, "shuffle": None, "t_test": None, "periods": None, "context": [], "curve": []})
+                       "claim": None, "shuffle": None, "t_test": None, "periods": None, "context": [], "curve": [],
+                       "notes": notes, "walk_forward": walk_forward})
 
     kind = spec.claim
     on_b = _claim(kind, r[built], b[built], s[built], mask[built])
@@ -577,6 +634,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
         "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
                     "method": "random timing" if spec.rules is not None else "sign-flip vs comparison"},
         "t_test": t_test, "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
+        "notes": notes, "walk_forward": walk_forward,
     })
 
 

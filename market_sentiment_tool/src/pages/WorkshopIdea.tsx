@@ -657,6 +657,9 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
         </div>
       </div>
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
+      {(r.notes ?? []).map((n) => (
+        <p key={n} className="mt-2 text-sm text-amber-200/90">{n}</p>
+      ))}
 
       {r.curve.length > 1 && (
         <div className="mt-4 h-48" aria-label="Idea vs benchmark, cumulative">
@@ -686,9 +689,21 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
             <tr><td className="py-1.5 text-slate-300">Better than chance ({r.shuffle.method})</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.p < r.shuffle.bar} /></td></tr>
             {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, daily difference</td><td className="py-1.5 text-slate-400">{pct(r.t_test.mean_daily_diff, 3)}/day · p = {r.t_test.p.toFixed(3)}{r.t_test.p < 0.05 && r.t_test.mean_daily_diff < 0 ? " · significant, but the wrong way" : ""}</td><td><Mark ok={r.t_test.p < 0.05 ? r.t_test.mean_daily_diff > 0 : null} /></td></tr>}
             {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each market period</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.held >= 4 ? true : r.periods.held <= 1 ? false : null} /></td></tr>}
+            {r.walk_forward && <tr><td className="py-1.5 text-slate-300">Walk-forward, later stretches in order</td><td className="py-1.5 text-slate-400">{r.walk_forward.held} of {r.walk_forward.of} held</td><td><Mark ok={r.walk_forward.of === 0 ? null : r.walk_forward.held === r.walk_forward.of ? true : r.walk_forward.held === 0 ? false : null} /></td></tr>}
             <tr><td className="py-1.5 text-slate-300">Variations tried on this idea</td><td className="py-1.5 text-slate-400">{r.variations} · bar raised accordingly</td><td /></tr>
           </tbody>
         </table>
+      )}
+
+      {r.walk_forward && r.walk_forward.folds.length > 0 && (
+        <div className="mt-2 space-y-0.5 text-xs text-slate-400">
+          {r.walk_forward.folds.map((f) => (
+            <p key={f.start}>
+              {f.start} → {f.end} · {f.label}
+              {f.idea_cagr !== null && f.bench_cagr !== null ? ` · idea ${f.idea_cagr.toFixed(1)}%/yr vs benchmark ${f.bench_cagr.toFixed(1)}%/yr` : ""}
+            </p>
+          ))}
+        </div>
       )}
 
       <p className="mt-1 text-xs text-slate-500">✓ holds · ✗ fails · ~ mixed or not decisive</p>
