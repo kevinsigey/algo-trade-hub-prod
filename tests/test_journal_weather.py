@@ -103,6 +103,11 @@ def test_climatology_is_the_same_week_in_past_years_never_using_the_target_year(
 
 def test_the_station_comes_from_the_series_and_the_rain_suffix():
     assert station_for(_lm("KXHIGHNY-26OCT09-T76", "greater", 76).market) == "NYC"
+    # Coverage expansion (phase-3 §3.2 step 4): stations verified from the
+    # live rules text 2026-11-01 -- Chicago temperatures settle at Midway.
+    assert station_for(_lm("KXHIGHTBOS-26NOV02-T72", "greater", 72).market) == "BOS"
+    assert station_for(_lm("KXLOWTCHI-26NOV02-T56", "greater", 56).market) == "MDW"
+    assert station_for(_lm("KXHIGHTSATX-26NOV02-T89", "greater", 89).market) == "SAT"
     assert station_for(_lm("KXRAIN-26OCT09-PHIL", "greater", 0).market) == "PHL"
     assert station_for(_lm("KXRAIN-26OCT09-TTN", "greater", 0).market) == "TTN"
     assert station_for(_lm("KXHIGHZZZ-26OCT09-T1", "greater", 1).market) is None

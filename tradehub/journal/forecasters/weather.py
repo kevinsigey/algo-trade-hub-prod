@@ -53,6 +53,22 @@ STATIONS: dict[str, tuple[str, str]] = {
     "KXHIGHTNOLA": ("high", "MSY"),
     "KXLOWTAUS": ("low", "AUS"), "KXLOWTOKC": ("low", "OKC"), "KXLOWTATL": ("low", "ATL"),
     "KXLOWTDEN": ("low", "DEN"), "KXLOWTEWR": ("low", "EWR"), "KXLOWTSDF": ("low", "SDF"),
+    # Coverage expansion (phase-3 §3.2 step 4, verified live 2026-11-01): each
+    # series had open markets for Nov 2, 2026 and its rules name the station in
+    # the (CLIxxx) form below. KXHIGHHOU had no open markets and is not added.
+    "KXHIGHAUS": ("high", "AUS"), "KXHIGHCHI": ("high", "MDW"), "KXHIGHDEN": ("high", "DEN"),
+    "KXHIGHMIA": ("high", "MIA"), "KXHIGHTATL": ("high", "ATL"), "KXHIGHTBOS": ("high", "BOS"),
+    "KXHIGHTDAL": ("high", "DFW"), "KXHIGHTDC": ("high", "DCA"), "KXHIGHTEWR": ("high", "EWR"),
+    "KXHIGHTLV": ("high", "LAS"), "KXHIGHTMIN": ("high", "MSP"), "KXHIGHTOKC": ("high", "OKC"),
+    "KXHIGHTPHX": ("high", "PHX"), "KXHIGHTSAN": ("high", "SAN"), "KXHIGHTSATX": ("high", "SAT"),
+    "KXHIGHTSDF": ("high", "SDF"), "KXHIGHTSEA": ("high", "SEA"), "KXHIGHTSFO": ("high", "SFO"),
+    "KXHIGHTTTN": ("high", "TTN"),
+    "KXLOWTBOS": ("low", "BOS"), "KXLOWTCHI": ("low", "MDW"), "KXLOWTDAL": ("low", "DFW"),
+    "KXLOWTDC": ("low", "DCA"), "KXLOWTHOU": ("low", "HOU"), "KXLOWTLAX": ("low", "LAX"),
+    "KXLOWTMIA": ("low", "MIA"), "KXLOWTMIN": ("low", "MSP"), "KXLOWTNOLA": ("low", "MSY"),
+    "KXLOWTNYC": ("low", "NYC"), "KXLOWTPHIL": ("low", "PHL"), "KXLOWTPHX": ("low", "PHX"),
+    "KXLOWTSAN": ("low", "SAN"), "KXLOWTSATX": ("low", "SAT"), "KXLOWTSEA": ("low", "SEA"),
+    "KXLOWTSFO": ("low", "SFO"), "KXLOWTTTN": ("low", "TTN"), "KXLOWTLV": ("low", "LAS"),
 }
 RAIN_SERIES = "KXRAIN"
 RAIN_STATION = {"SATX": "SAT", "PHIL": "PHL", "NOLA": "MSY", "MIN": "MSP", "LV": "LAS", "DC": "DCA",

@@ -26,7 +26,13 @@ STATION_INFO: dict[str, tuple[str, float, float]] = {
     "EWR": ("Newark", 40.690, -74.169), "SDF": ("Louisville", 38.174, -85.736),
     "SAT": ("San Antonio", 29.534, -98.470), "MSP": ("Minneapolis", 44.882, -93.222),
     "LAS": ("Las Vegas", 36.084, -115.154), "DCA": ("Washington DC", 38.852, -77.037),
-    "DFW": ("Dallas–Fort Worth", 32.898, -97.040), "ORD": ("Chicago", 41.974, -87.907),
+    "DFW": ("Dallas–Fort Worth", 32.898, -97.040), "ORD": ("Chicago (O'Hare)", 41.974, -87.907),
+    # Coverage expansion stations (phase-3 §3.2 step 4).
+    "MDW": ("Chicago (Midway)", 41.786, -87.752), "MIA": ("Miami", 25.795, -80.279),
+    "BOS": ("Boston", 42.366, -71.010), "PHX": ("Phoenix", 33.437, -112.008),
+    "SAN": ("San Diego", 32.734, -117.190), "SEA": ("Seattle", 47.450, -122.309),
+    "SFO": ("San Francisco", 37.621, -122.379), "TTN": ("Trenton", 40.277, -74.813),
+    "HOU": ("Houston", 29.645, -95.279),
 }
 
 ENSEMBLE = {f"weather_{k}": k for k in ("high", "low", "rain")}

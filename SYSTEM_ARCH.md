@@ -236,3 +236,15 @@ the house's pre-registered shrink weight from `forecasters/shrunk.py`,
 set once and never tuned on journal results. It freezes beside the raw
 ens-v2 row as a pure function of it. ens-v1 gets no blend row; its record
 stays the raw one the phase-3 measurements were taken on.
+
+## Weather ens-v2 step 4: coverage expansion (and a correction)
+
+STATIONS gains 19 high and 18 low series, each verified live 2026-11-01
+(open markets for Nov 2, 2026; station read from the rules' (CLIxxx)
+form -- Chicago temperatures settle at Midway, MDW, not O'Hare).
+KXHIGHHOU had no open markets and was skipped. The map's station table
+grows to match. CORRECTION to the phase-3 spec's rain plan: the
+per-city KXRAIND* series are month-to-date precipitation accumulations,
+not daily contracts, so the daily rain forecaster does NOT migrate to
+them -- the KXRAIN umbrella stays. A daily per-city rain forecaster
+would be a new design, not a migration.
