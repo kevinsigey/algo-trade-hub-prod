@@ -91,3 +91,9 @@ def test_draft_prompt_mentions_analyst():
     from tradehub.workshop.draft import SYSTEM
     for word in ("analyst", "net_upgrades", "target_upside", "stocks only"):
         assert word in SYSTEM, word
+
+
+def test_draft_prompt_mentions_spreads():
+    from tradehub.workshop.draft import SYSTEM
+    for word in ("spread", "A+B/C+D", "zscore", "percentile"):
+        assert word in SYSTEM, word

@@ -585,3 +585,23 @@ describe("Workshop event review fixes", () => {
     expect(screen.getByText(/· — events/)).toBeInTheDocument();
   });
 });
+
+describe("Workshop spread rules", () => {
+  it("offers a spread source with z-score and percentile, and words it plainly", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "spread" } });
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(expect.arrayContaining(["zscore", "percentile", "level"]));
+    expect(options).not.toContain("rsi");
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "zscore" } });
+    fireEvent.change(screen.getByLabelText("Series / ticker"), { target: { value: "RL+WSM/LULU+NKE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0]).toMatchObject({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore" });
+    expect(conditionText({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore", lookback_days: 60, op: ">", threshold: 2 } as never))
+      .toBe("RL+WSM/LULU+NKE spread 60-day z-score > 2");
+    expect(conditionText({ source: "price", series: "SPY", measure: "percentile", lookback_days: 252, op: "<", threshold: 10 } as never))
+      .toBe("SPY 252-day percentile < 10");
+  });
+});

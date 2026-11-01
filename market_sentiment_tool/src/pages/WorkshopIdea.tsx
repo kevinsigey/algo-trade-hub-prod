@@ -74,6 +74,7 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
             <option value="fred">FRED series</option>
             <option value="price">Price</option>
             <option value="analyst">Analyst (stocks)</option>
+            <option value="spread">Spread (A+B/C+D)</option>
           </select>
         </Field>
         <Field label="Series / ticker">
