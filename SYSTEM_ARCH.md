@@ -152,3 +152,16 @@ in the order path imports it (test-enforced). Debate verdicts never feed model
 probabilities, the scoreboard, or the trackers; grades (+5d/+20d direction hits,
 Hold = no-call, flat = miss) live in `debate_record.json`, with a "No edge detected
 in graded runs" banner at 30+ graded non-Hold +5d runs at <= 50% hits.
+
+## Macro predictions dashboard (phase-3 §1)
+
+`tradehub/macro.py` composes one card per macro engine (jobs, CPI, gas) from
+reads the hub already makes -- jobs_scorecard rows, the scoreboard's
+`current_runs`, and journal scores/forecasts/settlements -- behind
+`GET /api/macro`, with each source guarded separately so a dead read degrades
+only its own card's sections to null. The `/macro` page renders call, record
+(paired Brier vs the market, gate/promotion, diagnostics flags as
+annotations), and an 8-point trail; jobs trails are values, CPI/gas trails
+are probabilities, and the payload's `trail_kind` keeps the two apart. `/jobs`
+and `/cpi` remain the detail pages; the CPI card carries the display-only
+honesty line the old nav label held.
