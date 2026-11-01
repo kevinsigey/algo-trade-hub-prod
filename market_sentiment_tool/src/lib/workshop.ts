@@ -302,6 +302,16 @@ export interface DraftResponse {
   play: PlayMatch | null;
   alternatives: (PlayMatch & { spec: IdeaSpec })[];
   dropped?: string[];
+  /** What the drafter confessed it could not express (§2.2 envelope) -- shown, never silent. */
+  unexpressed?: string[];
+}
+
+/** The import door's request body: a spec drafted out-of-band (in chat), with the same
+ * envelope fields the server-side drafter returns. */
+export interface SpecImport {
+  spec: IdeaSpec;
+  requested?: string[];
+  unexpressed?: string[];
 }
 
 export type TickerNames = Record<string, { name: string; kind: string } | null>;

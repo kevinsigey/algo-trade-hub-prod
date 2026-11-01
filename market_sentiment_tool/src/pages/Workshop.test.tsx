@@ -617,6 +617,17 @@ describe("Workshop drafts: left-out tickers and saved drafts", () => {
     expect(await screen.findByText("The draft left out: BJ, MO. Add them back if you meant them.")).toBeInTheDocument();
   });
 
+  it("imports a chat-drafted spec onto the same confirm screen, confession shown", async () => {
+    const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 },
+      "/api/workshop/draft/import": { body: { spec: { ...SPEC, hold: ["RL"], when: undefined, rules: null }, model: "import", play: null, alternatives: [], dropped: [], unexpressed: ["no options legs yet"] } } });
+    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Import a spec drafted in chat" }));
+    fireEvent.change(screen.getByLabelText("Spec JSON (envelope or bare spec)"), { target: { value: JSON.stringify({ spec: { title: "x" }, requested: ["RL"], unexpressed: ["no options legs yet"] }) } });
+    fireEvent.click(screen.getByRole("button", { name: "Import as draft" }));
+    expect(await screen.findByText("The drafter couldn't express: no options legs yet")).toBeInTheDocument();
+    expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft/import"))).toBe(true);
+  });
+
   it("restores a saved draft after a reload, and Discard drops it", async () => {
     localStorage.setItem("workshop-draft-2", JSON.stringify({ ...SPEC, title: "Saved K-Shape", hold: ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"], when: undefined, rules: null }));
     const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 } });
