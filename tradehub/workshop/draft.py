@@ -1,15 +1,19 @@
 """A model turns Kevin's plain words into an IdeaSpec draft. Kevin confirms or edits it before anything runs.
 
-Two providers, one contract (phase-2 spec §2.2). Claude first: the Anthropic API with the IdeaSpec schema
-generated from the pydantic model and forced as a tool call, so a reply that does not fit the engine's
-contract cannot be returned. The free OpenRouter list is the automatic fallback when the Anthropic key is
-unset or the call fails (a refusal is an answer, not a failure -- it does not fall back). No key, a refusal
-or an API error all become DraftUnavailable, and the Workshop shows the hand-fill form.
+Providers, one contract (phase-2 spec §2.2, order revised 2026-11-01 at Kevin's call: the Anthropic
+key is not available to this project). Gemini first: Google's free tier (GEMINI_API_KEY from AI Studio)
+with the IdeaSpec schema generated from the pydantic model and sent as the response JSON schema, so the
+reply is shaped by the engine's contract and validated against it either way. Claude stays in the chain
+second for any deployment that does set ANTHROPIC_API_KEY (forced tool call, same envelope). The free
+OpenRouter list is the automatic fallback when the earlier keys are unset or their calls fail (a refusal
+is an answer, not a failure -- it does not fall back). No key, a refusal or an API error all become
+DraftUnavailable, and the Workshop shows the hand-fill form.
 
-Both providers answer in the same envelope -- {spec, requested, unexpressed} -- and the server diffs
+All providers answer in the same envelope -- {spec, requested, unexpressed} -- and the server diffs
 `requested` against the spec's actual tickers: anything named but neither used nor explained in
 `unexpressed` comes back as a loud drop, never a silent one. A draft may be incomplete; it may not be
-quietly incomplete.
+quietly incomplete. `unexpressed` doubles as the capability-request channel: each entry scopes the
+specific capability the engine would need added, so a gap becomes a buildable request, not a shrug.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from tradehub.workshop.spec import IdeaSpec
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 # Free models OpenRouter listed with structured outputs on 2026-10-30, best first. Override: OPENROUTER_MODELS.
 MODELS = ("nvidia/nemotron-3.5-super-vl:free", "dots-studio/dots-3-note-preview:free",
           "xingchen-agi/xing4.0-29b-a4b:free")
@@ -58,14 +63,22 @@ SYSTEM = (
     "shares when the idea says so. Never sell an option the held shares or a "
     "bought leg do not cover. An idea may also carry a portfolio wrapper (portfolio) when the words frame it as "
     "one sleeve of a broader book: a core list of tickers held equal-weight, the idea's share of the book "
-    "(idea_share, 0.1-0.9), and a rebalance cadence; the backtest then judges the combined book. Never invent results. "
+    "(idea_share, 0.1-0.9), and a rebalance cadence; the backtest then judges the combined book. "
+    "When the words ask for something outside this contract -- intraday timing (the engine is daily bars only), "
+    "fundamental screens, calendar or event-date rules, position sizing beyond the wrapper's share, more than "
+    "two option legs, a measure or data source not listed above -- do not silently substitute something else: "
+    "draft the closest version the contract CAN carry and scope the gap in unexpressed as a capability request "
+    "(see the envelope note). Never invent results. "
     "Reply with JSON only."
 )
 ENVELOPE_NOTE = (
     " Beside the spec itself, return requested -- every ticker, leg and condition the words name, one short "
-    "entry each -- and unexpressed -- anything the words ask for that the spec cannot carry, in plain words. "
-    "A named ticker that does not appear in the spec must be explained in unexpressed; unexplained absences "
-    "are reported to the user as silent drops."
+    "entry each -- and unexpressed -- anything the words ask for that the spec cannot carry. Write each "
+    "unexpressed entry as a capability request in exactly this shape: \"needs <the specific capability the "
+    "engine would have to add>: <what the words asked for> -- drafted <the closest stand-in in the spec> "
+    "instead\". Name the capability concretely (a data source, a measure, a timing granularity, a sizing "
+    "rule), never just \"unsupported\". A named ticker that does not appear in the spec must be explained in "
+    "unexpressed; unexplained absences are reported to the user as silent drops."
 )
 
 
@@ -153,11 +166,55 @@ def _draft_claude(text: str, *, post=requests.post) -> tuple[DraftEnvelope, str]
     raise DraftUnavailable("error", "the model returned no draft")
 
 
+def _draft_gemini(text: str, *, post=requests.post) -> tuple[DraftEnvelope, str]:
+    """Gemini (free tier): the envelope schema rides as the response JSON schema, so the
+    reply is shaped by the contract and still validated against it server-side."""
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise DraftUnavailable("no_key", "GEMINI_API_KEY is not set on the server")
+    model = os.getenv("GEMINI_DRAFT_MODEL", "").strip() or "gemini-2.5-flash"
+    # The REST surface is camelCase throughout (systemInstruction, generationConfig) --
+    # the field names are Google's, verified against the generateContent reference.
+    body = {
+        "systemInstruction": {"parts": [{"text": SYSTEM + ENVELOPE_NOTE}]},
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseJsonSchema": DraftEnvelope.model_json_schema(),
+            "maxOutputTokens": 8192,
+            # 2.5-flash thinks by default and thinking tokens come out of the output
+            # budget; a capped budget keeps the JSON from being truncated away.
+            "thinkingConfig": {"thinkingBudget": 1024},
+        },
+    }
+    try:
+        resp = post(GEMINI_URL.format(model=model),
+                    headers={"x-goog-api-key": key, "content-type": "application/json"},
+                    json=body, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 -- any HTTP failure means: try the next provider
+        raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
+    if (data.get("promptFeedback") or {}).get("blockReason"):
+        raise DraftUnavailable("refused", "the model declined to draft this idea")
+    candidate = (data.get("candidates") or [{}])[0]
+    if candidate.get("finishReason") in ("SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"):
+        raise DraftUnavailable("refused", "the model declined to draft this idea")
+    content = "".join(part.get("text") or ""
+                      for part in (candidate.get("content") or {}).get("parts") or [])
+    if not content.strip():
+        raise DraftUnavailable("error", "the model returned no draft")
+    try:
+        return DraftEnvelope.model_validate_json(content), model
+    except Exception as exc:  # noqa: BLE001
+        raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
+
+
 def _draft_openrouter(text: str, *, post=requests.post) -> tuple[DraftEnvelope, str]:
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key:
         raise DraftUnavailable("no_key", "no drafting model is configured on the server "
-                                         "(ANTHROPIC_API_KEY / OPENROUTER_API_KEY)")
+                                         "(GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY)")
     body = {
         "models": _models(),
         "messages": [{"role": "system", "content": SYSTEM + ENVELOPE_NOTE},
@@ -185,17 +242,19 @@ def _draft_openrouter(text: str, *, post=requests.post) -> tuple[DraftEnvelope, 
 
 
 def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str, list[str], list[str]]:
-    """(draft, the model id that wrote it, dropped, unexpressed). Claude first, OpenRouter
-    on fallback; the envelope diff runs on whichever answered."""
+    """(draft, the model id that wrote it, dropped, unexpressed). Gemini first (free tier),
+    then Claude where its key exists, then the OpenRouter free list; a refusal from any of
+    them is an answer and stops the chain. The envelope diff runs on whichever answered."""
     env: DraftEnvelope | None = None
     model = ""
-    if os.getenv("ANTHROPIC_API_KEY", "").strip():
-        try:
-            env, model = _draft_claude(text, post=post)
-        except DraftUnavailable as exc:
-            if exc.reason == "refused":
-                raise
-            env = None  # unset key or a failed call: the free list gets its turn
+    for key_var, provider in (("GEMINI_API_KEY", _draft_gemini), ("ANTHROPIC_API_KEY", _draft_claude)):
+        if env is None and os.getenv(key_var, "").strip():
+            try:
+                env, model = provider(text, post=post)
+            except DraftUnavailable as exc:
+                if exc.reason == "refused":
+                    raise
+                env = None  # a failed call: the next provider gets its turn
     if env is None:
         env, model = _draft_openrouter(text, post=post)
     dropped, unexpressed = envelope_check(env, text)
