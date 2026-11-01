@@ -82,3 +82,15 @@ On the VPS (as `deploy`):
     /opt/stack/bin/deploy deploy tradehub <old-sha>  # roll back
 
 Live execution and the crypto shadow worker are parked (spec §7); their old PM2 files are in git history (removed in this commit).
+
+## Agent debates (TradingAgents feed)
+
+On-demand LLM debate memos live in `tradehub/agents/` (spec:
+`docs/TradingAgents-Ideas-Feed-Spec.md`). One ticker per run, triggered by
+`python -m tradehub.scripts.agent_debate run <TICKER>`; the framework runs in its own
+venv (`tradehub/agents/requirements.txt`, or `TRADEHUB_AGENTS_PYTHON`), never inside the
+hub process, and has no path to orders. Runs are stored as artifacts (failures included),
+shown on the Workshop page under "Agent debates" with the standing label "LLM agent
+debate — not a model signal", and graded at +5/+20 trading days into a record kept
+separate from every model statistic. Set `TRADEHUB_AGENTS_DIR` to a persistent volume
+in production so artifacts survive deploys.

@@ -326,6 +326,58 @@ export function legText(leg: OptionLeg): string {
     `${leg.qty_per_share !== 1 ? `, ${leg.qty_per_share} per share` : ""}`;
 }
 
+/** One agent-debate card (feed spec §6): every label the payload resolved server-side. */
+export interface AgentDebateCard {
+  source: "agent_debate";
+  chip: string;
+  run_id: string;
+  ticker: string;
+  decision: string;
+  run_at_ct: string;
+  as_of_date: string;
+  historical: boolean;
+  historical_label: string | null;
+  framework_version: string;
+  framework_short: string;
+  llm_provider: string;
+  llm_model: string;
+  status: string;
+  error: string | null;
+  stale: boolean;
+  cost_usd: number | string;
+  inputs_note: string;
+  analyst_summaries: Record<string, string>;
+  bull_case: string;
+  bear_case: string;
+  trader_rationale: string;
+  risk_verdict: string;
+  has_report: boolean;
+  grades: Record<string, { ret_pct: number; outcome: string } | "pending">;
+}
+
+export interface DebateRecordSummary {
+  h5: { graded: number; hits: number; hit_rate: number | null; no_calls: number };
+  h20: { graded: number; hits: number; hit_rate: number | null; no_calls: number };
+  banner: boolean;
+}
+
+export interface AgentDebateFeed {
+  chip: string;
+  cards: AgentDebateCard[];
+  record: DebateRecordSummary;
+  banner: string | null;
+}
+
+/** A Workshop request that answers in plain text (a debate's markdown report). */
+export async function adminText(path: string): Promise<string> {
+  const token = await sessionToken();
+  const response = await fetch(buildApiUrl(path), {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  if (!response.ok) throw new ApiError(`Request failed (${response.status})`, response.status, null);
+  return response.text();
+}
+
 /** The import door's request body: a spec drafted out-of-band (in chat), with the same
  * envelope fields the server-side drafter returns. */
 export interface SpecImport {

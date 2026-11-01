@@ -140,3 +140,15 @@ VITE_API_BASE_URL="..."
 - Archive legacy or duplicate material under `archive/` so graphify and vault indexing stay centered on canonical surfaces.
 
 *Last updated: 2026-04-15 during cleanup and unification pass*
+
+## Agent debate feed (phase-2 §3.2)
+
+`tradehub/agents/` is a fenced side module: schema/store/importer/grader/payload for
+TradingAgents debate artifacts, a subprocess runner (framework isolated in its own
+venv; keys from env only), a CLI (`tradehub/scripts/agent_debate.py`), and two admin
+read routes (`GET /api/agent-debates`, `.../{run_id}/report`) feeding the Workshop
+page's Agent debates section. It imports no order/broker/portfolio code and nothing
+in the order path imports it (test-enforced). Debate verdicts never feed model
+probabilities, the scoreboard, or the trackers; grades (+5d/+20d direction hits,
+Hold = no-call, flat = miss) live in `debate_record.json`, with a "No edge detected
+in graded runs" banner at 30+ graded non-Hold +5d runs at <= 50% hits.

@@ -556,6 +556,27 @@ def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_adm
     return workshop_store.create_idea(supabase, body.title, body.plain_words)
 
 
+@app.get("/api/agent-debates", tags=["Workshop"])
+def agent_debates(_admin: dict = Depends(admin.require_admin)):
+    """The TradingAgents debate feed (phase-2 §3.2): labelled cards + the debate record.
+    Read-only and fenced -- this module has no path to orders, and debates are never
+    model signals: the chip text rides on every card and on the payload itself."""
+    from tradehub.agents import payload as agents_payload, store as agents_store
+    from tradehub.workshop.data import last_complete_day
+    latest = last_complete_day(datetime.now(timezone.utc)).isoformat()
+    return agents_payload.feed(agents_store.list_runs(), agents_store.load_grades(),
+                               latest_session=latest)
+
+
+@app.get("/api/agent-debates/{run_id}/report", tags=["Workshop"])
+def agent_debate_report(run_id: str, _admin: dict = Depends(admin.require_admin)):
+    from tradehub.agents import store as agents_store
+    text = agents_store.read_report(run_id)
+    if text is None:
+        raise HTTPException(404, detail="no such debate report")
+    return Response(content=text, media_type="text/markdown")
+
+
 @app.get("/api/workshop/ideas", tags=["Workshop"])
 def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     rows = workshop_store.list_ideas(supabase)
