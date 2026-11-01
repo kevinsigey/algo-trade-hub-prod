@@ -1440,6 +1440,20 @@ def _target_day(target: str):
         return None
 
 
+@app.get("/api/weather/degree-days", tags=["Weather"])
+def get_degree_days():
+    """The degree-day demand panel (§5.3): last completed week's HDD/CDD by Census
+    division vs the 10-year normal, plus the population-weighted national index.
+    Serves the weekly snapshot file as written; a missing snapshot is a 503 with
+    the reason, never a panel of invented zeros."""
+    from tradehub.weather_demand import read_snapshot, snapshot_path
+    panel = read_snapshot()
+    if panel is None:
+        raise HTTPException(503, detail=f"no degree-day snapshot at {snapshot_path()} yet -- "
+                                        "the weekly degree_days job has not written one")
+    return panel
+
+
 @app.get("/api/weather", tags=["Weather"])
 def get_weather(supabase=Depends(get_supabase)):
     """Today's weather forecast vs Kalshi vs climatology, plus settled history.
