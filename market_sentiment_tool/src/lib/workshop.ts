@@ -80,9 +80,21 @@ export const ORDER_OPTIONS: { value: string; label: string }[] = [
   { value: "limit:day", label: "Limit, during the day" },
 ];
 
+/** One option leg (§2.3): strike as % of the price at entry; priced with a model, never real history. */
+export interface OptionLeg {
+  underlying: string;
+  kind: "call" | "put";
+  side: "buy" | "sell";
+  strike_pct: number;
+  days_to_expiry: number;
+  roll_days_left: number;
+  qty_per_share: number;
+}
+
 export interface IdeaSpec {
   title: string;
   hold: string[];
+  options?: OptionLeg[];
   short?: string[];
   execution?: Execution;
   exits?: Exits;
@@ -176,6 +188,8 @@ export interface RunResult {
     held: number; of: number;
   } | null;
   notes?: string[];
+  /** Present when the spec carries option legs: the model-prices label and each leg's vol source. */
+  options?: { model_prices: boolean; legs: (OptionLeg & { vol: string })[] } | null;
   variations: number;
   context: { name: string; built_cagr: number | null; unseen_cagr: number | null; unseen_max_dd: number | null }[];
   curve: { t: string; idea: number; benchmark: number }[];
@@ -304,6 +318,12 @@ export interface DraftResponse {
   dropped?: string[];
   /** What the drafter confessed it could not express (§2.2 envelope) -- shown, never silent. */
   unexpressed?: string[];
+}
+
+export function legText(leg: OptionLeg): string {
+  return `${leg.side} ${leg.underlying} ${leg.kind} @ ${leg.strike_pct}% of spot, ${leg.days_to_expiry}d` +
+    `${leg.roll_days_left ? `, roll at ${leg.roll_days_left}d left` : ""}` +
+    `${leg.qty_per_share !== 1 ? `, ${leg.qty_per_share} per share` : ""}`;
 }
 
 /** The import door's request body: a spec drafted out-of-band (in chat), with the same

@@ -23,7 +23,7 @@ def api(monkeypatch):
     monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: ("closes", tuple(tickers)))
     monkeypatch.setattr(main, "workshop_fred", lambda series, start: "series")
 
-    def fake_run(spec, closes, fred, *, variations, seed):
+    def fake_run(spec, closes, fred, *, variations, seed, div_yields=None):
         calls.append({"variations": variations, "seed": seed, "fred": fred})
         return RESULT
     monkeypatch.setattr(main, "run_test", fake_run)
@@ -130,7 +130,7 @@ def passed(api, monkeypatch):
     c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})
     gate = {"status": "ready", "new_days": 70, "needed": 63, "claim": {"holds": True}, "size_ok": True, "reasons": []}
     seen = []
-    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, closes, fred: "frame")
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, closes, fred, div_yields=None: "frame")
 
     def fake_gate(spec, frame, data_end, size_pct):
         seen.append((frame, str(data_end), size_pct))
@@ -279,7 +279,7 @@ def test_run_analysis_and_csv_stop_at_the_runs_data_end(api, monkeypatch):
     c, db, _ = api
     frame, prices = _frame_and_prices()
     monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
-    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred, div_yields=None: frame)
     idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()
     run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
     got = c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").json()
@@ -317,7 +317,7 @@ def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
     frame, prices = _frame_and_prices()
     frame["ret"] = 0.0
     monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: prices)
-    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred: frame)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, p, fred, div_yields=None: frame)
     monkeypatch.setattr(main, "run_test", lambda *a, **k: {**RESULT, "curve": [{"t": "2025-01-01", "idea": 0.0, "benchmark": 0.0},
                                                                                 {"t": "2026-10-29", "idea": 12.0, "benchmark": 0.0}]})
     idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "gold"}).json()

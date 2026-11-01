@@ -45,6 +45,7 @@ HEADLINES = {
 def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
+    needed += [leg.underlying for leg in spec.options]
     needed += [c.series for c in _conditions(spec) if c.source in ("price", "analyst")]  # target_upside reads the close
     needed += [t for c in _conditions(spec) if c.source == "spread" for t in re.split(r"[+/]", c.series)]
     needed += list(spec.portfolio.core) if spec.portfolio else []
@@ -60,6 +61,17 @@ def _conditions(spec: IdeaSpec) -> list[Condition]:
 def rule_series_ids(spec: IdeaSpec) -> list[str]:
     """The FRED ids the rule reads."""
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "fred"))
+
+
+def option_series_ids(spec: IdeaSpec) -> list[str]:
+    """The FRED ids option legs read: each underlying's vol index (when CBOE publishes one)
+    plus DTB3 for the rate. Underlyings without an index fall back to realised vol in the
+    pricing core and the run labels them the cruder model."""
+    if not spec.options:
+        return []
+    from tradehub.workshop.options import VOL_INDEX
+    ids = [VOL_INDEX[u] for u in dict.fromkeys(leg.underlying for leg in spec.options) if u in VOL_INDEX]
+    return list(dict.fromkeys(ids + ["DTB3"]))
 
 
 def analyst_tickers(spec: IdeaSpec) -> list[str]:
@@ -202,7 +214,8 @@ def _frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> pd
     """The rows the rule runs on: from the start date (or the day analyst coverage begins, so years with no
     analyst data don't count as "out" days), dropping any day a rule ticker has no close."""
     rule = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else [])
-                              + [spec.benchmark, "SPY"] + (list(spec.portfolio.core) if spec.portfolio else [])))
+                              + [spec.benchmark, "SPY"] + (list(spec.portfolio.core) if spec.portfolio else [])
+                              + [leg.underlying for leg in spec.options]))
     start = pd.Timestamp(spec.start)
     for c in _conditions(spec):
         if c.source == "analyst":
@@ -233,15 +246,64 @@ def _legbars(spec: IdeaSpec, closes: pd.DataFrame, fred: dict | None = None) -> 
             "prev": frame[leg].to_numpy()[:-1], "side": 1 if spec.hold else -1}
 
 
-def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
+def _option_leg_series(spec: IdeaSpec, frame: pd.DataFrame, fred: dict[str, pd.Series],
+                         mask_all: pd.Series, div_yields: dict[str, float]) -> dict[int, pd.Series]:
+    """Each option leg's daily return per $1 of underlying notional, on the returns index
+    (frame rows 1..). A leg opens a FRESH contract at the first close of every in-segment --
+    strike set from that close -- and is flat while the rule is out; rolls inside a segment
+    are the pricing core's job. Model prices throughout (options.py): the run says so."""
+    from tradehub.workshop.options import implied_vol_series, leg_returns
+
+    if "DTB3" not in fred:
+        raise ValueError("an options test needs the DTB3 rate series (the data layer fetches it)")
+    rets_index = frame.index[1:]
+    in_mask = mask_all.iloc[1:].to_numpy(dtype=bool)
+    rate = (fred["DTB3"].astype(float) / 100.0).reindex(frame.index, method="ffill")
+    vols: dict[str, pd.Series] = {}
+    out: dict[int, pd.Series] = {}
+    # In-segment boundaries over returns positions: a segment [a..b] enters at frame row a+1.
+    starts = [i for i in range(len(in_mask)) if in_mask[i] and (i == 0 or not in_mask[i - 1])]
+    ends = [i for i in range(len(in_mask)) if in_mask[i] and (i == len(in_mask) - 1 or not in_mask[i + 1])]
+    for li, leg in enumerate(spec.options):
+        u = leg.underlying
+        if u not in vols:
+            vols[u] = implied_vol_series(u, frame[u], fred)[0]
+        series = pd.Series(0.0, index=rets_index)
+        for a, b in zip(starts, ends, strict=True):
+            rows = frame.index[a + 1: b + 2]  # entry close .. last in-day close
+            priced = leg_returns(leg.kind, 1 if leg.side == "buy" else -1, frame[u].loc[rows],
+                                 vols[u].loc[rows], rate.loc[rows], div_yields.get(u, 0.0),
+                                 days_to_expiry=leg.days_to_expiry, strike_pct=leg.strike_pct,
+                                 roll_days_left=leg.roll_days_left)
+            series.loc[rows] = priced["ret"].to_numpy()
+        out[li] = series
+    return out
+
+
+def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series],
+          div_yields: dict[str, float] | None = None):
     """The one rule implementation shared by the backtest, the live-paper gate and the shadow track."""
     frame = _frame(spec, closes, fred)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
-    # Equal weight across every leg; a short leg earns -r (rebalanced daily) and pays its borrow fee each day held.
-    n_legs = len(spec.hold) + len(spec.short)
-    borrow = spec.borrow_bps_yr / 1e4 / DAYS * len(spec.short) / n_legs
-    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / n_legs).to_numpy() - borrow
+    # Equal weight across every position; a short leg earns -r (rebalanced daily) and pays its borrow fee
+    # each day held. A covered option leg folds into its underlying's stream (its return is per $1 of
+    # underlying notional); a standalone leg is its own position.
+    hold_sum = rets[spec.hold].sum(axis=1) if spec.hold else pd.Series(0.0, index=rets.index)
+    short_sum = rets[spec.short].sum(axis=1) if spec.short else pd.Series(0.0, index=rets.index)
+    n_pos = len(spec.hold) + len(spec.short)
+    extra = pd.Series(0.0, index=rets.index)
+    if spec.options:
+        leg_map = _option_leg_series(spec, frame, fred, mask_all, div_yields or {})
+        for li, leg in enumerate(spec.options):
+            contrib = leg_map[li] * leg.qty_per_share
+            if leg.underlying in spec.hold:
+                hold_sum = hold_sum + contrib
+            else:
+                extra = extra + contrib
+                n_pos += 1
+    borrow = spec.borrow_bps_yr / 1e4 / DAYS * len(spec.short) / n_pos
+    held = ((hold_sum - short_sum + extra) / n_pos).to_numpy() - borrow
     other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(rets))
     return (rets.index, mask_all.iloc[1:].to_numpy(), held, other, rets[spec.benchmark].to_numpy(),
             rets["SPY"].to_numpy(), rets)
@@ -396,16 +458,18 @@ def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> n
     return np.where(m, held, other) - cost * switches
 
 
-def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.DataFrame:
+def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series],
+                div_yields: dict[str, float] | None = None) -> pd.DataFrame:
     """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
-    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
+    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred, div_yields)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
     ret = _blend(spec, _build(position, sleeve, other, _switch_cost(spec)), rets)
     return pd.DataFrame({"ret": ret, "on": mask, "bench": b, "spy": s, "exit": why, "held": position.astype(bool)},
                         index=idx)
 
 
-def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> tuple[dict[str, float], str]:
+def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series],
+                      div_yields: dict[str, float] | None = None) -> tuple[dict[str, float], str]:
     """Signed weights for the holding the order placed this morning establishes, from data up to the last close.
 
     Open/day orders set today's holding; a close order sets tomorrow's. Phantom business days are appended and the
@@ -420,7 +484,7 @@ def target_and_reason(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.S
         for part in ("open", "high", "low"):
             if f"{leg}.{part}" in padded:
                 padded.loc[extra, f"{leg}.{part}"] = frame[leg].iloc[-1]
-    _, mask, held, *_ = _legs(spec, padded, fred)
+    _, mask, held, *_ = _legs(spec, padded, fred, div_yields)
     position, why, _ = _held(spec, mask, held, _legbars(spec, padded, fred))  # the morning after a stop, it's out
     if bool(position[-1]):
         n = len(spec.hold) + len(spec.short)
@@ -441,8 +505,9 @@ def _blend_weights(spec: IdeaSpec, idea: dict[str, float]) -> dict[str, float]:
     return out
 
 
-def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> dict[str, float]:
-    return target_and_reason(spec, closes, fred)[0]
+def target_today(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series],
+                 div_yields: dict[str, float] | None = None) -> dict[str, float]:
+    return target_and_reason(spec, closes, fred, div_yields)[0]
 
 
 def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
@@ -494,7 +559,8 @@ def _late_listing_notes(spec: IdeaSpec, closes: pd.DataFrame) -> list[str]:
     legs = list(dict.fromkeys(list(spec.hold) + list(spec.short)
                               + ([spec.otherwise] if spec.otherwise != CASH else [])
                               + [spec.benchmark]
-                              + (list(spec.portfolio.core) if spec.portfolio else [])))
+                              + (list(spec.portfolio.core) if spec.portfolio else [])
+                              + [leg.underlying for leg in spec.options]))
     start = pd.Timestamp(spec.start)
     notes = []
     for t in legs:
@@ -536,8 +602,8 @@ def _walk_forward(spec: IdeaSpec, idx, r: np.ndarray, b: np.ndarray, s: np.ndarr
 
 
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
-             permutations: int = 1000) -> dict:
-    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
+             permutations: int = 1000, div_yields: dict[str, float] | None = None) -> dict:
+    idx, mask, held, other, b, s, rets = _legs(spec, closes, fred, div_yields)
     cost = _switch_cost(spec)
 
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
@@ -555,6 +621,17 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     # Computed before the not-enough-data return: a truncated or short history is exactly when
     # the notes matter, and the walk-forward's "of 0" is itself the honest answer there.
     notes = _late_listing_notes(spec, closes)
+    options_info = None
+    if spec.options:
+        from tradehub.workshop.options import implied_vol_series
+        leg_info = []
+        for leg in spec.options:
+            _, vol_label = implied_vol_series(leg.underlying, closes[leg.underlying], fred)
+            leg_info.append({**leg.model_dump(mode="json"), "vol": vol_label})
+        options_info = {"model_prices": True, "legs": leg_info}
+        vols = ", ".join(f"{li['underlying']}: {li['vol']}" for li in leg_info)
+        notes = notes + [f"Option legs are priced with a Black-Scholes model ({vols}), not real option "
+                         "history -- read this verdict as a model check, not a market record."]
     walk_forward = _walk_forward(spec, idx, r, b, s, mask)
 
     reason = None
@@ -567,7 +644,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     if reason:
         return _clean({**base, "verdict": "NOT ENOUGH DATA", "headline": HEADLINES["nodata"], "reason": reason,
                        "claim": None, "shuffle": None, "t_test": None, "periods": None, "context": [], "curve": [],
-                       "notes": notes, "walk_forward": walk_forward})
+                       "notes": notes, "walk_forward": walk_forward, "options": options_info})
 
     kind = spec.claim
     on_b = _claim(kind, r[built], b[built], s[built], mask[built])
@@ -634,7 +711,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
         "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
                     "method": "random timing" if spec.rules is not None else "sign-flip vs comparison"},
         "t_test": t_test, "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
-        "notes": notes, "walk_forward": walk_forward,
+        "notes": notes, "walk_forward": walk_forward, "options": options_info,
     })
 
 

@@ -36,7 +36,8 @@ from tradehub.api.frontend import mount_frontend
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
     analyst as workshop_analyst, earnings_dates as workshop_earnings, fred_series as workshop_fred, \
-    release_dates as workshop_release_dates, rule_series, ticker_info as workshop_ticker_info, \
+    div_yields as workshop_div_yields, release_dates as workshop_release_dates, rule_series, \
+    ticker_info as workshop_ticker_info, \
     with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
@@ -636,7 +637,7 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
         fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    frame = workshop_daily_frame(spec, prices, fred)
+    frame = workshop_daily_frame(spec, prices, fred, workshop_div_yields(spec, prices))
     return gate_check(spec, frame, date.fromisoformat(latest["data_end"]), size_pct), latest
 
 
@@ -701,7 +702,7 @@ def _run_frame(supabase, idea_id: int, run_id: int):
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     end = (run.get("result") or {}).get("data_end")
-    frame = workshop_daily_frame(spec, prices, fred)
+    frame = workshop_daily_frame(spec, prices, fred, workshop_div_yields(spec, prices))
     if end:
         frame = frame[frame.index <= pd.Timestamp(end)]
     return spec, frame, prices, end, run.get("result") or {}
@@ -792,7 +793,8 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     variation = len(found["runs"]) + 1
-    result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation)
+    result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation,
+                      div_yields=workshop_div_yields(spec, prices))
     return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
                                      result)
 

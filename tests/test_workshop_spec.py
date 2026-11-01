@@ -62,7 +62,7 @@ def test_short_legs_and_execution():
     assert pair.execution.limit_offset_bps == 20
     with pytest.raises(ValueError, match="both"):
         IdeaSpec(title="x both", hold=["GLD"], short=["gld"], claim="beats_benchmark")
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="needs a position"):
         IdeaSpec(title="nothing", hold=[], claim="beats_benchmark")
     with pytest.raises(ValueError):
         IdeaSpec(title="bad type", hold=["GLD"], claim="beats_benchmark", execution={"order_type": "stop"})
