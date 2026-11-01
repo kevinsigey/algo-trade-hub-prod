@@ -348,3 +348,17 @@ The same change removes the Macro page's Gas card (the journal forecaster
 keeps running and keeps its record): both audits graded gas a completed,
 decisive loss, and a page that presents it as a live prediction is less
 truthful than a tighter one. Oil takes the third slot.
+
+Jobless claims (2026-11-01, the macro audit's top unbuilt add): KXJOBLESSCLAIMS
+gets a weekly level model, `claims_nowcast`@`claims-v1` — the next DOL print as
+a Normal whose mean is the walk-forward OLS of the weekly change on the
+mean-reversion gap (4-week average minus last print), fit on ALFRED *first
+prints* of ICSA (settlement grades the initial release); below 30 pairs
+the forecaster freezes nothing rather than guessing. It sits
+beside `kalshi_implied_claims`, `baseline_persistence_claims` and a cautious
+row (`claims-v1+w25`, via the shrinkable set). Two contract widenings ride
+along: `yes_interval` now reads Kalshi's `greater_or_equal`/`less_or_equal`
+strike types (claims strikes are ≥ at round thousands), and "weekly" joins the
+journal cadences with the same 50-settled gate as monthly. A forecaster-side
+guard forecasts only when the print history ends with the immediately
+preceding release — a gapped history freezes nothing.

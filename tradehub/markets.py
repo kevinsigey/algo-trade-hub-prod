@@ -140,8 +140,12 @@ def yes_interval(market: KalshiMarket, resolution: float) -> tuple[float, float]
     half = resolution / 2.0
     if market.strike_type == "greater":
         return (market.floor_strike + half, math.inf)
+    if market.strike_type == "greater_or_equal":
+        return (market.floor_strike - half, math.inf)
     if market.strike_type == "less":
         return (-math.inf, market.cap_strike - half)
+    if market.strike_type == "less_or_equal":
+        return (-math.inf, market.cap_strike + half)
     if market.strike_type == "between":
         return (market.floor_strike - half, market.cap_strike + half)
     raise ValueError(f"unsupported strike_type {market.strike_type!r} for {market.ticker}")

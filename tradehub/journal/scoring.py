@@ -13,7 +13,7 @@ from tradehub.journal.forecasters.baselines import BASELINE_PREFIX
 from tradehub.journal.forecasters.shrunk import SUFFIX as SHRINK_SUFFIX
 from tradehub.track_record import BUCKETS, bucketize
 
-MIN_SETTLED = {"daily": 200, "monthly": 50, "meeting": 50}
+MIN_SETTLED = {"daily": 200, "weekly": 50, "monthly": 50, "meeting": 50}
 MIN_BUCKET_TARGETS = 20
 MURPHY_BINS = 10
 
