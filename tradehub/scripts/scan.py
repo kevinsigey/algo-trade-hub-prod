@@ -389,7 +389,8 @@ def main(
     deadline: float | None = None,
 ) -> int:
     from tradehub.core.env import load_local_env
-    from tradehub.core.supabase_client import get_client, upsert_opportunities
+    from tradehub.core import supabase_client
+    from tradehub.core.supabase_client import upsert_opportunities
     from tradehub.predictions import record_predictions
 
     # Entry point: load the developer-local `.env` explicitly rather than at
@@ -402,6 +403,12 @@ def main(
     deadline = time.monotonic() + SCAN_DEADLINE_SECONDS if deadline is None else float(deadline)
     failures: list[str] = []
     engine_states: dict[str, dict[str, Any]] = {}
+    run_id = f"scan-{now.isoformat()}"
+    run_start = time.monotonic()
+    try:
+        supabase_client.start_run(run_id, ["scan"])
+    except Exception:  # noqa: BLE001 - recording must never crash the scan
+        log.exception("scan run recording start failed")
     if live is None:
         live = KalshiLive(deadline=deadline)
 
@@ -451,7 +458,7 @@ def main(
 
     if client is None:
         try:
-            client = get_client()
+            client = supabase_client.get_client()
         except Exception as exc:
             message = f"client: {type(exc).__name__}: {exc}"
             failures.append(message)
@@ -687,6 +694,15 @@ def main(
         "writes": writes,
         "failures": failures,
     }
+    try:
+        total_opps = len(gas_edges) + len(labor_edges) + len(sports_edges)
+    except Exception:  # noqa: BLE001
+        total_opps = 0
+    try:
+        supabase_client.complete_run(run_id, total_opps, time.monotonic() - run_start,
+                                    "; ".join(failures) if failures else None)
+    except Exception:  # noqa: BLE001 - recording must never crash the scan
+        log.exception("scan run recording complete failed")
     print(json.dumps(summary, default=str))
     return 1 if failures else 0
 

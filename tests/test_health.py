@@ -174,7 +174,7 @@ def test_a_non_datetime_latest_value_is_treated_as_unknown():
 
 def test_only_scan_and_settle_lacking_markers_still_reports_ok():
     """The reported bug, as a test: untracked timers must not degrade a healthy system."""
-    report = _report(timers={"scan": None, "settle": None,
+    report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
                     untracked=UNTRACKED_TIMERS)
     assert report["status"] == "ok"
@@ -185,10 +185,10 @@ def test_only_scan_and_settle_lacking_markers_still_reports_ok():
 
 def test_an_untracked_timer_says_not_tracked_and_never_never():
     """Three different facts, three different words: fresh, stale/never, and not measured at all."""
-    report = _report(timers={"scan": None, "settle": None,
+    report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
                     untracked=UNTRACKED_TIMERS)
-    for name in ("scan", "settle"):
+    for name in ("settle",):
         assert report["timers"][name]["status"] == "not_tracked"
         assert report["timers"][name]["tracked"] is False
         # Unmeasured is not a measurement: no timestamp and no age, exactly like a missing order book.
@@ -222,12 +222,12 @@ def test_untracked_timers_are_still_listed_on_the_report():
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
                      untracked=UNTRACKED_TIMERS)
     assert set(report["timers"]) == {"scan", "settle", "journal", "orderbooks"}
-    assert report["untracked_timers"] == ["scan", "settle"]
-    assert report["tracked_timer_count"] == 2
+    assert report["untracked_timers"] == ["settle"]
+    assert report["tracked_timer_count"] == 3
 
 
 def test_untracked_does_not_mask_a_fault_in_a_tracked_timer():
-    report = _report(timers={"scan": None, "settle": None,
+    report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(hours=6), "orderbooks": _ago(minutes=20)},
                      untracked=UNTRACKED_TIMERS)
     assert report["status"] == "degraded"
@@ -245,7 +245,7 @@ def test_the_untracked_set_is_exactly_the_two_jobs_with_no_marker():
     two jobs whose absence of a marker is a documented fact about their code, and `journal` and
     `orderbooks` stay tracked.
     """
-    assert UNTRACKED_TIMERS == {"scan", "settle"}
+    assert UNTRACKED_TIMERS == {"settle"}
     assert UNTRACKED_TIMERS < set(TIMERS)
     assert {"journal", "orderbooks"} & UNTRACKED_TIMERS == set()
 

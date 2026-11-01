@@ -95,7 +95,8 @@ def test_a_healthy_system_reports_fresh_timers_over_the_endpoint(tmp_path, monke
     fresh_file.write_text("", encoding="utf-8")
     os.utime(fresh_file, (time.time(), time.time()))
 
-    supa = _Supa({"journal_scores": [{"computed_at": recent.isoformat()}]})
+    supa = _Supa({"journal_scores": [{"computed_at": recent.isoformat()}],
+                   "scanner_runs": [{"completed_at": recent.isoformat()}]})
     main.app.dependency_overrides[get_supabase] = lambda: supa
     try:
         report = TestClient(main.app).get("/api/health").json()["report"]
@@ -105,10 +106,10 @@ def test_a_healthy_system_reports_fresh_timers_over_the_endpoint(tmp_path, monke
     assert report["timers"]["journal"]["status"] == "ok"
     assert report["timers"]["orderbooks"]["status"] == "ok"
     # The two jobs with no marker are named, not silently counted as fresh.
-    assert report["untracked_timers"] == ["scan", "settle"]
-    assert report["timers"]["scan"]["status"] == "not_tracked"
+    assert report["untracked_timers"] == ["settle"]
+    assert report["timers"]["scan"]["status"] == "ok"
     assert report["timers"]["settle"]["status"] == "not_tracked"
-    assert report["tracked_timer_count"] == 2
+    assert report["tracked_timer_count"] == 3
     # No timer contributes a problem. (This fake returns no `journal_forecasts` rows, so every
     # registered daily family legitimately reads as silent; that is the families half of the report
     # and is covered by tests/test_health.py, so it is deliberately not asserted here.)
