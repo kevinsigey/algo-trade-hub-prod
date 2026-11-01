@@ -293,6 +293,7 @@ export interface DraftResponse {
   model: string;
   play: PlayMatch | null;
   alternatives: (PlayMatch & { spec: IdeaSpec })[];
+  dropped?: string[];
 }
 
 export type TickerNames = Record<string, { name: string; kind: string } | null>;

@@ -50,7 +50,7 @@ def test_draft_without_key_is_424_with_template(api, monkeypatch):
 def test_draft_ok(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", []))
     monkeypatch.setattr(main, "playbook_draft", lambda text: None)  # no play fits: the free-form draft writes it
     r = c.post("/api/workshop/draft", json={"text": "gold"})
     assert r.status_code == 200 and r.json()["spec"]["hold"] == ["GLD"] and r.json()["model"] == "x/y:free"
@@ -331,7 +331,7 @@ def test_analysis_flags_drift_from_the_stored_verdict(api, monkeypatch):
 def test_draft_from_scratch_skips_the_playbook(api, monkeypatch):
     c, _, _ = api
     from tradehub.workshop.spec import IdeaSpec
-    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free"))
+    monkeypatch.setattr(main, "draft_spec", lambda text: (IdeaSpec.model_validate(SPEC), "x/y:free", []))
     r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down", "free": True})
     assert r.status_code == 200 and r.json()["play"] is None and r.json()["model"] == "x/y:free"
 
@@ -402,3 +402,16 @@ def test_public_pages_cope_with_a_published_event_study(api, monkeypatch):
     record = TestClient(main.app).get(f"/api/ideas/{idea['id']}")
     assert record.status_code == 200
     assert all(r["claim"] is None for r in record.json()["runs"])
+
+
+def test_draft_dropped_ignores_the_benchmark_and_handles_event_studies(api, monkeypatch):
+    # Review of #208: SPY named as "stocks" is the benchmark, not a dropped leg; an event-study draft has no hold list.
+    c, _, _ = api
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    r = c.post("/api/workshop/draft", json={"text": "Gold does better when stocks are down"})
+    assert r.status_code == 200 and r.json()["dropped"] == []
+    r = c.post("/api/workshop/draft", json={"text": "XOM drifts up after earnings beats"})
+    assert r.status_code == 200 and r.json()["spec"]["kind"] == "event" and r.json()["dropped"] == []
+    r = c.post("/api/workshop/draft", json={"text": "hold RL, WSM, ABNB, DG, DLTR, BJ and MO as defensive ballast"})
+    assert r.status_code == 200 and r.json()["spec"]["hold"] == ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"]
+    assert r.json()["dropped"] == []

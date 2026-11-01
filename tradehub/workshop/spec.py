@@ -114,8 +114,8 @@ class IdeaSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=3, max_length=120)
-    hold: list[str] = Field(default_factory=list, max_length=5)
-    short: list[str] = Field(default_factory=list, max_length=5)
+    hold: list[str] = Field(default_factory=list, max_length=25)
+    short: list[str] = Field(default_factory=list, max_length=25)
     rules: Rules | None = None
     otherwise: str = CASH
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
