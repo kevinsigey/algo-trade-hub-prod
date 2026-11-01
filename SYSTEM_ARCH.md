@@ -165,3 +165,15 @@ annotations), and an 8-point trail; jobs trails are values, CPI/gas trails
 are probabilities, and the payload's `trail_kind` keeps the two apart. `/jobs`
 and `/cpi` remain the detail pages; the CPI card carries the display-only
 honesty line the old nav label held.
+
+## Workshop idea-builder parity (phase-3)
+
+Three surfaces describe the Workshop contract and must not drift:
+`tradehub/workshop/spec.py` MEASURES (what the engine runs), the editor's
+MEASURES table in `src/lib/workshop.ts` (what can be clicked), and the
+drafter's SYSTEM prose in `tradehub/workshop/draft.py` (what the drafting
+model is told). `tests/test_draft_parity.py` walks all three plus the
+condition/option-leg field vocabulary. Ticker lists in the editor are
+`src/components/TickerListInput.tsx`: raw text is component state, the parse
+flows to the spec on every keystroke, and the display never re-renders from
+the parse (parse-on-change had made commas untypeable).

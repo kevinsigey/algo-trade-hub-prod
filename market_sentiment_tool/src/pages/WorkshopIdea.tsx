@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import TickerListInput from "@/components/TickerListInput";
 import { PaperLine } from "@/pages/Ideas";
 import { toneClass } from "@/pages/Workshop";
 import {
@@ -245,7 +246,9 @@ function EventEditor({ initial, onRun, busy, note, storageKey }: { initial: Idea
           <input className={field} value={spec.title} onChange={(e) => set("title", e.target.value)} />
         </Field>
         <Field label={spec.event === "custom" ? "Tickers (from your table)" : "Tickers (comma separated)"}>
-          <input className={field} disabled={spec.event === "custom"} value={spec.event === "custom" ? [...new Set((spec.custom ?? []).map((e) => e.ticker))].join(", ") : spec.tickers.join(", ")} onChange={(e) => set("tickers", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+          <TickerListInput className={field} disabled={spec.event === "custom"}
+            value={spec.event === "custom" ? [...new Set((spec.custom ?? []).map((e) => e.ticker))] : spec.tickers}
+            onChange={(tickers) => set("tickers", tickers)} />
         </Field>
         <Field label="Event">
           <select className={field} value={spec.event} onChange={(e) => setEvent(e.target.value as EventSpec["event"])}>
@@ -352,10 +355,10 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
           </select>
         </Field>
         <Field label="Hold (tickers, comma separated, equal weight)">
-          <input className={field} value={spec.hold.join(", ")} onChange={(e) => setLegs("hold", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+          <TickerListInput className={field} value={spec.hold} onChange={(tickers) => setLegs("hold", tickers)} />
         </Field>
         <Field label="Short (tickers, comma separated)">
-          <input className={field} value={(spec.short ?? []).join(", ")} onChange={(e) => setLegs("short", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} />
+          <TickerListInput className={field} value={spec.short ?? []} onChange={(tickers) => setLegs("short", tickers)} />
         </Field>
         <Field label="Otherwise hold (ticker or CASH)">
           <input className={field} value={spec.otherwise} onChange={(e) => set("otherwise", e.target.value)} />
@@ -418,8 +421,8 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
       {spec.portfolio && (
         <div className="mt-2 grid gap-3 sm:grid-cols-3">
           <Field label="Core (tickers, equal weight)">
-            <input className={field} value={spec.portfolio.core.join(", ")}
-              onChange={(e) => set("portfolio", { ...spec.portfolio!, core: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })} />
+            <TickerListInput className={field} value={spec.portfolio.core}
+              onChange={(tickers) => set("portfolio", { ...spec.portfolio!, core: tickers })} />
           </Field>
           <Field label="Idea's share (%)">
             <input type="number" min={10} max={90} className={field} value={Math.round(spec.portfolio.idea_share * 100)}
