@@ -437,12 +437,14 @@ def start_run(run_id: str, engines: list, client=None):
     }).execute()
 
 
-def complete_run(run_id: str, total_opps: int, duration_sec: float, error_msg=None, client=None):
+def complete_run(run_id: str, total_opps: int, duration_sec: float, error_msg=None, client=None,
+                 engines: list | None = None):
     """Mark a scanner run as completed or failed, on the caller's client (see start_run).
 
     If the start row never landed (its insert failed), the update matches nothing and the
     completion would be lost -- a successful run leaving no marker at all. Insert the
-    finished row in that case. Not an upsert: `run_id` has no unique constraint to key on.
+    finished row in that case, carrying `engines` so the health reader (which filters on
+    `engines_run`) can actually see it. Not an upsert: `run_id` has no unique constraint.
     """
     client = client or get_client()
     status = "failed" if error_msg else "completed"
@@ -455,7 +457,7 @@ def complete_run(run_id: str, total_opps: int, duration_sec: float, error_msg=No
     }
     result = client.table("scanner_runs").update(row).eq("run_id", run_id).execute()
     if not getattr(result, "data", None):
-        client.table("scanner_runs").insert({"run_id": run_id, **row}).execute()
+        client.table("scanner_runs").insert({"run_id": run_id, "engines_run": engines or [], **row}).execute()
 
 
 def get_wipe_date():

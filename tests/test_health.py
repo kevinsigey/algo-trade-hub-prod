@@ -10,7 +10,6 @@ from datetime import datetime, timedelta, timezone
 from tradehub.health import (
     FROZEN_WINDOW_HOURS,
     STALE_AFTER_HOURS,
-    TIMERS,
     UNTRACKED_TIMERS,
     build_health_report,
     expected_daily,
@@ -246,17 +245,28 @@ def test_the_untracked_set_is_empty_because_both_hourly_jobs_record_their_runs()
     marker is a real fault again, not a gap in the record-keeping.
     """
     assert UNTRACKED_TIMERS == frozenset()
-    assert UNTRACKED_TIMERS < set(TIMERS)
+    # Behavioural pin, not just the set's contents: with the live set, a scan or settle with
+    # no marker reads `never` and degrades the page -- it is a tracked timer again.
+    report = _report(timers={"scan": None, "settle": None,
+                             "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
+                     untracked=UNTRACKED_TIMERS)
+    assert report["untracked_timers"] == []
+    assert report["timers"]["scan"]["status"] == "never"
+    assert report["timers"]["settle"]["status"] == "never"
+    assert report["status"] == "degraded"
 
 
 # ─── reading a job's last successful run ──────────────────────────────────────
 
 
 class _RunsSupa:
-    """A scanner_runs table with canned rows; every query chain returns them all."""
+    """A scanner_runs table with canned rows. The query filters are modelled as no-ops (the
+    production filters run server-side in PostgREST), but `.limit()` is honoured, so a test
+    can prove what the reader does when the page it asked for fills with other rows."""
 
     def __init__(self, rows):
         self.rows = rows
+        self._limit = None
 
     def table(self, name):
         assert name == "scanner_runs"
@@ -265,14 +275,22 @@ class _RunsSupa:
     def select(self, *a, **k):
         return self
 
+    def eq(self, *a, **k):
+        return self
+
+    def contains(self, *a, **k):
+        return self
+
     def order(self, *a, **k):
         return self
 
-    def limit(self, *a, **k):
+    def limit(self, n):
+        self._limit = n
         return self
 
     def execute(self):
-        return type("R", (), {"data": self.rows})()
+        rows = self.rows if self._limit is None else self.rows[: self._limit]
+        return type("R", (), {"data": rows})()
 
 
 def test_latest_run_reads_the_newest_completed_run_of_that_job():
@@ -298,6 +316,19 @@ def test_latest_run_ignores_failed_and_running_rows():
     ]
     assert _latest_run(_RunsSupa(rows), "scan") == _ago(hours=3)
     assert _latest_run(_RunsSupa(rows[:2]), "scan") is None
+
+
+def test_latest_run_reads_within_the_page_it_asked_for():
+    """The reader asks for the newest 50 rows *after* the server-side status/engine filters,
+    so in production the page holds only matching rows. Against this unfiltered fake the same
+    limit is what the reader sees: 50 newer failed rows crowd a completed one out of the page,
+    and the reader honestly reports none rather than reading past its own page."""
+    from tradehub.health import _latest_run
+
+    failed = [{"completed_at": _ago(minutes=1).isoformat(), "status": "failed", "engines_run": ["scan"]}] * 50
+    done = {"completed_at": _ago(minutes=90).isoformat(), "status": "completed", "engines_run": ["scan"]}
+    assert _latest_run(_RunsSupa(failed + [done]), "scan") is None
+    assert _latest_run(_RunsSupa(failed[:49] + [done]), "scan") == _ago(minutes=90)
 
 
 # ─── sports calendar: daily families only expected to freeze when calendar has targets ───────

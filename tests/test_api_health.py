@@ -32,6 +32,12 @@ class _Query:
     def gte(self, *a, **k):
         return self
 
+    def eq(self, *a, **k):
+        return self
+
+    def contains(self, *a, **k):
+        return self
+
     def execute(self):
         table = self.rows_by_table.get(getattr(self, "_table", ""), [])
         return type("R", (), {"data": table})()

@@ -274,7 +274,7 @@ def test_scan_main_records_the_run_on_the_injected_client(monkeypatch):
     monkeypatch.setattr(supabase_client, "start_run",
                         lambda run_id, engines, client=None: recorded.append(("start", run_id, engines, client)))
     monkeypatch.setattr(supabase_client, "complete_run",
-                        lambda run_id, total, dur, err=None, client=None: recorded.append(("complete", run_id, err, client)))
+                        lambda run_id, total, dur, err=None, client=None, engines=None: recorded.append(("complete", run_id, err, client)))
     monkeypatch.setattr(scan, "KalshiLive", lambda deadline=None: object())
     monkeypatch.setattr(scan, "load_engine_config", lambda engine: EngineConfig(min_edge_pct=3.0))
     monkeypatch.setattr(scan, "scan_gas", lambda *args, **kwargs: ([], []))

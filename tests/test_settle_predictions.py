@@ -84,12 +84,31 @@ def test_main_records_the_run_so_health_can_see_the_job_ran(monkeypatch):
     monkeypatch.setattr(settle_predictions, "start_run",
                         lambda run_id, engines, client=None: recorded.append(("start", run_id, engines, client)))
     monkeypatch.setattr(settle_predictions, "complete_run",
-                        lambda run_id, total, dur, err=None, client=None: recorded.append(("complete", run_id, err, client)))
+                        lambda run_id, total, dur, err=None, client=None, engines=None: recorded.append(("complete", run_id, err, client)))
 
     assert settle_predictions.main() == 0
     assert [r[0] for r in recorded] == ["start", "complete"]
     assert recorded[0][2] == ["settle"] and recorded[0][1].startswith("settle-")
     assert recorded[1][2] is None  # a clean pass completes without an error
+
+
+def test_main_records_a_pass_that_settled_nothing_through_errors_as_failed(monkeypatch):
+    """run_settlement_pass counts fetch/write errors instead of raising. A pass where every
+    fetch failed settled nothing and must not be recorded 'completed' -- that would keep the
+    Health timer fresh on a job that is settling nothing at all."""
+    recorded = []
+    monkeypatch.setattr(settle_predictions, "get_client", lambda: _FakeSupa())
+    monkeypatch.setattr(settle_predictions, "fetch_market", lambda t: {})
+    monkeypatch.setattr(settle_predictions, "run_settlement_pass",
+                        lambda supa, fetch: {"checked": 4, "settled": 0, "canceled": 0,
+                                             "fetch_errors": 4, "write_errors": 0})
+    monkeypatch.setattr(settle_predictions, "refresh_track_record", lambda supa, engine, **kw: [])
+    monkeypatch.setattr(settle_predictions, "start_run", lambda *a, **k: None)
+    monkeypatch.setattr(settle_predictions, "complete_run",
+                        lambda run_id, total, dur, err=None, client=None, engines=None: recorded.append(err))
+
+    assert settle_predictions.main() == 0  # the job itself still exits cleanly
+    assert recorded and "settled nothing" in recorded[0]
 
 
 def test_main_records_a_failed_pass_and_still_raises(monkeypatch):
@@ -103,7 +122,7 @@ def test_main_records_a_failed_pass_and_still_raises(monkeypatch):
     monkeypatch.setattr(settle_predictions, "run_settlement_pass", boom)
     monkeypatch.setattr(settle_predictions, "start_run", lambda *a, **k: recorded.append("start"))
     monkeypatch.setattr(settle_predictions, "complete_run",
-                        lambda run_id, total, dur, err=None, client=None: recorded.append(err))
+                        lambda run_id, total, dur, err=None, client=None, engines=None: recorded.append(err))
 
     try:
         settle_predictions.main()

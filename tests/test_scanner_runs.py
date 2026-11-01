@@ -19,6 +19,7 @@ class _FakeClient:
 
     def __init__(self, update_rows=None):
         self.calls = []
+        self.filters = []
         self.update_rows = update_rows if update_rows is not None else [{"id": 1}]
         self._mode = None
 
@@ -35,6 +36,7 @@ class _FakeClient:
         return self
 
     def eq(self, *a):
+        self.filters.append(a)
         return self
 
     def execute(self):
@@ -64,6 +66,7 @@ def test_complete_run_updates_the_matching_row(monkeypatch):
     assert len(fake.calls) == 1
     mode, row = fake.calls[0]
     assert mode == "update"
+    assert fake.filters == [("run_id", "scan-x")]  # this run's row, not every run
     assert row["status"] == "completed" and row["total_opps"] == 7 and row["error_msg"] is None
     assert row["completed_at"]
 
@@ -71,7 +74,10 @@ def test_complete_run_updates_the_matching_row(monkeypatch):
 def test_complete_run_inserts_when_the_start_row_never_landed(monkeypatch):
     _no_global_client(monkeypatch)
     fake = _FakeClient(update_rows=[])
-    supabase_client.complete_run("scan-x", 0, 1.0, "boom", client=fake)
+    supabase_client.complete_run("scan-x", 0, 1.0, "boom", client=fake, engines=["scan"])
     assert [mode for mode, _ in fake.calls] == ["update", "insert"]
     inserted = fake.calls[1][1]
     assert inserted["run_id"] == "scan-x" and inserted["status"] == "failed" and inserted["error_msg"] == "boom"
+    # The fallback row must carry the engine, or the health reader (which filters on
+    # engines_run) can never see the very marker the fallback exists to preserve.
+    assert inserted["engines_run"] == ["scan"]

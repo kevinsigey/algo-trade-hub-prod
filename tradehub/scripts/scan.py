@@ -706,7 +706,8 @@ def main(
     if client is not None:
         try:
             supabase_client.complete_run(run_id, total_opps, time.monotonic() - run_start,
-                                         "; ".join(failures) if failures else None, client=client)
+                                         "; ".join(failures) if failures else None, client=client,
+                                         engines=["scan"])
         except Exception:  # noqa: BLE001 - recording must never crash the scan
             log.exception("scan run recording complete failed")
     print(json.dumps(summary, default=str))
