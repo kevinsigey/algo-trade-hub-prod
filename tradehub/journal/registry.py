@@ -10,6 +10,7 @@ from tradehub.core.kalshi_feed import fetch_market
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
 from tradehub.journal.contract import Forecaster
+from tradehub.journal.daily import DailyCloses
 from tradehub.journal.forecasters.baselines import build_baselines
 from tradehub.journal.forecasters.calibrated import CalibratedForecaster
 from tradehub.journal.forecasters.cpi import CpiForecaster
@@ -19,6 +20,7 @@ from tradehub.journal.forecasters.fomc import FOMC_SERIES, FomcMapped, is_hold_m
 from tradehub.journal.forecasters.gas import build_gas
 from tradehub.journal.forecasters.housing import HousingForecaster
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster, QuitsDirection, UnrateDirection
+from tradehub.journal.forecasters.news_tone import EnergyToneForecaster, xle_source
 from tradehub.journal.forecasters.sentiment import SentimentMeter
 from tradehub.journal.forecasters.shrunk import MarketShrunk
 from tradehub.journal.forecasters.sports import SportsFeedForecaster, build_sports
@@ -34,6 +36,8 @@ _HOUSING = HousingForecaster()
 # One closes object per wave-2 family, given to BOTH the model and its naive baselines (see
 # `baselines.py`: the climatology a baseline freezes has to be the one the calendar carries).
 _WAVE2 = wave2_closes()
+# phase-2 §5.1: XLE closes for the energy news-tone row (its own object, shared with its baselines).
+_XLE = DailyCloses(xle_source())
 
 FORECASTERS: list[Forecaster] = [
     # plan (b): CPI + FOMC, each beside its Kalshi pseudo-forecaster (spec §5, ruling Q5)
@@ -53,12 +57,14 @@ FORECASTERS: list[Forecaster] = [
     SpyQuant(_SPX),
     # wave 2 (spec §8): VIX, gold (GLD) and EUR/USD daily direction, same walk-forward model
     *build_wave2(_WAVE2),
+    # phase-2 §5.1: energy news tone -> XLE direction, the fixed logistic z map, graded as-is
+    EnergyToneForecaster(_XLE),
     # wave 3 (spec §8): Case-Shiller national HPI month-over-month direction
     _HOUSING,
     # spec §8/§10: the naive baselines -- persistence and climatology for every non-market direction
     # family, each beside the model whose targets it prices, on the same closes and its own calendar.
     # Never promoted and never counted as evidence: see `forecasters/baselines.py` and `scoring.py`.
-    *build_baselines(_SPX, _WAVE2, _HOUSING),
+    *build_baselines(_SPX, _WAVE2, _HOUSING, {"xle": _XLE}),
     # wave 3 (spec §8): NFL and CFB feed consumers, each beside its Kalshi-implied baseline
     *build_sports(),
     # daily weather (highs, lows, rain): NOAA/ECMWF ensembles beside the Kalshi mid and station climatology
