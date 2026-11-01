@@ -1,13 +1,13 @@
 import { baselineName, CAUTIOUS_SUFFIX, forecasterLabel } from "@/lib/forecasterLabels";
 import { EXPERIMENTAL, tiles, type Baseline, type JournalScore } from "@/lib/journal";
+import { EARLY_N } from "@/lib/sample";
+
+export { EARLY_N };
 
 /**
  * The /journal page's view of the scorecards: one row per forecaster, ordered by how much evidence it has.
  * Presentation only. Every number comes from the server; the only constants here are display rules.
  */
-
-/** Below this many scored forecasts a skill number is too noisy to praise or blame. Display rule, not a gate. */
-export const EARLY_N = 30;
 
 /** Mirrors `MIN_SETTLED` in tradehub/journal/scoring.py, for the "x of y" progress hint only. */
 export const NEEDED: Record<JournalScore["cadence"], number> = { daily: 200, monthly: 50, meeting: 50 };
