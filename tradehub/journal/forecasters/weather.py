@@ -119,6 +119,7 @@ class WeatherInputs:
         self._get_json = get_json
         self._stations: dict[str, tuple[float, float, dict]] = {}
         self._ensembles: dict[str, Any] = {}
+        self._ensembles_v2: dict[str, Any] = {}
         self._hindcasts: dict[str, dict] = {}
 
     def _fetch_station(self, sid: str, start: date, end: date) -> dict[str, Any]:
@@ -126,6 +127,16 @@ class WeatherInputs:
 
     def _fetch_ensemble(self, lat: float, lon: float) -> dict[str, Any]:
         return fetch_ensemble(lat, lon, self._get_json)
+
+    def members_v2(self, sid: str, today: date):
+        """ens-v2's wider, model-tagged ensemble (MODELS_V2), cached apart
+        from ens-v1's -- the two versions never share a member pool."""
+        if sid not in self._ensembles_v2:
+            lat, lon, _days = self.station(sid, today)
+            from tradehub.data.ensemble import MODELS_V2, fetch_ensemble as _fetch_v2, parse_members_tagged
+            self._ensembles_v2[sid] = parse_members_tagged(
+                _fetch_v2(lat, lon, self._get_json, models=MODELS_V2))
+        return self._ensembles_v2[sid]
 
     def hindcast(self, sid: str, today: date) -> dict[date, dict[str, float]]:
         """Previous-runs day values for the station (ens-v2's fitting signal),
@@ -201,6 +212,28 @@ class WeatherEnsemble(_WeatherBase):
                                  "no_sub_title": mkt.no_sub_title})
 
 
+def ensemble_prob_by_model(market: KalshiMarket, kind: str, by_model: dict[str, list[float]], *,
+                           sigma: float = KERNEL_SIGMA, bias: float = 0.0) -> float:
+    """ens-v2's probability: each MODEL's member-share first, then the mean
+    across models -- equal weight per model family, never per headcount
+    (pooled, ECMWF's 51 members would outvote GEFS's 31 and ICON's 40).
+    Rain: the weighted share, shrunk with the total member count as v1 does."""
+    if kind == "rain":
+        shares, total = [], 0
+        for values in by_model.values():
+            if values:
+                shares.append(sum(v >= RAIN_MEASURABLE for v in values) / len(values))
+                total += len(values)
+        if not shares or not total:
+            return 0.5
+        share = statistics.fmean(shares)
+        return (share * total + 0.5) / (total + 1)  # _shrunk_share's form, on the weighted share
+    interval = yes_interval(market, TEMP_RESOLUTION)
+    per_model = [statistics.fmean(prob_in_interval(v + bias, sigma, interval) for v in values)
+                 for values in by_model.values() if values]
+    return statistics.fmean(per_model)
+
+
 FIT_WINDOW_DAYS = 60
 FIT_MIN_PAIRS = 20  # mirrors engines.weather.MIN_ERROR_PAIRS: below it, no fit is claimed
 
@@ -230,13 +263,14 @@ def fit_station_error(inputs: WeatherInputs, sid: str, kind: str, today: date):
 
 
 class WeatherEnsembleV2(_WeatherBase):
-    """ens-v2 (phase-3 §3.2): ens-v1's member-share machinery with a fitted
-    per-station bias and kernel width instead of the fixed pre-results 2.0F
-    kernel and no correction. Freezes beside ens-v1 under its own version;
+    """ens-v2 (phase-3 §3.2): ens-v1's member-share machinery with (step 1) a
+    fitted per-station bias and kernel width instead of the fixed
+    pre-results 2.0F kernel and no correction, and (step 2) a wider shelf
+    (GEFS 0.25 + ECMWF IFS + ICON EPS) weighted equally per MODEL rather
+    than pooled by headcount. Freezes beside ens-v1 under its own version;
     the fitted parameters and pair count ride in the payload, and a station
     under the pair floor freezes with v1's parameters and fitted=false.
-    Rain keeps the plain member share in this step (bias/kernel are
-    temperature concepts; the rain rework is §3.2's later step)."""
+    Rain's bias/kernel treatment is §3.2's later step (per-city rework)."""
 
     version = "ens-v2"
 
@@ -249,19 +283,24 @@ class WeatherEnsembleV2(_WeatherBase):
         if lm is None:
             return None
         sid = station_for(lm.market)
-        values = day_members(self._inputs.members(sid, now.date()), lm.market.close_time, self.kind)
+        from tradehub.data.ensemble import MODELS_V2, day_members_by_model
+        by_model = day_members_by_model(self._inputs.members_v2(sid, now.date()),
+                                        lm.market.close_time, self.kind)
+        values = [v for vs in by_model.values() for v in vs]
         if not values:
             return None
         mkt = lm.market
         error, n_pairs = fit_station_error(self._inputs, sid, self.kind, now.date())
         fitted = n_pairs >= FIT_MIN_PAIRS and self.kind != "rain"
-        prob = ensemble_prob(mkt, self.kind, values,
-                             sigma=error.sigma if fitted else KERNEL_SIGMA,
-                             bias=error.bias if fitted else 0.0)
+        prob = ensemble_prob_by_model(mkt, self.kind, by_model,
+                                      sigma=error.sigma if fitted else KERNEL_SIGMA,
+                                      bias=error.bias if fitted else 0.0)
         return Forecast(self.name, self.version, entry.target, prob,
                         market_prob=quote_mid(lm),
                         payload={**quote_payload(lm), "station": sid, "n_members": len(values),
-                                 "ensemble_mean": round(statistics.fmean(values), 3), "models": list(MODELS),
+                                 "ensemble_mean": round(statistics.fmean(values), 3),
+                                 "models": list(MODELS_V2), "weighting": "equal_per_model",
+                                 "members_by_model": {m: len(vs) for m, vs in by_model.items()},
                                  "kernel_sigma": error.sigma if fitted else KERNEL_SIGMA,
                                  "bias": error.bias if fitted else 0.0,
                                  "fit_pairs": n_pairs, "fitted": fitted,

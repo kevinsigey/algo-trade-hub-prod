@@ -65,6 +65,10 @@ class V2Inputs(Inputs):
     def hindcast(self, sid, today):
         return self._hind
 
+    def members_v2(self, sid, today):
+        from tradehub.data.ensemble import parse_members_tagged
+        return parse_members_tagged(self.ens)
+
 
 def _v2_inputs(hind):
     start = CLOSE - timedelta(hours=24)
@@ -98,6 +102,17 @@ def test_v2_fitted_bias_moves_the_probability_and_is_recorded():
     f2 = v2.forecast(e2, NOW)
     assert f2.payload["fit_source"] == "ecmwf previous-runs vs ACIS actuals"
     assert f2.payload["fitted"] is False  # ACIS fixture has no matching days
+
+
+def test_weighting_is_per_model_not_per_headcount():
+    from tradehub.journal.forecasters.weather import ensemble_prob_by_model
+    market = _lm("KXHIGHNY-26OCT09-T76", "greater", floor=76).market
+    # Model A: 2 members, both hot (prob ~0.96 each). Model B: 50 members,
+    # all cold (prob ~0.04). Pooled by headcount the cold model swamps the
+    # answer (~0.07); equal-per-model gives ~0.50.
+    by_model = {"a": [80.0, 80.0], "b": [70.0] * 50}
+    weighted = ensemble_prob_by_model(market, "high", by_model)
+    assert weighted == pytest.approx(0.50, abs=0.02)
 
 
 def test_registry_builds_v2_beside_v1():
