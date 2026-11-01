@@ -3,6 +3,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 
 import Health from "@/pages/Health";
 
+// The page now reads the re-run state through the signed admin fetch, which loads the
+// Supabase client: stub it (no session, so the re-run read simply finds nothing).
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: null } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
+  },
+}));
+
 const REPORT = {
   status: "degraded",
   generated_at: "2026-10-17T12:00:00+00:00",
@@ -46,6 +57,31 @@ describe("Health page", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
     expect(screen.getByText("weather_high")).toBeTruthy();
     expect(screen.getByText("Degraded")).toBeTruthy();
+  });
+
+  it("offers a re-run for scan and settles it into pending once asked", async () => {
+    const calls: { url: string; method?: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, method: init?.method });
+      const body = url.includes("/api/health/rerun")
+        ? init?.method === "POST"
+          ? { status: "pending", job: "scan", requested_by: "k@example.com", requested_at: "2026-10-17T12:05:00+00:00" }
+          : { pending: {} }
+        : { status: "ok", report: REPORT };
+      return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body } as unknown as Response;
+    }));
+    const { fireEvent } = await import("@testing-library/react");
+    render(<Health />);
+    await screen.findByText("Timers fresh");
+    // journal is not re-runnable: exactly one Re-run button exists (scan).
+    expect(screen.getAllByRole("button", { name: "Re-run" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
+    expect(await screen.findByText(/scan re-run requested/)).toBeTruthy();
+    expect(screen.getByText(/Re-run pending/)).toBeTruthy();
+    expect(calls.some((c) => c.url.includes("/api/health/rerun") && c.method === "POST")).toBe(true);
+    // Once asked, the button is replaced by the pending chip.
+    expect(screen.queryByRole("button", { name: "Re-run" })).toBeNull();
   });
 
   it("shows a healthy report as Healthy with no problems", async () => {

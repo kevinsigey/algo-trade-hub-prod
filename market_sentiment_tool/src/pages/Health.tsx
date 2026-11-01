@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2 } from "lucide-react";
 
 import { useHealth } from "@/hooks/useHealth";
+import { adminJson } from "@/lib/workshop";
 import { ct } from "@/lib/paperPortfolio";
 import {
   HEALTH_INTRO,
@@ -70,11 +72,39 @@ export default function Health() {
   );
 }
 
+interface RerunRequest { requested_by?: string; requested_at?: string }
+const RERUNNABLE = new Set(["scan", "settle"]);
+
 function HealthBody({ report }: { report: import("@/lib/health").HealthReport }) {
   const s = healthSummary(report);
   const timers = timerRows(report);
   const families = familyRows(report);
   const ob = report.orderbook;
+  // Re-run asks (phase-2 section 4.3): the API drops a trigger file the host watcher
+  // claims within a minute. Pending state is the file's own record, read back here.
+  const [rerunPending, setRerunPending] = useState<Record<string, RerunRequest>>({});
+  const [rerunBusy, setRerunBusy] = useState<string | null>(null);
+  const [rerunNote, setRerunNote] = useState<string | null>(null);
+  useEffect(() => {
+    adminJson<{ pending: Record<string, RerunRequest> }>("/api/health/rerun")
+      .then((r) => setRerunPending(r.pending ?? {}))
+      .catch(() => undefined);
+  }, []);
+  const askRerun = (job: string) => {
+    setRerunBusy(job);
+    setRerunNote(null);
+    adminJson<{ status: string; requested_by?: string; requested_at?: string }>("/api/health/rerun", {
+      method: "POST", body: JSON.stringify({ job }),
+    })
+      .then((r) => {
+        setRerunPending((prev) => ({ ...prev, [job]: { requested_by: r.requested_by, requested_at: r.requested_at } }));
+        setRerunNote(r.status === "already_pending"
+          ? `A ${job} re-run is already waiting for the host.`
+          : `${job} re-run requested -- the host picks it up within a minute.`);
+      })
+      .catch(() => setRerunNote(`The ${job} re-run request could not be written.`))
+      .finally(() => setRerunBusy(null));
+  };
 
   return (
     <>
@@ -126,10 +156,21 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
               <div className="flex shrink-0 items-center gap-2">
                 <span className="text-sm tabular-nums text-slate-300">{t.age}</span>
                 <ChipBadge chip={t.chip} />
+                {RERUNNABLE.has(t.name) && (rerunPending[t.name] ? (
+                  <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold text-sky-300">
+                    Re-run pending{rerunPending[t.name].requested_at ? ` · ${ct(rerunPending[t.name].requested_at!)}` : ""}
+                  </span>
+                ) : (
+                  <button type="button" disabled={rerunBusy !== null} onClick={() => askRerun(t.name)}
+                    className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-200 hover:border-slate-500 disabled:opacity-50">
+                    {rerunBusy === t.name ? "Asking..." : "Re-run"}
+                  </button>
+                ))}
               </div>
             </div>
           ))}
         </div>
+        {rerunNote && <p className="mt-2 text-sm text-slate-400">{rerunNote}</p>}
       </section>
 
       <section>
