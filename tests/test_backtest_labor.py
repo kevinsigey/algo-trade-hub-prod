@@ -230,3 +230,28 @@ def test_the_interlock_only_blocks_promotion():
     leaky = replace(inputs, icsa={}, ccsa={})
     assert record_guard({"gate_status": "SHADOW"}, leaky, months) is None
     assert record_guard({}, leaky, months) is None
+
+
+def test_feature_set_ghost_is_the_core_plus_ghost_gap_alone():
+    """The candidate set exists to grade ghost_gap_3m on its own (Kevin, 2026-11-01): inside ALL
+    it is bundled with ADP, hires and the post-2021 dummy, so an ALL run cannot say what ghost
+    itself is worth. It must add exactly one feature to the shipped core -- no more, or the
+    comparison stops being about ghost."""
+    from tradehub.engines.labor import CORE_FEATURES
+    from tradehub.scripts.backtest_labor import feature_set
+
+    assert feature_set("ghost") == CORE_FEATURES + ("ghost_gap_3m",)
+    assert feature_set("core") == CORE_FEATURES
+
+
+def test_recording_a_candidate_run_is_refused():
+    """current_runs keys on (engine, mode), so a recorded candidate run would silently replace
+    the shipped model's scoreboard row with a model that is not running. Candidates are for
+    comparison; promotion goes through CORE_FEATURES under a new engine version."""
+    from tradehub.scripts.backtest_labor import check_recordable
+
+    for name in ("all", "ghost"):
+        with pytest.raises(SystemExit) as excinfo:
+            check_recordable(name)
+        assert "refusing to record" in str(excinfo.value)
+    assert check_recordable("core") is None

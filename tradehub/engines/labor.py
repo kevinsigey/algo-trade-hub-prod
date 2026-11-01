@@ -38,6 +38,12 @@ MIN_PAYROLL_SIGMA = 40.0  # thousands
 JOLTS_LAG_DAYS = 40
 CORE_FEATURES = ("pay_last", "pay_3m", "icsa_ref_chg", "ccsa_ref_chg")
 ALL_FEATURES = CORE_FEATURES + ("adp_chg", "adp_missing", "jolts_hires_3m", "ghost_gap_3m", "post_2021")
+# Candidate set (Kevin, 2026-11-01): the shipped core plus ghost_gap_3m alone. The feature is
+# computed on every run (and 0-filled, with a warning, where no JOLTS vintage exists) but has
+# never been graded: inside ALL it is bundled with four other features, so an ALL run cannot say
+# what ghost itself is worth. This set exists so the backtest can grade it on its own. It is NOT
+# shipped -- labor-v1 runs CORE_FEATURES, and the live scan uses the same list.
+GHOST_FEATURES = CORE_FEATURES + ("ghost_gap_3m",)
 
 _ET = ZoneInfo("America/New_York")
 log = logging.getLogger(__name__)
