@@ -31,10 +31,15 @@ function stub(edges: SportsEdge[]) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+async function toDesk() {
+  fireEvent.click(await screen.findByRole("button", { name: "Grading desk" }));
+}
+
 describe("SportsEdges", () => {
   it("shows one row per game with the call, both probabilities and the gap", async () => {
     stub(EDGES);
     render(<SportsEdges />);
+    await toDesk();
     expect(await screen.findByText("Army to win")).toBeInTheDocument();
     expect(screen.getAllByText("UConn to win")).toHaveLength(1); // the two sides of one game are one pick
     expect(screen.getAllByText("+46 pts").length).toBeGreaterThan(0);
@@ -43,6 +48,7 @@ describe("SportsEdges", () => {
   it("features only reviewed, plausible picks and says so when there are none", async () => {
     stub(EDGES.filter((e) => e.tier !== "top_pick"));
     render(<SportsEdges />);
+    await toDesk();
     expect(await screen.findByText("No pick passed review today.")).toBeInTheDocument();
     expect(screen.queryByText("Top picks (1)")).not.toBeInTheDocument();
   });
@@ -50,14 +56,25 @@ describe("SportsEdges", () => {
   it("counts the games that had no usable edge instead of listing them", async () => {
     stub(EDGES);
     render(<SportsEdges />);
+    await toDesk();
     expect(await screen.findByText("1 more games had no usable edge.")).toBeInTheDocument();
   });
 
   it("stays inside its word budget: a page that needs more words should show a number instead", async () => {
     stub(EDGES);
     const { container } = render(<SportsEdges />);
+    await toDesk();
     await screen.findByText("Army to win");
     expect(copyWords(container)).toBeLessThanOrEqual(45);
+  });
+
+  it("leads with predictor-style cards that link to the sport's site, plus the estate cards", async () => {
+    stub(EDGES);
+    render(<SportsEdges />);
+    const card = await screen.findByRole("link", { name: /Army to win/ });
+    expect(card.getAttribute("href")).toContain("sports.40-160-91-131.sslip.io/?sport=");
+    expect(screen.getByRole("link", { name: /Premier League/ }).getAttribute("href")).toBe("https://pl.40-160-91-131.sslip.io");
+    expect(screen.getByRole("link", { name: /Formula 1/ }).getAttribute("href")).toBe("https://f1.40-160-91-131.sslip.io");
   });
 
   it("asks for another sport when a filter is pressed", async () => {

@@ -248,3 +248,13 @@ per-city KXRAIND* series are month-to-date precipitation accumulations,
 not daily contracts, so the daily rain forecaster does NOT migrate to
 them -- the KXRAIN umbrella stays. A daily per-city rain forecaster
 would be a new design, not a migration.
+
+## Sports dashboard (phase-3 §4)
+
+`/sports` leads with a Predictions tab in the predictor estate's card
+language: reviewer-passed picks as cards (model probability big,
+model-vs-market meter, whole card linking to the sport's predictor site),
+then unreviewed and flagged picks as cards -- flagged ones carry their
+flag and are never featured. PL/NBA/F1 are estate link cards. The old
+edges board is unchanged as the Grading desk tab; both tabs share one
+fetch and the same board() reduction, so the two views cannot disagree.
