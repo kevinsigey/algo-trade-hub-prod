@@ -30,16 +30,14 @@ from typing import Any
 # The hourly timers this product runs. The names match the VPS `tradehub-*` jobs.
 TIMERS: tuple[str, ...] = ("scan", "settle", "journal", "orderbooks")
 
-# The timers whose last success we CANNOT read, and why each one specifically. This is a fact about
-# what the jobs write, not a guess, and it is the whole reason the page once cried wolf:
-#
-#   settle  `predictions.settled_at` IS written, but only when a contract actually settles. A healthy
-#           hourly run with nothing to settle leaves it untouched, so it answers "when did something
-#           last settle", not "when did the job last run".
-#
-# `scan` is tracked via `scanner_runs.completed_at` (written by `tradehub/scripts/scan.py` on every
-# pass, success or failure). `settle` still has no per-pass row, so it stays `not_tracked`.
-UNTRACKED_TIMERS: frozenset[str] = frozenset({"settle"})
+# The timers whose last success we CANNOT read. This set is now empty: `scan` and `settle` both
+# record every pass in `scanner_runs` (scan.py / settle_predictions.py, via start_run/complete_run),
+# and `_latest_run` reads the newest completed one for each. It stays as a named set because the
+# report still has to be able to say `not_tracked` about a timer rather than guess -- the day a
+# job loses its run record, its name goes back in here instead of the page crying wolf over a
+# marker that does not exist. (History: `predictions.settled_at` was once read as settle's marker;
+# it only moves when a contract settles, so a healthy run with nothing to settle read as dead.)
+UNTRACKED_TIMERS: frozenset[str] = frozenset()
 
 # An hourly timer is expected to succeed at least this often. Two hours tolerates one missed tick.
 STALE_AFTER_HOURS = 2
@@ -267,6 +265,25 @@ def _latest(supa, table: str, column: str) -> datetime | None:
     return _as_datetime(rows[0].get(column))
 
 
+def _latest_run(supa, engine: str) -> datetime | None:
+    """The newest COMPLETED run of `engine` in `scanner_runs`, or None.
+
+    Two filters matter. `status`: a failed run also sets `completed_at`, and counting it as a
+    success would let a job that fails every hour read as healthy forever. `engines_run`: scan
+    and settle share the one run table, so each timer reads only its own rows. Fifty rows is
+    days of hourly runs -- far past the two-hour staleness window -- so the newest completed
+    run of either job is always in the page if it is recent enough to matter.
+    """
+    try:
+        result = (supa.table("scanner_runs").select("completed_at,status,engines_run")
+                  .order("completed_at", desc=True).limit(50).execute())
+    except Exception:  # noqa: BLE001 - health must never 500 on a missing table
+        return None
+    done = [_as_datetime(row.get("completed_at")) for row in getattr(result, "data", None) or []
+            if row.get("status") == "completed" and engine in (row.get("engines_run") or [])]
+    return max((d for d in done if d is not None), default=None)
+
+
 def _frozen_counts(supa, since: datetime) -> dict[str, int] | None:
     """Forecasts frozen at/after `since`, grouped by forecaster.
 
@@ -337,7 +354,9 @@ def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | N
         # The journal's last scorecard write is written every run, frozen or not, so it is the
         # honest "the journal ran" signal.
         "journal": _latest(supa, "journal_scores", "computed_at"),
-        "scan": _latest(supa, "scanner_runs", "completed_at"),
+        # Both hourly jobs record their runs in scanner_runs; only a completed run counts.
+        "scan": _latest_run(supa, "scan"),
+        "settle": _latest_run(supa, "settle"),
         "orderbooks": None,  # derived from the filesystem below, not from a table
     }
     orderbook_age = newest_orderbook_age_seconds(orderbook_dir, now)

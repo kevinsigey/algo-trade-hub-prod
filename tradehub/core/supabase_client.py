@@ -421,9 +421,15 @@ def get_trade_history(ticker=None, limit=200):
 
 # ── Scanner Runs ────────────────────────────────────────────────────
 
-def start_run(run_id: str, engines: list):
-    """Record the start of a scanner run."""
-    client = get_client()
+def start_run(run_id: str, engines: list, client=None):
+    """Record the start of a scanner run.
+
+    Writes through the caller's `client` when one is passed: a job that was handed a client
+    (every test, and any future embedding) must not silently write through the global client
+    instead -- with a developer-local `.env` present that would put fabricated runs in the
+    real database. The global client is only the fallback for a caller that has none.
+    """
+    client = client or get_client()
     client.table("scanner_runs").insert({
         "run_id": run_id,
         "status": "running",
@@ -431,17 +437,25 @@ def start_run(run_id: str, engines: list):
     }).execute()
 
 
-def complete_run(run_id: str, total_opps: int, duration_sec: float, error_msg=None):
-    """Mark a scanner run as completed or failed."""
-    client = get_client()
+def complete_run(run_id: str, total_opps: int, duration_sec: float, error_msg=None, client=None):
+    """Mark a scanner run as completed or failed, on the caller's client (see start_run).
+
+    If the start row never landed (its insert failed), the update matches nothing and the
+    completion would be lost -- a successful run leaving no marker at all. Insert the
+    finished row in that case. Not an upsert: `run_id` has no unique constraint to key on.
+    """
+    client = client or get_client()
     status = "failed" if error_msg else "completed"
-    client.table("scanner_runs").update({
+    row = {
         "status": status,
         "total_opps": total_opps,
         "duration_sec": round(duration_sec, 2),
         "error_msg": error_msg,
         "completed_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("run_id", run_id).execute()
+    }
+    result = client.table("scanner_runs").update(row).eq("run_id", run_id).execute()
+    if not getattr(result, "data", None):
+        client.table("scanner_runs").insert({"run_id": run_id, **row}).execute()
 
 
 def get_wipe_date():
