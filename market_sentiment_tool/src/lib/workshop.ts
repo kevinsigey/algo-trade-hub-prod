@@ -95,6 +95,8 @@ export interface IdeaSpec {
   claim: Claim;
   benchmark: string;
   cost_bps: number;
+  slippage_bps?: number;
+  borrow_bps_yr?: number;
   start: string;
   unseen_fraction: number;
   assumptions: string[];
@@ -294,6 +296,7 @@ export interface DraftResponse {
   model: string;
   play: PlayMatch | null;
   alternatives: (PlayMatch & { spec: IdeaSpec })[];
+  dropped?: string[];
 }
 
 export type TickerNames = Record<string, { name: string; kind: string } | null>;

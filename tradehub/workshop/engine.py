@@ -238,8 +238,10 @@ def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
     frame = _frame(spec, closes, fred)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
-    # Equal weight across every leg; a short leg earns -r (rebalanced daily, borrow cost inside cost_bps).
-    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / (len(spec.hold) + len(spec.short))).to_numpy()
+    # Equal weight across every leg; a short leg earns -r (rebalanced daily) and pays its borrow fee each day held.
+    n_legs = len(spec.hold) + len(spec.short)
+    borrow = spec.borrow_bps_yr / 1e4 / DAYS * len(spec.short) / n_legs
+    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / n_legs).to_numpy() - borrow
     other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(rets))
     return (rets.index, mask_all.iloc[1:].to_numpy(), held, other, rets[spec.benchmark].to_numpy(),
             rets["SPY"].to_numpy(), rets)
@@ -384,6 +386,11 @@ def _blend(spec: IdeaSpec, r: np.ndarray, rets: pd.DataFrame, rows: slice = slic
     return w * r + (1 - w) * core
 
 
+def _switch_cost(spec: IdeaSpec) -> float:
+    """Commission plus slippage, as a fraction, paid on each switch in or out."""
+    return (spec.cost_bps + spec.slippage_bps) / 1e4
+
+
 def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
     switches = np.concatenate([[False], m[1:] != m[:-1]])
     return np.where(m, held, other) - cost * switches
@@ -393,7 +400,7 @@ def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]
     """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
-    ret = _blend(spec, _build(position, sleeve, other, spec.cost_bps / 1e4), rets)
+    ret = _blend(spec, _build(position, sleeve, other, _switch_cost(spec)), rets)
     return pd.DataFrame({"ret": ret, "on": mask, "bench": b, "spy": s, "exit": why, "held": position.astype(bool)},
                         index=idx)
 
@@ -479,7 +486,7 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
              permutations: int = 1000) -> dict:
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
-    cost = spec.cost_bps / 1e4
+    cost = _switch_cost(spec)
 
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
         return _build(m, h, other, cost)

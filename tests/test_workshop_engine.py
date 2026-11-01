@@ -178,7 +178,7 @@ def test_pair_return_is_half_long_minus_half_short():
     rng, spy, frame = market(13)
     closes = pd.DataFrame({**frame, "AAA": prices(rng.normal(0.0004, 0.01, N)),
                            "BBB": prices(rng.normal(0.0001, 0.01, N))}, index=IDX)
-    s = IdeaSpec(title="AAA vs BBB", hold=["AAA"], short=["BBB"], claim="beats_benchmark", cost_bps=0)
+    s = IdeaSpec(title="AAA vs BBB", hold=["AAA"], short=["BBB"], claim="beats_benchmark", cost_bps=0, borrow_bps_yr=0)
     df = daily_frame(s, closes, {})
     r = closes.pct_change().iloc[1:]
     assert np.allclose(df["ret"].to_numpy(), ((r["AAA"] - r["BBB"]) / 2).to_numpy())
