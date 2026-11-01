@@ -9,7 +9,7 @@ import type { ViewRow } from "@/lib/journalView";
  * Spec §11 asks for "calibration diagrams per forecaster, 50%-baseline markers, bias readouts".
  * The bias readout existed; the diagram and the marker did not.
  *
- * `recharts` is already a dependency (`JobsScorecard`, `ShadowBacktester`), so this uses
+ * `recharts` is already a dependency (`JobsScorecard`), so this uses
  * `ReferenceLine` rather than hand-rolled SVG. The diagonal is perfect calibration: a forecaster
  * whose observed rate equals what it said is perfectly calibrated, so points ON the diagonal are
  * correct and points below it are over-confident. Without that reference a flat-looking line reads

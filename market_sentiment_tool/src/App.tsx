@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 // Pages
 import Home from "@/pages/Home";
-import ShadowBacktester from "@/pages/ShadowBacktester";
+import Crypto from "@/pages/Crypto";
 import Models from "@/pages/Models";
 import Scoreboard from "@/pages/Scoreboard";
 import SportsEdges from "@/pages/SportsEdges";
@@ -98,11 +98,11 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           <NavLink to="/weather" className={linkClass}>
             <CloudSun className="w-5 h-5 text-muted-foreground" /> Weather
           </NavLink>
-          {/* "Crypto Shadow", not "Shadow": a list item reading "Shadow" beside "Scoreboard" reads as
-              two halves of the same thing, and they are not (the 2026-09-28 collision). This is the
-              crypto shadow-timeline backtester at /shadow. */}
-          <NavLink to="/shadow" className={linkClass}>
-            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto Shadow
+          {/* Phase-3 §5: the page is a research desk now, not a shadow backtester -- the sniper
+              worker it graded stopped in June 2026. "Crypto research" cannot be confused with the
+              scoreboard's gate status the way the old "Crypto Shadow" label could. */}
+          <NavLink to="/crypto" className={linkClass}>
+            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto research
           </NavLink>
         </Group>
         <Group label="Admin">
@@ -289,13 +289,12 @@ function App() {
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
           <Route path="/lab" element={<Navigate to="/journal" replace />} />
-          {/* The crypto shadow-timeline backtester, which keeps the /shadow route it has always
-              had. It is NOT the scoreboard and never becomes it: a redirect from here to the
-              scoreboard would swap a crypto backtester for an engine scoreboard without saying so,
-              which is the same collision wearing a hat. The page says what it is and links to the
-              scoreboard instead. */}
-          <Route path="/shadow" element={<ShadowBacktester />} />
-          <Route path="/crypto" element={<ShadowBacktester />} />
+          {/* Phase-3 §5: the shadow backtester is deleted (it graded a worker that stopped in
+              June 2026 as if it were live). /shadow redirects to the crypto research desk --
+              the destination is the crypto successor page, not the scoreboard, so the old
+              collision warning does not apply. */}
+          <Route path="/shadow" element={<Navigate to="/crypto" replace />} />
+          <Route path="/crypto" element={<Crypto />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/models" element={<RequireAdmin><Models /></RequireAdmin>} />
           {/* The engine scoreboard, canonically at /scoreboard.

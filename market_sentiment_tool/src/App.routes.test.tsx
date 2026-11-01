@@ -3,7 +3,6 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 
 import App from "@/App";
 import type { ModelsResponse } from "@/lib/models";
-import type { ShadowPerformanceResponse } from "@/lib/shadowPerformance";
 
 // `src/lib/supabase.ts` builds a real client at import time and THROWS when the publishable key is
 // absent, so importing `App` -- which pulls in `Home` -> `useMarketEdges` --
@@ -110,26 +109,29 @@ function heading(): HTMLElement | null {
 /** The crypto page's h1. A separate query so the shadow describe can assert its absence without
  *  caring what the scoreboard is called. */
 function cryptoHeading(): HTMLElement | null {
-  return screen.queryByRole("heading", { name: /Crypto Shadow Timeline/i, level: 1 });
+  return screen.queryByRole("heading", { name: /Crypto research/i, level: 1 });
 }
 
-/** A read that succeeded and found nothing, which is what `/api/shadow-performance` sends whenever
- *  the table is readable but the window is empty. */
-const EMPTY_SHADOW: ShadowPerformanceResponse = {
-  domain: "crypto",
-  hours: 24,
-  generated_at: "2026-09-28T00:00:00Z",
-  thresholds: {},
-  summary: {
-    evaluated_count: 0,
-    considered_count: 0,
-    dead_zone_count: 0,
-    hit_rate: null,
-    brier_score: null,
-    virtual_pnl_pct: 0.0,
-  },
-  freshness: {},
-  series: [],
+/** The crypto desk's reads, stubbed empty-but-valid: the board with no cells filled and a
+ *  verdict whose population is all zero, so the desk renders its frame without inventing a
+ *  record. */
+const EMPTY_BOARD_CRYPTO = {
+  generated_at: "2026-11-01T00:00:00Z",
+  note: "Kalshi market data, not a prediction.",
+  spots: { BTC: null, ETH: null },
+  hourly: { BTC: null, ETH: null },
+  quarter: { BTC: null, ETH: null },
+};
+const EMPTY_VERDICT = {
+  record: "sniper_closed_record",
+  graded_on: "2026-11-01",
+  worker: { first_row: null, last_row: null, stopped: "2026-06-02", venue: "Kalshi demo API" },
+  population: { archived_rows: 0, by_status: {}, grading_population: 0, considered: 0, dead_zone: 0, dead_zone_share: null, graded: 0 },
+  overall: { count: 0, hit_rate: null, virtual_pnl_pct: 0, brier_score: null },
+  by_asset: {},
+  buckets: {},
+  price_source: "",
+  method: "",
 };
 
 /** Only `/api/scoreboard` matters here. The sidebar's book read is stubbed too, because `App` mounts
@@ -142,7 +144,9 @@ function stubApi() {
       forecasters: [],
       headline: { forecasters: 0, calibrated: 0, settled_calibrated: 0, promoted: 0 },
     },
-    "/api/shadow-performance": EMPTY_SHADOW,
+    "/api/crypto/board": EMPTY_BOARD_CRYPTO,
+    "/api/crypto/sniper-verdict": EMPTY_VERDICT,
+    "/api/onchain": { chains: [] },
     "/api/admin/me": { email: "kevin@example.com" },
     "/api/ideas": [],
     "/api/portfolio": { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] },
@@ -303,47 +307,44 @@ describe("the /shadow-scoreboard redirect lands on the canonical route", () => {
 });
 
 /**
- * The collision, pinned at both ends.
+ * The word 'shadow', after phase-3 §5 (2026-11-01).
  *
- * `/shadow` sent a visitor to the wrong page on 2026-09-28, and it did so for two reasons that a
- * test of the page alone cannot see: the route was reachable and looked like a scoreboard, and the
- * nav entry beside it was labelled with the word the scoreboard was known by. So both are asserted
- * here, and so is the thing that must NOT be true -- that `/shadow` renders the scoreboard. A
- * redirect from one to the other would pass every other test in this file while quietly replacing
- * a crypto backtester with an engine scoreboard, and that is the one substitution this product
- * keeps refusing to make quietly.
+ * The 2026-09-28 collision rulings pinned here for a month said: `/shadow` serves the crypto
+ * timeline itself, never a redirect, and never the scoreboard. Phase-3 §5 superseded them on
+ * the owner's call: the timeline graded a worker that stopped in June 2026, so the backtester
+ * is deleted and `/shadow` redirects to its successor, the crypto research desk at `/crypto`.
+ * What survives from the old ruling is the substitution guard, and it is still the point:
+ * `/shadow` must land on the CRYPTO successor, not on the scoreboard -- a redirect that quietly
+ * replaced a crypto page with an engine scoreboard would be the same collision wearing a hat.
+ * The nav says "Crypto research" and points at `/crypto`; nothing links to `/shadow` any more.
  */
 describe("the two pages that share the word 'shadow'", () => {
-  it("resolves /shadow to the crypto timeline, not to the scoreboard", async () => {
+  it("resolves /shadow to the crypto research desk, not to the scoreboard", async () => {
     await renderAppAt("/shadow");
 
+    expect(window.location.pathname).toBe("/crypto");
     expect(cryptoHeading()).toBeInTheDocument();
     expect(heading()).toBeNull();
   });
 
-  it("labels the /shadow nav entry with its domain, so 'Shadow' alone names nothing", async () => {
-    // The nav entry used to read plain "Shadow", directly above "Scoreboard". That is the sentence
-    // a reader parses as two halves of one thing. Asserted on the /shadow route rather than on "/"
-    // because the sidebar mounts on every route and "/" additionally mounts Home, which opens a
-    // realtime Supabase channel this file's stub is not a client for.
-    await renderAppAt("/shadow");
+  it("labels the crypto nav entry 'Crypto research' and points it at /crypto", async () => {
+    // Asserted on the /crypto route rather than on "/" because the sidebar mounts on every
+    // route and "/" additionally mounts Home, which opens a realtime Supabase channel this
+    // file's stub is not a client for.
+    await renderAppAt("/crypto");
 
-    const link = screen.getByRole("link", { name: /crypto shadow/i });
-    expect(link).toHaveAttribute("href", "/shadow");
-    // And nothing in the nav is called plain "Shadow" any more, which is the claim itself.
+    const link = screen.getByRole("link", { name: /crypto research/i });
+    expect(link).toHaveAttribute("href", "/crypto");
+    // Nothing in the nav is called plain "Shadow", and nothing links to the retired route.
     expect(screen.queryByRole("link", { name: /^shadow$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /crypto shadow/i })).not.toBeInTheDocument();
   });
 
-  it("sends a visitor who lands on /shadow to the scoreboard, on the page itself", async () => {
-    // The collision's other half, and the part a rename cannot do. The owner already has the wrong
-    // page open, and the read here is the one thing most likely to be broken, so the correction
-    // has to be in this page's own header rather than only in the nav he has to go looking for.
-    await renderAppAt("/shadow");
+  it("resolves /crypto itself to the research desk", async () => {
+    await renderAppAt("/crypto");
 
-    expect(screen.getByRole("link", { name: /open the engine scoreboard/i })).toHaveAttribute(
-      "href",
-      "/scoreboard",
-    );
+    expect(cryptoHeading()).toBeInTheDocument();
+    expect(heading()).toBeNull();
   });
 
   it("renders neither page on a path with no route", async () => {
@@ -351,6 +352,6 @@ describe("the two pages that share the word 'shadow'", () => {
 
     expect(cryptoHeading()).toBeNull();
     expect(heading()).toBeNull();
-    expect(screen.getByRole("link", { name: /crypto shadow/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /crypto research/i })).toBeInTheDocument();
   });
 });
