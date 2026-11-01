@@ -327,6 +327,32 @@ def health(supabase=Depends(get_supabase)):
     return HealthResponse(status="ok", timestamp=now, report=collect_health(supabase, now=now))
 
 
+class _RerunIn(BaseModel):
+    job: str
+
+
+@app.post("/api/health/rerun", tags=["System"])
+def health_rerun(body: _RerunIn, _admin: dict = Depends(admin.require_admin)):
+    """Ask the host to re-run scan or settle (phase-2 §4.3). The API cannot start host
+    jobs, so this drops a trigger file the VPS watcher claims within a minute; the file
+    carries the asking admin's email and the time, and the run lands in scanner_runs.
+    One pending request per job -- a second ask returns the one already waiting."""
+    from tradehub import health_rerun
+    try:
+        return health_rerun.request_rerun(body.job, requested_by=_admin.get("email") or "admin",
+                                          now=datetime.now(timezone.utc))
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    except health_rerun.RerunUnavailable as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
+
+
+@app.get("/api/health/rerun", tags=["System"])
+def health_rerun_pending(_admin: dict = Depends(admin.require_admin)):
+    from tradehub import health_rerun
+    return {"pending": health_rerun.pending()}
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 3: /api/positions
 # ════════════════════════════════════════════════════════════════════════════
