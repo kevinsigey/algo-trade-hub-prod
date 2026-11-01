@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
+
+import { adminJson } from "@/lib/workshop";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, Treemap, XAxis, YAxis } from "recharts";
 
@@ -87,24 +89,15 @@ export default function Portfolio() {
   const [liveIdeas, setLiveIdeas] = useState<{ id: number; title: string; size_pct: number | null }[]>([]);
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      let token: string | null = null;
-      try {
-        const { supabase } = await import("@/lib/supabase");
-        const { data: session } = await supabase.auth.getSession();
-        token = session.session?.access_token ?? null;
-      } catch {
-        token = null;
-      }
-      try {
-        const res = await fetch("/api/workshop/ideas", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-        const rows = res.ok ? await res.json() : [];
-        if (!cancelled) setLiveIdeas((rows || []).filter((r: any) => r.live_at && !r.killed_at && r.auto_orders));
-      } catch {
-        if (!cancelled) setLiveIdeas([]);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Admin only: a signed-out visitor gets a 401 and simply sees no list.
+    adminJson<{ id: number; title: string; size_pct: number | null; live_at: string | null; killed_at: string | null; auto_orders: boolean }[]>("/api/workshop/ideas")
+      .then((rows) => {
+        if (!cancelled) setLiveIdeas(rows.filter((r) => r.live_at && !r.killed_at && r.auto_orders));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (

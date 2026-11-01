@@ -402,3 +402,17 @@ def test_public_pages_cope_with_a_published_event_study(api, monkeypatch):
     record = TestClient(main.app).get(f"/api/ideas/{idea['id']}")
     assert record.status_code == 200
     assert all(r["claim"] is None for r in record.json()["runs"])
+
+
+def test_ideas_summary_counts_every_ideas_latest_run(api, monkeypatch):
+    # Critique L5: the public record shows the whole Workshop record, counts only.
+    c, db, _ = api
+    a = c.post("/api/workshop/ideas", json={"title": "Idea A", "plain_words": "a"}).json()
+    b = c.post("/api/workshop/ideas", json={"title": "Idea B", "plain_words": "b"}).json()
+    c.post("/api/workshop/ideas", json={"title": "Idea C", "plain_words": "c"})  # never run: not "tested"
+    c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC})  # FAIL (RESULT)
+    monkeypatch.setattr(main, "run_test", lambda *x, **k: {**RESULT, "verdict": "PASS"})
+    c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC})  # latest = PASS
+    c.post(f"/api/workshop/ideas/{b['id']}/runs", json={"spec": SPEC})  # PASS
+    got = TestClient(main.app).get("/api/ideas/summary").json()
+    assert got == {"tested": 2, "passed": 2, "failed": 0, "not_enough_data": 0, "published": 0}

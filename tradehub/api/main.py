@@ -753,17 +753,7 @@ def get_ideas_summary(supabase=Depends(get_supabase)):
         elif verdict == "NOT ENOUGH DATA":
             not_enough += 1
     published = len(workshop_store.published_ideas(supabase))
-    out = {
-        "tested": tested,
-        "ideas_tested": tested,
-        "passed": passed,
-        "failed": failed,
-        "not_enough_data": not_enough,
-        "not_enough": not_enough,
-        "published": published,
-        "published_here": published,
-    }
-    return out
+    return {"tested": tested, "passed": passed, "failed": failed, "not_enough_data": not_enough, "published": published}
 
 
 @app.get("/api/ideas/{idea_id}", tags=["Ideas"])
