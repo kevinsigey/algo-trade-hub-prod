@@ -77,11 +77,16 @@ def _shrunk_share(hits: int, n: int) -> float:
     return (hits + 0.5) / (n + 1)
 
 
-def ensemble_prob(market: KalshiMarket, kind: str, members: list[float]) -> float:
+def ensemble_prob(market: KalshiMarket, kind: str, members: list[float], *,
+                  sigma: float = KERNEL_SIGMA, bias: float = 0.0) -> float:
+    """Member-share with a Normal kernel. ens-v1 calls this with the defaults
+    (fixed 2.0F kernel, no bias -- the values set before any result was seen);
+    ens-v2 passes its fitted per-station (bias, sigma). Rain is a threshold
+    share and takes neither."""
     if kind == "rain":
         return _shrunk_share(sum(v >= RAIN_MEASURABLE for v in members), len(members))
     interval = yes_interval(market, TEMP_RESOLUTION)
-    return statistics.fmean(prob_in_interval(v, KERNEL_SIGMA, interval) for v in members)
+    return statistics.fmean(prob_in_interval(v + bias, sigma, interval) for v in members)
 
 
 def climatology_prob(market: KalshiMarket, kind: str, days: dict[date, dict[str, float | None]],
@@ -114,12 +119,25 @@ class WeatherInputs:
         self._get_json = get_json
         self._stations: dict[str, tuple[float, float, dict]] = {}
         self._ensembles: dict[str, Any] = {}
+        self._hindcasts: dict[str, dict] = {}
 
     def _fetch_station(self, sid: str, start: date, end: date) -> dict[str, Any]:
         return fetch_station(sid, start, end, self._get_json)
 
     def _fetch_ensemble(self, lat: float, lon: float) -> dict[str, Any]:
         return fetch_ensemble(lat, lon, self._get_json)
+
+    def hindcast(self, sid: str, today: date) -> dict[date, dict[str, float]]:
+        """Previous-runs day values for the station (ens-v2's fitting signal),
+        fetched at most once per station per process."""
+        if sid not in self._hindcasts:
+            lat, lon, _days = self.station(sid, today)
+            from tradehub.data.hindcast import fetch_hindcast, parse_day_values
+            try:
+                self._hindcasts[sid] = parse_day_values(fetch_hindcast(lat, lon, self._get_json))
+            except Exception:  # noqa: BLE001 - a failed hindcast read fits nothing, never crashes the run
+                self._hindcasts[sid] = {}
+        return self._hindcasts[sid]
 
     def station(self, sid: str, today: date) -> tuple[float, float, dict]:
         if sid not in self._stations:
@@ -183,6 +201,78 @@ class WeatherEnsemble(_WeatherBase):
                                  "no_sub_title": mkt.no_sub_title})
 
 
+FIT_WINDOW_DAYS = 60
+FIT_MIN_PAIRS = 20  # mirrors engines.weather.MIN_ERROR_PAIRS: below it, no fit is claimed
+
+
+def fit_station_error(inputs: WeatherInputs, sid: str, kind: str, today: date):
+    """(ErrorModel, n_pairs) for one station+kind, fit walk-forward: pairs are
+    (ECMWF previous-run day value, ACIS actual) for days strictly before
+    `today`, newest FIT_WINDOW_DAYS of them. Below FIT_MIN_PAIRS the fallback
+    is exactly ens-v1's parameters (bias 0, kernel 2.0), so an unfitted
+    station's v2 freeze equals its v1 freeze and the payload says unfitted."""
+    from tradehub.engines.weather import ErrorModel, fit_error_model
+    if kind == "rain":
+        return ErrorModel(0.0, KERNEL_SIGMA), 0
+    _lat, _lon, days = inputs.station(sid, today)
+    hind = inputs.hindcast(sid, today)
+    dated = []
+    for day, hv in hind.items():
+        if day >= today:
+            continue
+        actual = (days.get(day) or {}).get(kind)
+        if actual is not None and hv.get(kind) is not None:
+            dated.append((day, hv[kind], actual))
+    dated.sort()
+    pairs = [(fc, actual) for _day, fc, actual in dated[-FIT_WINDOW_DAYS:]]
+    return fit_error_model(pairs, min_pairs=FIT_MIN_PAIRS,
+                           fallback=ErrorModel(0.0, KERNEL_SIGMA)), len(pairs)
+
+
+class WeatherEnsembleV2(_WeatherBase):
+    """ens-v2 (phase-3 §3.2): ens-v1's member-share machinery with a fitted
+    per-station bias and kernel width instead of the fixed pre-results 2.0F
+    kernel and no correction. Freezes beside ens-v1 under its own version;
+    the fitted parameters and pair count ride in the payload, and a station
+    under the pair floor freezes with v1's parameters and fitted=false.
+    Rain keeps the plain member share in this step (bias/kernel are
+    temperature concepts; the rain rework is §3.2's later step)."""
+
+    version = "ens-v2"
+
+    def __init__(self, kind, live, fetch, inputs):
+        super().__init__(kind, live, fetch, inputs)
+        self.name = self.family
+
+    def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
+        lm = self._open.get(entry.target)
+        if lm is None:
+            return None
+        sid = station_for(lm.market)
+        values = day_members(self._inputs.members(sid, now.date()), lm.market.close_time, self.kind)
+        if not values:
+            return None
+        mkt = lm.market
+        error, n_pairs = fit_station_error(self._inputs, sid, self.kind, now.date())
+        fitted = n_pairs >= FIT_MIN_PAIRS and self.kind != "rain"
+        prob = ensemble_prob(mkt, self.kind, values,
+                             sigma=error.sigma if fitted else KERNEL_SIGMA,
+                             bias=error.bias if fitted else 0.0)
+        return Forecast(self.name, self.version, entry.target, prob,
+                        market_prob=quote_mid(lm),
+                        payload={**quote_payload(lm), "station": sid, "n_members": len(values),
+                                 "ensemble_mean": round(statistics.fmean(values), 3), "models": list(MODELS),
+                                 "kernel_sigma": error.sigma if fitted else KERNEL_SIGMA,
+                                 "bias": error.bias if fitted else 0.0,
+                                 "fit_pairs": n_pairs, "fitted": fitted,
+                                 "fit_source": "ecmwf previous-runs vs ACIS actuals",
+                                 "strike_type": mkt.strike_type,
+                                 "floor_strike": mkt.floor_strike,
+                                 "cap_strike": mkt.cap_strike,
+                                 "yes_sub_title": mkt.yes_sub_title,
+                                 "no_sub_title": mkt.no_sub_title})
+
+
 class WeatherClimatology(_WeatherBase):
     version = "v1"
 
@@ -215,6 +305,7 @@ def build_weather(live, fetch: Callable[[str], Any] = fetch_market, inputs: Weat
     out: list = []
     for kind in KINDS:
         out += [WeatherEnsemble(kind, live, fetch, inputs),
+                WeatherEnsembleV2(kind, live, fetch, inputs),
                 KalshiImplied(f"weather_{kind}", series_for(kind), "daily", live, fetch,
                               keep=lambda lm: station_for(lm.market) is not None),
                 WeatherClimatology(kind, live, fetch, inputs)]

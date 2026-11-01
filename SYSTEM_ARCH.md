@@ -201,3 +201,17 @@ same targets. The Weather page leads with an SVG US map
 markers via the same projection), the selected city's card under it, and
 the contract table demoted into a collapsed details section. The card
 names the ensemble version behind its numbers.
+
+## Weather ens-v2 (phase-3 §3.2, step 1)
+
+`WeatherEnsembleV2` freezes beside ens-v1 in the journal (same forecaster
+names, version "ens-v2"): ens-v1's member-share machinery with a fitted
+per-station bias and kernel width replacing the fixed pre-results 2.0F
+kernel. The fit is walk-forward on (ECMWF previous-runs day value, ACIS
+actual) pairs -- `tradehub/data/hindcast.py`; GFS previous runs answer
+nulls, so ECMWF is the fitting signal, stated in every payload
+(`fit_source`) beside `fitted`, `bias`, `kernel_sigma`, `fit_pairs`.
+Below 20 pairs a station freezes with ens-v1's exact parameters and
+fitted=false. Rain keeps the plain member share in this step. Promotion
+to the map page's headline numbers is grade-gated (200 settled per
+family, Kevin's call), per the phase-3 spec.
