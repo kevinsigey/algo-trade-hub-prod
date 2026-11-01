@@ -106,11 +106,12 @@ describe("Journal", () => {
     // ungated sum over provisional cards, which is the bug. The hero is 0 until something calibrates.
     expect(within(totals).getByText("forecasts locked in").previousSibling).toHaveTextContent("0");
     expect(within(totals).getByText("scored so far").previousSibling).toHaveTextContent("0");
-    expect(within(totals).getByText("promoted").previousSibling).toHaveTextContent("0");
-    const results = screen.getByLabelText("Results");
-    expect(within(results).getByText("S&P 500 tomorrow: model")).toBeInTheDocument();
-    expect(within(results).getByText("-0.10")).toBeInTheDocument();
-    expect(within(results).getAllByText("Too early").length).toBe(2);
+    // Nothing has a measured gap against its baseline here, so nothing may claim to beat it.
+    expect(within(totals).getByText("beating what they are measured against").previousSibling).toHaveTextContent("none yet");
+    const macro = screen.getByLabelText("Macro & markets");
+    expect(within(macro).getByText("S&P 500 tomorrow: model")).toBeInTheDocument();
+    expect(within(macro).getAllByText("Too early to say").length).toBe(2);
+    expect(within(macro).getAllByText("not measured").length).toBe(2);
   });
 
   it("lists forecasters with nothing scored as short chips, in plain words, with the baseline folded away", async () => {
@@ -191,7 +192,8 @@ describe("Journal", () => {
     stubFetch();
     const { container } = render(<Journal />);
     await screen.findByLabelText("Totals");
-    expect(copyWords(container)).toBeLessThanOrEqual(45);
+    // The league table carries a method line, a blurb per group and a column key; it is still short.
+    expect(copyWords(container)).toBeLessThanOrEqual(170);
   });
 
   it("shows the API's error instead of an empty ledger", async () => {
@@ -331,7 +333,7 @@ describe("Journal tabs and empty states", () => {
   it("moves selection and focus with the arrow keys", async () => {
     stubFetch();
     render(<Journal />);
-    const scored = await screen.findByRole("tab", { name: "Scored" });
+    const scored = await screen.findByRole("tab", { name: "League table" });
     scored.focus();
     fireEvent.keyDown(scored, { key: "ArrowRight" });
     const over = screen.getByRole("tab", { name: "Over time" });
@@ -340,7 +342,7 @@ describe("Journal tabs and empty states", () => {
     expect(scored).toHaveAttribute("tabindex", "-1");
     expect(document.activeElement).toBe(over);
     fireEvent.keyDown(over, { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: "Scored" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "League table" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("says so in one sentence when nothing has been scored or is waiting", async () => {
@@ -349,8 +351,9 @@ describe("Journal tabs and empty states", () => {
       ok: true, status: 200, json: () => Promise.resolve(url.includes("/api/journal/series") ? { series: [] } : empty),
     })));
     render(<Journal />);
-    expect(await screen.findByText("Nothing has been scored yet.")).toBeInTheDocument();
-    expect(screen.getByText("No scored forecasters yet.")).toBeInTheDocument();
+    expect(await screen.findByText("none yet")).toBeInTheDocument();
+    // The sports this journal does not score yet are still named, never hidden.
+    expect(screen.getByText("Premier League")).toBeInTheDocument();
     expect(screen.getByText("No forecasters waiting to be scored.")).toBeInTheDocument();
   });
 });

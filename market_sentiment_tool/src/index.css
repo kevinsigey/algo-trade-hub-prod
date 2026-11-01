@@ -1,56 +1,63 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  /* The Predictor family's tokens (predictor-ui/tokens.css), as the HSL triplets shadcn reads.
+     Stage #0b0d10, panel #151920, rule #2b333f, text #f3f5f8, faint text #909aa8 (6.8:1 on the panel).
+     The Hub's accent is white, as on the Predictor hub page. No glows, no gradients, 6px corners. */
   :root {
-    --background: 220 20% 7%;
-    --foreground: 210 20% 90%;
+    --background: 216 17% 5%;
+    --foreground: 216 24% 96%;
 
-    --card: 220 18% 10%;
-    --card-foreground: 210 20% 90%;
+    --card: 216 18% 10%;
+    --card-foreground: 216 24% 96%;
 
-    --popover: 220 18% 10%;
-    --popover-foreground: 210 20% 90%;
+    --popover: 216 18% 10%;
+    --popover-foreground: 216 24% 96%;
 
-    --primary: 142 72% 50%;
-    --primary-foreground: 220 20% 7%;
+    --primary: 216 24% 96%;
+    --primary-foreground: 216 17% 5%;
 
-    --secondary: 220 16% 16%;
-    --secondary-foreground: 210 20% 80%;
+    --secondary: 216 19% 14%;
+    --secondary-foreground: 214 17% 77%;
 
-    --muted: 220 14% 14%;
-    --muted-foreground: 215 12% 50%;
+    --muted: 216 19% 14%;
+    --muted-foreground: 214 11% 62%;
 
-    --accent: 38 92% 55%;
-    --accent-foreground: 220 20% 7%;
+    --accent: 216 19% 14%;
+    --accent-foreground: 216 24% 96%;
 
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 100% 71%;
+    --destructive-foreground: 216 17% 5%;
 
-    --border: 220 14% 18%;
-    --input: 220 14% 18%;
-    --ring: 142 72% 50%;
+    --border: 216 17% 21%;
+    --input: 216 17% 21%;
+    --ring: 216 24% 96%;
 
-    --radius: 0.5rem;
+    --radius: 0.375rem;
 
-    --profit: 142 72% 50%;
-    --loss: 0 72% 55%;
-    --warn: 38 92% 55%;
-    --info: 210 80% 60%;
-    --terminal-bg: 220 22% 5%;
-    --purple: 270 70% 60%;
+    --profit: 145 66% 55%;
+    --loss: 0 100% 71%;
+    --warn: 43 100% 62%;
+    --info: 214 17% 77%;
+    --terminal-bg: 216 17% 5%;
+    --purple: 214 17% 77%;
 
-    --sidebar-background: 220 18% 10%;
-    --sidebar-foreground: 210 20% 90%;
-    --sidebar-primary: 142 72% 50%;
-    --sidebar-primary-foreground: 220 20% 7%;
-    --sidebar-accent: 220 16% 16%;
-    --sidebar-accent-foreground: 210 20% 80%;
-    --sidebar-border: 220 14% 18%;
-    --sidebar-ring: 142 72% 50%;
+    --pr-win: #3ddc84;
+    --pr-loss: #ff6b6b;
+    --pr-faint: #909aa8;
+
+    --sidebar-background: 216 18% 10%;
+    --sidebar-foreground: 216 24% 96%;
+    --sidebar-primary: 216 24% 96%;
+    --sidebar-primary-foreground: 216 17% 5%;
+    --sidebar-accent: 216 19% 14%;
+    --sidebar-accent-foreground: 216 24% 96%;
+    --sidebar-border: 216 17% 21%;
+    --sidebar-ring: 216 24% 96%;
   }
 }
 
@@ -65,13 +72,23 @@
 }
 
 @layer utilities {
+  /* Numbers stay in Barlow, tabular, so a column of figures lines up without a second typeface. */
   .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Barlow', ui-sans-serif, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
   }
 
   .font-sans {
-    font-family: 'Inter', sans-serif;
+    font-family: 'Barlow', ui-sans-serif, system-ui, sans-serif;
   }
+
+  .font-display {
+    font-family: 'Barlow Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
+  }
+
+  .text-pr-win { color: var(--pr-win); }
+  .text-pr-loss { color: var(--pr-loss); }
+  .border-pr-loss { border-color: var(--pr-loss); }
 
   .text-profit {
     color: hsl(var(--profit));
@@ -99,34 +116,6 @@
 
   .bg-purple {
     background-color: hsl(var(--purple));
-  }
-
-  .glow-profit {
-    text-shadow: 0 0 20px hsl(142 72% 50% / 0.4);
-  }
-
-  .glow-loss {
-    text-shadow: 0 0 20px hsl(0 72% 55% / 0.4);
-  }
-
-  .glow-purple {
-    text-shadow: 0 0 20px hsl(270 70% 60% / 0.4);
-  }
-
-  .glow-warn {
-    text-shadow: 0 0 20px hsl(38 92% 55% / 0.4);
-  }
-
-  .border-glow-profit {
-    box-shadow: 0 0 15px -3px hsl(142 72% 50% / 0.15);
-  }
-
-  .border-glow-loss {
-    box-shadow: 0 0 15px -3px hsl(0 72% 55% / 0.15);
-  }
-
-  .border-glow-warn {
-    box-shadow: 0 0 15px -3px hsl(38 92% 55% / 0.25);
   }
 
   .scrollbar-thin::-webkit-scrollbar {
