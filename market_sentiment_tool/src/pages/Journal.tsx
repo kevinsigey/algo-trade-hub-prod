@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import JournalSports from "@/components/JournalSports";
 import { LeagueTable } from "@/components/LeagueTable";
 import { SkillOverTime } from "@/components/SkillOverTime";
 import { WeatherPanel } from "@/components/WeatherPanel";
@@ -18,7 +19,7 @@ import { beatingCount, league } from "@/lib/league";
  * Nothing here computes a score: the server does, and `lib/league.ts` only changes the sign of the gap.
  */
 
-type Tab = "league" | "time" | "weather" | "waiting";
+type Tab = "league" | "time" | "weather" | "sports" | "waiting";
 
 function Number_({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
@@ -80,6 +81,7 @@ export default function Journal() {
     ["league", "League table"],
     ["time", "Over time"],
     ["weather", "Weather"],
+    ["sports", "Sports"],
     ["waiting", `Waiting (${waiting.length})`],
   ];
 
@@ -126,6 +128,8 @@ export default function Journal() {
       <div className={tab === "time" ? "" : "hidden"}><SkillOverTime series={series?.series ?? []} /></div>
 
       <div className={tab === "weather" ? "" : "hidden"}><WeatherPanel /></div>
+
+      <div className={tab === "sports" ? "" : "hidden"}><JournalSports scores={data.forecasters} /></div>
 
       {waiting.length > 0 ? (
         <section aria-label="Waiting" className={tab === "waiting" ? "" : "hidden"}>
