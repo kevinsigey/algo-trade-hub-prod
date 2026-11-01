@@ -10,6 +10,7 @@ import JobsNowcast from "@/pages/JobsNowcast";
 import Cpi from "@/pages/Cpi";
 import Journal from "@/pages/Journal";
 import Health from "@/pages/Health";
+import MachineKeys from "@/pages/MachineKeys";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Weather from "@/pages/Weather";
 import { NoOrdersBanner } from "@/components/NoOrdersBanner";
@@ -24,7 +25,7 @@ import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -122,6 +123,10 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           {/* Freshness of every timer and forecaster: "is anything running", not "who is winning". */}
           <NavLink to="/health" className={linkClass}>
             <HeartPulse className="w-5 h-5 text-teal-400" /> Health
+          </NavLink>
+          {/* Phase-2 machine API, step 1: key lifecycle + audit. The routes the keys serve come later. */}
+          <NavLink to="/machine-keys" className={linkClass}>
+            <KeyRound className="w-5 h-5 text-muted-foreground" /> Machine keys
           </NavLink>
           {admin === "admin" ? (
             <button type="button" onClick={() => void supabase.auth.signOut()} className={`${linkClass({ isActive: false })} w-full`}>
@@ -317,6 +322,7 @@ function App() {
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />
           <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
+          <Route path="/machine-keys" element={<RequireAdmin><MachineKeys /></RequireAdmin>} />
           <Route path="/weather" element={<Weather />} />
         </Routes>
         </Guarded>

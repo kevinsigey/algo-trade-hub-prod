@@ -420,6 +420,68 @@ def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
     return user
 
 
+# ── Machine API keys (phase-2 spec §1, step 1): issue/revoke from the admin UI only. ──────
+# No /api/v1 routes exist yet -- this step is the key lifecycle and the audit table, shipped
+# dark. The plaintext key is returned exactly once, by create; only its hash is stored, and
+# no response ever carries the hash.
+class _KeyIn(BaseModel):
+    label: str = Field(min_length=1, max_length=60)
+    scopes: list[str] = Field(min_length=1)
+    max_qty: int = Field(default=100, ge=1, le=100_000)
+    max_notional: float = Field(default=25_000, gt=0)
+    daily_cap: int = Field(default=50, ge=1, le=10_000)
+
+
+@app.post("/api/admin/keys", tags=["Admin"], status_code=201)
+def create_machine_key(body: _KeyIn, _admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    from tradehub.api import machine_keys
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    try:
+        row, plaintext = machine_keys.create_key(
+            supabase, body.label, body.scopes, max_qty=body.max_qty,
+            max_notional=body.max_notional, daily_cap=body.daily_cap)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**row, "key": plaintext}
+
+
+@app.get("/api/admin/keys", tags=["Admin"])
+def list_machine_keys(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    from tradehub.api import machine_keys
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"keys": machine_keys.list_keys(supabase)}
+
+
+@app.post("/api/admin/keys/{key_id}/revoke", tags=["Admin"])
+def revoke_machine_key(key_id: int, _admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    from tradehub.api import machine_keys
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    row = machine_keys.revoke_key(supabase, key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such key")
+    return row
+
+
+@app.get("/api/admin/keys/{key_id}/events", tags=["Admin"])
+def machine_key_events(key_id: int, _admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    from tradehub.api import machine_keys
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    if machine_keys.get_key(supabase, key_id) is None:
+        raise HTTPException(status_code=404, detail="no such key")
+    return {"events": machine_keys.recent_events(supabase, key_id)}
+
+
 # ── Trading HQ Workshop (step 2): Kevin-only. Plain words -> draft -> Kevin confirms -> run -> verdict. ──
 class _DraftIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
