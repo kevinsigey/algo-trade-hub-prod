@@ -1,0 +1,674 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+import App from "@/App";
+import { claimLabel, conditionText, rulesText } from "@/lib/workshop";
+import Workshop from "@/pages/Workshop";
+import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
+
+const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: session.token ? { access_token: session.token } : null } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
+  },
+}));
+
+const SPEC = {
+  title: "Gold when rates rise", hold: ["GLD"], otherwise: "SPY", claim: "beats_benchmark_when", benchmark: "SPY",
+  cost_bps: 10, start: "2006-01-03", unseen_fraction: 0.3, assumptions: ["rates rising = 10-year yield up 0.25 over 3 months"],
+  when: { source: "fred", series: "DGS10", measure: "change", lookback_days: 63, op: ">", threshold: 0.25 },
+};
+const RUN = {
+  id: 1, variation: 4, spec: SPEC, draft_model: "claude-opus-5-5", verdict: "FAIL", created_at: "2026-10-30T00:00:00Z",
+  result: {
+    verdict: "FAIL", headline: "Worked on the years it was built on, not after.", reason: null, split_date: "2019-01-02",
+    data_start: "2006-01-04", data_end: "2026-10-29", variations: 4,
+    claim: { built: { holds: true, value: 3.1, label: "+3.1 pts/yr" }, unseen: { holds: false, value: -1.4, label: "-1.4 pts/yr" } },
+    shuffle: { beats_pct: 71, p: 0.29, bar: 0.0125, permutations: 1000, seed: 4, method: "random timing" },
+    t_test: { mean_daily_diff: 0.02, t: 1.7, p: 0.08 }, periods: { held: 3, of: 5 },
+    context: [{ name: "Idea", built_cagr: 9, unseen_cagr: 7, unseen_max_dd: -20 }, { name: "SPY", built_cagr: 8, unseen_cagr: 12, unseen_max_dd: -25 }],
+    curve: [{ t: "2006-01-04", idea: 0, benchmark: 0 }, { t: "2026-10-29", idea: 200, benchmark: 300 }],
+  },
+};
+
+function serve(routes: Record<string, { status?: number; body: unknown }>) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    const key = Object.keys(routes).sort((a, b) => b.length - a.length).find((k) => url.includes(k));
+    const hit = key ? routes[key] : { status: 200, body: {} };
+    return new Response(JSON.stringify(hit.body), { status: hit.status ?? 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  session.token = "jwt";
+  window.history.pushState({}, "", "/");
+  try { localStorage.clear(); } catch { void 0; }
+});
+
+describe("workshop copy", () => {
+  it("says each claim in plain words", () => {
+    expect(claimLabel("ballast")).toMatch(/loses less than SPY/);
+    expect(conditionText(SPEC.when as never)).toBe("DGS10 change over 63 trading days > 0.25");
+    expect(conditionText(null)).toBe("always");
+  });
+});
+
+describe("Workshop pages", () => {
+  it("lists ideas with their latest verdict and sends the bearer token", async () => {
+    const f = serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "FAIL" }] } });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
+    expect(screen.getByLabelText("Type an idea in plain words")).toBeInTheDocument();
+    expect(screen.getByText("4 runs")).toBeInTheDocument();
+    expect((f.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
+  });
+
+  it("shows a verdict with the shuffle result and the variation count", async () => {
+    serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [RUN] } } });
+    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Worked on the years it was built on, not after.")).toBeInTheDocument();
+    expect(screen.getByText(/beats 71% of 1,000/)).toBeInTheDocument();
+    expect(screen.getByText("4 · bar raised accordingly")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
+  });
+
+  it("falls back to the hand-fill form when the AI can't draft", async () => {
+    serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Bonds protect me", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { status: 424, body: { detail: "OPENROUTER_API_KEY is not set", reason: "no_key", template: { ...SPEC, title: "", hold: [], when: null, claim: "beats_benchmark", assumptions: [] } } },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("The AI couldn't draft this — fill it in.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run it" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Bonds")).toBeInTheDocument();
+  });
+
+  it("never sends the session to a path built from a non-numeric id", async () => {
+    const f = serve({});
+    render(<MemoryRouter initialEntries={["/workshop/..%2F..%2Fadmin%2Fme"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("No such idea.")).toBeInTheDocument();
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("is admin only", async () => {
+    session.token = null;
+    serve({ "/api/portfolio": { body: { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] } } });
+    window.history.pushState({}, "", "/workshop");
+    await act(async () => {
+      render(<App />);
+    });
+    expect(screen.getByRole("heading", { name: "Admin only" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /workshop/i })).toHaveAttribute("href", "/workshop");
+  });
+});
+
+
+const PASS_RUN = { ...RUN, verdict: "PASS", result: { ...RUN.result, verdict: "PASS", headline: "Did what it claims on the years it hadn't seen." } };
+const IDEA = { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "", published_at: null, live_at: null, killed_at: null, size_pct: null };
+const openIdea = () =>
+  render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+const posts = (f: ReturnType<typeof serve>) =>
+  f.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([u, init]) => [String(u), (init as RequestInit).body]);
+
+describe("Workshop live-paper gate", () => {
+  it("shows why the gate is waiting and keeps Go live off", async () => {
+    serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/gate": { body: { status: "waiting", new_days: 40, needed: 63, claim: null, size_ok: true, reasons: ["waiting for data: 40 of 63 new trading days since the backtest"] } },
+    });
+    openIdea();
+    fireEvent.change(await screen.findByLabelText("Size (% of account)"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check the gate" }));
+    expect(await screen.findByText(/40 of 63 new trading days/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go live on paper" })).toBeDisabled();
+  });
+
+  it("goes live when the gate is clear", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/gate": { body: { status: "ready", new_days: 70, needed: 63, claim: { holds: true, label: "+2.0 pts/yr vs benchmark", days: 70 }, size_ok: true, reasons: [] } },
+      "/api/workshop/ideas/1/live": { body: { ...IDEA, live_at: "2026-11-02T15:00:00Z" } },
+    });
+    openIdea();
+    fireEvent.change(await screen.findByLabelText("Size (% of account)"), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check the gate" }));
+    const go = await screen.findByRole("button", { name: "Go live on paper" });
+    await waitFor(() => expect(go).toBeEnabled());
+    fireEvent.click(go);
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/live"), JSON.stringify({ size_pct: 20 })]));
+  });
+
+  it("shows the order tag once live and asks before killing", async () => {
+    const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20 };
+    const shadow = { days: 3, since: "2026-11-03", as_of: "2026-11-05", state: "live", return_pct: 1.2, bench_return_pct: 0.4, claim: null, failing: false, curve: [] };
+    const f = serve({ "/api/workshop/ideas/1": { body: { idea: live, runs: [PASS_RUN], tag: "idea-1-", shadow } } });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    openIdea();
+    expect(await screen.findByText("idea-1-")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy tag" })).toBeInTheDocument();
+    expect(screen.getByText("+1.2%")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kill this idea" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(posts(f)).toEqual([]);
+  });
+
+  it("publishes to the Ideas record", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/publish": { body: { ...IDEA, published_at: "2026-11-01T00:00:00Z" } },
+    });
+    openIdea();
+    fireEvent.click(await screen.findByRole("button", { name: "Publish to the Ideas record" }));
+    await waitFor(() => expect(posts(f).map(([u]) => u)).toContainEqual(expect.stringContaining("/api/workshop/ideas/1/publish")));
+  });
+});
+
+describe("Workshop trade labels", () => {
+  it("relabels a fill to an idea", async () => {
+    const f = serve({
+      "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 1, latest_verdict: "PASS" }] },
+      "/api/workshop/fills": { body: { state: "live", fills: [{ order_id: "o-1", symbol: "GLD", side: "buy", qty: 10, price: 300, at: "2026-11-02T15:00:00Z", tag: null, idea_id: null, idea: "No idea yet (manual)", history: [] }] } },
+      "/api/workshop/labels": { body: {} },
+    });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    const pick = await screen.findByLabelText("Idea for GLD buy 10 on 2026-11-02");
+    fireEvent.change(pick, { target: { value: "1" } });
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
+  });
+});
+
+
+describe("Workshop editor: shorts and orders", () => {
+  it("posts short legs and the order type with the run", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Short QQQ", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [], execution: { order_type: "market", timing: "open", limit_offset_bps: 0 } }, model: "x/y:free" } },
+      "/api/workshop/ideas/2/runs": { body: RUN },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Short (tickers, comma separated)"), { target: { value: "SPY" } });
+    fireEvent.change(screen.getByLabelText("Orders"), { target: { value: "limit:close" } });
+    fireEvent.change(screen.getByLabelText("Limit offset (bps)"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
+    const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
+    expect(body.spec.short).toEqual(["SPY"]);
+    expect(body.spec.execution).toEqual({ order_type: "limit", timing: "close", limit_offset_bps: 15 });
+  });
+});
+
+
+describe("Workshop automatic paper orders", () => {
+  const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20, auto_orders: false };
+  const ORDER = { id: 1, idea_id: 1, day: "2026-11-03", symbol: "GLD", side: "buy", qty: 66, client_order_id: "idea-1-auto-20261103-GLD-open", status: "skipped", reason: "TRADEHUB_PAPER_ORDERS is off", alpaca_order_id: null, at: "" };
+
+  it("asks before switching orders on, and says when the server switch is off", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: live, runs: [PASS_RUN], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [ORDER] } },
+      "/api/workshop/ideas/1/auto": { body: { ...live, auto_orders: true } },
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    openIdea();
+    expect(await screen.findByText(/server's paper-order switch is off/)).toBeInTheDocument();
+    expect(screen.getByText("TRADEHUB_PAPER_ORDERS is off")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on automatic paper orders" }));
+    expect(confirm).toHaveBeenCalled();
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/auto"), JSON.stringify({ on: true })]));
+  });
+});
+
+
+describe("Workshop editor: exits", () => {
+  it("posts the exits with the run, and only offers intraday for one ticker", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Gold", plain_words: "Gold with a stop", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } },
+      "/api/workshop/ideas/2/runs": { body: RUN },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Stop-loss %"), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("Trailing stop %"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Max days held"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText("Exits checked"), { target: { value: "intraday" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    await waitFor(() => expect(posts(f).length).toBeGreaterThan(0));
+    const body = JSON.parse(String(posts(f).find(([u]) => String(u).includes("/runs"))?.[1]));
+    expect(body.spec.exits).toEqual({ stop_loss_pct: 8, trailing_pct: 12, take_profit_pct: null, max_days: 60, mode: "intraday" });
+  });
+});
+
+
+describe("Workshop editor: intraday exits", () => {
+  it("only offers during-the-day exits for one ticker", async () => {
+    serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Pair", plain_words: "Gold vs SPY", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: ["SPY"] }, model: "x/y:free" } },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole("option", { name: /During the day/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Short (tickers, comma separated)"), { target: { value: "" } });
+    expect(screen.getByRole("option", { name: /During the day/ })).toBeEnabled();
+  });
+});
+
+describe("Workshop rules (step 6)", () => {
+  it("renders rules text for legacy when", () => {
+    expect(rulesText(SPEC as never)).toBe("while DGS10 change over 63 trading days > 0.25");
+    expect(rulesText({ ...SPEC, when: undefined, rules: null } as never)).toBe("always");
+    const rsi = { source: "price", series: "XLE", measure: "rsi", lookback_days: 14, slow_days: null, op: "<", threshold: 30 };
+    const cross = { ...rsi, series: "SPY", measure: "sma_cross", lookback_days: 50, slow_days: 200, op: ">", threshold: 0 };
+    const high = { ...rsi, series: "QQQ", measure: "vs_high", lookback_days: 20, op: ">", threshold: 0 };
+    expect(conditionText(cross as never)).toBe("SPY 50-day avg above 200-day avg");
+    expect(conditionText(high as never)).toBe("QQQ new 20-day high");
+    expect(rulesText({ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [rsi, cross] }, exit: { mode: "any", conditions: [high] } } } as never))
+      .toBe("buy when all of XLE RSI(14) < 30, SPY 50-day avg above 200-day avg; sell when QQQ new 20-day high");
+  });
+
+  const editor = (onRun = vi.fn()) => {
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    return onRun;
+  };
+
+  it("adds and removes a condition", () => {
+    editor();
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Add a buy condition" }));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(2);
+    fireEvent.change(screen.getAllByLabelText("Source")[1], { target: { value: "price" } });
+    fireEvent.change(screen.getAllByLabelText("Measure")[1], { target: { value: "sma_cross" } });
+    expect(screen.getByLabelText("Slow average (days)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove buy condition 1" }));
+    expect(screen.getAllByLabelText("Measure")).toHaveLength(1);
+    expect(screen.getByText("Sells when the buy rule stops holding.")).toBeInTheDocument();
+  });
+
+  it("sell-when toggle adds exit group to the saved spec", () => {
+    const onRun = editor();
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.click(screen.getByLabelText("Sell when its own rule holds"));
+    fireEvent.change(screen.getByLabelText("Sell when"), { target: { value: "any" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    const sent = onRun.mock.calls[0][0];
+    expect(sent.when).toBeUndefined();
+    expect(sent.rules.enter.conditions).toHaveLength(1);
+    expect(sent.rules.exit.mode).toBe("any");
+    expect(sent.rules.exit.conditions).toHaveLength(1);
+  });
+});
+
+describe("Workshop review fixes (step 6)", () => {
+  it("lets Kevin type a slow average shorter than 200", () => {
+    const cross = { source: "price", series: "SPY", measure: "sma_cross", lookback_days: 50, slow_days: 200, op: ">", threshold: 0 };
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [cross] }, exit: null } } as never} onRun={onRun} busy={false} />);
+    const slow = screen.getByLabelText("Slow average (days)");
+    fireEvent.change(slow, { target: { value: "1" } });
+    expect(slow).toHaveValue(1); // mid-typing, not rewritten to 200
+    for (const v of ["15", "150"]) fireEvent.change(slow, { target: { value: v } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0].slow_days).toBe(150);
+  });
+
+  it("shows the server's reason for a rejected rule", async () => {
+    serve({ "/api/workshop/ideas/1/runs": { status: 422, body: { detail: [{ loc: ["body"], msg: "Value error, sma_cross needs slow_days longer than lookback_days", type: "value_error" }] } } });
+    const { adminJson } = await import("@/lib/workshop");
+    await expect(adminJson("/api/workshop/ideas/1/runs", { method: "POST", body: "{}" })).rejects.toThrow("sma_cross needs slow_days longer than lookback_days");
+  });
+});
+
+describe("Workshop analyst rules (step 6 Part B)", () => {
+  const open = () => {
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={vi.fn()} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "analyst" } });
+  };
+
+  it("analyst source offers only analyst measures", () => {
+    open();
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(["net_upgrades", "target_upside"]);
+  });
+
+  it("warns analyst data starts ~2019 and stocks only", () => {
+    open();
+    expect(screen.getByText("Data from ~2019, stocks only (no ETFs).")).toBeInTheDocument();
+    expect(conditionText({ source: "analyst", series: "AAPL", measure: "net_upgrades", lookback_days: 63, op: ">", threshold: 0 } as never))
+      .toBe("AAPL analyst upgrades minus downgrades over 63 trading days > 0");
+  });
+});
+
+describe("Workshop deeper look", () => {
+  const ANALYSIS = {
+    data_end: "2026-10-29",
+    years: [
+      { year: 2022, idea: 30.1, bench: -18.2, excess: 48.3, days_in: 60, idea_in: 31.0 },
+      { year: 2023, idea: -20.2, bench: 26.2, excess: -46.4, days_in: 34, idea_in: -19.9 },
+    ],
+    rolling: [{ t: "2023-01-03", excess: 40 }, { t: "2026-10-29", excess: -10 }],
+  };
+
+  it("shows each year and the rolling 12-month excess", async () => {
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: ANALYSIS } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    const row = await screen.findByRole("row", { name: /2023/ });
+    expect(row).toHaveTextContent("−20.2%");
+    expect(row).toHaveTextContent("+26.2%");
+    expect(row).toHaveTextContent("−46.4");
+    expect(row).toHaveTextContent("34%");
+    expect(screen.getByLabelText("Rolling 12-month excess return")).toBeInTheDocument();
+  });
+
+  it("downloads the run's daily data with the session token", async () => {
+    const f = serve({ "/api/workshop/ideas/1/runs/1/daily.csv": { body: "date,in\n" } });
+    const created = vi.fn(() => "blob:x");
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download daily data (CSV)" }));
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    const [url, init] = f.mock.calls[0];
+    expect(String(url)).toContain("/api/workshop/ideas/1/runs/1/daily.csv");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
+  });
+
+  it("names each ticker so GOLD isn't mistaken for gold", async () => {
+    serve({ "/api/workshop/tickers": { body: { GOLD: { name: "Gold.com, Inc.", kind: "stock" }, SPY: { name: "SPDR S&P 500 ETF", kind: "ETF" } } } });
+    render(<DraftEditor initial={{ ...SPEC, hold: ["GOLD"], when: undefined, rules: null } as never} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("GOLD: Gold.com, Inc. (stock)")).toBeInTheDocument();
+  });
+});
+
+describe("Workshop deeper look review fixes", () => {
+  it("warns when today's data no longer matches the stored verdict", async () => {
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: { data_end: "2026-10-29", years: [], rolling: [], drift_pts: -12.4 } } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByText(/differs from the verdict by −12.4 pts/)).toBeInTheDocument();
+  });
+
+  it("remembers ticker names instead of asking again", async () => {
+    const f = serve({ "/api/workshop/tickers": { body: { QQQ: { name: "Invesco QQQ Trust", kind: "ETF" }, SPY: { name: "SPDR S&P 500 ETF", kind: "ETF" } } } });
+    const spec = { ...SPEC, hold: ["QQQ"], when: undefined, rules: null } as never;
+    const first = render(<DraftEditor initial={spec} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("QQQ: Invesco QQQ Trust (ETF)")).toBeInTheDocument();
+    first.unmount();
+    render(<DraftEditor initial={spec} onRun={vi.fn()} busy={false} />);
+    expect(await screen.findByText("QQQ: Invesco QQQ Trust (ETF)")).toBeInTheDocument();
+    expect(f.mock.calls.filter(([u]) => String(u).includes("/api/workshop/tickers"))).toHaveLength(1);
+  });
+});
+
+describe("Workshop playbook", () => {
+  const hedge = { ...SPEC, title: "Oil as a ballast", hold: ["USO"], when: undefined, rules: null };
+  const basket = { ...SPEC, title: "Oil as a ballast", hold: ["XLV", "XLP", "XLU", "MA"], when: undefined, rules: null, claim: "ballast" };
+  const DRAFT = {
+    spec: hedge, model: "playbook",
+    play: { id: "hedge_when_market_falls", name: "Hold it while the market falls", summary: "Hold the asset only after SPY has fallen.", source: "Ideas #3/#5", why: ["fall of the s&p"] },
+    alternatives: [{ id: "ballast_basket", name: "Ballast basket", summary: "Always hold a low-volatility basket.", source: "Strategy HQ v5.0", why: ["ballast"], spec: basket }],
+  };
+
+  it("shows the matched play and switches to a close alternative", async () => {
+    const f = serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Oil ballast", plain_words: "Oil as a ballast against the fall of the S&P", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: DRAFT },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Hold it while the market falls")).toBeInTheDocument();
+    expect(screen.getByText(/fall of the s&p/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("USO")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use Ballast basket instead" }));
+    expect(await screen.findByDisplayValue("XLV, XLP, XLU, MA")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Write it from scratch" }));
+    await waitFor(() => expect(posts(f).some(([u, b]) => String(u).includes("/api/workshop/draft") && JSON.parse(String(b)).free === true)).toBe(true));
+  });
+});
+
+describe("Workshop portfolio ideas", () => {
+  it("tests the idea inside a portfolio when asked", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Test it inside a portfolio"));
+    fireEvent.change(screen.getByLabelText("Core (tickers, equal weight)"), { target: { value: "SPY, TLT" } });
+    fireEvent.change(screen.getByLabelText("Idea's share (%)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].portfolio).toEqual({ core: ["SPY", "TLT"], idea_share: 0.3 });
+  });
+
+  it("says a run was judged as a portfolio", () => {
+    const run = { ...RUN, spec: { ...SPEC, portfolio: { core: ["SPY"], idea_share: 0.5 } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/as 50% of a portfolio with SPY/)).toBeInTheDocument();
+  });
+});
+
+describe("Workshop deeper look polish", () => {
+  it("labels the split year in the year table", async () => {
+    const ANALYSIS = {
+      data_end: "2026-10-29",
+      years: [
+        { year: 2018, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 },
+        { year: 2019, idea: 3, bench: 2, excess: 1, days_in: 60, idea_in: 3 },
+        { year: 2020, idea: 4, bench: 2, excess: 2, days_in: 70, idea_in: 4 },
+      ],
+      rolling: [{ t: "2018-01-03", excess: 1 }, { t: "2020-10-29", excess: 2 }],
+    };
+    serve({ "/api/workshop/ideas/1/runs/1/analysis": { body: ANALYSIS } });
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByText("split")).toBeInTheDocument();
+  });
+});
+
+describe("Workshop macd and analyst wording", () => {
+  it("hides the days field for macd and shows the fixed text", () => {
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [{ source: "price", series: "SPY", measure: "macd", lookback_days: 0, slow_days: null, op: ">", threshold: 0 }] }, exit: null } } as never} onRun={vi.fn()} busy={false} />);
+    expect(screen.getByText("MACD uses fixed 12/26/9")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Over (trading days)")).not.toBeInTheDocument();
+  });
+
+  it("says analyst measures use trading days", () => {
+    expect(conditionText({ source: "analyst", series: "AAPL", measure: "target_upside", lookback_days: 5, op: ">", threshold: 0 } as never))
+      .toBe("AAPL analyst target upside (%, last 5 trading days) > 0");
+  });
+});
+
+describe("Workshop MACD days", () => {
+  it("saves a valid days value when MACD hides the field", () => {
+    const onRun = vi.fn();
+    const rsi = { source: "price", series: "SPY", measure: "rsi", lookback_days: 0, slow_days: null, op: "<", threshold: 30 };
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: { enter: { mode: "all", conditions: [rsi] }, exit: null } } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "macd" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0].lookback_days).toBe(1);
+  });
+});
+
+describe("Workshop deeper look polish (review)", () => {
+  it("disables the download while it runs and says when it failed", async () => {
+    let finish: (r: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => { finish = res; })));
+    render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Download daily data (CSV)" }));
+    expect(await screen.findByRole("button", { name: "Downloading…" })).toBeDisabled();
+    finish(new Response("nope", { status: 500 }));
+    expect(await screen.findByText("Download failed (500)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download daily data (CSV)" })).not.toBeDisabled();
+  });
+
+  it("forgets the loaded years when the run changes", async () => {
+    serve({ "/api/workshop/ideas/1/runs/": { body: { data_end: "2026-10-29", years: [{ year: 2023, idea: 1, bench: 2, excess: -1, days_in: 50, idea_in: 1 }], rolling: [] } } });
+    const { rerender } = render(<MemoryRouter><VerdictCard ideaId="1" run={RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Year by year" }));
+    expect(await screen.findByRole("row", { name: /2023/ })).toBeInTheDocument();
+    rerender(<MemoryRouter><VerdictCard ideaId="1" run={{ ...RUN, id: 2 } as never} onVary={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.queryByRole("row", { name: /2023/ })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Year by year" })).toBeInTheDocument();
+  });
+});
+
+describe("Workshop event studies", () => {
+  const EV = { kind: "event", title: "XOM drifts up after beats", tickers: ["XOM"], event: "earnings", when: "beat", gap_pct: 5,
+    window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+  const EV_RUN = { ...RUN, id: 9, spec: EV, verdict: "FAIL", result: {
+    kind: "event", verdict: "FAIL", headline: "Did not do what it claims.", reason: null, split_date: "2023-01-27",
+    data_start: "2014-10-31", data_end: "2026-10-30", variations: 1, n_events: 30,
+    claim: { built: { holds: true, value: 0.4, label: "+0.40% average move vs SPY over days +1 to +5, 21 events" },
+             unseen: { holds: false, value: -0.2, label: "-0.20% average move vs SPY over days +1 to +5, 9 events" } },
+    shuffle: { beats_pct: 30, p: 0.7, bar: 0.05, permutations: 1000, seed: 1, method: "random dates" },
+    t_test: { mean_daily_diff: -0.2, t: -0.5, p: 0.69 }, periods: { held: 2, of: 5 }, context: [], curve: [],
+    per_ticker: [{ ticker: "XOM", n: 30, mean: 0.21, shrunk: 0.21, weight: 1, t: 0.6 }],
+    events: [{ date: "2026-10-30", ticker: "XOM", surprise: 4.9, ar0: 1.2, car_1_3: 0.4, car_1_5: -0.3, car_1_10: 0.1, pre_5: 0.2 }],
+  } };
+
+  it("edits an event study and runs it on the event route", async () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={EV as never} onRun={onRun} busy={false} />);
+    expect(screen.getByText("Event study")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Which prints"), { target: { value: "miss" } });
+    fireEvent.change(screen.getByLabelText("Claimed move"), { target: { value: "down" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0]).toMatchObject({ kind: "event", when: "miss", direction: "down", tickers: ["XOM"] });
+  });
+
+  it("shows an event verdict with the shrunk per-ticker table and the events", () => {
+    render(<MemoryRouter><VerdictCard ideaId="1" run={EV_RUN as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/beats 30% of 1,000 random dates/)).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /XOM 30/ })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /2026-10-30/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download events (CSV)" })).toBeInTheDocument();
+  });
+});
+
+describe("Workshop: my own event dates", () => {
+  it("reads a pasted notebook event table", () => {
+    const onRun = vi.fn();
+    const EVD = { kind: "event", title: "My earnings table", tickers: [], event: "custom", custom: [], when: "all", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EVD as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText(/Paste your events/), { target: { value:
+      "ticker,report_date,fall,surprise_pct,beat\nGOOGL,2026-07-22,False,214.1,True\nxom,2026-04-29,False,-3.5,False\n" } });
+    expect(screen.getByText("2 events read")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].custom).toEqual([
+      { ticker: "GOOGL", date: "2026-07-22", surprise: 214.1 }, { ticker: "XOM", date: "2026-04-29", surprise: -3.5 }]);
+  });
+});
+
+describe("Workshop event review fixes", () => {
+  it("switching to my own dates drops the old tickers", () => {
+    const onRun = vi.fn();
+    const EV = { kind: "event", title: "XOM beats", tickers: ["XOM"], event: "earnings", when: "beat", gap_pct: 5,
+      window: "drift_1_5", direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] };
+    render(<DraftEditor initial={EV as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Event"), { target: { value: "custom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].tickers).toEqual([]);
+  });
+
+  it("shows a dash for a missing event count and the server's marks", () => {
+    const run = { ...RUN, id: 11, verdict: "NOT ENOUGH DATA",
+      spec: { kind: "event", title: "x", tickers: ["XOM"], event: "earnings", when: "all", gap_pct: 5, window: "drift_1_5",
+              direction: "up", benchmark: "SPY", start: "2010-01-04", unseen_fraction: 0.3, assumptions: [] },
+      result: { ...RUN.result, kind: "event", claim: null, shuffle: null, t_test: null, periods: null, reason: "only 4 events", context: [], curve: [] } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText(/· — events/)).toBeInTheDocument();
+  });
+});
+
+describe("Workshop spread rules", () => {
+  it("offers a spread source with z-score and percentile, and words it plainly", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "spread" } });
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(expect.arrayContaining(["zscore", "percentile", "level"]));
+    expect(options).not.toContain("rsi");
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "zscore" } });
+    fireEvent.change(screen.getByLabelText("Series / ticker"), { target: { value: "RL+WSM/LULU+NKE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0]).toMatchObject({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore" });
+    expect(conditionText({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore", lookback_days: 60, op: ">", threshold: 2 } as never))
+      .toBe("RL+WSM/LULU+NKE spread 60-day z-score > 2");
+    expect(conditionText({ source: "price", series: "SPY", measure: "percentile", lookback_days: 252, op: "<", threshold: 10 } as never))
+      .toBe("SPY 252-day percentile < 10");
+  });
+});
+
+describe("Workshop drafts: left-out tickers and saved drafts", () => {
+  const IDEA2 = { idea: { id: 2, title: "K-Shape", plain_words: "long RL WSM ABNB DG DLTR BJ MO", created_at: "" }, runs: [] };
+  const page = () => render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+
+  it("says which named tickers the draft left out", async () => {
+    serve({ "/api/workshop/ideas/2": { body: IDEA2 }, "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["RL", "WSM"], when: undefined, rules: null }, model: "x", play: null, alternatives: [], dropped: ["BJ", "MO"] } } });
+    page();
+    expect(await screen.findByText("The draft left out: BJ, MO. Add them back if you meant them.")).toBeInTheDocument();
+  });
+
+  it("restores a saved draft after a reload, and Discard drops it", async () => {
+    localStorage.setItem("workshop-draft-2", JSON.stringify({ ...SPEC, title: "Saved K-Shape", hold: ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"], when: undefined, rules: null }));
+    const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 } });
+    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByDisplayValue("RL, WSM, ABNB, DG, DLTR, BJ, MO")).toBeInTheDocument();
+    expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Discard saved draft" }));
+    expect(localStorage.getItem("workshop-draft-2")).toBeNull();
+  });
+});
+
+describe("Workshop costs", () => {
+  it("edits slippage, and borrow only when there is a short leg", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: ["QQQ"] } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Slippage per switch (bps)"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Short borrow (bps a year)"), { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0]).toMatchObject({ slippage_bps: 5, borrow_bps_yr: 300 });
+    cleanup();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: [] } as never} onRun={vi.fn()} busy={false} />);
+    expect(screen.queryByLabelText("Short borrow (bps a year)")).not.toBeInTheDocument();
+  });
+});
+
+describe("Workshop walk-forward and data notes (critique L9)", () => {
+  it("shows the walk-forward summary, each fold in order, and the late-listing note", () => {
+    const run = { ...RUN, result: { ...RUN.result,
+      notes: ["NEWCO has no prices before 2015-08-04: every leg of this test starts then, so the years before it are not tested."],
+      walk_forward: { held: 3, of: 4, folds: [
+        { start: "2010-01-04", end: "2014-01-02", days: 1000, holds: true, value: 2.0, label: "+2.0 pts/yr", idea_cagr: 9.5, bench_cagr: 7.5 },
+        { start: "2014-01-03", end: "2018-01-02", days: 1000, holds: true, value: 1.0, label: "+1.0 pts/yr", idea_cagr: 8.0, bench_cagr: 7.0 },
+        { start: "2018-01-03", end: "2022-01-03", days: 1000, holds: false, value: -0.5, label: "-0.5 pts/yr", idea_cagr: 6.0, bench_cagr: 6.5 },
+        { start: "2022-01-04", end: "2026-01-02", days: 1000, holds: true, value: 0.7, label: "+0.7 pts/yr", idea_cagr: 7.2, bench_cagr: 6.5 },
+      ] } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText("Walk-forward, later stretches in order")).toBeInTheDocument();
+    expect(screen.getByText("3 of 4 held")).toBeInTheDocument();
+    expect(screen.getByText(/2010-01-04 → 2014-01-02/)).toBeInTheDocument();
+    expect(screen.getByText(/2022-01-04 → 2026-01-02/)).toBeInTheDocument();
+    expect(screen.getByText(/NEWCO has no prices before 2015-08-04/)).toBeInTheDocument();
+  });
+});
+
+describe("Workshop verdict clarity (critique L4)", () => {
+  it("has a legend, a wrong-way note, a benchmark label and a chart caption", () => {
+    const run = { ...RUN, result: { ...RUN.result, t_test: { mean_daily_diff: -0.07, t: -2.2, p: 0.026 } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText("✓ holds · ✗ fails · ~ mixed or not decisive")).toBeInTheDocument();
+    expect(screen.getByText(/significant, but the wrong way/)).toBeInTheDocument();
+    expect(screen.getByText("SPY (benchmark)")).toBeInTheDocument();
+    expect(screen.getByText("Cumulative return since 2006-01-04, % (not log)")).toBeInTheDocument();
+    expect(screen.getByText("On the unseen years")).toBeInTheDocument();
+  });
+});

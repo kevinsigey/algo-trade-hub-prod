@@ -1,3 +1,4 @@
+import OnChainPulse from "@/components/OnChainPulse";
 import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
@@ -244,7 +245,15 @@ export default function ShadowBacktester() {
               <Badge className="bg-emerald-500 text-emerald-950 font-bold">CRYPTO</Badge>
             </div>
           </header>
+          <OnChainPulse />
           <Unavailable status={error.status} detail={error.message} errorCode={error.code} />
+          <button
+            type="button"
+            onClick={reload}
+            className="mt-4 rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300 hover:text-white"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -258,6 +267,7 @@ export default function ShadowBacktester() {
   return (
     <div className="min-h-screen bg-slate-950 px-8 py-10 text-slate-100">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-8">
+        <OnChainPulse />
         <div className="flex flex-col gap-4 border-b border-slate-900 pb-8 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-3">

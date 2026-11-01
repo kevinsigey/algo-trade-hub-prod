@@ -241,7 +241,7 @@ def test_deploy_workflow_builds_then_deploys_to_vps():
     assert workflow["jobs"]["build"]["needs"] == ["test", "frontend"]
     assert workflow["jobs"]["vps"]["needs"] == "build"
     assert workflow["jobs"]["vps"]["if"] == "vars.VPS_HOST != ''"
-    assert workflow["env"]["IMAGE"] == "ghcr.io/kevocado/tradehub"
+    assert workflow["env"]["IMAGE"] == "ghcr.io/kevinsigey/tradehub"
     for needle in (
         "deploy tradehub ${{ github.sha }}",
         "SUPABASE_SERVICE_ROLE_KEY: dummy-baseline-placeholder",

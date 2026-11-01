@@ -59,7 +59,7 @@ export interface WeatherStat {
 
 /** The big numbers. Formatting only; no score is derived here. */
 export function weatherStats(today: WeatherTodayRow[], settled: WeatherSettledRow[]): WeatherStat {
-  const cities = new Set(today.map((r) => r.target)).size;
+  const cities = new Set(today.map((r) => parseWeatherTarget(r.target).city)).size;
   return {
     todayCount: today.length,
     settledCount: settled.length,

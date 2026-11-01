@@ -134,3 +134,43 @@ describe("JobsNowcast", () => {
     expect(screen.getByRole("status")).toBeInTheDocument(); // loader
   });
 });
+describe("JobsNowcast truth fixes (critique 2026-10-31)", () => {
+  it("shows the unemployment miss in points, never k jobs", async () => {
+    stubFetch("unemployment", [
+      mockRow({ series: "unemployment", reference_month: "2026-08-01", nowcast_mu: 4.2, first_print: 4.1, kalshi_mean_1h: 4.1,
+                nowcast_sigma: 0.1, latest: 4.1, nowcast_abs_err: 0.1, kalshi_abs_err: 0.0 }),
+    ]);
+    render(<JobsNowcast />);
+    (await screen.findByRole("button", { name: "Unemployment" })).click();
+    expect(await screen.findAllByText("0.1 pts")).not.toHaveLength(0);
+    expect(screen.queryByText(/k jobs/)).not.toBeInTheDocument();
+  });
+
+  it("labels a tie as a tie", async () => {
+    stubFetch("payrolls", [mockRow({ nowcast_mu: 100, kalshi_mean_1h: 100, first_print: 120, nowcast_abs_err: 20, kalshi_abs_err: 20 })]);
+    render(<JobsNowcast />);
+    expect(await screen.findByText("Tie")).toBeInTheDocument();
+  });
+
+  it("says plainly when Kalshi was closer on both scores", async () => {
+    stubFetch("payrolls", [
+      mockRow({ reference_month: "2026-08-01", nowcast_abs_err: 80, kalshi_abs_err: 60, nowcast_brier: 0.2, kalshi_brier: 0.1 }),
+      mockRow({ reference_month: "2026-09-01", nowcast_abs_err: 68, kalshi_abs_err: 78, nowcast_brier: 0.13, kalshi_brier: 0.19 }),
+    ]);
+    render(<JobsNowcast />);
+    expect(await screen.findByText("Kalshi was closer: typical miss 69k vs ours 74k")).toBeInTheDocument();
+  });
+
+  it("does not count an unscored report", async () => {
+    stubFetch("payrolls", [mockRow({ reference_month: "2026-08-01" }), mockRow({ reference_month: "2026-09-01", kalshi_mean_1h: null })]);
+    render(<JobsNowcast />);
+    await waitFor(() => expect(screen.getByText(/not scored/)).toBeInTheDocument());
+    expect(screen.queryByText(/2 scored/)).not.toBeInTheDocument();
+  });
+
+  it("marks a print outside the model's ±σ", async () => {
+    stubFetch("payrolls", [mockRow({ nowcast_mu: 147, nowcast_sigma: 95, first_print: 29 })]);
+    render(<JobsNowcast />);
+    expect(await screen.findByText("outside ±σ")).toBeInTheDocument();
+  });
+});

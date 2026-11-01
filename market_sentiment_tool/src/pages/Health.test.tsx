@@ -100,3 +100,12 @@ describe("Health page", () => {
     await waitFor(() => expect(screen.getByText(/status 500/)).toBeTruthy());
   });
 });
+
+describe("Health timestamps", () => {
+  it("shows times in Central time, not raw ISO", async () => {
+    vi.stubGlobal("fetch", mockFetch({ status: "ok", report: REPORT }));
+    render(<Health />);
+    expect(await screen.findByText(/^Generated 7:00 AM CT, Sat Oct 17$/)).toBeInTheDocument();
+    expect(screen.queryByText(/2026-10-17T12:00:00/)).not.toBeInTheDocument();
+  });
+});

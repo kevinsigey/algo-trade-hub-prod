@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Chip, type Tone } from "@/components/Chip";
 import { JournalDetail } from "@/components/JournalDetail";
 import { getJson } from "@/lib/getJson";
+import { NextRelease } from "@/components/NextRelease";
 import { Stat } from "@/components/Stat";
 import type { JournalResponse } from "@/lib/journal";
 import { STATUS_WORDS, skillText, totals, viewRows, type Status } from "@/lib/journalView";
@@ -37,6 +38,8 @@ export default function Cpi() {
         <h1 className="text-3xl font-bold text-white">Inflation (CPI)</h1>
         <p className="mt-2 text-slate-400">Our forecast, locked in 24 hours before each report, beside the Kalshi price.</p>
       </header>
+
+      <NextRelease family="cpi" title="Next report" />
 
       <section aria-label="Totals" className="grid gap-3 sm:grid-cols-2">
         <Stat value={t.frozen} label="forecasts locked in" />

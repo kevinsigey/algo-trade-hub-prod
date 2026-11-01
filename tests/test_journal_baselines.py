@@ -418,3 +418,17 @@ def test_the_registry_publishes_both_baselines_for_every_non_market_direction_fa
     # Each family keeps its own calendar: EUR/USD follows the ECB reference days, not the NYSE.
     eurusd = by_name["eurusd_direction"]._closes.source.is_session
     assert by_name[baseline_name("persistence", "eurusd")]._is_session is eurusd is is_target_day
+
+def test_the_spx_baselines_from_build_baselines_settle_on_the_spx_closes():
+    """Regression: build_baselines handed settle_spx unbound, so every SPX baseline settle raised TypeError."""
+    from tradehub.journal.forecasters.baselines import build_baselines
+    from tradehub.journal.spx import SpxCloses, spx_target
+
+    levels = _walk()
+    spx = SpxCloses(fetch=lambda series, start: levels)
+    housing = HousingForecaster.__new__(HousingForecaster)
+    day = sorted(levels)[-1]
+    now = datetime.combine(day + timedelta(days=1), datetime.min.time(), UTC)
+    for b in [f for f in build_baselines(spx, {}, housing) if isinstance(f, DirectionBaseline)]:
+        s = b.settle(spx_target(day), now)
+        assert s is not None and s.outcome == (1 if levels[day] > levels[sorted(levels)[-2]] else 0)

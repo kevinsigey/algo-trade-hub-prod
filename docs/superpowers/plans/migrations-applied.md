@@ -50,8 +50,14 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 26 | `20260428000020_journal_scores_paired_brier.sql` |
 | 27 | `20260428000021_journal_scores_paired_brier_validate.sql` |
 | 28 | `20260428000022_journal_scores_gap.sql` |
+| 29 | `20261029000001_journal_previews.sql` |
+| 30 | `20261030000001_portfolio_snapshots.sql` |
+| 31 | `20261030000002_workshop.sql` |
+| 32 | `20261031000001_ideas_live.sql` |
+| 33 | `20261031000002_paper_orders.sql` |
+| 34 | `20261031000003_shadow_exit.sql` |
 
-**Watermark: `20260428000022_journal_scores_gap.sql`**
+**Watermark: `20261031000003_shadow_exit.sql`**
 
 ## How to record a new one
 

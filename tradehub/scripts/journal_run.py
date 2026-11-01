@@ -14,6 +14,7 @@ from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.health import collect_health
 from tradehub.health_alerts import alert_on_failures
+from tradehub.journal.preview import run_previews
 from tradehub.journal.registry import FORECASTERS
 from tradehub.journal.runner import run_journal
 
@@ -22,6 +23,12 @@ def main() -> int:
     load_local_env()
     supa = get_client()
     summary = run_journal(supa, FORECASTERS, datetime.now(UTC))
+
+    # Preview of the next jobs/CPI release: never scored, never fatal to the run above.
+    try:
+        summary["previews"] = run_previews(supa, datetime.now(UTC))["previews"]
+    except Exception as exc:  # noqa: BLE001
+        summary["previews"] = f"failed: {exc}"
 
     # Failure notifier, scoped to the two things this job is asked to alert on: the run itself failing,
     # and a daily family freezing nothing for 24h. Timer staleness and the order-book file are on the

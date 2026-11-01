@@ -14,12 +14,15 @@ Then visit: http://localhost:8000/docs  (Swagger UI — auto-generated)
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
+import pandas as pd
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from tradehub.core.env import load_local_env
 from tradehub.health import collect_health
@@ -28,7 +31,21 @@ from tradehub.api.schemas import (
     ShadowPerformanceResponse,
 )
 from tradehub.api.dependencies import get_supabase
+from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
+from tradehub.workshop import store as workshop_store
+from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
+    analyst as workshop_analyst, earnings_dates as workshop_earnings, fred_series as workshop_fred, \
+    release_dates as workshop_release_dates, rule_series, ticker_info as workshop_ticker_info, \
+    with_rule_bars
+from tradehub.workshop.draft import DraftUnavailable, draft_spec
+from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
+from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers as playbook_dropped
+from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
+    run_test, tickers_for
+from tradehub.workshop.data import NY
+from tradehub.workshop.record import shadow_summary
+from tradehub.workshop.spec import IdeaSpec, blank_spec
 from tradehub.engine_catalogue import engine_catalogue
 from tradehub.engine_health import engine_health
 from tradehub.gate_status import DEFAULT_GATE_STATUS, latest_gate_statuses, table_missing
@@ -385,6 +402,468 @@ async def get_pnl_summary(supabase=Depends(get_supabase)):
 # ════════════════════════════════════════════════════════════════════════════
 
 
+# ── Trading HQ: the public Alpaca PAPER portfolio (spec 2026-10-29 §4.2) ─────
+# Plain `def`: the Alpaca reads are blocking `requests` calls, so FastAPI runs these in its threadpool.
+@app.get("/api/portfolio", tags=["Portfolio"])
+def get_portfolio(supabase=Depends(get_supabase)):
+    from tradehub.portfolio import service
+
+    try:
+        return service.portfolio(supabase)
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault(service.SNAPSHOTS, exc) from exc
+
+
+@app.get("/api/admin/me", tags=["Admin"])
+def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
+    """Kevin's session, confirmed server-side. The Workshop's routes use the same dependency."""
+    return user
+
+
+# ── Trading HQ Workshop (step 2): Kevin-only. Plain words -> draft -> Kevin confirms -> run -> verdict. ──
+class _DraftIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    free: bool = False  # skip the playbook: the AI writes the whole spec
+
+
+class _IdeaIn(BaseModel):
+    title: str = Field(min_length=3, max_length=120)
+    plain_words: str = Field(min_length=1, max_length=4000)
+
+
+class _RunIn(BaseModel):
+    spec: IdeaSpec
+    draft_model: str | None = None
+
+
+def _fred_start(start: date) -> date:
+    """FRED reads reach 3 years before the test start, so a lookback (max 756 trading days) is filled on day one."""
+    return start - timedelta(days=3 * 366)
+
+
+@app.post("/api/workshop/draft", tags=["Workshop"])
+def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
+    d = None if body.free else playbook_draft(body.text)  # a known play first; the AI only picks among the matches
+    if d is not None:
+        def play(x):
+            return {"id": x.play.id, "name": x.play.name, "summary": x.play.summary, "source": x.play.source,
+                    "why": list(x.why)}
+        dropped = playbook_dropped(body.text, d.spec)
+        return {"spec": d.spec.model_dump(mode="json"), "model": d.model, "play": play(d),
+                "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives],
+                "dropped": dropped}
+    try:
+        spec, model, dropped = draft_spec(body.text)
+    except DraftUnavailable as exc:
+        return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
+                                                      "template": blank_spec()})
+    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": [], "dropped": dropped}
+
+
+@app.post("/api/workshop/ideas", tags=["Workshop"])
+def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    return workshop_store.create_idea(supabase, body.title, body.plain_words)
+
+
+@app.get("/api/workshop/ideas", tags=["Workshop"])
+def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    rows = workshop_store.list_ideas(supabase)
+    ideas = {i["id"]: i for i in supabase.table("ideas").select("*").execute().data or []}
+    for r in rows:
+        i = ideas.get(r["id"], {})
+        r["live_at"] = i.get("live_at")
+        r["killed_at"] = i.get("killed_at")
+        r["auto_orders"] = i.get("auto_orders")
+        r["size_pct"] = i.get("size_pct")
+    return rows
+
+
+def _found(supabase, idea_id: int) -> dict:
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    return found
+
+
+def _live_spec(supabase, idea: dict) -> IdeaSpec:
+    return IdeaSpec.model_validate(workshop_store.get_run(supabase, idea["live_run_id"])["spec"])
+
+
+def _shadow(supabase, idea: dict) -> dict:
+    live_day = datetime.fromisoformat(idea["live_at"]).astimezone(NY).date()
+    return shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea["id"]), _today(),
+                          live_day)
+
+
+@app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
+def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    found = _found(supabase, idea_id)
+    idea = found["idea"]
+    shadow = _shadow(supabase, idea) if idea.get("live_at") else None
+    from tradehub.portfolio.paper_orders import orders_enabled
+
+    return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
+            "orders": workshop_store.order_log(supabase, idea_id, 50)}
+
+
+class _AutoIn(BaseModel):
+    on: bool
+
+
+@app.post("/api/workshop/ideas/{idea_id}/auto", tags=["Workshop"])
+def workshop_auto(idea_id: int, body: _AutoIn, user: dict = Depends(admin.require_admin),
+                  supabase=Depends(get_supabase)):
+    """Step 4: switch an idea's automatic PAPER orders on or off. On needs a live, unkilled idea."""
+    idea = _found(supabase, idea_id)["idea"]
+    if body.on and (not idea.get("live_at") or idea.get("killed_at")):
+        raise HTTPException(status_code=409, detail="only a live idea that has not been killed can trade")
+    return workshop_store.set_auto(supabase, idea_id, body.on, user.get("email", "admin"))
+
+
+class _LiveIn(BaseModel):
+    size_pct: float = Field(gt=0, le=100)
+
+
+class _LabelIn(BaseModel):
+    order_id: str = Field(min_length=1, max_length=128)
+    idea_id: int | None = None
+
+
+def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | None]:
+    """The live-paper gate on the idea's latest run, recomputed from fresh prices every time it is asked."""
+    runs = _found(supabase, idea_id)["runs"]
+    latest = runs[-1] if runs else None
+    if latest is not None and (latest.get("spec") or {}).get("kind") == "event":
+        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+                "reasons": ["event studies are research only for now: they don't trade on paper"]}, None
+    if latest is None or latest["verdict"] != "PASS":
+        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+                "reasons": ["the latest run did not PASS"]}, None
+    spec = IdeaSpec.model_validate(latest["spec"])
+    try:
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    frame = workshop_daily_frame(spec, prices, fred)
+    return gate_check(spec, frame, date.fromisoformat(latest["data_end"]), size_pct), latest
+
+
+@app.get("/api/workshop/ideas/{idea_id}/gate", tags=["Workshop"])
+def workshop_gate(idea_id: int, size_pct: float | None = Query(None, gt=0, le=100),
+                  _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    return _gate(supabase, idea_id, size_pct)[0]
+
+
+@app.post("/api/workshop/ideas/{idea_id}/publish", tags=["Workshop"])
+def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    _found(supabase, idea_id)
+    try:
+        return workshop_store.publish(supabase, idea_id)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already published") from exc
+
+
+@app.post("/api/workshop/ideas/{idea_id}/live", tags=["Workshop"])
+def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    if _found(supabase, idea_id)["idea"].get("live_at"):
+        raise HTTPException(status_code=409, detail="already live")
+    gate, run = _gate(supabase, idea_id, body.size_pct)
+    if gate["status"] != "ready":
+        raise HTTPException(status_code=409, detail="; ".join(gate["reasons"]) or "the gate is not clear")
+    try:
+        return workshop_store.go_live(supabase, idea_id, run["id"], body.size_pct, gate)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already live") from exc
+
+
+@app.post("/api/workshop/ideas/{idea_id}/kill", tags=["Workshop"])
+def workshop_kill(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    if not _found(supabase, idea_id)["idea"].get("live_at"):
+        raise HTTPException(status_code=409, detail="only a live idea can be killed")
+    try:
+        return workshop_store.kill(supabase, idea_id)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already killed") from exc
+
+
+@app.post("/api/workshop/labels", tags=["Workshop"])
+def workshop_label(body: _LabelIn, user: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    if body.idea_id is not None and workshop_store.get_idea(supabase, body.idea_id) is None:
+        raise HTTPException(status_code=422, detail=f"no idea {body.idea_id}")
+    return workshop_store.add_label(supabase, body.order_id, body.idea_id, user.get("email", "admin"))
+
+
+def _run_frame(supabase, idea_id: int, run_id: int):
+    """A stored run's spec and its daily frame, recomputed from its spec and cut at the run's own data_end."""
+    run = workshop_store.get_run(supabase, run_id)
+    if run is None or run.get("idea_id") != idea_id:
+        raise HTTPException(status_code=404, detail="no such run")
+    if (run.get("spec") or {}).get("kind") == "event":
+        raise HTTPException(status_code=422, detail="the deeper look is for rule ideas; an event study lists its events")
+    spec = IdeaSpec.model_validate(run["spec"])
+    try:
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    end = (run.get("result") or {}).get("data_end")
+    frame = workshop_daily_frame(spec, prices, fred)
+    if end:
+        frame = frame[frame.index <= pd.Timestamp(end)]
+    return spec, frame, prices, end, run.get("result") or {}
+
+
+@app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/analysis", tags=["Workshop"])
+def workshop_run_analysis(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
+                          supabase=Depends(get_supabase)):
+    _, frame, _, end, stored = _run_frame(supabase, idea_id, run_id)
+    curve = stored.get("curve") or []
+    # Today's prices (dividend restatements, revised series) can differ from what the verdict judged: say by how much.
+    drift = float(((1 + frame["ret"]).prod() - 1) * 100 - curve[-1]["idea"]) if curve and len(frame) else None
+    return {**workshop_analysis(frame), "data_end": end, "drift_pts": drift}
+
+
+@app.get("/api/workshop/ideas/{idea_id}/runs/{run_id}/daily.csv", tags=["Workshop"])
+def workshop_run_csv(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    run = workshop_store.get_run(supabase, run_id)
+    if run is not None and run.get("idea_id") == idea_id and (run.get("spec") or {}).get("kind") == "event":
+        cols = ["date", "ticker", "surprise", "ar0", "car_1_3", "car_1_5", "car_1_10", "pre_5"]
+        table = pd.DataFrame((run.get("result") or {}).get("events") or [], columns=cols)
+        return Response(table.to_csv(index=False, float_format="%.6g"), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="idea-{idea_id}-run-{run_id}-events.csv"'})
+    spec, frame, prices, _, _ = _run_frame(supabase, idea_id, run_id)
+    legs = list(dict.fromkeys(list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != "CASH" else [])
+                              + [spec.benchmark]))
+    out = pd.DataFrame({"rule_on": frame["on"].astype(int),
+                        "held": frame.get("held", frame["on"]).astype(int), "idea_ret": frame["ret"], "bench_ret": frame["bench"],
+                        "spy_ret": frame["spy"], "exit": frame["exit"]}, index=frame.index)
+    for t in legs:
+        out[f"close_{t}"] = prices[t].reindex(frame.index)
+    out.index = out.index.strftime("%Y-%m-%d")
+    return Response(out.to_csv(index_label="date", float_format="%.8g"), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="idea-{idea_id}-run-{run_id}-daily.csv"'})
+
+
+@app.get("/api/workshop/tickers", tags=["Workshop"])
+def workshop_tickers(symbols: str = Query(..., max_length=300), _admin: dict = Depends(admin.require_admin)):
+    wanted = list(dict.fromkeys(s.strip().upper() for s in symbols.split(",") if s.strip()))
+    if len(wanted) > 20:
+        raise HTTPException(status_code=422, detail="at most 20 tickers")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:  # Yahoo's .info is slow; look them up side by side
+        return dict(zip(wanted, pool.map(workshop_ticker_info, wanted)))
+
+
+class _EventRunIn(BaseModel):
+    spec: EventSpec
+    draft_model: str | None = None
+
+
+@app.post("/api/workshop/ideas/{idea_id}/event-runs", tags=["Workshop"])
+def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    """An event study (earnings, FOMC/CPI/jobs days, price gaps), judged like a rule idea but on events."""
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    spec = body.spec
+    try:
+        closes = workshop_closes(list(dict.fromkeys(spec.tickers + [spec.benchmark])), spec.start - timedelta(days=30))
+        if spec.event == "earnings":
+            events = {t: workshop_earnings(t) for t in spec.tickers}
+        elif spec.event in RELEASES:
+            events = {"*": workshop_release_dates(RELEASES[spec.event])}
+        else:
+            events = {}
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    variation = len(found["runs"]) + 1
+    result = run_event_test(spec, closes, events, variations=variation, seed=idea_id * 1000 + variation)
+    return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
+                                     result)
+
+
+@app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])
+def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.require_admin),
+                 supabase=Depends(get_supabase)):
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such idea")
+    spec = body.spec
+    try:
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    variation = len(found["runs"]) + 1
+    result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation)
+    return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
+                                     result)
+
+
+# ── Trading HQ Ideas record (step 3): public, published ideas only, fails and kills included. ──
+def _today() -> date:
+    return date.today()
+
+
+def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
+    latest = runs[-1] if runs else None
+    status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else "backtest"
+    live = None
+    if idea.get("live_at"):
+        live = _shadow(supabase, idea)
+        if idea.get("killed_at"):
+            live["state"] = "killed"  # the record ended on purpose; not stale
+    return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
+            "claim": latest["spec"].get("claim") if latest else None,
+            "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
+            "live_at": idea.get("live_at"), "killed_at": idea.get("killed_at"), "live": live}
+
+
+@app.get("/api/ideas", tags=["Ideas"])
+def get_ideas(supabase=Depends(get_supabase)):
+    out = []
+    for idea in workshop_store.published_ideas(supabase):
+        row = _public_idea(supabase, idea, workshop_store.get_idea(supabase, idea["id"])["runs"])
+        if row["live"]:
+            row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
+        out.append(row)
+    return out
+
+
+@app.get("/api/ideas/summary", tags=["Ideas"])
+def get_ideas_summary(supabase=Depends(get_supabase)):
+    runs = supabase.table("idea_runs").select("idea_id,variation,verdict").execute().data or []
+    latest: dict[int, tuple[int, str]] = {}
+    for r in runs:
+        iid = r["idea_id"]
+        if iid not in latest or r["variation"] > latest[iid][0]:
+            latest[iid] = (r["variation"], r["verdict"])
+    tested = passed = failed = not_enough = 0
+    for _, (_, verdict) in latest.items():
+        tested += 1
+        if verdict == "PASS":
+            passed += 1
+        elif verdict == "FAIL":
+            failed += 1
+        elif verdict == "NOT ENOUGH DATA":
+            not_enough += 1
+    published = len(workshop_store.published_ideas(supabase))
+    return {"tested": tested, "passed": passed, "failed": failed, "not_enough_data": not_enough, "published": published}
+
+
+@app.get("/api/ideas/{idea_id}", tags=["Ideas"])
+def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None or not found["idea"].get("published_at"):
+        raise HTTPException(status_code=404, detail="no such idea")  # private and missing look the same
+    from tradehub.portfolio import service
+
+    row = _public_idea(supabase, found["idea"], found["runs"])
+    row["plain_words"] = found["idea"]["plain_words"]
+    row["shadow"] = row.pop("live")
+    row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
+                    "headline": r["result"].get("headline"), "p": (r["result"].get("shuffle") or {}).get("p"),
+                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"].get("claim")}
+                   for r in found["runs"]]
+    try:
+        trades = service.closed(supabase)["trades"]
+    except Exception:  # noqa: BLE001 -- trades are context; the record stands without them
+        trades = []
+    row["trades"] = [t for t in trades if t["idea"] == found["idea"]["title"]]
+    return row
+
+
+@app.get("/api/portfolio/closed", tags=["Portfolio"])
+def get_portfolio_closed(supabase=Depends(get_supabase)):
+    from tradehub.portfolio import service
+
+    return service.closed(supabase)
+
+
+class _OrderIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=10)
+    qty: int = Field(ge=1, le=100_000)
+    side: str
+    order_type: str = "market"
+    limit_price: float | None = Field(default=None, gt=0)
+    time_in_force: str = "day"
+    idea_id: int | None = None
+
+
+@app.post("/api/portfolio/orders", tags=["Portfolio"])
+def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_admin)):
+    """Place one paper order by hand (Kevin, signed in). This is the critique's signed-in order
+    endpoint -- deliberately NOT a machine API: the only credential is Kevin's admin session,
+    and the only order path is paper_orders.submit, so the paper host, the TRADEHUB_PAPER_ORDERS
+    switch and the protective-order tag rules all still apply. Plain market/limit only; stops
+    and GTC orders remain the hub's own protective orders, never hand-placed.
+    With an idea_id the client_order_id carries the `idea-<n>-` tag, so the order shows in that
+    idea's order log and fills like an auto order does."""
+    from uuid import uuid4
+
+    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.workshop.spec import TICKER
+
+    symbol = body.symbol.strip().upper()
+    if not TICKER.match(symbol):
+        raise HTTPException(status_code=422, detail=f"not a ticker: {body.symbol!r}")
+    if body.side not in ("buy", "sell"):
+        raise HTTPException(status_code=422, detail="side must be buy or sell")
+    if body.order_type not in ("market", "limit"):
+        raise HTTPException(status_code=422, detail="hand-placed orders are market or limit only")
+    if body.time_in_force not in ("opg", "cls", "day"):
+        raise HTTPException(status_code=422, detail="time_in_force must be opg, cls or day")
+    if body.order_type == "limit" and body.limit_price is None:
+        raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
+    tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
+    client_order_id = tag + uuid4().hex[:12]
+    try:
+        order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
+                                    order_type=body.order_type, time_in_force=body.time_in_force,
+                                    limit_price=body.limit_price if body.order_type == "limit" else None)
+    except paper_orders.OrdersDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except paper_orders.DuplicateOrder as exc:
+        raise HTTPException(status_code=409, detail="an order with this client_order_id was already sent") from exc
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
+
+
+@app.get("/api/workshop/fills", tags=["Workshop"])
+def workshop_fills(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """Kevin's paper fills, newest first, each with its idea and its full relabel history (tag first)."""
+    from tradehub.portfolio import book, service
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    try:
+        fills, client_ids = service.tagged_fills(supabase, public=False)
+    except AccountNotConnected:
+        return {"state": "not_connected", "fills": []}
+    history = workshop_store.label_history(supabase)
+    out = []
+    for f in sorted(fills, key=lambda f: f["transaction_time"], reverse=True)[:200]:
+        tag = client_ids.get(f.get("order_id")) or None
+        prev, steps = book.tag_id(tag), []
+        for h in history.get(f.get("order_id"), []):
+            steps.append({"from": prev, "to": h["idea_id"], "by": h["by"], "at": h["at"]})
+            prev = h["idea_id"]
+        out.append({"order_id": f.get("order_id"), "symbol": f["symbol"], "side": f["side"], "qty": float(f["qty"]),
+                    "price": float(f["price"]), "at": f["transaction_time"], "tag": tag, "idea_id": f["idea_id"],
+                    "idea": f["idea"], "history": steps})
+    return {"state": "live", "fills": out}
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 8: /api/shadow-performance
 # ════════════════════════════════════════════════════════════════════════════
@@ -464,6 +943,18 @@ def get_journal(supabase=Depends(get_supabase)):
         "headline": journal_headline(rows),
         "standings": {**rows_out, "verdict": journal_verdict_sentence(rows_out)},
     }
+
+
+@app.get("/api/journal/previews", tags=["Journal"])
+def get_journal_previews(supabase=Depends(get_supabase)):
+    """The next jobs and CPI releases as the models see them right now. Not locked, not scored."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    try:
+        rows = _fetch_all(supabase, "journal_previews", lambda q: q.select("*"), order=("close_at", "target"))
+    except Exception as exc:  # noqa: BLE001 - classified by _table_fault
+        raise _table_fault("journal_previews", exc) from exc
+    return {"as_of": datetime.now(timezone.utc).isoformat(), "previews": rows}
 
 
 @app.get("/api/journal/feed", tags=["Journal"])
@@ -846,6 +1337,14 @@ def _fetch_all(supa, table: str, build, *, page: int = POSTGREST_CAP, cap: int |
         lo += page
         if cap is not None and len(rows) >= cap:
             return rows[:cap]
+
+
+@app.get("/api/onchain", tags=["Crypto"])
+def get_onchain():
+    """Live BTC and ETH chain state from free public endpoints; fails soft per chain, cached 60 s."""
+    from tradehub.onchain import collect
+
+    return collect()
 
 
 @app.get("/api/sports-record", tags=["Sports"])

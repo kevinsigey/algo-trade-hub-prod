@@ -73,14 +73,14 @@ describe("weather page truth", () => {
     expect(s.cities).toBe(0);
   });
 
-  it("counts cities from unique targets", () => {
+  it("counts cities from distinct cities, not contracts", () => {
     const rows: WeatherTodayRow[] = [
-      { ...TODAY_ROW, target: "T-KXHIGHNY-26OCT18" },
-      { ...TODAY_ROW, target: "T-KXHIGHLAX-26OCT18" },
-      { ...TODAY_ROW, target: "T-KXHIGHPHIL-26OCT18" },
+      { ...TODAY_ROW, target: "kalshi:KXHIGHNY-26OCT18-T75" },
+      { ...TODAY_ROW, target: "kalshi:KXHIGHNY-26OCT18-T80" },
+      { ...TODAY_ROW, target: "kalshi:KXHIGHLAX-26OCT18-T75" },
     ];
     const s = weatherStats(rows, []);
-    expect(s.cities).toBe(3);
+    expect(s.cities).toBe(2);
   });
 });
 

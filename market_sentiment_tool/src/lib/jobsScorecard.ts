@@ -68,7 +68,11 @@ export function toChartPoints(rows: JobsScorecardRow[]): ScorecardChartPoint[] {
 export function summarizeScorecard(rows: JobsScorecardRow[]): ScorecardSummary {
   const scored = rows.filter(
     (row) =>
-      toNumber(row.nowcast_abs_err) !== null && toNumber(row.kalshi_abs_err) !== null,
+      toNumber(row.nowcast_abs_err) !== null &&
+      toNumber(row.kalshi_abs_err) !== null &&
+      toNumber(row.first_print) !== null &&
+      toNumber(row.nowcast_mu) !== null &&
+      toNumber(row.kalshi_mean_1h) !== null,
   );
   const briers = rows.filter(
     (row) => toNumber(row.nowcast_brier) !== null && toNumber(row.kalshi_brier) !== null,

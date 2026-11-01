@@ -9,7 +9,7 @@ they are separate track records.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from tradehub.data.cleveland_fed import fetch_nowcast_history
@@ -18,6 +18,7 @@ from tradehub.engine_config import load_engine_config
 from tradehub.engines.cpi import CPI_TARGETS, CPI_TRAIN_MONTHS, cpi_prob, fit_cpi_error, latest_nowcast, training_pairs
 from tradehub.journal.contract import CalendarEntry, Forecast, Settlement
 from tradehub.journal.kalshi_linked import (
+    FREEZE_LEAD,
     entry_for,
     in_freeze_window,
     kalshi_target,
@@ -35,9 +36,10 @@ class CpiForecaster:
     cadence = "monthly"
 
     def __init__(self, series: str, live, fetch_market: Callable[[str], Any], *,
-                 nowcast_fn: Callable[[str], dict] = fetch_nowcast_history, params: dict[str, float] | None = None):
+                 nowcast_fn: Callable[[str], dict] = fetch_nowcast_history, params: dict[str, float] | None = None,
+                 lead: timedelta = FREEZE_LEAD):
         self.kind, self.version = CPI_TARGETS[series]
-        self.series = series
+        self.series, self._lead = series, lead
         self._live, self._fetch_market, self._nowcast_fn = live, fetch_market, nowcast_fn
         params = params if params is not None else load_engine_config(CPI_ENGINE).params
         self._window = int(params.get("train_months", CPI_TRAIN_MONTHS))
@@ -47,7 +49,7 @@ class CpiForecaster:
 
     def targets(self, now: datetime) -> list[CalendarEntry]:
         self._open = {kalshi_target(lm.market.ticker): lm for lm in self._live.open_markets(self.series)
-                      if in_freeze_window(lm, now)}
+                      if in_freeze_window(lm, now, self._lead)}
         self._history = None  # refetched lazily, once per run, only if something needs forecasting
         return [entry_for(lm, "cpi", self.cadence) for lm in self._open.values()]
 

@@ -17,7 +17,7 @@ import requests
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
 # Yahoo answers 429 to the default python-requests agent and 200 to an honest, descriptive one. The
 # journal identifies itself; it does not pretend to be a browser.
-USER_AGENT = "tradehub-journal/1.0 (+https://github.com/Kevocado/algo-trade-hub-prod)"
+USER_AGENT = "tradehub-journal/1.0 (+https://github.com/kevinsigey/algo-trade-hub-prod)"
 TIMEOUT_SECONDS = 30
 
 
