@@ -70,11 +70,27 @@ def test_cpi_card_pairs_probabilities_by_target_and_marks_display_only():
     assert cpi["record"]["n_settled"] == 24
 
 
-def test_gas_card_reads_its_record_from_the_journal_not_the_scoreboard():
-    gas = _build()["gas"]
-    assert gas["record"]["source"] == "journal"
-    assert gas["record"]["brier_market"] == 0.20 and gas["record"]["gap"] == 0.02
-    assert gas["call"]["ours"] == 0.55 and gas["detail_href"] == "/journal"
+def test_no_gas_card_even_when_gas_rows_exist():
+    # Both 2026-11-01 audits graded gas a completed, decisive loss; the Macro
+    # page stops presenting it as a prediction. Its journal rows may still be
+    # in the inputs -- they simply earn no card.
+    assert "gas" not in _build()
+
+
+def test_oil_card_pairs_with_the_kalshi_oil_row_and_reads_the_journal_record():
+    scores = SCORES + [{"forecaster": "oil_wti", "forecaster_version": "wti-v1", "n_settled": 12,
+                        "brier": 0.19, "brier_baseline": 0.17, "gap": 0.02, "gap_se": 0.02}]
+    forecasts = FORECASTS + [
+        {"forecaster": "oil_wti", "forecaster_version": "wti-v1", "target": "kalshi:KXWTI-26NOV0214-T90.49",
+         "probability": 0.61, "frozen_at": "2026-11-02T18:00:00Z"},
+        {"forecaster": "kalshi_implied_oil", "forecaster_version": "mkt", "target": "kalshi:KXWTI-26NOV0214-T90.49",
+         "probability": 0.58, "frozen_at": "2026-11-02T18:00:00Z"},
+    ]
+    oil = _build(journal_scores=scores, journal_forecasts=forecasts)["oil"]
+    assert oil["title"] == "Oil" and oil["display_only"] is False
+    assert oil["record"]["source"] == "journal" and oil["record"]["n_settled"] == 12
+    assert oil["call"]["ours"] == 0.61 and oil["call"]["market"] == 0.58
+    assert oil["detail_href"] == "/journal"
 
 
 def test_empty_sources_degrade_to_null_sections_never_zeros():

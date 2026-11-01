@@ -328,3 +328,23 @@ market first (moneyline, else the deepest record) with the remaining
 markets under an "All markets" fold, and the NFL/CFB vs-Kalshi line from
 the journal's own scores via the shared vsLine helper. A malformed
 sports payload degrades to an unavailable note, never a crash.
+
+## Oil forecaster (2026-11-01, on the weather/energy audit)
+
+`oil_wti`@wti-v1 joins the journal on KXWTI (daily WTI, ICE settlement
+~14:30 ET): the oil engine (tradehub/engines/oil.py) regresses the per-day
+settlement change on the CL=F 5-close change, fit and applied at the same
+decision time (close minus 2h), anchored on Kalshi's own settled values;
+settlements skip weekends, so changes are per-day across their gap and the
+horizon scales the same way. Beside it: kalshi_implied_oil, a persistence
+baseline, and -- from day one, the row gas never got -- oil_wti_cautious
+(w25 MarketShrunk, version-pinned). The Macro page gains an Oil card
+beside Gas. Evidence for the build: KXWTI is open and liquid (Oct 30 event
+traded 223,133 contracts) and Yahoo CL=F matched its settlement to the
+cent, keyless; KXWTID/KXBRENT do not exist, KXOIL has no open markets.
+Known v1 limitation, stated in tradehub/data/wti.py: CL=F is the
+continuous series, so one close a month carries the contract roll.
+The same change removes the Macro page's Gas card (the journal forecaster
+keeps running and keeps its record): both audits graded gas a completed,
+decisive loss, and a page that presents it as a live prediction is less
+truthful than a tighter one. Oil takes the third slot.
