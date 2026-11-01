@@ -32,6 +32,7 @@ def build_backtest_run_row(
     data_hash: str,
     date_from: datetime,
     date_to: datetime,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "engine": result.engine,
@@ -55,6 +56,10 @@ def build_backtest_run_row(
         "max_cal_dev": result.gate["max_cal_dev"],
         "gate_status": result.gate["status"],
         "gate_reasons": result.gate["reasons"],
+        # §6.1 diagnostics (migration 20261101000002): measured facts about the run's
+        # inputs and residuals. None for engines that do not compute them -- the
+        # column is nullable and readers treat absence as "not measured".
+        "diagnostics": diagnostics,
     }
 
 

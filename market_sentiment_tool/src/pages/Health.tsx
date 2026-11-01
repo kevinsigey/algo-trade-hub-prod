@@ -211,6 +211,27 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
         </section>
       ) : null}
 
+      {report.diagnostics ? (
+        <section>
+          <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">
+            Model diagnostics
+          </h2>
+          <p className="text-xs text-slate-500">
+            From the newest measured backtest run ({report.diagnostics.engine} · {report.diagnostics.mode}).
+            Flags are reasons to look at a model, not health failures.
+          </p>
+          {report.diagnostics.feature_flags.length + report.diagnostics.residual_flags.length > 0 ? (
+            <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-amber-200">
+              {[...report.diagnostics.feature_flags, ...report.diagnostics.residual_flags].map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-slate-400">No diagnostic flags on that run.</p>
+          )}
+        </section>
+      ) : null}
+
       <p className="pb-6 text-xs text-slate-600">Generated {ct(report.generated_at)}</p>
     </>
   );

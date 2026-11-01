@@ -192,10 +192,21 @@ def main(argv: list[str] | None = None) -> int:
     firsts = {event_month(raw["event_ticker"]): parse_expiration_value(raw["expiration_value"]) / 1000.0 for raw in raws}
     kalshi_means = kalshi_implied_means(markets, histories)
     both = [m for m in nowcasts if m in kalshi_means and m in firsts]
+    # Diagnostics (§6.1): per-feature stationarity/zero screening over the values the
+    # model actually consumed, and residual checks on the standardised errors.
+    # Measurement only -- computed and carried in the report and the recorded row's
+    # config, never consulted by the gate.
+    from tradehub.diagnostics import feature_diagnostics, residual_diagnostics
+    ordered = [nowcasts[m] for m in sorted(nowcasts)]
+    diag = {
+        "features": feature_diagnostics({f: [nc.features.values[f] for nc in ordered] for f in features}),
+        "residuals": residual_diagnostics(
+            [(firsts[m] - nowcasts[m].mu) / nowcasts[m].sigma for m in sorted(both) if nowcasts[m].sigma > 0]),
+    }
     config = {"engine": "labor_nowcast", "series": PAYROLL_SERIES, "mode": args.mode, "features": list(features),
               "start": args.start.isoformat(), "end": args.end.isoformat()}
     row = build_backtest_run_row(
-        result, engine_version=LABOR_ENGINE_VERSION, config=config,
+        result, engine_version=LABOR_ENGINE_VERSION, config=config, diagnostics=diag,
         data_hash=data_snapshot_hash(quoted, histories),
         date_from=datetime.combine(args.start, time(0), tzinfo=timezone.utc),
         date_to=datetime.combine(args.end, time(23, 59), tzinfo=timezone.utc),
@@ -203,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {key: row[key] for key in ("engine", "mode", "n_decisions", "n_fills", "pnl_after_fees", "max_drawdown",
                                         "brier_ours", "brier_market", "gate_status", "gate_reasons")}
     report.update({
+        "diagnostics": diag,
         "months": len(nowcasts),
         "unquoted_dropped": len(decisions) - len(quoted),
         "months_with_kalshi_mean": len(both),

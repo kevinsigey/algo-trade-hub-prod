@@ -389,6 +389,9 @@ def current_runs(runs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "max_drawdown": run.get("max_drawdown"),
             "gate_status": status,
             "gate_reasons": reasons,
+            # §6.1 diagnostics ride through untouched (null = not measured). The page
+            # renders their flags as annotations; nothing here interprets them.
+            "diagnostics": run.get("diagnostics"),
             # `MIN_SETTLED` is the reviewer's floor, imported and never written out. It rides
             # along on its own fields whether or not the gate states a bar, and is never the
             # bar `met` is judged against -- see `settled_distance`.

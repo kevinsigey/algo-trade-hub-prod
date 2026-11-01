@@ -94,6 +94,32 @@ export interface ScoreboardRow {
   promotion_status: string;
   gate_reasons: string[];
   settled_distance: SettledDistance | null;
+  /** Section 6.1 diagnostics measured by the run itself; null when it recorded none. */
+  diagnostics?: RunDiagnostics | null;
+}
+
+export interface FeatureDiagnostic {
+  feature: string;
+  zero_share: number;
+  adf: { verdict?: string; stat?: number; status?: string };
+  flags: string[];
+}
+
+export interface RunDiagnostics {
+  features: FeatureDiagnostic[];
+  residuals: { flags: string[]; ljung_box?: { p?: number }; arch_lm?: { p?: number } };
+}
+
+/** The run's diagnostic flags as annotation strings ("pay_rev_3m: mostly_zero",
+ * "residual_arch"). Empty when the run measured clean or measured nothing --
+ * the two are told apart by `diagnostics` being non-null, not by this list. */
+export function diagnosticFlags(row: ScoreboardRow): string[] {
+  const d = row.diagnostics;
+  if (!d) return [];
+  return [
+    ...(d.features ?? []).flatMap((f) => (f.flags ?? []).map((flag) => `${f.feature}: ${flag}`)),
+    ...((d.residuals?.flags ?? []) as string[]),
+  ];
 }
 
 export interface ScoreboardResponse {

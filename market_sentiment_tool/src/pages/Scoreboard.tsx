@@ -6,6 +6,7 @@ import { SettledBars } from "@/components/SettledBars";
 import {
   backtestGateLabel,
   brierVerdict,
+  diagnosticFlags,
   formatBrier,
   formatCount,
   formatSimulatedMoney,
@@ -138,6 +139,11 @@ function Row({ row }: { row: ScoreboardRow }) {
               <li key={reason}>{reason}</li>
             ))}
           </ul>
+        )}
+        {diagnosticFlags(row).length > 0 && (
+          <div className="mt-2 text-[11px] text-amber-300/90">
+            Diagnostics: {diagnosticFlags(row).join(" · ")}
+          </div>
         )}
       </td>
     </tr>
