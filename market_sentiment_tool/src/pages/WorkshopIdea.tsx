@@ -396,7 +396,7 @@ function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaS
         <Field label="Data from">
           <input type="date" className={field} value={spec.start} onChange={(e) => set("start", e.target.value)} />
         </Field>
-        <Field label="Unseen share (most recent)">
+        <Field label="Unseen years (share of the data)">
           <input type="number" step="0.05" min="0.1" max="0.5" className={field} value={spec.unseen_fraction} onChange={(e) => set("unseen_fraction", Number(e.target.value))} />
         </Field>
       </div>
@@ -581,6 +581,7 @@ function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; o
         </div>
       </div>
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
+
       {r.claim && r.shuffle && (
         <table className="mt-4 w-full text-sm">
           <tbody className="divide-y divide-slate-800/80">
@@ -675,29 +676,33 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
         </div>
       )}
 
+      {r.curve.length > 1 && <p className="mt-1 text-xs text-slate-500">Cumulative return since {r.data_start}, % (not log)</p>}
+
       {r.claim && r.shuffle && (
         <table className="mt-4 w-full text-sm">
           <tbody className="divide-y divide-slate-800/80">
             <tr><td className="py-1.5 text-slate-300">On the years it was built on</td><td className="py-1.5 text-slate-400">{r.claim.built.label}</td><td><Mark ok={r.claim.built.holds} /></td></tr>
-            <tr><td className="py-1.5 text-slate-300">On the years it hadn't seen</td><td className="py-1.5 text-slate-400">{r.claim.unseen.label}</td><td><Mark ok={r.claim.unseen.holds} /></td></tr>
+            <tr><td className="py-1.5 text-slate-300">On the unseen years</td><td className="py-1.5 text-slate-400">{r.claim.unseen.label}</td><td><Mark ok={r.claim.unseen.holds} /></td></tr>
             <tr><td className="py-1.5 text-slate-300">Better than chance ({r.shuffle.method})</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.p < r.shuffle.bar} /></td></tr>
-            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, daily difference</td><td className="py-1.5 text-slate-400">{pct(r.t_test.mean_daily_diff, 3)}/day · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.p < 0.05 ? r.t_test.mean_daily_diff > 0 : null} /></td></tr>}
+            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, daily difference</td><td className="py-1.5 text-slate-400">{pct(r.t_test.mean_daily_diff, 3)}/day · p = {r.t_test.p.toFixed(3)}{r.t_test.p < 0.05 && r.t_test.mean_daily_diff < 0 ? " · significant, but the wrong way" : ""}</td><td><Mark ok={r.t_test.p < 0.05 ? r.t_test.mean_daily_diff > 0 : null} /></td></tr>}
             {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each market period</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.held >= 4 ? true : r.periods.held <= 1 ? false : null} /></td></tr>}
             <tr><td className="py-1.5 text-slate-300">Variations tried on this idea</td><td className="py-1.5 text-slate-400">{r.variations} · bar raised accordingly</td><td /></tr>
           </tbody>
         </table>
       )}
 
+      <p className="mt-1 text-xs text-slate-500">✓ holds · ✗ fails · ~ mixed or not decisive</p>
+
       {r.context.length > 0 && (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[28rem] text-xs tabular-nums">
             <thead className="text-left text-slate-400">
-              <tr><th className="py-1 font-medium">Per year</th><th className="py-1 text-right font-medium">Built years</th><th className="py-1 text-right font-medium">Unseen years</th><th className="py-1 text-right font-medium">Unseen worst drop</th></tr>
+              <tr><th className="py-1 font-medium">Per year (CAGR)</th><th className="py-1 text-right font-medium">Built years</th><th className="py-1 text-right font-medium">Unseen years</th><th className="py-1 text-right font-medium">Unseen worst drop</th></tr>
             </thead>
             <tbody>
               {r.context.map((c) => (
                 <tr key={c.name} className="border-t border-slate-800/80">
-                  <td className={`py-1 ${c.name === "Idea" ? "font-semibold text-amber-300" : "text-slate-300"}`}>{c.name}</td>
+                  <td className={`py-1 ${c.name === "Idea" ? "font-semibold text-amber-300" : "text-slate-300"}`}>{c.name}{c.name === run.spec.benchmark ? " (benchmark)" : ""}</td>
                   <td className="py-1 text-right text-slate-300">{pct(c.built_cagr)}</td>
                   <td className="py-1 text-right text-slate-300">{pct(c.unseen_cagr)}</td>
                   <td className="py-1 text-right text-slate-300">{pct(c.unseen_max_dd, 0)}</td>
