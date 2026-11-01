@@ -61,7 +61,7 @@ export function ReportDumbbells({ points, fmt }: { points: ReportPoint[]; fmt: (
             <span className="text-right tabular-nums text-slate-300">
               {p.firstPrint === null ? "—" : fmt(p.firstPrint)}
               <span className="block text-[10px] text-slate-500">
-                {win === "ours" ? "We were closer" : win === "kalshi" ? "Kalshi was closer" : win === "tie" ? "Even" : "not scored"}
+                {win === "ours" ? "We were closer" : win === "kalshi" ? "Kalshi was closer" : win === "tie" ? "Tie" : "not scored"}
               </span>
             </span>
           </div>
