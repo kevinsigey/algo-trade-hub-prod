@@ -188,3 +188,16 @@ neighbour days ran) -- window edges and quiet stretches are "none", no claim.
 The Health page leads with the grid (family intensity = frozen count) and
 demotes the timers/families lists into collapsed details; Problems stay
 open. The orderbooks timer has no history source and is not drawn.
+
+## Weather map (phase-3 §3.1)
+
+`GET /api/weather/map` composes per-city summaries from journal forecasts
+WITH payloads (station + ensemble mean live there; /api/weather strips
+them): `tradehub/weather_map.py` groups the latest unsettled freeze batch
+per (station, kind), lays ensemble/Kalshi/climatology probabilities per
+bucket, and pairs the station's settled record against the market on the
+same targets. The Weather page leads with an SVG US map
+(`src/lib/usStates.ts` -- Census-derived state outlines projected once,
+markers via the same projection), the selected city's card under it, and
+the contract table demoted into a collapsed details section. The card
+names the ensemble version behind its numbers.

@@ -1486,6 +1486,32 @@ def get_macro(supabase=Depends(get_supabase)):
                        today=_dt.now(timezone.utc).date())
 
 
+@app.get("/api/weather/map", tags=["Weather"])
+def get_weather_map(supabase=Depends(get_supabase)):
+    """Per-city weather summaries for the map page (phase-3 §3.1), composed
+    from journal forecasts WITH their payloads -- the station and the
+    ensemble mean live in the payload, which /api/weather strips. A failed
+    read is a 503, never an empty map: an empty map would claim the ensemble
+    forecasts nowhere."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    from tradehub.weather_map import build_weather_map
+    names = ("weather_high", "weather_low", "weather_rain",
+             "kalshi_implied_weather_high", "kalshi_implied_weather_low", "kalshi_implied_weather_rain",
+             "baseline_climatology_weather_high", "baseline_climatology_weather_low",
+             "baseline_climatology_weather_rain")
+    try:
+        forecasts = (supabase.table("journal_forecasts").select("*")
+                     .in_("forecaster", list(names))
+                     .order("frozen_at", desc=True).limit(6000).execute().data or [])
+        settlements = _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
+                                 order=("target",))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=_missing_table_message("journal_forecasts", e))
+    outcomes = {s["target"]: s["outcome"] for s in settlements if s.get("outcome") is not None}
+    return build_weather_map(forecasts=forecasts, settlements=outcomes)
+
+
 @app.get("/api/weather/degree-days", tags=["Weather"])
 def get_degree_days():
     """The degree-day demand panel (§5.3): last completed week's HDD/CDD by Census

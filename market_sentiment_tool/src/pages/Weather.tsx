@@ -3,6 +3,9 @@ import { AlertTriangle, CloudSun, Loader2 } from "lucide-react";
 
 import { useWeather } from "@/hooks/useWeather";
 import { buildApiUrl } from "@/lib/api";
+import { getJson } from "@/lib/getJson";
+import { US_STATE_PATHS, US_VIEWBOX, projectUs } from "@/lib/usStates";
+import { cityHeadline, type WeatherCity, type WeatherMapResponse } from "@/lib/weatherMap";
 import {
   WEATHER_INTRO,
   formatOutcome,
@@ -37,6 +40,105 @@ function Stat({ label, value, sub }: { label: string; value: string | number; su
       <div className="mt-1 text-3xl font-black tracking-tight text-white">{value}</div>
       {sub ? <div className="mt-1 text-xs text-slate-500">{sub}</div> : null}
     </div>
+  );
+}
+
+/**
+ * The map (phase-3 §3.1): one marker per forecast city on a US outline, the
+ * headline call on the marker, the full per-city card one click down. Its
+ * read is independent of the contract table below -- either can fail without
+ * taking the other down. Every probability names its source (ensemble /
+ * Kalshi / climatology) and the ensemble's version is printed on the card,
+ * so a model swap can never happen silently.
+ */
+function WeatherMap() {
+  const [cities, setCities] = useState<WeatherCity[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    getJson<WeatherMapResponse>("/api/weather/map")
+      .then((r) => {
+        if (!Array.isArray(r?.cities)) throw new Error("map payload has no cities");
+        setCities(r.cities);
+        setSelected(r.cities[0]?.sid ?? null);
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  if (failed) {
+    return <p className="text-sm text-slate-500">The map is unavailable right now — the contract table below still reports.</p>;
+  }
+  if (!cities) {
+    return <p className="text-sm text-slate-500">Loading the map…</p>;
+  }
+  if (cities.length === 0) {
+    return <p className="text-sm text-slate-500">No city forecasts frozen yet.</p>;
+  }
+  const city = cities.find((c) => c.sid === selected) ?? cities[0];
+  const kindBlock = (label: string, k: WeatherCity["high"]) =>
+    k ? (
+      <div key={label} className="mt-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          {label} · {k.day} · ensemble {k.version ?? "—"}{k.mean != null ? ` · mean ${k.mean.toFixed(1)}°` : ""}
+        </p>
+        <ul className="mt-1 space-y-0.5 text-sm tabular-nums">
+          {k.buckets.map((b) => (
+            <li key={b.label} className="flex justify-between gap-3">
+              <span className="text-slate-300">{b.label}</span>
+              <span className="text-slate-400">
+                ens <span className="text-slate-100">{formatProb(b.ours)}</span> · kalshi {formatProb(b.market)} · clim {formatProb(b.clim)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : null;
+
+  return (
+    <section aria-label="Weather map">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-3">
+        <svg viewBox={US_VIEWBOX} className="w-full" role="img" aria-label="US map of forecast cities">
+          {Object.entries(US_STATE_PATHS).map(([name, d]) => (
+            <path key={name} d={d} className="fill-slate-900 stroke-slate-700" strokeWidth={0.7} />
+          ))}
+          {cities.map((c) => {
+            const [x, y] = projectUs(c.lon, c.lat);
+            const active = c.sid === city.sid;
+            return (
+              <g key={c.sid} transform={`translate(${x},${y})`} className="cursor-pointer"
+                onClick={() => setSelected(c.sid)}>
+                <title>{`${c.name} — ${cityHeadline(c)}`}</title>
+                <circle r={active ? 13 : 10} className={active ? "fill-emerald-400/30 stroke-emerald-300" : "fill-emerald-500/20 stroke-emerald-500/70"} />
+                <text textAnchor="middle" dominantBaseline="central" className="fill-emerald-100 text-[10px] font-bold">
+                  {cityHeadline(c)}
+                </text>
+                <text y={24} textAnchor="middle" className="fill-slate-300 text-[10px]">{c.name}</text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold text-white">{city.name}</h2>
+          {city.record ? (
+            <p className="text-xs tabular-nums text-slate-400">
+              Station record: {city.record.n} settled · Brier ours {city.record.brier_ours.toFixed(3)} vs Kalshi {city.record.brier_market.toFixed(3)}
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500">No settled record at this station yet.</p>
+          )}
+        </div>
+        {kindBlock("High", city.high)}
+        {kindBlock("Low", city.low)}
+        {kindBlock("Rain", city.rain)}
+        {!city.high && !city.low && !city.rain && (
+          <p className="mt-2 text-sm text-slate-500">No live ensemble freeze for this city — the marker is its settled record.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -75,10 +177,15 @@ export default function Weather() {
               <Stat label="Settled" value={s.settledCount} sub="with outcome" />
             </div>
 
+            <WeatherMap />
+
             {today.length === 0 && settled.length === 0 ? (
               <p className="text-sm text-slate-500">No weather data available.</p>
             ) : (
-              <>
+              <details>
+                <summary className="cursor-pointer text-sm font-bold uppercase tracking-wider text-slate-400">
+                  All contracts, the long way
+                </summary>
                 {today.length > 0 ? (
                   <section>
                     <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">
@@ -142,7 +249,7 @@ export default function Weather() {
                     </div>
                   </section>
                 ) : null}
-              </>
+              </details>
             )}
 
             <p className="pb-6 text-xs text-slate-600">
