@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
@@ -77,6 +77,44 @@ describe("Portfolio", () => {
     expect(screen.getAllByText("No idea yet (manual)").length).toBe(2);
     expect(screen.getByText("Every position · 1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Closed trades/ })).toHaveAttribute("href", "/portfolio/closed");
+  });
+});
+
+describe("Portfolio hand orders (signed-in only)", () => {
+  function serveRoutes(adminOk: boolean, posted: Record<string, unknown>[]) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/orders")) {
+        posted.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return new Response(JSON.stringify({ order: { id: "a1" }, client_order_id: "manual-abc123", placed_by: "k@example.com" }), { status: 200 });
+      }
+      if (url.includes("/api/admin/me")) {
+        return adminOk
+          ? new Response(JSON.stringify({ email: "k@example.com" }), { status: 200 })
+          : new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      }
+      if (url.includes("/api/workshop/ideas")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+  }
+
+  it("shows no order form to a signed-out visitor", async () => {
+    serveRoutes(false, []);
+    page(<Portfolio />);
+    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+    expect(screen.queryByText("Place an order by hand")).toBeNull();
+  });
+
+  it("places a market order through the endpoint when signed in", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    page(<Portfolio />);
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
+    fireEvent.change(screen.getByLabelText("Shares"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: buy 3 XLE \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted).toEqual([{ symbol: "XLE", qty: 3, side: "buy", order_type: "market", time_in_force: "day" }]);
   });
 });
 

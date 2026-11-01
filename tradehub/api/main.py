@@ -787,6 +787,59 @@ def get_portfolio_closed(supabase=Depends(get_supabase)):
     return service.closed(supabase)
 
 
+class _OrderIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=10)
+    qty: int = Field(ge=1, le=100_000)
+    side: str
+    order_type: str = "market"
+    limit_price: float | None = Field(default=None, gt=0)
+    time_in_force: str = "day"
+    idea_id: int | None = None
+
+
+@app.post("/api/portfolio/orders", tags=["Portfolio"])
+def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_admin)):
+    """Place one paper order by hand (Kevin, signed in). This is the critique's signed-in order
+    endpoint -- deliberately NOT a machine API: the only credential is Kevin's admin session,
+    and the only order path is paper_orders.submit, so the paper host, the TRADEHUB_PAPER_ORDERS
+    switch and the protective-order tag rules all still apply. Plain market/limit only; stops
+    and GTC orders remain the hub's own protective orders, never hand-placed.
+    With an idea_id the client_order_id carries the `idea-<n>-` tag, so the order shows in that
+    idea's order log and fills like an auto order does."""
+    from uuid import uuid4
+
+    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.workshop.spec import TICKER
+
+    symbol = body.symbol.strip().upper()
+    if not TICKER.match(symbol):
+        raise HTTPException(status_code=422, detail=f"not a ticker: {body.symbol!r}")
+    if body.side not in ("buy", "sell"):
+        raise HTTPException(status_code=422, detail="side must be buy or sell")
+    if body.order_type not in ("market", "limit"):
+        raise HTTPException(status_code=422, detail="hand-placed orders are market or limit only")
+    if body.time_in_force not in ("opg", "cls", "day"):
+        raise HTTPException(status_code=422, detail="time_in_force must be opg, cls or day")
+    if body.order_type == "limit" and body.limit_price is None:
+        raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
+    tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
+    client_order_id = tag + uuid4().hex[:12]
+    try:
+        order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
+                                    order_type=body.order_type, time_in_force=body.time_in_force,
+                                    limit_price=body.limit_price if body.order_type == "limit" else None)
+    except paper_orders.OrdersDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except paper_orders.DuplicateOrder as exc:
+        raise HTTPException(status_code=409, detail="an order with this client_order_id was already sent") from exc
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
+
+
 @app.get("/api/workshop/fills", tags=["Workshop"])
 def workshop_fills(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     """Kevin's paper fills, newest first, each with its idea and its full relabel history (tag first)."""
