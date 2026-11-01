@@ -308,3 +308,23 @@ specific capability the engine would need added, what the words asked for,
 and the closest stand-in drafted -- so a scoping gap arrives as a buildable
 request. Activation: set GEMINI_API_KEY via scripts/set-vps-secret.sh and
 forward it in the stack compose (beside ANTHROPIC_API_KEY).
+
+## Weather map callouts + side-by-side (2026-11-01)
+
+The five Northeast stations whose true positions collide at map scale
+(BOS/NYC/EWR/TTN/PHL) draw their labeled circles fanned over the Atlantic
+in latitude order (`MARKER_CALLOUTS` in src/lib/weatherMap.ts), each with
+a dot and leader line at the true station point; DCA keeps its true
+position. A layout test keeps every pair of labeled circles >=24px apart.
+The city card's per-kind buckets are now a table with Ours and Kalshi in
+their own columns (climatology muted) -- the side-by-side the map summary
+always implied.
+
+## Journal sports tab (2026-11-01)
+
+The Journal gains a Sports tab: the /api/sports-record estate (the same
+payload the Models page renders in full), one card per sport, headline
+market first (moneyline, else the deepest record) with the remaining
+markets under an "All markets" fold, and the NFL/CFB vs-Kalshi line from
+the journal's own scores via the shared vsLine helper. A malformed
+sports payload degrades to an unavailable note, never a crash.

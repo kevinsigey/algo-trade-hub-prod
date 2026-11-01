@@ -4,8 +4,8 @@ import { AlertTriangle, CloudSun, Loader2 } from "lucide-react";
 import { useWeather } from "@/hooks/useWeather";
 import { buildApiUrl } from "@/lib/api";
 import { getJson } from "@/lib/getJson";
-import { US_STATE_PATHS, US_VIEWBOX, projectUs } from "@/lib/usStates";
-import { cityHeadline, type WeatherCity, type WeatherMapResponse } from "@/lib/weatherMap";
+import { US_STATE_PATHS, US_VIEWBOX } from "@/lib/usStates";
+import { cityHeadline, markerLayout, type WeatherCity, type WeatherMapResponse } from "@/lib/weatherMap";
 import {
   WEATHER_INTRO,
   formatOutcome,
@@ -76,22 +76,34 @@ function WeatherMap() {
     return <p className="text-sm text-slate-500">No city forecasts frozen yet.</p>;
   }
   const city = cities.find((c) => c.sid === selected) ?? cities[0];
+  // Ours and Kalshi side by side, one column each (Kevin's ask, 2026-11-01):
+  // the same buckets the marker summarizes, priced by both, climatology muted.
   const kindBlock = (label: string, k: WeatherCity["high"]) =>
     k ? (
-      <div key={label} className="mt-3">
+      <div key={label} className="mt-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           {label} · {k.day} · ensemble {k.version ?? "—"}{k.mean != null ? ` · mean ${k.mean.toFixed(1)}°` : ""}
         </p>
-        <ul className="mt-1 space-y-0.5 text-sm tabular-nums">
-          {k.buckets.map((b) => (
-            <li key={b.label} className="flex justify-between gap-3">
-              <span className="text-slate-300">{b.label}</span>
-              <span className="text-slate-400">
-                ens <span className="text-slate-100">{formatProb(b.ours)}</span> · kalshi {formatProb(b.market)} · clim {formatProb(b.clim)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <table className="mt-1 w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wider text-slate-500">
+              <th className="py-0.5 text-left font-medium">Bucket</th>
+              <th className="py-0.5 text-right font-semibold text-slate-200">Ours</th>
+              <th className="py-0.5 text-right font-semibold text-slate-200">Kalshi</th>
+              <th className="py-0.5 text-right font-medium">Climatology</th>
+            </tr>
+          </thead>
+          <tbody>
+            {k.buckets.map((b) => (
+              <tr key={b.label} className="border-t border-slate-800/60">
+                <td className="py-1 text-slate-300">{b.label}</td>
+                <td className="py-1 text-right font-semibold text-slate-50">{formatProb(b.ours)}</td>
+                <td className="py-1 text-right text-slate-200">{formatProb(b.market)}</td>
+                <td className="py-1 text-right text-slate-500">{formatProb(b.clim)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     ) : null;
 
@@ -103,17 +115,25 @@ function WeatherMap() {
             <path key={name} d={d} className="fill-slate-900 stroke-slate-700" strokeWidth={0.7} />
           ))}
           {cities.map((c) => {
-            const [x, y] = projectUs(c.lon, c.lat);
+            const { point, at, callout } = markerLayout(c);
             const active = c.sid === city.sid;
             return (
-              <g key={c.sid} transform={`translate(${x},${y})`} className="cursor-pointer"
-                onClick={() => setSelected(c.sid)}>
-                <title>{`${c.name} — ${cityHeadline(c)}`}</title>
-                <circle r={active ? 13 : 10} className={active ? "fill-emerald-400/30 stroke-emerald-300" : "fill-emerald-500/20 stroke-emerald-500/70"} />
-                <text textAnchor="middle" dominantBaseline="central" className="fill-emerald-100 text-[10px] font-bold">
-                  {cityHeadline(c)}
-                </text>
-                <text y={24} textAnchor="middle" className="fill-slate-300 text-[10px]">{c.name}</text>
+              <g key={c.sid}>
+                {callout && (
+                  <>
+                    <line x1={point[0]} y1={point[1]} x2={at[0]} y2={at[1]} className="stroke-slate-600" strokeWidth={1} />
+                    <circle cx={point[0]} cy={point[1]} r={2.5} className="fill-slate-400" />
+                  </>
+                )}
+                <g transform={`translate(${at[0]},${at[1]})`} className="cursor-pointer"
+                  onClick={() => setSelected(c.sid)}>
+                  <title>{`${c.name} — ${cityHeadline(c)}`}</title>
+                  <circle r={active ? 13 : 10} className={active ? "fill-emerald-400/30 stroke-emerald-300" : "fill-emerald-500/20 stroke-emerald-500/70"} />
+                  <text textAnchor="middle" dominantBaseline="central" className="fill-emerald-100 text-[10px] font-bold">
+                    {cityHeadline(c)}
+                  </text>
+                  <text y={24} textAnchor="middle" className="fill-slate-300 text-[10px]">{c.name}</text>
+                </g>
               </g>
             );
           })}
