@@ -13,6 +13,7 @@ from tradehub.journal.contract import Forecaster
 from tradehub.journal.daily import DailyCloses
 from tradehub.journal.forecasters.baselines import build_baselines
 from tradehub.journal.forecasters.calibrated import CalibratedForecaster
+from tradehub.journal.forecasters.claims import build_claims
 from tradehub.journal.forecasters.cpi import CpiForecaster
 from tradehub.journal.forecasters.daily_direction import build_wave2, wave2_closes
 from tradehub.journal.forecasters.ercot import build_ercot
@@ -77,11 +78,14 @@ FORECASTERS: list[Forecaster] = [
     # WTI daily crude (2026-11-01 audit: build): the CL=F regression beside the Kalshi mid
     # and a persistence baseline
     *build_oil(_LIVE),
+    # weekly jobless claims (2026-11-01 audit: build): the first-print level model beside
+    # the Kalshi mid and a persistence baseline
+    *build_claims(_LIVE),
 ]
 
 # plan 15: the market-linked models again, each pulled toward the Kalshi price (see forecasters/shrunk.py).
 # Their own scorecards, beside the pure models', which are untouched.
-_SHRINKABLE = {"cpi_nowcast", "fomc_mapped", "labor_nowcast"}
+_SHRINKABLE = {"cpi_nowcast", "fomc_mapped", "labor_nowcast", "claims_nowcast"}
 # Order matters and is relied on: `run_journal` walks the list, so each wrapper finds the model's own
 # frozen row already in the store (see forecasters/shrunk.py). The store is passed as a callable
 # because this module is imported with no credentials in hand.
