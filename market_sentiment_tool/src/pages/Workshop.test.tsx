@@ -641,3 +641,15 @@ describe("Workshop costs", () => {
     expect(screen.queryByLabelText("Short borrow (bps a year)")).not.toBeInTheDocument();
   });
 });
+
+describe("Workshop verdict clarity (critique L4)", () => {
+  it("has a legend, a wrong-way note, a benchmark label and a chart caption", () => {
+    const run = { ...RUN, result: { ...RUN.result, t_test: { mean_daily_diff: -0.07, t: -2.2, p: 0.026 } } };
+    render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText("✓ holds · ✗ fails · ~ mixed or not decisive")).toBeInTheDocument();
+    expect(screen.getByText(/significant, but the wrong way/)).toBeInTheDocument();
+    expect(screen.getByText("SPY (benchmark)")).toBeInTheDocument();
+    expect(screen.getByText("Cumulative return since 2006-01-04, % (not log)")).toBeInTheDocument();
+    expect(screen.getByText("On the unseen years")).toBeInTheDocument();
+  });
+});
