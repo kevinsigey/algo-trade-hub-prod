@@ -76,10 +76,19 @@ def main() -> int:
         summary["track_record_skipped_on_journal"] = skipped
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
-        _record(lambda: complete_run(run_id, 0, time.monotonic() - started, error, client=supa))
+        _record(lambda: complete_run(run_id, 0, time.monotonic() - started, error, client=supa,
+                                     engines=["settle"]))
         raise
+    # A pass whose fetches/writes failed and which settled or canceled nothing did not succeed,
+    # even though it returned a summary: recording it "completed" would keep the Health timer
+    # fresh on a job that is settling nothing. Partial errors alongside real progress still
+    # count as completed -- the failed rows stay unsettled and retry next pass.
+    errors = summary.get("fetch_errors", 0) + summary.get("write_errors", 0)
+    progress = summary.get("settled", 0) + summary.get("canceled", 0)
+    error = (f"settled nothing: {summary.get('fetch_errors', 0)} fetch errors, "
+             f"{summary.get('write_errors', 0)} write errors") if errors and not progress else None
     _record(lambda: complete_run(run_id, summary.get("settled", 0), time.monotonic() - started,
-                                 None, client=supa))
+                                 error, client=supa, engines=["settle"]))
     print(json.dumps(summary))
     return 0
 

@@ -270,12 +270,15 @@ def _latest_run(supa, engine: str) -> datetime | None:
 
     Two filters matter. `status`: a failed run also sets `completed_at`, and counting it as a
     success would let a job that fails every hour read as healthy forever. `engines_run`: scan
-    and settle share the one run table, so each timer reads only its own rows. Fifty rows is
-    days of hourly runs -- far past the two-hour staleness window -- so the newest completed
-    run of either job is always in the page if it is recent enough to matter.
+    and settle share the one run table, so each timer reads only its own rows.
     """
     try:
+        # Filtered server-side, before the limit: an unfiltered page of 50 could be crowded
+        # out by newer failed/running/other-engine rows and hide a completed run entirely.
+        # The Python filter below stays as well -- it costs nothing and keeps the answer the
+        # same against clients that ignore the query filters.
         result = (supa.table("scanner_runs").select("completed_at,status,engines_run")
+                  .eq("status", "completed").contains("engines_run", [engine])
                   .order("completed_at", desc=True).limit(50).execute())
     except Exception:  # noqa: BLE001 - health must never 500 on a missing table
         return None
