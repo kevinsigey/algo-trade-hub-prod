@@ -164,19 +164,19 @@ def test_a_non_datetime_latest_value_is_treated_as_unknown():
 
 
 # ─── timers with no marker are untracked, not broken ──────────────────────────
-# `scan` and `settle` run hourly and write no record that the *job* ran. `scanner_runs` exists but
-# `start_run`/`complete_run` are never called, so it stays empty; `predictions.settled_at` is only
-# written when a contract actually settles, so it records "last time something settled". Reading
-# either as a last-success marker reported both timers "never" while they were running fine, which
-# made the whole page "degraded" on a healthy system -- a false alarm on the page whose only job is
-# to be trusted about faults.
+# The mechanism survives even though no timer uses it today: a job whose code writes no record
+# that the *job* ran must read `not_tracked`, never `never` -- reading a missing marker as a
+# failure once reported both hourly jobs "never" while they were running fine, a false alarm on
+# the page whose only job is to be trusted about faults. These tests pass their untracked set
+# explicitly; the live set is pinned empty by the policy test at the end of the section, because
+# scan and settle both record every pass in `scanner_runs` now.
 
 
-def test_only_scan_and_settle_lacking_markers_still_reports_ok():
+def test_an_untracked_timer_lacking_a_marker_still_reports_ok():
     """The reported bug, as a test: untracked timers must not degrade a healthy system."""
     report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
-                    untracked=UNTRACKED_TIMERS)
+                    untracked=frozenset({"settle"}))
     assert report["status"] == "ok"
     assert report["problems"] == []
     assert report["timers"]["journal"]["status"] == "ok"
@@ -187,7 +187,7 @@ def test_an_untracked_timer_says_not_tracked_and_never_never():
     """Three different facts, three different words: fresh, stale/never, and not measured at all."""
     report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
-                    untracked=UNTRACKED_TIMERS)
+                    untracked=frozenset({"settle"}))
     for name in ("settle",):
         assert report["timers"][name]["status"] == "not_tracked"
         assert report["timers"][name]["tracked"] is False
@@ -220,7 +220,7 @@ def test_untracked_timers_are_still_listed_on_the_report():
     """They are excluded from the fault count, never hidden: the gap stays visible on the page."""
     report = _report(timers={"scan": None, "settle": None,
                              "journal": _ago(minutes=10), "orderbooks": _ago(minutes=20)},
-                     untracked=UNTRACKED_TIMERS)
+                     untracked=frozenset({"settle"}))
     assert set(report["timers"]) == {"scan", "settle", "journal", "orderbooks"}
     assert report["untracked_timers"] == ["settle"]
     assert report["tracked_timer_count"] == 3
@@ -229,25 +229,75 @@ def test_untracked_timers_are_still_listed_on_the_report():
 def test_untracked_does_not_mask_a_fault_in_a_tracked_timer():
     report = _report(timers={"scan": _ago(minutes=5), "settle": None,
                              "journal": _ago(hours=6), "orderbooks": _ago(minutes=20)},
-                     untracked=UNTRACKED_TIMERS)
+                     untracked=frozenset({"settle"}))
     assert report["status"] == "degraded"
     assert any("timer journal is stale" in p for p in report["problems"])
-    # And the untracked pair contributed nothing to that verdict.
-    assert not any(p.startswith("timer scan") or p.startswith("timer settle") for p in report["problems"])
+    # And the untracked timer contributed nothing to that verdict.
+    assert not any(p.startswith("timer settle") for p in report["problems"])
 
 
-def test_the_untracked_set_is_exactly_the_two_jobs_with_no_marker():
+def test_the_untracked_set_is_empty_because_both_hourly_jobs_record_their_runs():
     """Pin the policy, because it is fail-safe in the dangerous direction.
 
     Widening UNTRACKED_TIMERS silences a real timer: adding `journal` here would make a journal that
     never ran read as "not tracked" and the page would report `ok` on a system whose journal is dead.
-    That is the exact false-negative this whole change exists to avoid, so the set is pinned to the
-    two jobs whose absence of a marker is a documented fact about their code, and `journal` and
-    `orderbooks` stay tracked.
+    That is the exact false-negative this whole change exists to avoid. The set is empty today
+    because it can be: scan and settle both write a `scanner_runs` row on every pass, so a missing
+    marker is a real fault again, not a gap in the record-keeping.
     """
-    assert UNTRACKED_TIMERS == {"settle"}
+    assert UNTRACKED_TIMERS == frozenset()
     assert UNTRACKED_TIMERS < set(TIMERS)
-    assert {"journal", "orderbooks"} & UNTRACKED_TIMERS == set()
+
+
+# ─── reading a job's last successful run ──────────────────────────────────────
+
+
+class _RunsSupa:
+    """A scanner_runs table with canned rows; every query chain returns them all."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def table(self, name):
+        assert name == "scanner_runs"
+        return self
+
+    def select(self, *a, **k):
+        return self
+
+    def order(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": self.rows})()
+
+
+def test_latest_run_reads_the_newest_completed_run_of_that_job():
+    from tradehub.health import _latest_run
+
+    rows = [
+        {"completed_at": _ago(minutes=30).isoformat(), "status": "completed", "engines_run": ["settle"]},
+        {"completed_at": _ago(minutes=5).isoformat(), "status": "completed", "engines_run": ["scan"]},
+        {"completed_at": _ago(minutes=90).isoformat(), "status": "completed", "engines_run": ["scan"]},
+    ]
+    supa = _RunsSupa(rows)
+    assert _latest_run(supa, "scan") == _ago(minutes=5)
+    assert _latest_run(supa, "settle") == _ago(minutes=30)
+
+
+def test_latest_run_ignores_failed_and_running_rows():
+    from tradehub.health import _latest_run
+
+    rows = [
+        {"completed_at": _ago(minutes=1).isoformat(), "status": "failed", "engines_run": ["scan"]},
+        {"completed_at": None, "status": "running", "engines_run": ["scan"]},
+        {"completed_at": _ago(hours=3).isoformat(), "status": "completed", "engines_run": ["scan"]},
+    ]
+    assert _latest_run(_RunsSupa(rows), "scan") == _ago(hours=3)
+    assert _latest_run(_RunsSupa(rows[:2]), "scan") is None
 
 
 # ─── sports calendar: daily families only expected to freeze when calendar has targets ───────
