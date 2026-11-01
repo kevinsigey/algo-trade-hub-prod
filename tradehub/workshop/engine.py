@@ -13,6 +13,7 @@ Pure: daily closes and FRED series in, a verdict dict out. Rules (spec 2026-10-2
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 
 import numpy as np
@@ -45,6 +46,7 @@ def tickers_for(spec: IdeaSpec) -> list[str]:
     """Every ticker run_test reads: the rule's, the benchmark, SPY for ballast, and the context row."""
     needed = list(spec.hold) + list(spec.short) + ([spec.otherwise] if spec.otherwise != CASH else []) + [spec.benchmark]
     needed += [c.series for c in _conditions(spec) if c.source in ("price", "analyst")]  # target_upside reads the close
+    needed += [t for c in _conditions(spec) if c.source == "spread" for t in re.split(r"[+/]", c.series)]
     needed += list(spec.portfolio.core) if spec.portfolio else []
     return list(dict.fromkeys(needed + list(CONTEXT)))
 
@@ -65,6 +67,12 @@ def analyst_tickers(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "analyst"))
 
 
+def spread_series(series: str, closes: pd.DataFrame) -> pd.Series:
+    """log(equal-weight geometric basket of the left legs) - log(same of the right legs), from daily closes."""
+    left, right = (side.split("+") for side in series.split("/"))
+    return np.log(closes[left]).mean(axis=1, skipna=False) - np.log(closes[right]).mean(axis=1, skipna=False)
+
+
 def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.Series:
     """True on day t when the condition held on information available at the close of t-1 (FRED: t-2)."""
     idx = closes.index
@@ -77,6 +85,8 @@ def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.S
             if any(k not in closes for k in cols):
                 raise ValueError(f"a VWAP rule needs daily bars with volume for {t}")
             bars = closes[list(cols)].rename(columns=cols)
+    elif c.source == "spread":
+        values, lag = spread_series(c.series, closes), 1
     elif c.source == "analyst":  # actions land during the day: one more day, like FRED
         measured = signals.analyst_measure(fred[f"{c.series}@analyst"], idx, c.measure, c.lookback_days,
                                            close=closes[c.series])
@@ -228,8 +238,10 @@ def _legs(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]):
     frame = _frame(spec, closes, fred)
     mask_all = condition_mask(spec, frame, fred)
     rets = frame.pct_change().iloc[1:]
-    # Equal weight across every leg; a short leg earns -r (rebalanced daily, borrow cost inside cost_bps).
-    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / (len(spec.hold) + len(spec.short))).to_numpy()
+    # Equal weight across every leg; a short leg earns -r (rebalanced daily) and pays its borrow fee each day held.
+    n_legs = len(spec.hold) + len(spec.short)
+    borrow = spec.borrow_bps_yr / 1e4 / DAYS * len(spec.short) / n_legs
+    held = ((rets[spec.hold].sum(axis=1) - rets[spec.short].sum(axis=1)) / n_legs).to_numpy() - borrow
     other = rets[spec.otherwise].to_numpy() if spec.otherwise != CASH else np.zeros(len(rets))
     return (rets.index, mask_all.iloc[1:].to_numpy(), held, other, rets[spec.benchmark].to_numpy(),
             rets["SPY"].to_numpy(), rets)
@@ -374,6 +386,11 @@ def _blend(spec: IdeaSpec, r: np.ndarray, rets: pd.DataFrame, rows: slice = slic
     return w * r + (1 - w) * core
 
 
+def _switch_cost(spec: IdeaSpec) -> float:
+    """Commission plus slippage, as a fraction, paid on each switch in or out."""
+    return (spec.cost_bps + spec.slippage_bps) / 1e4
+
+
 def _build(m: np.ndarray, held: np.ndarray, other: np.ndarray, cost: float) -> np.ndarray:
     switches = np.concatenate([[False], m[1:] != m[:-1]])
     return np.where(m, held, other) - cost * switches
@@ -383,7 +400,7 @@ def daily_frame(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series]
     """Per trading day: the idea's return after costs, whether the rule had it in, the benchmark's and SPY's."""
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
     position, why, sleeve = _held(spec, mask, held, _legbars(spec, closes, fred))
-    ret = _blend(spec, _build(position, sleeve, other, spec.cost_bps / 1e4), rets)
+    ret = _blend(spec, _build(position, sleeve, other, _switch_cost(spec)), rets)
     return pd.DataFrame({"ret": ret, "on": mask, "bench": b, "spy": s, "exit": why, "held": position.astype(bool)},
                         index=idx)
 
@@ -469,7 +486,7 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
              permutations: int = 1000) -> dict:
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred)
-    cost = spec.cost_bps / 1e4
+    cost = _switch_cost(spec)
 
     def build(m: np.ndarray, h: np.ndarray = held) -> np.ndarray:
         return _build(m, h, other, cost)

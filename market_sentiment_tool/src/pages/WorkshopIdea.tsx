@@ -74,6 +74,7 @@ function ConditionRow({ c, label, onChange, onRemove }: { c: Condition; label: s
             <option value="fred">FRED series</option>
             <option value="price">Price</option>
             <option value="analyst">Analyst (stocks)</option>
+            <option value="spread">Spread (A+B/C+D)</option>
           </select>
         </Field>
         <Field label="Series / ticker">
@@ -214,13 +215,17 @@ function TickerNamesLine({ symbols }: { symbols: string[] }) {
 }
 
 /** The draft, as a form. Nothing runs until Kevin presses Run it. An event study gets its own form. */
-export function DraftEditor(props: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+export function DraftEditor(props: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string; storageKey?: string }) {
   return isEvent(props.initial) ? <EventEditor {...props} /> : <RuleEditor {...props} />;
 }
 
-function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+function EventEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string; storageKey?: string }) {
   const [spec, setSpec] = useState<EventSpec>(initial as unknown as EventSpec);
   const [pasted, setPasted] = useState(() => ((initial as unknown as EventSpec).custom ?? []).map((e) => [e.ticker, e.date, e.surprise ?? ""].join(",")).join("\n"));
+  useEffect(() => {
+    if (!storageKey) return;
+    try { localStorage.setItem(storageKey, JSON.stringify(spec)); } catch { void 0; }
+  }, [spec, storageKey]);
   const set = <K extends keyof EventSpec>(key: K, value: EventSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const setEvent = (event: EventSpec["event"]) => setSpec((s) => ({
     ...s, event, when: event === "gap" ? "down" : "all", window: event === "gap" && s.window === "reaction" ? "drift_1_5" : s.window,
@@ -301,11 +306,15 @@ function EventEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun:
   );
 }
 
-function RuleEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string }) {
+function RuleEditor({ initial, onRun, busy, note, storageKey }: { initial: IdeaSpec; onRun: (s: IdeaSpec) => void; busy: boolean; note?: string; storageKey?: string }) {
   const [spec, setSpec] = useState<IdeaSpec>(() => {
     const { when: _legacy, ...rest } = initial; // a stored steps 2-5 spec: its one condition becomes the buy rule
     return { ...rest, rules: specRules(initial) };
   });
+  useEffect(() => {
+    if (!storageKey) return;
+    try { localStorage.setItem(storageKey, JSON.stringify(spec)); } catch { void 0; }
+  }, [spec, storageKey]);
   const set = <K extends keyof IdeaSpec>(key: K, value: IdeaSpec[K]) => setSpec((s) => ({ ...s, [key]: value }));
   const exec = spec.execution ?? DEFAULT_EXECUTION;
   const exits = spec.exits ?? NO_EXITS;
@@ -376,6 +385,14 @@ function RuleEditor({ initial, onRun, busy, note }: { initial: IdeaSpec; onRun: 
         <Field label="Cost per switch (bps)">
           <input type="number" className={field} value={spec.cost_bps} onChange={(e) => set("cost_bps", Number(e.target.value))} />
         </Field>
+        <Field label="Slippage per switch (bps)">
+          <input type="number" className={field} value={spec.slippage_bps ?? 0} onChange={(e) => set("slippage_bps", Number(e.target.value))} />
+        </Field>
+        {(spec.short ?? []).length > 0 && (
+          <Field label="Short borrow (bps a year)">
+            <input type="number" className={field} value={spec.borrow_bps_yr ?? 25} onChange={(e) => set("borrow_bps_yr", Number(e.target.value))} />
+          </Field>
+        )}
         <Field label="Data from">
           <input type="date" className={field} value={spec.start} onChange={(e) => set("start", e.target.value)} />
         </Field>
@@ -839,7 +856,7 @@ export default function WorkshopIdea() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"] } | null>(null);
+  const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"]; dropped?: string[] } | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -857,7 +874,7 @@ export default function WorkshopIdea() {
   const requestDraft = useCallback((text: string, title: string, free = false) => {
     setDrafting(true);
     adminJson<DraftResponse>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text, free }) })
-      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives }))
+      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives, dropped: d.dropped }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
         if (template) setDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
@@ -871,8 +888,23 @@ export default function WorkshopIdea() {
 
   useEffect(() => {
     if (!data || params.get("draft") !== "1" || draft || drafting) return;
+    try {
+      if (localStorage.getItem(`workshop-draft-${id}`)) return;
+    } catch { void 0; }
     requestDraft(data.idea.plain_words, data.idea.title);
-  }, [data, params, draft, drafting, requestDraft]);
+  }, [data, params, draft, drafting, requestDraft, id]);
+
+  useEffect(() => {
+    if (!data || draft || drafting) return;
+    const key = `workshop-draft-${id}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const spec = JSON.parse(raw) as IdeaSpec;
+        setDraft({ spec, model: null, play: null, alternatives: [], dropped: [] });
+      }
+    } catch { void 0; }
+  }, [data, draft, drafting, id]);
 
   /** Swap the draft for one of the other plays the words matched. */
   const switchPlay = (alt: DraftResponse["alternatives"][number]) => {
@@ -890,6 +922,7 @@ export default function WorkshopIdea() {
     try {
       const route = isEvent(spec) ? "event-runs" : "runs";
       await adminJson<Run>(`/api/workshop/ideas/${id}/${route}`, { method: "POST", body: JSON.stringify({ spec, draft_model: draft?.model ?? null }) });
+      try { localStorage.removeItem(`workshop-draft-${id}`); } catch { void 0; }
       setDraft(null);
       await load();
     } catch (e) {
@@ -931,7 +964,17 @@ export default function WorkshopIdea() {
           </div>
         </section>
       )}
-      {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} />}
+      {draft?.dropped && draft.dropped.length > 0 && (
+        <p className="mt-4 text-sm text-amber-300">The draft left out: {draft.dropped.join(", ")}. Add them back if you meant them.</p>
+      )}
+      {draft && (
+        <div className="mt-4 flex justify-end">
+          <button type="button" className={button} onClick={() => { try { localStorage.removeItem(`workshop-draft-${id}`); } catch { void 0; } setDraft(null); }}>
+            Discard saved draft
+          </button>
+        </div>
+      )}
+      {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} storageKey={id ? `workshop-draft-${id}` : undefined} />}
       {data && data.runs.length === 0 && !draft && !drafting && (
         <button type="button" onClick={() => setParams({ draft: "1" })} className="mt-6 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900">
           Draft the test

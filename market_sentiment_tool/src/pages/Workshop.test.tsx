@@ -51,6 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   session.token = "jwt";
   window.history.pushState({}, "", "/");
+  try { localStorage.clear(); } catch { void 0; }
 });
 
 describe("workshop copy", () => {
@@ -583,5 +584,60 @@ describe("Workshop event review fixes", () => {
       result: { ...RUN.result, kind: "event", claim: null, shuffle: null, t_test: null, periods: null, reason: "only 4 events", context: [], curve: [] } };
     render(<MemoryRouter><VerdictCard ideaId="1" run={run as never} onVary={vi.fn()} /></MemoryRouter>);
     expect(screen.getByText(/· — events/)).toBeInTheDocument();
+  });
+});
+
+describe("Workshop spread rules", () => {
+  it("offers a spread source with z-score and percentile, and words it plainly", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null } as never} onRun={onRun} busy={false} />);
+    fireEvent.click(screen.getByLabelText("Buy only when a rule holds"));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "spread" } });
+    const options = Array.from((screen.getByLabelText("Measure") as HTMLSelectElement).options).map((o) => o.value);
+    expect(options).toEqual(expect.arrayContaining(["zscore", "percentile", "level"]));
+    expect(options).not.toContain("rsi");
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "zscore" } });
+    fireEvent.change(screen.getByLabelText("Series / ticker"), { target: { value: "RL+WSM/LULU+NKE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0].rules.enter.conditions[0]).toMatchObject({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore" });
+    expect(conditionText({ source: "spread", series: "RL+WSM/LULU+NKE", measure: "zscore", lookback_days: 60, op: ">", threshold: 2 } as never))
+      .toBe("RL+WSM/LULU+NKE spread 60-day z-score > 2");
+    expect(conditionText({ source: "price", series: "SPY", measure: "percentile", lookback_days: 252, op: "<", threshold: 10 } as never))
+      .toBe("SPY 252-day percentile < 10");
+  });
+});
+
+describe("Workshop drafts: left-out tickers and saved drafts", () => {
+  const IDEA2 = { idea: { id: 2, title: "K-Shape", plain_words: "long RL WSM ABNB DG DLTR BJ MO", created_at: "" }, runs: [] };
+  const page = () => render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+
+  it("says which named tickers the draft left out", async () => {
+    serve({ "/api/workshop/ideas/2": { body: IDEA2 }, "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["RL", "WSM"], when: undefined, rules: null }, model: "x", play: null, alternatives: [], dropped: ["BJ", "MO"] } } });
+    page();
+    expect(await screen.findByText("The draft left out: BJ, MO. Add them back if you meant them.")).toBeInTheDocument();
+  });
+
+  it("restores a saved draft after a reload, and Discard drops it", async () => {
+    localStorage.setItem("workshop-draft-2", JSON.stringify({ ...SPEC, title: "Saved K-Shape", hold: ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"], when: undefined, rules: null }));
+    const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 } });
+    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByDisplayValue("RL, WSM, ABNB, DG, DLTR, BJ, MO")).toBeInTheDocument();
+    expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Discard saved draft" }));
+    expect(localStorage.getItem("workshop-draft-2")).toBeNull();
+  });
+});
+
+describe("Workshop costs", () => {
+  it("edits slippage, and borrow only when there is a short leg", () => {
+    const onRun = vi.fn();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: ["QQQ"] } as never} onRun={onRun} busy={false} />);
+    fireEvent.change(screen.getByLabelText("Slippage per switch (bps)"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Short borrow (bps a year)"), { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+    expect(onRun.mock.calls[0][0]).toMatchObject({ slippage_bps: 5, borrow_bps_yr: 300 });
+    cleanup();
+    render(<DraftEditor initial={{ ...SPEC, when: undefined, rules: null, short: [] } as never} onRun={vi.fn()} busy={false} />);
+    expect(screen.queryByLabelText("Short borrow (bps a year)")).not.toBeInTheDocument();
   });
 });

@@ -34,7 +34,10 @@ SYSTEM = (
     "vs_low (above 0 / below 0 = a new N-day high / low), volatility, vs_vwap; FRED series allow only level, change, "
     "pct_change, vs_sma and volatility. source analyst (stocks only, no ETFs; data mostly from 2019) allows "
     "net_upgrades (upgrades minus downgrades over N days) and target_upside (% the mean price target set in the last "
-    "N days is above the price). Never invent results. "
+    "N days is above the price). source spread watches the log ratio of two equal-weight baskets, series "
+    "written A+B/C+D (longs/shorts), with measures level, change, vs_sma, volatility, zscore (standard deviations "
+    "from its N-day mean) and percentile (today's rank in the last N days, 0-100); zscore and percentile also work "
+    "on price and FRED series. Never invent results. "
     "Reply with JSON only."
 )
 
@@ -50,7 +53,7 @@ def _models() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()] or list(MODELS)
 
 
-def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str]:
+def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str, list[str]]:
     """(draft, the model id that wrote it)."""
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key:
@@ -78,4 +81,5 @@ def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str]:
         spec = IdeaSpec.model_validate_json(content)
     except Exception as exc:  # noqa: BLE001
         raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
-    return spec, data.get("model") or MODEL
+    from tradehub.workshop.playbook import dropped_tickers  # playbook imports draft: import here, not at the top
+    return spec, data.get("model") or MODEL, dropped_tickers(text, spec)

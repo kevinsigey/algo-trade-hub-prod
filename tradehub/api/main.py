@@ -40,7 +40,7 @@ from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes 
     with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
-from tradehub.workshop.playbook import draft as playbook_draft
+from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers as playbook_dropped
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, tickers_for
 from tradehub.workshop.data import NY
@@ -448,14 +448,16 @@ def workshop_draft(body: _DraftIn, _admin: dict = Depends(admin.require_admin)):
         def play(x):
             return {"id": x.play.id, "name": x.play.name, "summary": x.play.summary, "source": x.play.source,
                     "why": list(x.why)}
+        dropped = playbook_dropped(body.text, d.spec)
         return {"spec": d.spec.model_dump(mode="json"), "model": d.model, "play": play(d),
-                "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives]}
+                "alternatives": [{**play(a), "spec": a.spec.model_dump(mode="json")} for a in d.alternatives],
+                "dropped": dropped}
     try:
-        spec, model = draft_spec(body.text)
+        spec, model, dropped = draft_spec(body.text)
     except DraftUnavailable as exc:
         return JSONResponse(status_code=424, content={"detail": str(exc), "reason": exc.reason,
                                                       "template": blank_spec()})
-    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": []}
+    return {"spec": spec.model_dump(mode="json"), "model": model, "play": None, "alternatives": [], "dropped": dropped}
 
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])
