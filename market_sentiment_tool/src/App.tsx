@@ -27,7 +27,7 @@ import { supabase } from "@/lib/supabase";
 import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
-  `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
+  `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
 
 const Group = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div>
@@ -55,10 +55,10 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
     <>
       <div className="p-6">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center border border-emerald-500/40">
-            <Activity className="w-5 h-5 text-emerald-400" />
+          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center border border-border">
+            <Activity className="w-5 h-5 text-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-tight text-white uppercase italic">Algo Trade Hub</span>
+          <span className="font-display text-2xl font-semibold tracking-wide text-foreground uppercase">Algo Trade Hub</span>
         </div>
       </div>
 
@@ -68,56 +68,56 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
             <LayoutDashboard className="w-5 h-5" /> Portfolio
           </NavLink>
           <NavLink to="/portfolio/closed" className={linkClass}>
-            <History className="w-5 h-5 text-slate-400" /> Closed trades
+            <History className="w-5 h-5 text-muted-foreground" /> Closed trades
           </NavLink>
         </Group>
         <Group label="Ideas">
           <NavLink to="/ideas" className={linkClass}>
-            <Lightbulb className="w-5 h-5 text-amber-300" /> Ideas
+            <Lightbulb className="w-5 h-5 text-muted-foreground" /> Ideas
           </NavLink>
         </Group>
         <Group label="Predictions">
-          <NavLink to="/predictions" className={linkClass}>
-            <Compass className="w-5 h-5 text-emerald-300" /> Overview
-          </NavLink>
           <NavLink to="/journal" className={linkClass}>
             {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
-            <BookOpen className="w-5 h-5 text-emerald-400" /> Journal
+            <BookOpen className="w-5 h-5 text-foreground" /> Journal
+          </NavLink>
+          <NavLink to="/predictions" className={linkClass}>
+            <Compass className="w-5 h-5 text-muted-foreground" /> Overview
           </NavLink>
           <NavLink to="/sports" className={linkClass}>
-            <Trophy className="w-5 h-5 text-cyan-400" /> Sports
+            <Trophy className="w-5 h-5 text-muted-foreground" /> Sports
           </NavLink>
           <NavLink to="/jobs" className={linkClass}>
-            <Briefcase className="w-5 h-5 text-sky-400" /> Jobs nowcast
+            <Briefcase className="w-5 h-5 text-muted-foreground" /> Jobs nowcast
           </NavLink>
           {/* Label says "Display", not "Nowcast" or "Edges". This board is NOT a board of
               opportunities, and a nav entry that reads like the others would put the claim back
               that the page spends its length taking away. */}
           <NavLink to="/cpi" className={linkClass}>
-            <BarChart3 className="w-5 h-5 text-amber-400" /> CPI Display
+            <BarChart3 className="w-5 h-5 text-muted-foreground" /> CPI Display
           </NavLink>
           <NavLink to="/weather" className={linkClass}>
-            <CloudSun className="w-5 h-5 text-sky-300" /> Weather
+            <CloudSun className="w-5 h-5 text-muted-foreground" /> Weather
           </NavLink>
           {/* "Crypto Shadow", not "Shadow": a list item reading "Shadow" beside "Scoreboard" reads as
               two halves of the same thing, and they are not (the 2026-09-28 collision). This is the
               crypto shadow-timeline backtester at /shadow. */}
           <NavLink to="/shadow" className={linkClass}>
-            <LineChart className="w-5 h-5 text-amber-400" /> Crypto Shadow
+            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto Shadow
           </NavLink>
         </Group>
         <Group label="Admin">
           {/* Trading HQ step 2: plain-words idea -> drafted test -> verdict. */}
           <NavLink to="/workshop" className={linkClass}>
-            <FlaskConical className="w-5 h-5 text-amber-300" /> Workshop
+            <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
           </NavLink>
           {/* "Engine Scoreboard", not "Shadow Scoreboard": the page scores ENGINES against their
               markets, and "shadow" already names two other things here. */}
           <NavLink to="/scoreboard" className={linkClass}>
-            <Scale className="w-5 h-5 text-rose-400" /> Engine Scoreboard
+            <Scale className="w-5 h-5 text-muted-foreground" /> Engine Scoreboard
           </NavLink>
           <NavLink to="/models" className={linkClass}>
-            <Cpu className="w-5 h-5 text-indigo-400" /> Models
+            <Cpu className="w-5 h-5 text-muted-foreground" /> Models
           </NavLink>
           {/* Freshness of every timer and forecaster: "is anything running", not "who is winning". */}
           <NavLink to="/health" className={linkClass}>
