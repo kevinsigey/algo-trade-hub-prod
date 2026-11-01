@@ -96,6 +96,7 @@ def build_health_report(
     untracked: frozenset[str] | None = None,
     calendar_by_family: Mapping[str, list[dict[str, Any]]] | None = None,
     diagnostics: Mapping[str, Any] | None = None,
+    history: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the whole read-only report. Pure: `timers`/`frozen_by_family` are already fetched.
 
@@ -233,6 +234,7 @@ def build_health_report(
         # reason to look at a model, not a health failure, and the section is
         # absent (not "clean") when no run has recorded diagnostics yet.
         "diagnostics": dict(diagnostics) if diagnostics else None,
+        "history": dict(history) if history else None,
         "problems": problems,
     }
 
@@ -354,6 +356,108 @@ def _expected_cadences() -> dict[str, str | None]:
     return out
 
 
+HISTORY_DAYS = 14
+
+
+def build_history(*, completed_runs: list[tuple[str, str]], journal_days: set[str],
+                  frozen_rows: list[tuple[str, str]], diag_rows: list[tuple[str, list[str]]],
+                  cadences: dict[str, str | None], days_list: list[str]) -> dict[str, Any]:
+    """The Health heatmap's 14-day grid (phase-3 §2), pure.
+
+    Inputs arrive pre-bucketed by the collector as (kind, CT-date) pairs:
+    completed scanner runs, journal score days, (forecaster, day) freezes, and
+    (day, flags) diagnostics. A timer cell is "silent" only on evidence: the
+    timer completed on BOTH neighbouring days in the window and not this one --
+    a gap inside an active stretch. Window edges and quiet stretches make no
+    claim ("none"), the same discipline as the point-in-time report. Family
+    cells carry their frozen count (the page shades by it); a daily-cadence
+    family silent by the same neighbour rule is marked, monthly/meeting
+    families make no daily claim. The orderbooks timer has no history source
+    (filesystem ages only) and is honestly absent from the grid."""
+    run_days: dict[str, set[str]] = {}
+    for kind, day in completed_runs:
+        run_days.setdefault(kind, set()).add(day)
+    frozen: dict[tuple[str, str], int] = {}
+    for name, day in frozen_rows:
+        frozen[(name, day)] = frozen.get((name, day), 0) + 1
+    diag: dict[str, list[str]] = {}
+    for day, flags in diag_rows:
+        diag.setdefault(day, []).extend(flags)
+
+    def timer_cells(days_with: set[str]) -> list[dict[str, Any]]:
+        cells = []
+        for i, day in enumerate(days_list):
+            if day in days_with:
+                cells.append({"date": day, "status": "ok"})
+            elif 0 < i < len(days_list) - 1 and days_list[i - 1] in days_with and days_list[i + 1] in days_with:
+                cells.append({"date": day, "status": "silent"})
+            else:
+                cells.append({"date": day, "status": "none"})
+        return cells
+
+    timers = {kind: timer_cells(run_days.get(kind, set())) for kind in ("scan", "settle")}
+    timers["journal"] = timer_cells(journal_days)
+
+    families: dict[str, list[dict[str, Any]]] = {}
+    for name, cadence in sorted(cadences.items()):
+        days_with = {d for (n, d) in frozen if n == name}
+        cells = []
+        for i, day in enumerate(days_list):
+            count = frozen.get((name, day), 0)
+            if count:
+                cells.append({"date": day, "status": "ok", "count": count})
+            elif cadence == "daily" and 0 < i < len(days_list) - 1 \
+                    and days_list[i - 1] in days_with and days_list[i + 1] in days_with:
+                cells.append({"date": day, "status": "silent", "count": 0})
+            else:
+                cells.append({"date": day, "status": "none", "count": 0})
+        families[name] = cells
+
+    diagnostics = [{"date": day, "status": ("flags" if diag.get(day) else "none"),
+                    "flags": diag.get(day, [])} for day in days_list]
+    return {"days": days_list, "timers": timers, "families": families, "diagnostics": diagnostics}
+
+
+def _history(supa, now: datetime, cadences: dict[str, str | None]) -> dict[str, Any] | None:
+    """Bucket the last HISTORY_DAYS (CT) of runs/freezes/scores for the grid.
+    None on any read failure -- the page then says the heatmap is unavailable
+    rather than drawing a quiet fortnight nobody measured."""
+    from zoneinfo import ZoneInfo
+    ct = ZoneInfo("America/Chicago")
+    today = now.astimezone(ct).date()
+    days_list = [(today - timedelta(days=i)).isoformat() for i in range(HISTORY_DAYS - 1, -1, -1)]
+    since = (now - timedelta(days=HISTORY_DAYS)).isoformat()
+
+    def day_of(ts: str) -> str:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(ct).date().isoformat()
+
+    try:
+        runs = (supa.table("scanner_runs").select("completed_at,engines_run")
+                .eq("status", "completed").gte("completed_at", since).execute().data or [])
+        scores = (supa.table("journal_scores").select("computed_at")
+                  .gte("computed_at", since).execute().data or [])
+        frozen_rows = (supa.table("journal_forecasts").select("forecaster,frozen_at")
+                       .gte("frozen_at", since).execute().data or [])
+        diag_runs = (supa.table("backtest_runs").select("created_at,engine,diagnostics")
+                     .not_.is_("diagnostics", "null").gte("created_at", since).execute().data or [])
+    except Exception:  # noqa: BLE001 - health must never 500 on a missing table
+        return None
+    completed = [(kind, day_of(r["completed_at"])) for r in runs if r.get("completed_at")
+                 for kind in (r.get("engines_run") or []) if kind in ("scan", "settle")]
+    journal_days = {day_of(s["computed_at"]) for s in scores if s.get("computed_at")}
+    frozen = [(r["forecaster"], day_of(r["frozen_at"])) for r in frozen_rows if r.get("frozen_at")]
+    diags = []
+    for r in diag_runs:
+        d = r.get("diagnostics") or {}
+        flags = [f"{r.get('engine')}: {f['feature']}: {flag}" for f in d.get("features") or []
+                 for flag in (f.get("flags") or [])]
+        flags += [f"{r.get('engine')}: {flag}" for flag in (d.get("residuals") or {}).get("flags") or []]
+        if flags:
+            diags.append((day_of(r["created_at"]), flags))
+    return build_history(completed_runs=completed, journal_days=journal_days, frozen_rows=frozen,
+                         diag_rows=diags, cadences=cadences, days_list=days_list)
+
+
 def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | None = None) -> dict[str, Any]:
     """Read every input and assemble the report. Read-only; never raises."""
     now = now or datetime.now(timezone.utc)
@@ -388,6 +492,7 @@ def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | N
         untracked=UNTRACKED_TIMERS,
         calendar_by_family=calendar_by_family,
         diagnostics=_latest_diagnostics(supa),
+        history=_history(supa, now, cadences),
     )
 
 

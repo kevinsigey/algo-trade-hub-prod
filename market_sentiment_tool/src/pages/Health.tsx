@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2 } from "lucide-react";
 
 import { useHealth } from "@/hooks/useHealth";
@@ -75,6 +75,76 @@ export default function Health() {
 interface RerunRequest { requested_by?: string; requested_at?: string }
 const RERUNNABLE = new Set(["scan", "settle"]);
 
+/**
+ * The last 14 days as a heatmap (phase-3 §2): rows are timers, forecaster
+ * families, and the diagnostics annotations; colour is the verdict, intensity
+ * is the frozen count. "Silent" is only ever a gap inside an active stretch
+ * (the backend's rule), never an inference from a quiet day. The orderbooks
+ * timer has no history source and is not drawn -- absence over invention.
+ */
+function Heatmap({ history }: { history: import("@/lib/health").HealthHistory | null | undefined }) {
+  const [detail, setDetail] = useState<string | null>(null);
+  if (history === undefined) return null;
+  if (history === null) {
+    return (
+      <section>
+        <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">Last 14 days</h2>
+        <p className="text-sm text-slate-500">Heatmap unavailable — its reads failed; the sections below still report now.</p>
+      </section>
+    );
+  }
+  const rows: { label: string; cells: import("@/lib/health").HistoryCell[] }[] = [
+    ...Object.entries(history.timers).map(([label, cells]) => ({ label, cells })),
+    ...Object.entries(history.families).map(([label, cells]) => ({ label, cells })),
+    { label: "diagnostics", cells: history.diagnostics },
+  ];
+  const cellClass = (c: import("@/lib/health").HistoryCell, isFamily: boolean) => {
+    if (c.status === "silent") return "bg-rose-500/80";
+    if (c.status === "flags") return "bg-amber-400/80";
+    if (c.status === "ok") {
+      if (!isFamily) return "bg-emerald-500/70";
+      const n = c.count ?? 0;
+      return n >= 21 ? "bg-emerald-500/90" : n >= 6 ? "bg-emerald-500/65" : n >= 2 ? "bg-emerald-500/45" : "bg-emerald-500/30";
+    }
+    return "bg-slate-800";
+  };
+  const describe = (label: string, c: import("@/lib/health").HistoryCell) =>
+    c.status === "flags"
+      ? `${label} · ${c.date} · ${(c.flags ?? []).join("; ") || "flags recorded"} (annotations, not a verdict)`
+      : c.status === "ok"
+        ? `${label} · ${c.date} · ran${c.count != null ? ` · ${c.count} frozen` : ""}`
+        : c.status === "silent"
+          ? `${label} · ${c.date} · silent — a gap inside an active stretch`
+          : `${label} · ${c.date} · no claim`;
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">Last 14 days</h2>
+      <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+        <div className="grid min-w-[560px] gap-1" style={{ gridTemplateColumns: `7rem repeat(${history.days.length}, minmax(0,1fr))` }}>
+          <div />
+          {history.days.map((d) => (
+            <div key={d} className="text-center text-[10px] tabular-nums text-slate-500">{d.slice(5)}</div>
+          ))}
+          {rows.map((row) => (
+            <Fragment key={row.label}>
+              <div className="truncate pr-2 text-xs leading-6 text-slate-300">{row.label}</div>
+              {row.cells.map((c) => (
+                <button key={`${row.label}-${c.date}`} type="button" title={describe(row.label, c)}
+                  aria-label={describe(row.label, c)}
+                  onClick={() => setDetail(describe(row.label, c))}
+                  className={`h-6 rounded ${cellClass(c, row.label in history.families)}`} />
+              ))}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        {detail ?? "Green ran (darker = more frozen) · red = silent inside an active stretch · amber = diagnostics flags that day · dark = no claim. The orderbooks timer has no history source and is not drawn."}
+      </p>
+    </section>
+  );
+}
+
 function HealthBody({ report }: { report: import("@/lib/health").HealthReport }) {
   const s = healthSummary(report);
   const timers = timerRows(report);
@@ -139,8 +209,10 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
         </p>
       ) : null}
 
-      <section>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">Timers</h2>
+      <Heatmap history={report.history} />
+
+      <details>
+        <summary className="mb-2 cursor-pointer text-sm font-bold uppercase tracking-wider text-slate-400">Timers</summary>
         <div className="flex flex-col gap-2">
           {timers.map((t) => (
             <div
@@ -171,12 +243,12 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
           ))}
         </div>
         {rerunNote && <p className="mt-2 text-sm text-slate-400">{rerunNote}</p>}
-      </section>
+      </details>
 
-      <section>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">
+      <details>
+        <summary className="mb-2 cursor-pointer text-sm font-bold uppercase tracking-wider text-slate-400">
           Forecasts frozen (last {report.frozen_window_hours}h)
-        </h2>
+        </summary>
         <div className="flex flex-col gap-2">
           {families.length === 0 ? (
             <p className="text-sm text-slate-500">No families reported.</p>
@@ -198,7 +270,7 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
             ))
           )}
         </div>
-      </section>
+      </details>
 
       {report.problems.length > 0 ? (
         <section>

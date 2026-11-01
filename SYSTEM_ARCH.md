@@ -177,3 +177,14 @@ condition/option-leg field vocabulary. Ticker lists in the editor are
 `src/components/TickerListInput.tsx`: raw text is component state, the parse
 flows to the spec on every keystroke, and the display never re-renders from
 the parse (parse-on-change had made commas untypeable).
+
+## Health heatmap (phase-3 §2)
+
+`GET /api/health`'s report carries a `history` block: the last 14 CT days of
+completed scanner runs, journal score days, per-forecaster freezes, and
+diagnostics flag days, bucketed by `tradehub/health.py: build_history`
+(pure). A cell is "silent" only for a gap inside an active stretch (both
+neighbour days ran) -- window edges and quiet stretches are "none", no claim.
+The Health page leads with the grid (family intensity = frozen count) and
+demotes the timers/families lists into collapsed details; Problems stay
+open. The orderbooks timer has no history source and is not drawn.
