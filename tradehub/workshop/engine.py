@@ -86,6 +86,13 @@ def news_series_ids(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "news"))
 
 
+def revision_series_ids(spec: IdeaSpec) -> list[str]:
+    """The FRED ids whose conditions use the revision measure: their series dict key
+    is "<id>@revision" and the values come from ALFRED vintages (workshop/data.py)."""
+    return list(dict.fromkeys(c.series for c in _conditions(spec)
+                              if c.source == "fred" and c.measure == "revision"))
+
+
 def spread_series(series: str, closes: pd.DataFrame) -> pd.Series:
     """log(equal-weight geometric basket of the left legs) - log(same of the right legs), from daily closes."""
     left, right = (side.split("+") for side in series.split("/"))
@@ -112,8 +119,15 @@ def _hit(c: Condition, closes: pd.DataFrame, fred: dict[str, pd.Series]) -> pd.S
         hit = measured > c.threshold if c.op == ">" else measured < c.threshold
         return (hit & measured.notna()).shift(2, fill_value=False).astype(bool)
     else:
-        raw = fred[c.series].sort_index()
+        # The revision measure reads the vintage-built series under its own key; the
+        # measured value IS that series (how far the freshest print has moved from
+        # its first print), so no further measure is applied to it.
+        key = f"{c.series}@revision" if c.measure == "revision" else c.series
+        raw = fred[key].sort_index()
         values, lag = raw.reindex(idx.union(raw.index)).ffill().reindex(idx), 2  # +1 day for publication
+        if c.measure == "revision":
+            hit = values > c.threshold if c.op == ">" else values < c.threshold
+            return (hit & values.notna()).shift(lag, fill_value=False).astype(bool)
     measured = signals.measure(values, c.measure, c.lookback_days, slow=c.slow_days, bars=bars)
     hit = measured > c.threshold if c.op == ">" else measured < c.threshold
     return (hit & measured.notna()).shift(lag, fill_value=False).astype(bool)  # missing value = false

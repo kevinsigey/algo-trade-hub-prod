@@ -203,10 +203,54 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
     return frame
 
 
-def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=None) -> dict:
+def revision_series(series_id: str, start: date, *, vintages_fn=None, today: date | None = None) -> pd.Series:
+    """How far the freshest print has been revised from its first print, known at
+    each month-end vintage (phase-2 §5.2). Built from ALFRED vintages on the same
+    month-end grid the labor scoreboard uses -- that point-in-time record is the
+    measure's data basis. One pass in vintage order, tracking first prints with
+    first_prints' rule (the earliest vintage's back history never counts), emitting
+    at each vintage the revision-so-far of that vintage's newest month. Monthly
+    print series only (PAYEMS and kin): the value is a change minus a first-print
+    change, in the series' own units."""
+    from tradehub.data.alfred_vintages import fetch_vintages
+    from tradehub.engines.labor import add_months, month_end
+
+    def change(vintage: dict, month: date) -> float | None:
+        prev = add_months(month, -1)
+        return vintage[month] - vintage[prev] if month in vintage and prev in vintage else None
+
+    today = today or date.today()
+    grid, day = [], month_end(start)
+    while day <= month_end(today):
+        grid.append(day)
+        day = month_end(add_months(day, 1))
+    vintages = (vintages_fn or fetch_vintages)(series_id, grid)
+    out: dict[date, float] = {}
+    firsts: dict[date, float] = {}
+    newest: date | None = None
+    for vday in sorted(vintages):
+        vintage = vintages[vday]
+        if not vintage:
+            continue
+        top = max(vintage)
+        fresh = [top] if newest is None else [m for m in vintage if newest < m <= top]
+        for m in fresh:
+            c = change(vintage, m)
+            if c is not None:
+                firsts[m] = c
+        current = change(vintage, top)
+        if current is not None and top in firsts:
+            out[vday] = current - firsts[top]
+        newest = top if newest is None else max(newest, top)
+    return pd.Series(out, name=f"{series_id}@revision", dtype=float).sort_index()
+
+
+def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=None, revision_fn=None) -> dict:
     """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst",
-    news-tone baskets by name. Option legs add their vol indexes and DTB3 (engine.option_series_ids)."""
-    from tradehub.workshop.engine import analyst_tickers, news_series_ids, option_series_ids, rule_series_ids
+    news-tone baskets by name, revision series under "<id>@revision". Option legs add their vol
+    indexes and DTB3 (engine.option_series_ids)."""
+    from tradehub.workshop.engine import (analyst_tickers, news_series_ids, option_series_ids,
+                                          revision_series_ids, rule_series_ids)
     ids = list(dict.fromkeys(rule_series_ids(spec) + option_series_ids(spec)))
     out = {i: (fred or fred_series)(i, fred_start) for i in ids}
     for t in analyst_tickers(spec):
@@ -215,6 +259,8 @@ def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=N
         from tradehub.workshop.news import news_tone_series
         for basket in news_series_ids(spec):
             out[basket] = (news_fn or news_tone_series)(basket, fred_start)
+    for series_id in revision_series_ids(spec):
+        out[f"{series_id}@revision"] = (revision_fn or revision_series)(series_id, fred_start)
     return out
 
 

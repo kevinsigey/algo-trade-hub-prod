@@ -25,7 +25,7 @@ class Condition(BaseModel):
     source: Literal["fred", "price", "analyst", "spread", "news"]
     series: str = Field(min_length=1, max_length=200)  # spread: "A+B/C+D", the log ratio of two equal-weight baskets
     measure: Literal["level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
-                     "volatility", "vs_vwap", "net_upgrades", "target_upside", "zscore", "percentile"]
+                     "volatility", "vs_vwap", "net_upgrades", "target_upside", "zscore", "percentile", "revision"]
     lookback_days: int = Field(63, ge=1, le=756)
     slow_days: int | None = Field(None, ge=2, le=756)  # sma_cross only: the slow average; lookback_days is the fast one
     op: Literal[">", "<"]
@@ -60,7 +60,10 @@ class Condition(BaseModel):
 
 
 MEASURES = {
-    "fred": {"level", "change", "pct_change", "vs_sma", "volatility", "zscore", "percentile"},
+    # "revision" (phase-2 §5.2, FRED only): how far the series' freshest print has been
+    # revised from its first print, in the series' own units -- read from ALFRED
+    # vintages under "<id>@revision" (workshop/data.py), not from the latest series.
+    "fred": {"level", "change", "pct_change", "vs_sma", "volatility", "zscore", "percentile", "revision"},
     "price": {"level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
               "volatility", "vs_vwap", "zscore", "percentile"},
     "spread": {"level", "change", "vs_sma", "volatility", "zscore", "percentile"},

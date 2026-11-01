@@ -7,7 +7,7 @@ export type Verdict = "PASS" | "FAIL" | "NOT ENOUGH DATA";
 
 export type Measure =
   | "level" | "change" | "pct_change" | "vs_sma" | "sma_cross" | "rsi" | "macd" | "vs_high" | "vs_low" | "volatility" | "vs_vwap"
-  | "net_upgrades" | "target_upside" | "zscore" | "percentile";
+  | "net_upgrades" | "target_upside" | "zscore" | "percentile" | "revision";
 
 export interface Condition {
   source: "fred" | "price" | "analyst" | "spread" | "news";
@@ -50,6 +50,7 @@ export const MEASURES: { value: Measure; label: string; hint: string; sources: S
   { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", sources: P },
   { value: "zscore", label: "z-score", hint: "standard deviations from its N-day average (2 = stretched)", sources: WITH_NEWS },
   { value: "percentile", label: "percentile", hint: "today's rank among the last N days, 0-100 (95 = near the top)", sources: ANY },
+  { value: "revision", label: "revision", hint: "how far the freshest print has been revised from its first print, in the series' own units (monthly series like PAYEMS)", sources: ["fred"] },
   { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N trading days", sources: ["analyst"] },
   { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N trading days is above the price", sources: ["analyst"] },
 ];
@@ -435,6 +436,7 @@ export function conditionText(c: Condition | null): string {
   const zero = t === 0;
   switch (c.measure) {
     case "level": return c.source === "spread" ? `${s} spread ${op} ${t}` : `${s} ${op} ${t}`;
+    case "revision": return `${s} latest-print revision ${op} ${t}`;
     case "zscore": return `${s}${c.source === "spread" ? " spread" : ""} ${n}-day z-score ${op} ${t}`;
     case "percentile": return `${s}${c.source === "spread" ? " spread" : ""} ${n}-day percentile ${op} ${t}`;
     case "change": return `${s} change over ${n} trading days ${op} ${t}`;
