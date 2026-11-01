@@ -5,6 +5,7 @@ import { Stat } from "@/components/Stat";
 import { buildApiUrl } from "@/lib/api";
 import type { SportsEdge, SportsEdgesResponse } from "@/lib/sportsEdges";
 import { board, gapText, type SportsPick } from "@/lib/sportsPicks";
+import { ctDateTime } from "@/lib/format";
 
 /**
  * /sports: where the NFL and college-football predictors and the Kalshi market disagree, one pick per game.
@@ -56,7 +57,8 @@ async function fetchAll(sport: string): Promise<SportsEdge[]> {
   return edges;
 }
 
-const WHEN = new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+/** Game starts in the house style (§6): Chicago time, CT suffix. */
+const WHEN = { format: (d: Date) => ctDateTime(d.toISOString()) };
 
 const SPORT_SITE = (sport: string) => `https://sports.40-160-91-131.sslip.io/?sport=${sport}`;
 

@@ -55,11 +55,6 @@ export interface SniperVerdict {
 export const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
 
-export const usd = (v: number | null | undefined) =>
-  v == null ? "—" : `$${v.toLocaleString("en-US", { maximumFractionDigits: v < 10 ? 2 : 0 })}`;
-
-const CT_TIME = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/Chicago", hour: "numeric", minute: "2-digit",
-});
-
-export const ctTime = (iso: string) => `${CT_TIME.format(new Date(iso))} CT`;
+// One money format and one CT timestamp style live in lib/format (§6);
+// re-exported here so the page's imports stay in one place.
+export { ctTime, usd } from "@/lib/format";

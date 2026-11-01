@@ -98,10 +98,27 @@ describe("Workshop pages", () => {
   it("shows a verdict with the shuffle result and the variation count", async () => {
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [RUN] } } });
     render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText("Worked on the years it was built on, not after.")).toBeInTheDocument();
+    // The headline appears twice by design since §6: the summary header leads with the latest
+    // run's headline, and the verdict card below carries it too.
+    expect(await screen.findAllByText("Worked on the years it was built on, not after.")).toHaveLength(2);
     expect(screen.getByText(/beats 71% of 1,000/)).toBeInTheDocument();
     expect(screen.getByText("4 · bar raised accordingly")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
+  });
+
+  it("leads with a summary header and collapses older runs (§6)", async () => {
+    const older = { ...RUN, id: 0, variation: 3, created_at: "2026-10-20T00:00:00Z",
+      result: { ...RUN.result, headline: "An earlier headline." } };
+    serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [older, RUN] } } });
+    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    // The summary header carries the LATEST verdict, headline and lifecycle state.
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    expect(summary).toHaveTextContent("FAIL");
+    expect(summary).toHaveTextContent("Worked on the years it was built on, not after.");
+    expect(summary).toHaveTextContent("2 runs");
+    expect(summary).toHaveTextContent("In testing · not published");
+    // The older run is one collapsed line: variation, verdict, date, headline.
+    expect(screen.getByText(/Variation 3 · FAIL · .* — An earlier headline\./)).toBeInTheDocument();
   });
 
   it("falls back to the hand-fill form when the AI can't draft", async () => {

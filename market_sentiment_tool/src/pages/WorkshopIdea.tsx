@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import TickerListInput from "@/components/TickerListInput";
+import { ctDateTime } from "@/lib/format";
 import { PaperLine } from "@/pages/Ideas";
 import { toneClass } from "@/pages/Workshop";
 import {
@@ -936,6 +937,40 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   );
 }
 
+/** Where an idea stands, in one line, from its own timestamps. */
+function lifecycleLabel(data: IdeaDetail): string {
+  const i = data.idea;
+  if (i.killed_at) return `Killed ${ctDateTime(i.killed_at)}`;
+  if (i.live_at) return `Live on paper since ${ctDateTime(i.live_at)}${i.size_pct != null ? ` · ${i.size_pct}% size` : ""}${i.auto_orders ? " · auto-orders on" : ""}`;
+  if (i.published_at) return `Published ${ctDateTime(i.published_at)} · not live yet`;
+  return "In testing · not published";
+}
+
+/**
+ * The summary header (§6): the latest run's verdict and headline, the run
+ * count, and the lifecycle state -- the page's whole answer before any
+ * scrolling. The full cards below keep every detail; this only leads.
+ */
+function SummaryHeader({ data }: { data: IdeaDetail }) {
+  const latest = data.runs[data.runs.length - 1];
+  return (
+    <section aria-label="Summary" className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3">
+      {latest ? (
+        <>
+          <span className={`rounded-lg border-2 px-3 py-0.5 text-lg font-extrabold ${toneClass[verdictTone(latest.verdict)]}`}>{latest.verdict}</span>
+          <span className="min-w-0 flex-1 text-sm text-slate-200">{latest.result.headline}</span>
+          <span className="text-xs text-slate-400">
+            {data.runs.length} run{data.runs.length === 1 ? "" : "s"} · latest {ctDateTime(latest.created_at)}
+          </span>
+        </>
+      ) : (
+        <span className="text-sm text-slate-300">No runs yet — draft the test to get a verdict.</span>
+      )}
+      <span className="text-xs font-medium text-slate-300">{lifecycleLabel(data)}</span>
+    </section>
+  );
+}
+
 export default function WorkshopIdea() {
   // Only a numeric id ever reaches a URL: the requests below carry Kevin's session token, so a crafted link
   // must not be able to point them at another API path.
@@ -1053,8 +1088,14 @@ export default function WorkshopIdea() {
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Workshop
       </Link>
       {data && <h1 className="mt-3 text-xl font-semibold text-white">“{data.idea.plain_words}”</h1>}
+      {data && <SummaryHeader data={data} />}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
-      {data && id && <LifecyclePanel id={id} detail={data} onChange={load} />}
+      {data && id && (
+        <details className="mt-6">
+          <summary className="cursor-pointer text-sm font-semibold text-white">Lifecycle & live-paper gate</summary>
+          <LifecyclePanel id={id} detail={data} onChange={load} />
+        </details>
+      )}
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
@@ -1116,9 +1157,18 @@ export default function WorkshopIdea() {
           Draft the test
         </button>
       )}
-      {data && [...data.runs].reverse().map((r) => (
-        <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
-      ))}
+      {data && [...data.runs].reverse().map((r, idx) =>
+        idx === 0 ? (
+          <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+        ) : (
+          <details key={r.id} className="mt-6">
+            <summary className="cursor-pointer text-sm text-slate-300">
+              Variation {r.variation} · {r.verdict} · {ctDateTime(r.created_at)} — {r.result.headline}
+            </summary>
+            <VerdictCard ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+          </details>
+        ),
+      )}
     </div>
   );
 }

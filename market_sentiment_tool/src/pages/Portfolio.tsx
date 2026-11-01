@@ -6,6 +6,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, Treemap, XAxis, YAxis } from "recharts";
 
 import StrategyHqStrip from "@/components/StrategyHqStrip";
+import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   fmtPct,
@@ -156,7 +157,7 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
                 <Tooltip
                   contentStyle={{ background: "#0f172a", border: "1px solid #1e293b" }}
                   formatter={(v: number, name: string) => [fmtPct(v), name === "portfolio_pct" ? "Portfolio" : "SPY"]}
-                  labelFormatter={(t: string) => new Date(t).toLocaleString()}
+                  labelFormatter={(t: string) => ctDateTime(t)}
                 />
                 <Line type="monotone" dataKey="portfolio_pct" stroke="#34d399" strokeWidth={2.5} dot={false} />
                 <Line type="monotone" dataKey="spy_pct" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" dot={false} />
@@ -220,9 +221,14 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
             Closed trades <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>
-        <div className="mt-3">
-          <PositionsTable rows={data.positions} />
-        </div>
+        {/* §6: the composition above already says what we own; the full table
+            is one click down instead of a screen of scroll. */}
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm text-slate-300">Show the full position table</summary>
+          <div className="mt-3">
+            <PositionsTable rows={data.positions} />
+          </div>
+        </details>
       </section>
 
       <OrderForm />
