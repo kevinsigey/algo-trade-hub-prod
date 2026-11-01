@@ -197,5 +197,8 @@ def test_the_registry_runs_every_weather_family_with_unique_keys():
         for name in (f"weather_{kind}", f"kalshi_implied_weather_{kind}", f"baseline_climatology_weather_{kind}"):
             assert any(k[0] == name for k in keys), name
     assert len(set(keys)) == len(keys)
-    assert not any(k[0].startswith("weather_") and k[0].endswith("_cautious") for k in keys)
+    # Weather cautious rows exist only as the ens-v2 blend (phase-3 §3.2 step 3):
+    # version "ens-v2+w25", never on the ens-v1 line or the baselines.
+    cautious = [k for k in keys if k[0].startswith("weather_") and k[0].endswith("_cautious")]
+    assert cautious and all(k[1] == "ens-v2+w25" for k in cautious)
     assert isinstance(WeatherClimatology, type)
