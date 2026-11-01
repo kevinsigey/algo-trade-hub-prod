@@ -1798,6 +1798,40 @@ def get_onchain():
     return collect()
 
 
+@app.get("/api/crypto/board", tags=["Crypto"])
+def get_crypto_board():
+    """Tracked Kalshi crypto markets (phase-3 §5): the hourly ladder's
+    coin-flip line and the 15-minute market's implied probability, per coin,
+    beside Kraken spot. Market data, not predictions; each series is guarded
+    separately inside live_board, so a dead read nulls its own cell."""
+    from tradehub.crypto_board import live_board
+
+    return live_board()
+
+
+@app.get("/api/crypto/sniper-verdict", tags=["Crypto"])
+def get_sniper_verdict():
+    """The retired sniper's closed record (phase-3 §5): the one-time re-grade
+    snapshot written by tradehub.scripts.sniper_regrade. A missing or
+    unreadable snapshot is a 503 with the reason -- never an invented record,
+    and never a live refresh: this record is closed."""
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    path = _Path(_os.environ.get(
+        "TRADEHUB_SNIPER_VERDICT",
+        str(_Path(__file__).resolve().parents[1] / "data" / "sniper_verdict.json"),
+    ))
+    try:
+        return _json.loads(path.read_text())
+    except FileNotFoundError:
+        raise HTTPException(503, detail=f"no sniper verdict snapshot at {path} -- "
+                                        "the one-time re-grade (tradehub.scripts.sniper_regrade) has not been run")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, detail=f"sniper verdict snapshot at {path} is unreadable: {exc}")
+
+
 @app.get("/api/sports-record", tags=["Sports"])
 def get_sports_record() -> dict[str, Any]:
     """Each sports predictor's own published record, normalised. Display only: nothing here is scored.

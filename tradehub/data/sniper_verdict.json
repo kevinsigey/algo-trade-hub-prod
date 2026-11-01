@@ -1,0 +1,71 @@
+{
+  "record": "sniper_closed_record",
+  "graded_on": "2026-11-01",
+  "worker": {
+    "first_row": "2026-04-08 21:39:32.532367+00",
+    "last_row": "2026-06-02 02:58:47.69311+00",
+    "stopped": "2026-06-02",
+    "venue": "Kalshi demo API"
+  },
+  "population": {
+    "archived_rows": 84197,
+    "by_status": {
+      "signal_detected": 23150,
+      "inference_heartbeat": 33350,
+      "execution_skip": 23150,
+      "blocked": 4547
+    },
+    "grading_population": 56498,
+    "rows_with_probability": 56498,
+    "considered": 18602,
+    "dead_zone": 37896,
+    "dead_zone_share": 0.6707494070586569,
+    "graded": 18602
+  },
+  "overall": {
+    "count": 18602,
+    "hit_rate": 0.5479518331362219,
+    "virtual_pnl_pct": 526.108932085619,
+    "brier_score": 0.2512787728353462
+  },
+  "by_asset": {
+    "BTC": {
+      "count": 17547,
+      "hit_rate": 0.5443095685872229,
+      "virtual_pnl_pct": 612.0096881619523,
+      "brier_score": 0.25191255357049314
+    },
+    "ETH": {
+      "count": 1055,
+      "hit_rate": 0.6085308056872037,
+      "virtual_pnl_pct": -85.90075607633307,
+      "brier_score": 0.24073758747077534
+    }
+  },
+  "buckets": {
+    "0.55-0.60": {
+      "count": 8169,
+      "hit_rate": 0.7006977598237238
+    },
+    "<=0.45": {
+      "count": 8244,
+      "hit_rate": 0.393619602134886
+    },
+    ">=0.60": {
+      "count": 2189,
+      "hit_rate": 0.5591594335312928
+    }
+  },
+  "thresholds": {
+    "BTC": {
+      "yes": 0.5751,
+      "no": 0.4249
+    },
+    "ETH": {
+      "yes": 0.551,
+      "no": 0.449
+    }
+  },
+  "price_source": "BTC: coinbase, ETH: coinbase",
+  "method": "Graded once with the hub's existing shadow evaluator: each archived row's model probability against the next hour's spot direction (hourly closes), the trade side taken from the model's own probability thresholds. Rows sharing an hour share its outcome; the grade is the evaluator's row-level grade, not a per-event grade."
+}

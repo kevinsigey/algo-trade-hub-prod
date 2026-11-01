@@ -258,3 +258,23 @@ then unreviewed and flagged picks as cards -- flagged ones carry their
 flag and are never featured. PL/NBA/F1 are estate link cards. The old
 edges board is unchanged as the Grading desk tab; both tabs share one
 fetch and the same board() reduction, so the two views cannot disagree.
+
+## Crypto research desk (phase-3 §5)
+
+`/crypto` is a research desk now; the ShadowBacktester is deleted and
+`/shadow` redirects here. The page states plainly that the sniper worker
+stopped 2026-06-02, keeps the OnChainPulse strip, and adds: (1) a tracked
+Kalshi board (`tradehub/crypto_board.py`, GET /api/crypto/board) -- the
+hourly ladder (KXBTCD/KXETHD) and 15-minute market (KXBTC15M/KXETH15M)
+per coin beside Kraken spot, labelled market data. The ladder usually
+quotes as a step (99c below spot, 1c above), so its line is reported as
+the step bracket when no strike trades near 50. (2) The sniper's closed
+record: `tradehub/scripts/sniper_regrade.py` graded the archive once
+(2026-11-01) with the existing shadow evaluator -- 18,602 of 56,498
+archived rows graded (67.1% dead zone), hit rate 54.8%, Brier 0.2513 --
+into `tradehub/data/sniper_verdict.json`, served by
+GET /api/crypto/sniper-verdict and never refreshed. Prices came from
+Coinbase history: Kraken's OHLC is a rolling ~720-candle window and
+cannot reach Apr-May 2026 (the script validates coverage and falls
+back). (3) Research-item cards led by the venue lead-lag measurement,
+the standing gate for any BTC daily-direction forecaster proposal.
