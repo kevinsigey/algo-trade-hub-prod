@@ -39,5 +39,9 @@ def paper_get(path: str, params: dict | None = None, *, session=requests) -> Any
     return _get(PAPER_BASE + path, params, session)
 
 
+def latest_price(symbol: str, *, session=requests) -> float:
+    return float(_get(DATA_BASE + f"/v2/stocks/{symbol}/trades/latest", None, session)["trade"]["p"])
+
+
 def latest_spy_price(*, session=requests) -> float:
-    return float(_get(DATA_BASE + "/v2/stocks/SPY/trades/latest", None, session)["trade"]["p"])
+    return latest_price("SPY", session=session)

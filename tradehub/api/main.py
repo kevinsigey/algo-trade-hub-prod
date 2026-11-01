@@ -19,10 +19,10 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from tradehub.core.env import load_local_env
 from tradehub.health import collect_health
@@ -900,6 +900,112 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     except (paper_orders.OrderRejected, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
+
+
+# ── Machine API (phase-2 spec §1, step 2): key-authenticated, paper-only, shipped OFF. ────
+# POST /api/v1/orders places through the same paper_orders.submit as the form above, under
+# three extra fences the form does not need: the TRADEHUB_MACHINE_ORDERS kill switch, the
+# per-key caps stored on the key, and a caller-supplied client_order_id the server namespaces
+# to ext-<key_id>-<caller> so a retry can never double-place and a machine can never mint an
+# idea-/manual-/protective id. Market orders only in v1; limit orders are step 5 (v1.1).
+class _MachineOrderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # protective shapes (stop_price, order_class…) 422 here
+
+    symbol: str = Field(min_length=1, max_length=10)
+    qty: int = Field(ge=1, le=100_000)
+    side: str
+    client_order_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    order_type: str = "market"
+    time_in_force: str = "day"
+    limit_price: float | None = Field(default=None, gt=0)
+    idea_id: int | None = None
+
+
+@app.post("/api/v1/orders", tags=["Machine API"])
+def place_machine_order(body: _MachineOrderIn, authorization: str | None = Header(None),
+                        supabase=Depends(get_supabase)):
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_price
+    from tradehub.workshop.spec import TICKER
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    route = "POST /api/v1/orders"
+
+    def refused(outcome: str, status: int, detail: str):
+        machine_keys.record_event(supabase, key["id"], route, f"refused:{outcome}",
+                                  detail=detail, client_order_id=body.client_order_id)
+        raise HTTPException(status_code=status, detail=detail)
+
+    machine_api.require_scope(supabase, key, "orders:place", route)
+    if not machine_api.machine_orders_enabled():
+        refused("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")
+    symbol = body.symbol.strip().upper()
+    if not TICKER.match(symbol):
+        refused("validation", 422, f"not a ticker: {body.symbol!r}")
+    if body.side not in ("buy", "sell"):
+        refused("validation", 422, "side must be buy or sell")
+    if body.time_in_force not in ("opg", "cls", "day"):
+        refused("validation", 422, "time_in_force must be opg, cls or day")
+    if body.order_type != "market" or body.limit_price is not None:
+        refused("order_type", 422, "machine orders are market-only in v1; limit orders arrive in v1.1")
+    if body.qty > int(key["max_qty"]):
+        refused("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")
+    try:
+        price = latest_price(symbol)
+    except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
+        refused("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked")
+    if price * body.qty > float(key["max_notional"]):
+        refused("max_notional", 429,
+                f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")
+    if machine_api.placed_today(supabase, key["id"]) >= int(key["daily_cap"]):
+        refused("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")
+
+    client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+    try:
+        order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
+                                    order_type="market", time_in_force=body.time_in_force,
+                                    limit_price=None)
+    except paper_orders.OrdersDisabled as exc:
+        refused("paper_switch_off", 409, str(exc))
+    except paper_orders.DuplicateOrder:
+        refused("duplicate", 409, "an order with this client_order_id was already sent")
+    except AccountNotConnected:
+        refused("account", 424, "the paper account is not connected")
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        refused("rejected", 422, str(exc))
+
+    label_note = None
+    try:
+        from tradehub.workshop import store as workshop_store
+
+        workshop_store.add_label(supabase, order["id"], body.idea_id, f"api:{key['label']}")
+    except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
+        label_note = "label failed"
+    machine_keys.record_event(supabase, key["id"], route, "placed",
+                              detail=label_note, client_order_id=client_order_id)
+    return {"order": order, "client_order_id": client_order_id, "placed_by": f"api:{key['label']}"}
+
+
+@app.get("/api/v1/portfolio", tags=["Machine API"])
+def get_machine_portfolio(authorization: str | None = Header(None), supabase=Depends(get_supabase)):
+    """The Portfolio page's payload minus the account number. A read: it works with the kill
+    switch off, so a script can always reconcile (spec §1.4)."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio import service
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "portfolio:read", "GET /api/v1/portfolio")
+    payload = service.portfolio(supabase)
+    payload.pop("account_number", None)
+    machine_keys.record_event(supabase, key["id"], "GET /api/v1/portfolio", "read")
+    return payload
 
 
 @app.get("/api/workshop/fills", tags=["Workshop"])
