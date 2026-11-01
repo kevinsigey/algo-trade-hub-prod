@@ -27,6 +27,7 @@ from tradehub.engines.labor import (
     ALL_FEATURES,
     CORE_FEATURES,
     GHOST_FEATURES,
+    REVISION_FEATURES,
     LABOR_ENGINE_VERSION,
     PAYROLL_RESOLUTION,
     PAYROLL_SERIES,
@@ -127,7 +128,8 @@ def _month_arg(text: str) -> date:
 def feature_set(name: str):
     """The named feature sets the CLI offers. `ghost` is the candidate set: the shipped core plus
     ghost_gap_3m alone, so the feature is graded on its own rather than inside the ALL bundle."""
-    return {"core": CORE_FEATURES, "all": ALL_FEATURES, "ghost": GHOST_FEATURES}[name]
+    return {"core": CORE_FEATURES, "all": ALL_FEATURES, "ghost": GHOST_FEATURES,
+            "revision": REVISION_FEATURES}[name]
 
 
 def check_recordable(features_name: str) -> None:
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=_month_arg, default=date(2023, 3, 1), help="first reference month, YYYY-MM")
     parser.add_argument("--end", type=_month_arg, required=True, help="last reference month, YYYY-MM")
     parser.add_argument("--mode", choices=["taker", "maker"], default="taker")
-    parser.add_argument("--features", choices=["core", "all", "ghost"], default="core")
+    parser.add_argument("--features", choices=["core", "all", "ghost", "revision"], default="core")
     parser.add_argument("--cache-dir", type=Path, default=None, help="ALFRED vintage cache (default $TRADEHUB_ALFRED_CACHE)")
     parser.add_argument("--record", action="store_true", help="write a backtest_runs row")
     args = parser.parse_args(argv)

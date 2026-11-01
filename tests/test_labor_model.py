@@ -167,3 +167,52 @@ def test_jolts_present_produces_no_warning(caplog):
     assert not any("JOLTS" in r.getMessage() for r in caplog.records), (
         f"a present JOLTS vintage still warned: {[r.getMessage() for r in caplog.records]}"
     )
+
+
+# ── pay_rev_3m (phase-2 §5.2): the revision trend of the last three prints ──────
+
+def _rev_payems(with_later_revision: bool = False):
+    """Three month-end vintages whose revisions are known exactly: Jul first-printed
+    +100, later +120 (+20); Aug first-printed +150, later +110 (-40); Sep +170 (fresh)."""
+    vintages = {
+        date(2025, 7, 31): {date(2025, 6, 1): 1000.0, date(2025, 7, 1): 1100.0},
+        date(2025, 8, 31): {date(2025, 6, 1): 1000.0, date(2025, 7, 1): 1100.0, date(2025, 8, 1): 1250.0},
+        date(2025, 9, 30): {date(2025, 6, 1): 1000.0, date(2025, 7, 1): 1120.0,
+                            date(2025, 8, 1): 1230.0, date(2025, 9, 1): 1400.0},
+    }
+    if with_later_revision:
+        vintages[date(2025, 10, 31)] = {date(2025, 6, 1): 1000.0, date(2025, 7, 1): 1120.0,
+                                        date(2025, 8, 1): 1200.0, date(2025, 9, 1): 1400.0,
+                                        date(2025, 10, 1): 1550.0}
+    return vintages
+
+
+def _rev_features(payems):
+    month = date(2025, 9, 1)
+    end = month_end(month)
+    icsa = {end: _weekly(date(2025, 7, 5), 16, lambda i: 200000.0 + 1000 * i)}
+    ccsa = {end: _weekly(date(2025, 7, 5), 16, lambda i: 1800000.0 + 5000 * i)}
+    return labor_features(month, payems=payems, icsa=icsa, ccsa=ccsa, hires={}, openings={},
+                          adp={}, release=date(2025, 10, 3))
+
+
+def test_pay_rev_3m_is_the_mean_revision_of_the_last_three_prints():
+    feats = _rev_features(_rev_payems())
+    assert feats is not None
+    assert feats.values["pay_rev_3m"] == pytest.approx((0.0 - 40.0 + 20.0) / 3)
+
+
+def test_pay_rev_3m_never_sees_a_later_vintage():
+    """The October vintage revises August again (to +80 change). The September
+    feature is built at the September vintage and must not move."""
+    feats = _rev_features(_rev_payems(with_later_revision=True))
+    assert feats is not None
+    assert feats.values["pay_rev_3m"] == pytest.approx((0.0 - 40.0 + 20.0) / 3)
+
+
+def test_pay_rev_3m_zero_fills_with_a_warning_when_no_first_print_exists():
+    """A single-vintage record has no first prints to compare against: the feature
+    is 0 rather than measured, the same honesty rule as ghost_gap_3m."""
+    only = {date(2025, 9, 30): _rev_payems()[date(2025, 9, 30)]}
+    feats = _rev_features(only)
+    assert feats is not None and feats.values["pay_rev_3m"] == 0.0

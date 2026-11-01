@@ -37,13 +37,20 @@ SIGMA_WINDOW = 36
 MIN_PAYROLL_SIGMA = 40.0  # thousands
 JOLTS_LAG_DAYS = 40
 CORE_FEATURES = ("pay_last", "pay_3m", "icsa_ref_chg", "ccsa_ref_chg")
-ALL_FEATURES = CORE_FEATURES + ("adp_chg", "adp_missing", "jolts_hires_3m", "ghost_gap_3m", "post_2021")
+ALL_FEATURES = CORE_FEATURES + ("adp_chg", "adp_missing", "jolts_hires_3m", "ghost_gap_3m", "post_2021", "pay_rev_3m")
 # Candidate set (Kevin, 2026-11-01): the shipped core plus ghost_gap_3m alone. The feature is
 # computed on every run (and 0-filled, with a warning, where no JOLTS vintage exists) but has
 # never been graded: inside ALL it is bundled with four other features, so an ALL run cannot say
 # what ghost itself is worth. This set exists so the backtest can grade it on its own. It is NOT
 # shipped -- labor-v1 runs CORE_FEATURES, and the live scan uses the same list.
 GHOST_FEATURES = CORE_FEATURES + ("ghost_gap_3m",)
+# Candidate set (phase-2 §5.2): the shipped core plus pay_rev_3m alone -- the mean
+# revision-so-far of the last three prints. Revisions carry a persistent sign bias
+# (the Oct 12 plan's "free feature"), and the tradeable object is the surprise
+# distribution of the NEXT print, which a revision trend shifts. Same discipline as
+# ghost: computed on every run, 0-filled with a warning where the vintage record
+# cannot price it, graded on its own before any promotion.
+REVISION_FEATURES = CORE_FEATURES + ("pay_rev_3m",)
 
 _ET = ZoneInfo("America/New_York")
 log = logging.getLogger(__name__)
@@ -161,6 +168,24 @@ def first_prints(vintages: Mapping[date, Vintage], *, change: bool = True) -> di
                 out[month] = value
         newest = top if newest is None else max(newest, top)
     return out
+
+
+def _first_print_of(vintages: Mapping[date, Vintage], month: date, *, upto: date) -> float | None:
+    """`month`'s first print (its change in the vintage where it first appeared),
+    reading only vintages at or before `upto` -- first_prints' rule for one month,
+    so a feature built at a decision vintage cannot see a later one. The earliest
+    vintage's back history does not count: only its newest month is a first print
+    there, exactly as first_prints has it."""
+    newest: date | None = None
+    for vday, vintage in sorted(vintages.items()):
+        if vday > upto or not vintage:
+            continue
+        top = max(vintage)
+        fresh = (month == top) if newest is None else (newest < month <= top)
+        if fresh:
+            return _change(vintage, month)  # None if unmeasurable in that vintage
+        newest = top if newest is None else max(newest, top)
+    return None
 
 
 @dataclass(frozen=True)
@@ -320,6 +345,25 @@ def labor_features(
             sources.append(Observation(f"JTSHIL:{j.isoformat()}", hires_v[j],
                                        end_of_day_et(month_end(j) + timedelta(days=JOLTS_LAG_DAYS))))
 
+    # Revision trend (phase-2 §5.2): how far the last three prints have already been
+    # revised from their first prints, all knowable at this vintage. Same honesty rule
+    # as JOLTS above: where the vintage record cannot price it, 0 with a warning.
+    revs: list[float] = []
+    for k in range(3):
+        m_k = add_months(latest, -k)
+        current, first = _change(pay, m_k), _first_print_of(payems, m_k, upto=vintage_day)
+        if current is None or first is None:
+            revs = []
+            break
+        revs.append(current - first)
+    if revs:
+        pay_rev_3m = sum(revs) / 3.0
+        sources.append(Observation(f"PAYEMS@rev:{latest.isoformat()}", pay_rev_3m, as_of))
+    else:
+        log.warning("labor_features %s: no first-print record for a recent month, so pay_rev_3m "
+                    "is 0 rather than measured (it is not in CORE_FEATURES)", month.isoformat())
+        pay_rev_3m = 0.0
+
     adp_vintage_day = release - timedelta(days=1)
     adp_values = adp.get(adp_vintage_day) or {}
     adp_change = _change(adp_values, month) if month == max(adp_values, default=None) else None
@@ -337,6 +381,7 @@ def labor_features(
         "jolts_hires_3m": hires_3m,
         "ghost_gap_3m": ghost_3m,
         "post_2021": 1.0 if month >= POST_2021 else 0.0,
+        "pay_rev_3m": pay_rev_3m,
     }
     return LaborFeatures(month, values, tuple(sources))
 
