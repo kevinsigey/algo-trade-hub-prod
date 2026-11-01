@@ -39,6 +39,23 @@ export interface HealthReport {
   /** Section 6.1 diagnostics from the newest measured backtest run. Flags only --
    * never counted in `problems`; null when no run has recorded diagnostics. */
   diagnostics?: HealthDiagnostics | null;
+  /** The 14-day heatmap grid (phase-3 §2). Absent/null when its reads failed --
+   * the page then says so instead of drawing a quiet fortnight. */
+  history?: HealthHistory | null;
+}
+
+export interface HistoryCell {
+  date: string;
+  status: "ok" | "silent" | "flags" | "none";
+  count?: number;
+  flags?: string[];
+}
+
+export interface HealthHistory {
+  days: string[];
+  timers: Record<string, HistoryCell[]>;
+  families: Record<string, HistoryCell[]>;
+  diagnostics: HistoryCell[];
 }
 
 export interface HealthDiagnostics {

@@ -15,6 +15,21 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 const REPORT = {
+  history: {
+    days: ["2026-10-16", "2026-10-17"],
+    timers: { scan: [
+      { date: "2026-10-16", status: "ok" },
+      { date: "2026-10-17", status: "silent" },
+    ] },
+    families: { weather: [
+      { date: "2026-10-16", status: "ok", count: 12 },
+      { date: "2026-10-17", status: "none", count: 0 },
+    ] },
+    diagnostics: [
+      { date: "2026-10-16", status: "none", flags: [] },
+      { date: "2026-10-17", status: "flags", flags: ["labor_nowcast: pay_rev_3m: mostly_zero"] },
+    ],
+  },
   status: "degraded",
   generated_at: "2026-10-17T12:00:00+00:00",
   frozen_window_hours: 24,
@@ -57,6 +72,14 @@ describe("Health page", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
     expect(screen.getByText("weather_high")).toBeTruthy();
     expect(screen.getByText("Degraded")).toBeTruthy();
+  });
+
+  it("draws the 14-day heatmap with evidence-based cell labels", async () => {
+    render(<Health />);
+    await waitFor(() => expect(screen.getByText("Last 14 days")).toBeTruthy());
+    expect(screen.getByLabelText("scan · 2026-10-17 · silent — a gap inside an active stretch")).toBeTruthy();
+    expect(screen.getByLabelText("weather · 2026-10-16 · ran · 12 frozen")).toBeTruthy();
+    expect(screen.getByLabelText(/diagnostics · 2026-10-17 · labor_nowcast: pay_rev_3m: mostly_zero/)).toBeTruthy();
   });
 
   it("offers a re-run for scan and settles it into pending once asked", async () => {
