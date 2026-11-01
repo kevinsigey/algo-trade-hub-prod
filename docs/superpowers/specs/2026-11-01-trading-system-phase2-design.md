@@ -265,7 +265,80 @@ with a trading consumer, not as a journal exhibit:
   `revision` measure for jobs ideas, judged like every other idea. The scoreboard rerun that
   starts this phase (point-in-time vintages) is its data foundation.
 
-## 6. Sequence
+## 6. Time-series techniques: graded candidates
+
+Kevin flagged the book-companion repo Arnav111garg/Time-Series-Analysis (28 modules) on
+2026-11-01 and asked what the hub can use. The answer recorded here: techniques, not code.
+That repo is teaching material — single-file scripts, latest-data pulls, no point-in-time
+discipline, no tests — so nothing is vendored and it is not a dependency. Each candidate
+below is reimplemented to hub standards (vintage-correct inputs, walk-forward grading) and
+earns its place the way everything else in this spec does: a graded run against the
+incumbent, or it stays a note. In the order they would be attempted:
+
+### 6.1 Diagnostics pack (planned; cheap; no model changes)
+
+- **Stationarity screening** (reference Module 2: unit-root tests) over engine feature
+  inputs at fit and backtest time, logged per feature per run and surfaced as a Models-page
+  annotation. Purpose: catch a feature that has changed character — the ghost_gap_3m
+  zero-fill class of problem — in the run output, not in a post-mortem.
+- **Residual diagnostics** on the nowcasts (Module 3: Ljung-Box on standardized residuals,
+  ARCH-LM). The scoreboard grades Brier and calibration; nothing today checks whether the
+  residuals still carry autocorrelation the model left on the table. Ships as flags on
+  Health, not gates — a diagnostic becomes a gate only by its own decision, with evidence.
+- First deliverable is measurement only. No behavior changes in this item.
+
+### 6.2 Volatility layer (planned; equity/options side only)
+
+The hub's σ is static everywhere it matters: labor's is the RMS of the last 36 in-sample
+residuals behind a floor; idea backtests use historical vol windows; nothing sizes off a
+conditional estimate. Candidates: GARCH-family conditional vol (Modules 8–9, including the
+asymmetric EGARCH/GJR forms) and HAR-RV on realized vol (Module 10), consumed where vol is
+an input to a decision — Workshop idea risk stats, sleeve vol targeting, options-adjacent
+sizing.
+
+- Explicitly NOT for the macro nowcasts by default: against Kalshi, the market's implied
+  distribution already carries the vol information. Swapping an engine's σ requires a
+  graded win on the existing harness (Brier plus interval coverage, walk-forward), never a
+  prior about which model class is better.
+- Ships dark as a reported stat first, like the machine API rollout (§1.7): consumers read
+  it only after it beats the incumbent σ on coverage over the same windows.
+
+### 6.3 Pairs / cointegration (candidate; needs an IdeaSpec extension)
+
+Workshop ideas are baskets with rules; a spread is a different object, so this takes the
+same shape as options (§2.3): a contract extension designed before anything trades it. A
+spread position type — two symbols, a hedge ratio (static, or Kalman-estimated dynamic,
+Module 14), entry/exit on the spread's z-score — plus a required cointegration claim
+(Module 11) in the spec's claims, re-tested point-in-time by the runner and never taken
+from the drafter's word. Design-only this phase, execution fenced exactly as options
+execution is. SETAR-style regime-switching spread dynamics (Module 19) is a later
+refinement, not v1.
+
+### 6.4 Regime tags (experimental annotation only)
+
+HMM regime classification (Module 15) may annotate HQ ideas and TradingAgents memos
+("current regime: …") under the §3.2 fence: labeled not-a-model-signal, no sizing or
+gating use. Promotion to a gating input requires a pre-registered falsification run in the
+TradingAgents style — graded forward sample, kill threshold named in advance. Regime
+labels are the easiest technique in this section to fool yourself with; the fence is the
+point.
+
+### 6.5 Considered and rejected
+
+- **RL trading agents** (Module 26): an execution-adjacent learner inside a system whose
+  rule is that nothing learns its way past the order fences. Rejected outright, not deferred.
+- **LSTM/deep forecasters** (Module 17) for the macro engines: monthly macro series are
+  data-starved for deep learning, and the edge-claim discipline needs interpretable
+  incumbents. Revisit only against a daily-frequency target.
+- **ARIMA-family replacements** for the ridge nowcasts (Modules 5–7): the ridge on
+  vintage-correct features is the right shape for release-day nowcasting. ARIMAX
+  (Module 22) stays a benchmark candidate if §6.1's residual diagnostics show structure
+  the ridge is missing — evidence first.
+- **Copula portfolio risk** (Module 23) and **EVT tail risk** (Module 24): the paper
+  portfolio is too small for either to estimate honestly today. Revisit when the book
+  holds enough concurrent positions for a dependence or tail estimate to mean something.
+
+## 7. Sequence
 
 1. Machine API steps 1–3 (§1.7) — the door, dark, then lit with a smoke test.
 2. Claude drafter + import door (§2.2) — better ideas in, nothing silently dropped.
@@ -275,6 +348,12 @@ with a trading consumer, not as a journal exhibit:
 6. HQ summary strip + minimum-sample pass (§4.1–4.2).
 7. Health re-run (§4.3); Oct 12 modules (§5) in the order energy-news, revisions, degree-days.
 8. Reading-comfort redesigns and the docs/legacy cleanup (§4.4–4.5).
+9. Diagnostics pack (§6.1) — measurement only; independent, can land any time after step 2.
+10. Volatility layer (§6.2) — dark as a reported stat, graded against the incumbent σ
+    before any consumer reads it.
+
+Pairs (§6.3) and regime tags (§6.4) are candidates on record, not sequenced work: each
+gets its own design pass when scheduled.
 
 Each step is its own PR with the repo's gates (pytest, ruff, tsc, eslint, vitest) and the
 CodeRabbit-or-self-review rule Kevin set in the critique-fixes plan.
