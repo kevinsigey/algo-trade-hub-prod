@@ -1440,6 +1440,52 @@ def _target_day(target: str):
         return None
 
 
+@app.get("/api/macro", tags=["Macro"])
+def get_macro(supabase=Depends(get_supabase)):
+    """The Macro predictions dashboard (phase-3 §1): one card per macro engine,
+    composed from reads the hub already makes (jobs scorecard, scoreboard
+    current runs, journal scores/forecasts/settlements). Composition, not a
+    verdict: every read is guarded separately, so one dead source degrades its
+    own card's sections to null -- the page renders those as "unavailable" --
+    instead of taking the dashboard down or, worse, filling the gap with a
+    plausible zero."""
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    from datetime import datetime as _dt
+    from tradehub.macro import build_macro
+    from tradehub.scoreboard import current_runs as _current_runs
+
+    def guarded(read, fallback):
+        try:
+            return read()
+        except Exception:  # noqa: BLE001 - per-source isolation is the design
+            log.exception("api: macro source read failed")
+            return fallback
+
+    runs = guarded(lambda: _fetch_all(supabase, "backtest_runs", lambda q: q.select("*")), [])
+    rows = _current_runs(runs) if runs else []
+    pairs = {(r["engine"], r["engine_version"]) for r in rows if r["engine"] and r["engine_version"]}
+    if pairs:
+        try:
+            promotion = latest_gate_statuses(supabase, pairs)
+        except Exception:  # noqa: BLE001 - fails closed, like the scoreboard
+            log.exception("api: macro promotion lookup failed")
+            promotion = {}
+        for r in rows:
+            r["promotion_status"] = promotion.get((r["engine"], r["engine_version"]), DEFAULT_GATE_STATUS)
+    jobs_rows = guarded(lambda: (supabase.table("jobs_scorecard").select("*")
+                                 .eq("series", "payrolls").order("reference_month").execute().data or []), [])
+    scores = guarded(lambda: _fetch_all(supabase, "journal_scores", lambda q: q.select("*"),
+                                        order=("forecaster", "forecaster_version")), [])
+    forecasts = guarded(lambda: (supabase.table("journal_forecasts").select("*")
+                                 .order("frozen_at", desc=True).limit(1000).execute().data or []), [])
+    settlements = guarded(lambda: _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
+                                             order=("target",)), [])
+    return build_macro(jobs_rows=jobs_rows, scoreboard_rows=rows, journal_scores=scores,
+                       journal_forecasts=forecasts, journal_settlements=settlements,
+                       today=_dt.now(timezone.utc).date())
+
+
 @app.get("/api/weather/degree-days", tags=["Weather"])
 def get_degree_days():
     """The degree-day demand panel (§5.3): last completed week's HDD/CDD by Census

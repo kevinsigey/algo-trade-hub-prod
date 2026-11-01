@@ -6,6 +6,7 @@ import ShadowBacktester from "@/pages/ShadowBacktester";
 import Models from "@/pages/Models";
 import Scoreboard from "@/pages/Scoreboard";
 import SportsEdges from "@/pages/SportsEdges";
+import Macro from "@/pages/Macro";
 import JobsNowcast from "@/pages/JobsNowcast";
 import Cpi from "@/pages/Cpi";
 import Journal from "@/pages/Journal";
@@ -25,7 +26,7 @@ import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -88,14 +89,11 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           <NavLink to="/sports" className={linkClass}>
             <Trophy className="w-5 h-5 text-muted-foreground" /> Sports
           </NavLink>
-          <NavLink to="/jobs" className={linkClass}>
-            <Briefcase className="w-5 h-5 text-muted-foreground" /> Jobs nowcast
-          </NavLink>
-          {/* Label says "Display", not "Nowcast" or "Edges". This board is NOT a board of
-              opportunities, and a nav entry that reads like the others would put the claim back
-              that the page spends its length taking away. */}
-          <NavLink to="/cpi" className={linkClass}>
-            <BarChart3 className="w-5 h-5 text-muted-foreground" /> CPI Display
+          {/* Jobs and CPI are detail pages now (phase-3 §1); the nav leads with the Macro
+              dashboard. The CPI honesty rule moved with the content: its macro card carries
+              the "display, not opportunities" line, so the claim is still never made. */}
+          <NavLink to="/macro" className={linkClass}>
+            <Landmark className="w-5 h-5 text-muted-foreground" /> Macro predictions
           </NavLink>
           <NavLink to="/weather" className={linkClass}>
             <CloudSun className="w-5 h-5 text-muted-foreground" /> Weather
@@ -319,6 +317,7 @@ function App() {
               Same component, same /api/scoreboard read, address bar updated to the real path. */}
           <Route path="/shadow-scoreboard" element={<Navigate to="/scoreboard" replace />} />
           <Route path="/sports" element={<SportsEdges />} />
+          <Route path="/macro" element={<Macro />} />
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />
           <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
