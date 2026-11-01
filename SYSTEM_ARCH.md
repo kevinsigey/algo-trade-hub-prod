@@ -278,3 +278,20 @@ Coinbase history: Kraken's OHLC is a rolling ~720-candle window and
 cannot reach Apr-May 2026 (the script validates coverage and falls
 back). (3) Research-item cards led by the venue lead-lag measurement,
 the standing gate for any BTC daily-direction forecaster proposal.
+
+## Reading comfort (phase-3 §6)
+
+Workshop idea detail leads with a summary header (latest verdict +
+headline, run count, lifecycle state from the idea's own timestamps);
+the LifecyclePanel moves behind a "Lifecycle & live-paper gate" fold,
+and older runs collapse to one line each (variation, verdict, date,
+headline) with the latest run expanded. Portfolio's full position table
+collapses behind its header (the composition summary above it already
+says what we own; closed trades keep their own page). One timestamp
+style and one money format now live in `src/lib/format.ts` (CT times
+with suffix, `usd`) and are applied across the phase-3 pages (Macro,
+Health, Weather, Sports, Crypto) and the Portfolio chart tooltip.
+Journal settled-list grouping: SKIPPED BY DECISION -- the journal's
+league table is already grouped by forecaster family by design, and
+there is no separate flat settled list on the page to regroup; the
+per-forecaster detail lives in JournalDetail.
