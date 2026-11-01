@@ -228,15 +228,15 @@ class MonthlyBaseline:
 
 
 def build_baselines(spx_closes: Closes, wave2: Mapping[str, Closes],
-                    housing: HousingForecaster) -> list[Forecaster]:
+                    housing: HousingForecaster, extra: Mapping[str, Closes] | None = None) -> list[Forecaster]:
     """Both baselines for every non-market direction family, beside the model whose targets they price.
 
     Each family keeps its own session calendar (spec §8: EUR/USD settles on ECB reference days, the rest
     on NYSE sessions) and its own settlement, so a baseline row settles on exactly what its model's row
-    settles on.
+    settles on. `extra` carries later families that are not wave-2 models (xle, for the news-tone row).
     """
     out: list[Forecaster] = []
-    for family, closes in [("spx", spx_closes), *wave2.items()]:
+    for family, closes in [("spx", spx_closes), *wave2.items(), *(extra or {}).items()]:
         settle = ((lambda t, n, c=closes: settle_spx(t, n, c)) if family == "spx"
                   else (lambda t, n, c=closes: settle_daily(t, n, c)))
         out += [DirectionBaseline(closes, family, kind,
