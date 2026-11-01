@@ -29,10 +29,16 @@ export function PaperLine({ live }: { live: ShadowSummary }) {
 /** The public Ideas record (Trading HQ spec §4.1): every published idea, fails and kills included. */
 export default function Ideas() {
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
+  const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Ideas</h1>
       <p className="mt-1 text-sm text-slate-400">Every idea published here stays here, pass, fail or killed.</p>
+      {summary && (
+        <p className="mt-1 text-xs text-slate-500">
+          Workshop record: {summary.tested} ideas tested · {summary.passed} passed · {summary.failed} failed · {summary.not_enough_data} not enough data · {summary.published} published here
+        </p>
+      )}
       {loading && <Loader2 className="mt-8 h-5 w-5 animate-spin text-slate-400" aria-label="Loading" />}
       {error && <p role="alert" className="mt-8 text-sm text-rose-300">{error}</p>}
       {data && data.length === 0 && <p className="mt-8 text-sm text-slate-400">No ideas published yet.</p>}

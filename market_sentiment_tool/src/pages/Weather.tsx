@@ -68,8 +68,8 @@ export default function Weather() {
         ) : (
           <>
             <div className="grid grid-cols-3 gap-3">
-              <Stat label="Cities today" value={s.cities} sub="contracts frozen" />
-              <Stat label="Today's rows" value={s.todayCount} sub="ensemble vs Kalshi" />
+              <Stat label="Cities today" value={s.cities} sub="distinct cities" />
+              <Stat label="Contracts frozen" value={s.todayCount} sub="ensemble vs Kalshi" />
               <Stat label="Settled" value={s.settledCount} sub="with outcome" />
             </div>
 

@@ -84,17 +84,17 @@ const ctTime = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
 });
 
-function ct(iso: string): string {
+export function ct(iso: string): string {
   const parts = Object.fromEntries(ctTime.formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
   return `${parts.hour}:${parts.minute} ${parts.dayPeriod} CT, ${parts.weekday} ${parts.month} ${parts.day}`;
 }
 
 /** The line under the big numbers: every number on the page carries its as-of time and state. */
 export function stateLabel(state: PortfolioState, asOf: string | null): string {
-  if (state === "not_connected" || !asOf) return "Account not connected";
-  if (state === "stale") return `Stale · last read ${ct(asOf)}`;
-  if (state === "pre_start") return `Pre-start test account · as of ${ct(asOf)}`;
-  return `Live · as of ${ct(asOf)}`;
+  if (state === "not_connected") return "Paper account not connected";
+  if (state === "stale") return `Paper account · stale, last read ${asOf ? ct(asOf) : "—"}`;
+  if (state === "pre_start") return `Paper account · not traded yet · as of ${asOf ? ct(asOf) : "—"}`;
+  return `Paper account · live · as of ${asOf ? ct(asOf) : "—"}`;
 }
 
 export function tone(v: number | null | undefined): string {

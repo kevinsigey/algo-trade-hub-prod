@@ -1,4 +1,7 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+
+import { adminJson } from "@/lib/workshop";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, Treemap, XAxis, YAxis } from "recharts";
 
@@ -83,6 +86,19 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
 
 export default function Portfolio() {
   const { data, error, loading } = useApi<PortfolioPayload>("/api/portfolio");
+  const [liveIdeas, setLiveIdeas] = useState<{ id: number; title: string; size_pct: number | null }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    // Admin only: a signed-out visitor gets a 401 and simply sees no list.
+    adminJson<{ id: number; title: string; size_pct: number | null; live_at: string | null; killed_at: string | null; auto_orders: boolean }[]>("/api/workshop/ideas")
+      .then((rows) => {
+        if (!cancelled) setLiveIdeas(rows.filter((r) => r.live_at && !r.killed_at && r.auto_orders));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
@@ -98,19 +114,19 @@ export default function Portfolio() {
 
       {data && data.state === "not_connected" && (
         <div className="mt-8 rounded-xl border border-slate-800 p-6">
-          <div className="text-xl font-semibold text-white">Account not connected</div>
+          <div className="text-xl font-semibold text-white">Paper account not connected</div>
           <p className="mt-1 max-w-prose text-sm text-slate-400">
             The paper trading account is not linked yet. Numbers appear here from its first snapshot, never before.
           </p>
         </div>
       )}
 
-      {data && data.state !== "not_connected" && data.scoreboard && <Body data={data} />}
+      {data && data.state !== "not_connected" && data.scoreboard && <Body data={data} liveIdeas={liveIdeas} />}
     </div>
   );
 }
 
-function Body({ data }: { data: PortfolioPayload }) {
+function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: number; title: string; size_pct: number | null }[] }) {
   const s = data.scoreboard;
   const holdings = data.positions.map((p) => ({ name: p.symbol, size: Math.abs(p.market_value), pct: p.pct_of_book }));
   const count = data.positions.filter((p) => p.symbol !== "Cash").length;
@@ -176,6 +192,23 @@ function Body({ data }: { data: PortfolioPayload }) {
           </ul>
         </div>
       </section>
+
+      {liveIdeas.length > 0 && (
+        <section className="mt-12">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-lg font-semibold text-white">Ideas trading on this account</h2>
+            <Link to="/workshop" className="text-sm text-emerald-300 hover:text-emerald-200">Workshop →</Link>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {liveIdeas.map((idea) => (
+              <li key={idea.id} className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-800 px-4 py-2.5 text-sm">
+                <Link to={`/workshop/${idea.id}`} className="text-slate-200 hover:text-emerald-300">{idea.title}</Link>
+                <span className="tabular-nums text-slate-400">{idea.size_pct ?? "—"}%</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="mt-12">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
