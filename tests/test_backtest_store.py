@@ -16,6 +16,8 @@ MIGRATION_COLUMNS = {
     "engine", "engine_version", "mode", "config", "config_hash", "data_hash", "date_from", "date_to",
     "n_decisions", "n_fills", "n_settled", "pnl_after_fees", "max_drawdown", "turnover", "brier_ours",
     "brier_market", "log_loss", "cal_buckets", "max_cal_dev", "gate_status", "gate_reasons",
+    # Added by 20261101000002_run_diagnostics.sql (§6.1), applied to production.
+    "diagnostics",
 }
 
 

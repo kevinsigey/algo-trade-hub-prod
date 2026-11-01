@@ -36,6 +36,18 @@ export interface HealthReport {
   families: Record<string, HealthFamily>;
   orderbook: HealthOrderbook;
   problems: string[];
+  /** Section 6.1 diagnostics from the newest measured backtest run. Flags only --
+   * never counted in `problems`; null when no run has recorded diagnostics. */
+  diagnostics?: HealthDiagnostics | null;
+}
+
+export interface HealthDiagnostics {
+  engine: string | null;
+  mode: string | null;
+  run_at: string | null;
+  window_end: string | null;
+  feature_flags: string[];
+  residual_flags: string[];
 }
 
 /** Intro copy. Kept under the word budget and asserted by test. */

@@ -95,6 +95,7 @@ def build_health_report(
     now: datetime,
     untracked: frozenset[str] | None = None,
     calendar_by_family: Mapping[str, list[dict[str, Any]]] | None = None,
+    diagnostics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the whole read-only report. Pure: `timers`/`frozen_by_family` are already fetched.
 
@@ -227,6 +228,11 @@ def build_health_report(
             "newest_file_age_seconds": orderbook_age_seconds,
             "status": orderbook_status,
         },
+        # §6.1 diagnostics from the newest backtest run that measured them. Flags
+        # only: this section NEVER adds to `problems` -- a diagnostic flag is a
+        # reason to look at a model, not a health failure, and the section is
+        # absent (not "clean") when no run has recorded diagnostics yet.
+        "diagnostics": dict(diagnostics) if diagnostics else None,
         "problems": problems,
     }
 
@@ -381,7 +387,29 @@ def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | N
         now=now,
         untracked=UNTRACKED_TIMERS,
         calendar_by_family=calendar_by_family,
+        diagnostics=_latest_diagnostics(supa),
     )
+
+
+def _latest_diagnostics(supa) -> dict[str, Any] | None:
+    """The diagnostics of the newest backtest run that recorded any (§6.1), with
+    the run's identity -- flags without provenance would be unactionable. None
+    when the table is unreadable or no run has measured yet."""
+    try:
+        result = (supa.table("backtest_runs").select("engine,mode,created_at,date_to,diagnostics")
+                  .not_.is_("diagnostics", "null")
+                  .order("created_at", desc=True).limit(1).execute())
+    except Exception:  # noqa: BLE001 - health must never 500 on a missing table/column
+        return None
+    rows = getattr(result, "data", None) or []
+    if not rows:
+        return None
+    row = rows[0]
+    diag = row.get("diagnostics") or {}
+    feature_flags = [f"{f['feature']}: {flag}" for f in diag.get("features") or [] for flag in (f.get("flags") or [])]
+    return {"engine": row.get("engine"), "mode": row.get("mode"), "run_at": row.get("created_at"),
+            "window_end": row.get("date_to"), "feature_flags": feature_flags,
+            "residual_flags": (diag.get("residuals") or {}).get("flags") or []}
 
 
 def _fetch_calendar_by_family(supa, now: datetime) -> dict[str, list[dict[str, Any]]] | None:
