@@ -26,6 +26,7 @@ from tradehub.data.labor_inputs import Nowcast, load_labor_inputs, payroll_nowca
 from tradehub.engines.labor import (
     ALL_FEATURES,
     CORE_FEATURES,
+    GHOST_FEATURES,
     LABOR_ENGINE_VERSION,
     PAYROLL_RESOLUTION,
     PAYROLL_SERIES,
@@ -123,6 +124,26 @@ def _month_arg(text: str) -> date:
     return datetime.strptime(text, "%Y-%m").date()
 
 
+def feature_set(name: str):
+    """The named feature sets the CLI offers. `ghost` is the candidate set: the shipped core plus
+    ghost_gap_3m alone, so the feature is graded on its own rather than inside the ALL bundle."""
+    return {"core": CORE_FEATURES, "all": ALL_FEATURES, "ghost": GHOST_FEATURES}[name]
+
+
+def check_recordable(features_name: str) -> None:
+    """Only the shipped feature set may be recorded.
+
+    `current_runs` keys on (engine, mode), so recording a candidate run would silently replace
+    the shipped model's scoreboard row with a model that is not running. A candidate that earns
+    its place is promoted properly instead: into CORE_FEATURES, under a new engine version.
+    """
+    if features_name != "core":
+        raise SystemExit(
+            f"refusing to record a '{features_name}' run: the scoreboard's labor row grades the "
+            "shipped labor-v1 (CORE_FEATURES); a candidate feature set is for comparison only"
+        )
+
+
 def record_guard(row: dict[str, Any], inputs, months: Sequence[date]) -> None:
     """Refuse to store a PROMOTED run whose inputs are not point-in-time.
 
@@ -144,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=_month_arg, default=date(2023, 3, 1), help="first reference month, YYYY-MM")
     parser.add_argument("--end", type=_month_arg, required=True, help="last reference month, YYYY-MM")
     parser.add_argument("--mode", choices=["taker", "maker"], default="taker")
-    parser.add_argument("--features", choices=["core", "all"], default="core")
+    parser.add_argument("--features", choices=["core", "all", "ghost"], default="core")
     parser.add_argument("--cache-dir", type=Path, default=None, help="ALFRED vintage cache (default $TRADEHUB_ALFRED_CACHE)")
     parser.add_argument("--record", action="store_true", help="write a backtest_runs row")
     args = parser.parse_args(argv)
@@ -156,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     results = {raw["ticker"]: raw["result"] for raw in raws}
     releases = release_dates(all_raws)
     months = sorted({event_month(m.event_ticker) for m in markets})
-    features = CORE_FEATURES if args.features == "core" else ALL_FEATURES
+    features = feature_set(args.features)
     inputs = load_labor_inputs(first_month=TRAIN_START, last_month=args.end, releases=releases,
                                as_of=datetime.now(timezone.utc).date(), with_adp=args.features == "all",
                                cache_dir=args.cache_dir)
@@ -190,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.record:
         from tradehub.core.supabase_client import get_client
 
+        check_recordable(args.features)
         record_guard(row, inputs, months)
         record_backtest_run(get_client(), row)
     return 0
