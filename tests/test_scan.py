@@ -263,6 +263,38 @@ def test_scan_main_assigns_one_fifteen_minute_deadline_to_network_scan(monkeypat
     assert scan.SCAN_DEADLINE_SECONDS == 15 * 60
 
 
+def test_scan_main_records_the_run_on_the_injected_client(monkeypatch):
+    """The run record is what Health reads, and it must be written through the client the caller
+    injected -- not a global one. With a developer-local `.env` in reach, a global write from a
+    test run would put fabricated runs in the real database."""
+    from tradehub.core import supabase_client
+    import tradehub.predictions as predictions_module
+
+    recorded = []
+    monkeypatch.setattr(supabase_client, "start_run",
+                        lambda run_id, engines, client=None: recorded.append(("start", run_id, engines, client)))
+    monkeypatch.setattr(supabase_client, "complete_run",
+                        lambda run_id, total, dur, err=None, client=None, engines=None: recorded.append(("complete", run_id, err, client)))
+    monkeypatch.setattr(scan, "KalshiLive", lambda deadline=None: object())
+    monkeypatch.setattr(scan, "load_engine_config", lambda engine: EngineConfig(min_edge_pct=3.0))
+    monkeypatch.setattr(scan, "scan_gas", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(scan, "latest_gate_statuses", lambda client, pairs: {})
+    monkeypatch.setattr(scan, "remove_stale_edges", lambda client, produced: None)
+    monkeypatch.setattr(scan, "sports_due", lambda now: False)
+    monkeypatch.setattr(scan, "remove_started_sports_edges", lambda *a, **k: [])
+    monkeypatch.setattr(scan, "remove_closed_cpi_edges", lambda *args, **kwargs: None)
+    monkeypatch.setattr(scan, "remove_closed_labor_edges", lambda *args, **kwargs: None)
+    monkeypatch.setattr(predictions_module, "record_predictions", lambda client, rows: None)
+    monkeypatch.setattr(supabase_client, "upsert_opportunities", lambda rows: None)
+
+    sentinel = object()
+    assert scan.main(now=NOW, client=sentinel) == 0
+    assert [r[0] for r in recorded] == ["start", "complete"]
+    assert recorded[0][2] == ["scan"]
+    assert all(r[-1] is sentinel for r in recorded)
+    assert recorded[1][2] is None  # a clean pass completes without an error
+
+
 def test_scan_main_isolates_engine_failure_and_returns_nonzero(monkeypatch, capsys, caplog):
     caplog.set_level(logging.INFO)
     recorded = []

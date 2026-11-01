@@ -10,14 +10,19 @@ None and promotion stays blocked on that criterion.
 from __future__ import annotations
 
 import json
+import logging
 import sys
+import time
+from datetime import datetime, timezone
 
 from tradehub.core.env import load_local_env
 from tradehub.core.kalshi_feed import fetch_market
-from tradehub.core.supabase_client import get_client
+from tradehub.core.supabase_client import complete_run, get_client, start_run
 from tradehub.journal.legacy import journal_engines, journal_scores
 from tradehub.settlement import run_settlement_pass
 from tradehub.track_record import refresh_track_record
+
+log = logging.getLogger(__name__)
 
 # (engine, cadence) pairs the cron refreshes — the spec's engine set (section
 # 3.1). Cadence sets the gate's contract minimum: daily engines need 200
@@ -33,27 +38,57 @@ ENGINES = [
 ]
 
 
+def _record(call) -> None:
+    """Run recording must never crash the settle: the health marker is worth less than the pass."""
+    try:
+        call()
+    except Exception:  # noqa: BLE001
+        log.exception("settle run recording failed")
+
+
 def main() -> int:
     # Entry point: load the developer-local `.env` explicitly. A no-op in
     # production, where the container supplies real variables and has no `.env`.
     # See `tradehub.core.env`.
     load_local_env()
     supa = get_client()
-    summary = run_settlement_pass(supa, fetch_market)
-    refreshed = []
-    skipped = []
-    # One ledger of record (v2 spec §4): an engine with a journal scorecard is graded by the journal, so
-    # its legacy rollup is left alone. Its `predictions` rows are still settled above (the CPI display and
-    # the sports hub calibration read them); only the second headline number is retired.
-    on_journal = journal_engines(journal_scores(supa))
-    for engine, cadence in ENGINES:
-        if engine in on_journal:
-            skipped.append(engine)
-            continue
-        payloads = refresh_track_record(supa, engine, cadence=cadence, simulated_pnl_after_fees=None)
-        refreshed.extend(f"{engine}@{p['engine_version']}" for p in payloads)
-    summary["track_record_refreshed"] = refreshed
-    summary["track_record_skipped_on_journal"] = skipped
+    # Every pass leaves a run row in scanner_runs (engines_run ["settle"]), so Health can say
+    # when the settle JOB last ran -- `predictions.settled_at` cannot: it only moves when a
+    # contract actually settles, so a healthy pass with nothing to settle read as a dead job.
+    run_id = f"settle-{datetime.now(timezone.utc).isoformat()}"
+    started = time.monotonic()
+    _record(lambda: start_run(run_id, ["settle"], client=supa))
+    try:
+        summary = run_settlement_pass(supa, fetch_market)
+        refreshed = []
+        skipped = []
+        # One ledger of record (v2 spec §4): an engine with a journal scorecard is graded by the journal, so
+        # its legacy rollup is left alone. Its `predictions` rows are still settled above (the CPI display and
+        # the sports hub calibration read them); only the second headline number is retired.
+        on_journal = journal_engines(journal_scores(supa))
+        for engine, cadence in ENGINES:
+            if engine in on_journal:
+                skipped.append(engine)
+                continue
+            payloads = refresh_track_record(supa, engine, cadence=cadence, simulated_pnl_after_fees=None)
+            refreshed.extend(f"{engine}@{p['engine_version']}" for p in payloads)
+        summary["track_record_refreshed"] = refreshed
+        summary["track_record_skipped_on_journal"] = skipped
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        _record(lambda: complete_run(run_id, 0, time.monotonic() - started, error, client=supa,
+                                     engines=["settle"]))
+        raise
+    # A pass whose fetches/writes failed and which settled or canceled nothing did not succeed,
+    # even though it returned a summary: recording it "completed" would keep the Health timer
+    # fresh on a job that is settling nothing. Partial errors alongside real progress still
+    # count as completed -- the failed rows stay unsettled and retry next pass.
+    errors = summary.get("fetch_errors", 0) + summary.get("write_errors", 0)
+    progress = summary.get("settled", 0) + summary.get("canceled", 0)
+    error = (f"settled nothing: {summary.get('fetch_errors', 0)} fetch errors, "
+             f"{summary.get('write_errors', 0)} write errors") if errors and not progress else None
+    _record(lambda: complete_run(run_id, summary.get("settled", 0), time.monotonic() - started,
+                                 error, client=supa, engines=["settle"]))
     print(json.dumps(summary))
     return 0
 
