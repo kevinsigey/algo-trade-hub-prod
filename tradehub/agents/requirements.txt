@@ -1,0 +1,7 @@
+# The TradingAgents framework's ISOLATED environment (feed spec §8: its own env, keys
+# from env vars only). Install into a venv the hub process never imports:
+#   python -m venv tradehub/agents/.venv
+#   tradehub/agents/.venv/bin/pip install -r tradehub/agents/requirements.txt
+# or point TRADEHUB_AGENTS_PYTHON at any interpreter with the framework installed.
+# Pinned to the upstream repo: the framework is distributed via GitHub, not PyPI.
+tradingagents @ git+https://github.com/TauricResearch/TradingAgents@c4544913a14ed3df5f1ed7b9e8483270ce20682a  # v0.7.1, pinned at build (feed spec §1)

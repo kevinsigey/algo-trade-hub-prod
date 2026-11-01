@@ -108,3 +108,7 @@ _attic/
 graphify-out/
 
 .superpowers/
+tradehub/agents/data/runs/*
+!tradehub/agents/data/runs/.gitkeep
+tradehub/agents/data/debate_record.json
+tradehub/agents/.venv/

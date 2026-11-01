@@ -72,6 +72,29 @@ describe("Workshop pages", () => {
     expect((f.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
   });
 
+  it("renders agent debate cards with the fence labels and the separate record", async () => {
+    serve({
+      "/api/workshop/ideas": { body: [] },
+      "/api/agent-debates": { body: {
+        chip: "LLM agent debate — not a model signal",
+        cards: [{ source: "agent_debate", chip: "LLM agent debate — not a model signal", run_id: "pltr-1", ticker: "PLTR",
+          decision: "Buy", run_at_ct: "2026-11-01T09:00:00-05:00", as_of_date: "2026-10-20", historical: false,
+          historical_label: null, framework_version: "0.2.3", framework_short: "0.2.3", llm_provider: "anthropic",
+          llm_model: "claude-sonnet-4-5", status: "complete", error: null, stale: true, cost_usd: "not recorded",
+          inputs_note: "framework defaults", analyst_summaries: { fundamentals: "not recorded" },
+          bull_case: "Growth.", bear_case: "Valuation.", trader_rationale: "Starter.", risk_verdict: "Small.",
+          has_report: true, grades: { "+5d": { ret_pct: 3.2, outcome: "hit" }, "+20d": "pending" } }],
+        record: { h5: { graded: 1, hits: 1, hit_rate: 1, no_calls: 0 }, h20: { graded: 0, hits: 0, hit_rate: null, no_calls: 0 }, banner: false },
+        banner: null } },
+    });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    expect(await screen.findByText("LLM agent debate — not a model signal")).toBeInTheDocument();
+    expect(screen.getByText("PLTR")).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
+    expect(screen.getByText(/\+5d hit \(\+3\.2%\)/)).toBeInTheDocument();
+    expect(screen.getByText(/kept separate from every model statistic/)).toBeInTheDocument();
+  });
+
   it("shows a verdict with the shuffle result and the variation count", async () => {
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [RUN] } } });
     render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
