@@ -79,6 +79,13 @@ def analyst_tickers(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "analyst"))
 
 
+def news_series_ids(spec: IdeaSpec) -> list[str]:
+    """The news baskets the rule reads (workshop/news.py). They land in the same
+    series dict as FRED and take the same t-2 publication lag in _hit: a day's tone
+    is only complete after the day ends."""
+    return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "news"))
+
+
 def spread_series(series: str, closes: pd.DataFrame) -> pd.Series:
     """log(equal-weight geometric basket of the left legs) - log(same of the right legs), from daily closes."""
     left, right = (side.split("+") for side in series.split("/"))

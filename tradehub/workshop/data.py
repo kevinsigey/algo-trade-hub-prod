@@ -203,14 +203,18 @@ def analyst(ticker: str, *, fetch=None, cache_dir: Path | None = None, now: date
     return frame
 
 
-def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None) -> dict:
-    """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst".
-    Option legs add their vol indexes and DTB3 (engine.option_series_ids)."""
-    from tradehub.workshop.engine import analyst_tickers, option_series_ids, rule_series_ids
+def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=None) -> dict:
+    """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst",
+    news-tone baskets by name. Option legs add their vol indexes and DTB3 (engine.option_series_ids)."""
+    from tradehub.workshop.engine import analyst_tickers, news_series_ids, option_series_ids, rule_series_ids
     ids = list(dict.fromkeys(rule_series_ids(spec) + option_series_ids(spec)))
     out = {i: (fred or fred_series)(i, fred_start) for i in ids}
     for t in analyst_tickers(spec):
         out[f"{t}@analyst"] = (analyst_fn or analyst)(t)
+    if news_series_ids(spec):
+        from tradehub.workshop.news import news_tone_series
+        for basket in news_series_ids(spec):
+            out[basket] = (news_fn or news_tone_series)(basket, fred_start)
     return out
 
 

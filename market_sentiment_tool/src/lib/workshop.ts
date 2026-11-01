@@ -10,7 +10,7 @@ export type Measure =
   | "net_upgrades" | "target_upside" | "zscore" | "percentile";
 
 export interface Condition {
-  source: "fred" | "price" | "analyst" | "spread";
+  source: "fred" | "price" | "analyst" | "spread" | "news";
   series: string;
   measure: Measure;
   lookback_days: number;
@@ -35,9 +35,10 @@ type Src = Condition["source"];
 const P: Src[] = ["price"];
 const FP: Src[] = ["fred", "price", "spread"];
 const ANY: Src[] = ["fred", "price", "spread"];
+const WITH_NEWS: Src[] = ["fred", "price", "spread", "news"];
 export const MEASURES: { value: Measure; label: string; hint: string; sources: Src[] }[] = [
-  { value: "level", label: "level", hint: "the value itself", sources: FP },
-  { value: "change", label: "change", hint: "change over N days, in the series' own units", sources: FP },
+  { value: "level", label: "level", hint: "the value itself (for news: the day's mean article tone, -100..+100)", sources: WITH_NEWS },
+  { value: "change", label: "change", hint: "change over N days, in the series' own units", sources: WITH_NEWS },
   { value: "pct_change", label: "% change", hint: "% change over N days", sources: ["fred", "price"] },
   { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", sources: FP },
   { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", sources: FP },
@@ -47,7 +48,7 @@ export const MEASURES: { value: Measure; label: string; hint: string; sources: S
   { value: "vs_high", label: "vs N-day high", hint: "% above the prior N-day high (above 0 = breakout)", sources: P },
   { value: "vs_low", label: "vs N-day low", hint: "% above the prior N-day low (below 0 = breakdown)", sources: P },
   { value: "vs_vwap", label: "vs VWAP", hint: "% above its N-day VWAP", sources: P },
-  { value: "zscore", label: "z-score", hint: "standard deviations from its N-day average (2 = stretched)", sources: ANY },
+  { value: "zscore", label: "z-score", hint: "standard deviations from its N-day average (2 = stretched)", sources: WITH_NEWS },
   { value: "percentile", label: "percentile", hint: "today's rank among the last N days, 0-100 (95 = near the top)", sources: ANY },
   { value: "net_upgrades", label: "net upgrades", hint: "analyst upgrades minus downgrades over N trading days", sources: ["analyst"] },
   { value: "target_upside", label: "target upside", hint: "% the average price target set in the last N trading days is above the price", sources: ["analyst"] },
