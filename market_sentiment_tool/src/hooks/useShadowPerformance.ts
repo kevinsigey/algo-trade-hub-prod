@@ -94,8 +94,10 @@ export function useShadowPerformance({
       } else {
         setLoading(true);
       }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: controller.signal });
         const payload = await response.json();
         if (!response.ok) {
           throw new ShadowRequestError(
@@ -110,16 +112,18 @@ export function useShadowPerformance({
         }
       } catch (err) {
         if (!cancelled) {
+          const isAbort = err instanceof DOMException && err.name === "AbortError";
           const failure =
             err instanceof ShadowRequestError
               ? err
               : new ShadowRequestError(
-                  err instanceof Error ? err.message : "Unknown shadow dashboard error",
+                  isAbort ? "Request timed out after 15 seconds" : (err instanceof Error ? err.message : "Unknown shadow dashboard error"),
                   null,
                 );
           setError({ message: failure.message, status: failure.status, code: failure.code });
         }
       } finally {
+        clearTimeout(timer);
         if (!cancelled) {
           setLoading(false);
           setRefreshing(false);

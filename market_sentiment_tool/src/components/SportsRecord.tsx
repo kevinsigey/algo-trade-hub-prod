@@ -105,25 +105,71 @@ function Card({ sport, scores }: { sport: SportsRecordSport; scores: JournalScor
   );
 }
 
+const FETCH_TIMEOUT_MS = 15000;
+
 export default function SportsRecord() {
   const [data, setData] = useState<SportsRecordResponse | null>(null);
   const [scores, setScores] = useState<JournalScore[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
-  // Two requests, two states: the journal only adds the Kalshi line, so a slow or failed journal must not
-  // hold the five records back.
   useEffect(() => {
-    loadSportsRecord().then(setData).catch((e: Error) => setError(e.message));
+    setData(null);
+    setError(null);
+    setScores(null);
+    let cancelled = false;
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!cancelled && !done) {
+        done = true;
+        setError("Request timed out after 15 seconds");
+      }
+    }, FETCH_TIMEOUT_MS);
+    loadSportsRecord()
+      .then((d) => {
+        if (cancelled || done) return;
+        done = true;
+        clearTimeout(timer);
+        setData(d);
+      })
+      .catch((e: Error) => {
+        if (cancelled || done) return;
+        done = true;
+        clearTimeout(timer);
+        setError(e.message);
+      });
+    // Two requests, two states: the journal only adds the Kalshi line, so a slow or failed journal must not
+    // hold the five records back.
+    const jTimer = setTimeout(() => undefined, FETCH_TIMEOUT_MS);
     getJson<JournalResponse>("/api/journal")
-      .then((j) => setScores(j.forecasters ?? []))
-      .catch(() => undefined); // stays null: no Kalshi line, never a false "not scored yet"
-  }, []);
+      .then((j) => {
+        if (cancelled) return;
+        clearTimeout(jTimer);
+        setScores(j.forecasters ?? []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        clearTimeout(jTimer);
+      }); // stays null: no Kalshi line, never a false "not scored yet"
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      clearTimeout(jTimer);
+    };
+  }, [attempt]);
 
   if (error) {
     return (
       <section aria-label="Sports predictors" className="space-y-3">
         <h2 className="text-xl font-semibold text-white">Sports predictors</h2>
         <p className="text-sm text-slate-500" title={error}>Sports records unavailable right now</p>
+        <button
+          type="button"
+          onClick={() => setAttempt((n) => n + 1)}
+          className="mt-2 rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300 hover:text-white"
+        >
+          Retry
+        </button>
       </section>
     );
   }

@@ -82,20 +82,52 @@ function Detail({ entry }: { entry: CatalogueEntry }) {
   );
 }
 
+const FETCH_TIMEOUT_MS = 15000;
+
 export default function Models() {
   const [data, setData] = useState<ModelsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    fetch(buildApiUrl("/api/scoreboard"))
+    setData(null);
+    setError(null);
+    let cancelled = false;
+    let done = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      if (!cancelled && !done) {
+        done = true;
+        controller.abort();
+        setError("Request timed out after 15 seconds");
+      }
+    }, FETCH_TIMEOUT_MS);
+    fetch(buildApiUrl("/api/scoreboard"), { signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
+        if (cancelled || done) return;
+        done = true;
+        clearTimeout(timer);
         setData(payload as ModelsResponse);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Unknown error"));
-  }, []);
+      .catch((err) => {
+        if (cancelled || done) return;
+        done = true;
+        clearTimeout(timer);
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setError("Request timed out after 15 seconds");
+        } else {
+          setError(err instanceof Error ? err.message : "Unknown error");
+        }
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [attempt]);
 
   // The sports records come from their own endpoint, so they stay up when the scoreboard is slow or down.
   if (error) {
@@ -104,6 +136,13 @@ export default function Models() {
         <div className="rounded-lg border border-rose-900 bg-rose-950/30 p-4 text-sm text-rose-200">
           <p className="font-semibold">Models unavailable</p>
           <p className="mt-1 text-rose-300/80">{error}</p>
+          <button
+            type="button"
+            onClick={() => setAttempt((n) => n + 1)}
+            className="mt-3 rounded-full border border-slate-700 px-3 py-1 text-sm text-slate-300 hover:text-white"
+          >
+            Retry
+          </button>
         </div>
         <SportsRecord />
       </div>
