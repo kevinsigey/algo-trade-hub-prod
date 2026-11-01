@@ -72,6 +72,48 @@ def test_main_wires_pass_and_refresh(monkeypatch, capsys):
     assert out["track_record_refreshed"] == ["weather@v1", "macro@v1"]
 
 
+def test_main_records_the_run_so_health_can_see_the_job_ran(monkeypatch):
+    """Every pass -- including one that settles nothing -- must leave a scanner_runs row, or
+    Health can only see `predictions.settled_at`, which records when something last settled,
+    not when the job last ran."""
+    recorded = []
+    monkeypatch.setattr(settle_predictions, "get_client", lambda: _FakeSupa())
+    monkeypatch.setattr(settle_predictions, "fetch_market", lambda t: {})
+    monkeypatch.setattr(settle_predictions, "run_settlement_pass", lambda supa, fetch: {"checked": 0, "settled": 0})
+    monkeypatch.setattr(settle_predictions, "refresh_track_record", lambda supa, engine, **kw: [])
+    monkeypatch.setattr(settle_predictions, "start_run",
+                        lambda run_id, engines, client=None: recorded.append(("start", run_id, engines, client)))
+    monkeypatch.setattr(settle_predictions, "complete_run",
+                        lambda run_id, total, dur, err=None, client=None: recorded.append(("complete", run_id, err, client)))
+
+    assert settle_predictions.main() == 0
+    assert [r[0] for r in recorded] == ["start", "complete"]
+    assert recorded[0][2] == ["settle"] and recorded[0][1].startswith("settle-")
+    assert recorded[1][2] is None  # a clean pass completes without an error
+
+
+def test_main_records_a_failed_pass_and_still_raises(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(settle_predictions, "get_client", lambda: _FakeSupa())
+    monkeypatch.setattr(settle_predictions, "fetch_market", lambda t: {})
+
+    def boom(supa, fetch):
+        raise RuntimeError("kalshi down")
+
+    monkeypatch.setattr(settle_predictions, "run_settlement_pass", boom)
+    monkeypatch.setattr(settle_predictions, "start_run", lambda *a, **k: recorded.append("start"))
+    monkeypatch.setattr(settle_predictions, "complete_run",
+                        lambda run_id, total, dur, err=None, client=None: recorded.append(err))
+
+    try:
+        settle_predictions.main()
+        raise AssertionError("main should have raised")
+    except RuntimeError:
+        pass
+    assert recorded[0] == "start"
+    assert "RuntimeError" in recorded[1]
+
+
 def test_an_engine_on_the_journal_is_not_refreshed_into_the_legacy_track_record(monkeypatch, capsys):
     class OnJournal(_FakeSupa):
         def execute(self):
