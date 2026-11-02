@@ -21,6 +21,7 @@ import ClosedTrades from "@/pages/ClosedTrades";
 import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
 import Login, { RecoveryRedirect } from "@/pages/Login";
+import { GoatCounterTracker } from "@/components/GoatCounterTracker";
 import Workshop from "@/pages/Workshop";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -273,6 +274,7 @@ function Guarded({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <BrowserRouter>
+      <GoatCounterTracker />
       <RecoveryRedirect />
       <AppShell>
         <Guarded>
