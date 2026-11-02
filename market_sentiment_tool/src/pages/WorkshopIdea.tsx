@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { PlayCheckButton } from "@/components/PlayCheck";
 import TickerListInput from "@/components/TickerListInput";
 import { ctDateTime } from "@/lib/format";
 import { PaperLine } from "@/pages/Ideas";
@@ -1199,6 +1200,11 @@ export default function WorkshopIdea() {
       {data && <h1 className="mt-3 text-xl font-semibold text-white">“{data.idea.plain_words}”</h1>}
       {data && <SummaryHeader data={data} />}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
+      {data && id && data.runs.length > 0 && !isEvent(data.runs[data.runs.length - 1].spec) && (
+        <div className="mt-6">
+          <PlayCheckButton ideaId={Number(id)} source="workshop" title={data.idea.title} />
+        </div>
+      )}
       {data && id && (
         <section className="mt-6" aria-label="Lifecycle">
           <h2 className="text-sm font-semibold text-white">Lifecycle — publish, track, go live</h2>
