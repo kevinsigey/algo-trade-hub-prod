@@ -125,6 +125,23 @@ def test_stop_and_trailing_orders_only_with_a_stop_tag(keys, monkeypatch):
     assert len(s.calls) == 3
 
 
+def test_a_machine_stop_tag_is_the_second_sanctioned_protective_family(keys, monkeypatch):
+    """2026-11-02: the machine API's ext-<key>-stop- tags may carry stops (the mirror
+    book's door); every other ext- or plain tag still refuses a protective shape."""
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-9"}))
+    paper_orders.submit("XLE", 115, "sell", "ext-1-stop-mirror-xle-20261102", order_type="stop",
+                        time_in_force="gtc", stop_price=65.55, session=s)
+    assert s.calls[0]["json"]["stop_price"] == "65.55" and s.calls[0]["json"]["type"] == "stop"
+    for tag, kw in (("ext-1-mirror-xle", {"order_type": "stop", "time_in_force": "gtc", "stop_price": 1.0}),
+                    ("ext-1-stop-mirror-xle", {"order_type": "stop", "time_in_force": "day", "stop_price": 1.0}),
+                    ("ext-1-stop-mirror-xle", {"order_type": "market", "time_in_force": "gtc"}),
+                    ("manual-x", {"order_type": "stop", "time_in_force": "gtc", "stop_price": 1.0})):
+        with pytest.raises(ValueError):
+            paper_orders.submit("XLE", 5, "sell", tag, session=s, **kw)
+    assert len(s.calls) == 1
+
+
 def test_cancel_only_the_hubs_own_stops(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     s = Session(Resp(204))

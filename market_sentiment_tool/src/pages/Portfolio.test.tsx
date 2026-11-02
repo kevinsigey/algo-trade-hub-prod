@@ -84,6 +84,13 @@ describe("Portfolio hand orders (signed-in only)", () => {
   function serveRoutes(adminOk: boolean, posted: Record<string, unknown>[]) {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/api/portfolio/open-orders")) {
+        return new Response(JSON.stringify({ orders: [{
+          alpaca_order_id: "a9", client_order_id: "ext-1-stop-mirror-xom", symbol: "XOM",
+          side: "sell", type: "stop", time_in_force: "gtc", qty: 49, filled_qty: 0,
+          limit_price: null, stop_price: 175, status: "new", submitted_at: "2026-11-02T14:31:00Z",
+        }] }), { status: 200 });
+      }
       if (url.includes("/api/portfolio/orders")) {
         posted.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
         return new Response(JSON.stringify({ order: { id: "a1" }, client_order_id: "manual-abc123", placed_by: "k@example.com" }), { status: 200 });
@@ -103,6 +110,22 @@ describe("Portfolio hand orders (signed-in only)", () => {
     page(<Portfolio />);
     expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
     expect(screen.queryByText("Place an order by hand")).toBeNull();
+  });
+
+  it("shows the staged orders panel, signed in only", async () => {
+    serveRoutes(true, []);
+    page(<Portfolio />);
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    expect(await screen.findByText("XOM")).toBeInTheDocument();
+    expect(screen.getByText("$175.00")).toBeInTheDocument();
+    expect(screen.getByText("gtc")).toBeInTheDocument();
+  });
+
+  it("hides the staged orders panel from a signed-out visitor", async () => {
+    serveRoutes(false, []);
+    page(<Portfolio />);
+    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+    expect(screen.queryByText("Staged orders")).toBeNull();
   });
 
   it("places a market order through the endpoint when signed in", async () => {

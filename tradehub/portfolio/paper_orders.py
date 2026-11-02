@@ -3,6 +3,9 @@
 - The host is alpaca_paper.PAPER_BASE; this file names no other host (tests/test_portfolio_alpaca_paper.py).
 - Two kinds of request: POST /v2/orders (new orders), and DELETE /v2/orders/{id} only for a protective order the
   hub itself placed (client_order_id `idea-<n>-stop-...`). No replaces, no position closes, nothing else.
+- Protective orders carry one of two sanctioned tags: the hub's own `idea-<n>-stop-...` or the machine
+  API's `ext-<key>-stop-...` (2026-11-02: Kevin's staged mirror book needed its stops to ride through the
+  machine door; the API fences those to held positions, this module fences the tag family and the shape).
 - Nothing is sent unless the server env TRADEHUB_PAPER_ORDERS is exactly "on" (each idea has its own switch too).
 - Rule orders: market or limit, at the open (opg), at the close (cls) or during the day (day). Protective orders
   (stop, trailing stop, take-profit limit) are good-till-cancelled and must carry the stop tag. Whole shares.
@@ -21,6 +24,7 @@ from tradehub.portfolio.alpaca_paper import PAPER_BASE, AccountNotConnected, _he
 ORDER_TYPES = ("market", "limit", "stop", "trailing_stop")
 TIMES_IN_FORCE = ("opg", "cls", "day", "gtc")
 STOP_TAG = re.compile(r"^idea-\d+-stop-")
+MACHINE_STOP_TAG = re.compile(r"^ext-\d+-stop-")
 ORDER_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
@@ -56,9 +60,11 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
     if order_type not in ORDER_TYPES or time_in_force not in TIMES_IN_FORCE or side not in ("buy", "sell"):
         raise ValueError(f"unsupported order: {order_type}/{time_in_force}/{side}")
     protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
-    if protective and not (STOP_TAG.match(client_order_id) and time_in_force == "gtc"
+    sanctioned = STOP_TAG.match(client_order_id) or MACHINE_STOP_TAG.match(client_order_id)
+    if protective and not (sanctioned and time_in_force == "gtc"
                            and order_type in ("stop", "trailing_stop", "limit")):
-        raise ValueError("stops and good-till-cancelled orders are only the hub's own protective orders")
+        raise ValueError("stops and good-till-cancelled orders are only sanctioned protective orders "
+                         "(an idea- stop tag or a machine ext- stop tag)")
     if order_class not in (None, "oco"):
         raise ValueError(f"unsupported order class: {order_class}")
     if order_class == "oco" and not (order_type == "limit" and take_profit_price and stop_price):

@@ -1008,15 +1008,32 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     return {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
 
 
+@app.get("/api/portfolio/open-orders", tags=["Portfolio"])
+def get_portfolio_open_orders(user: dict = Depends(admin.require_admin)):
+    """Every order resting on the paper account, for the Portfolio page's staged-orders
+    panel: the same broker-wide view the machine API exposes at /api/v1/orders/open."""
+    from tradehub.api.machine_api import open_broker_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    try:
+        return {"orders": open_broker_orders()}
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+
+
 # ── Machine API (phase-2 spec §1, step 2): key-authenticated, paper-only, shipped OFF. ────
 # POST /api/v1/orders places through the same paper_orders.submit as the form above, under
 # three extra fences the form does not need: the TRADEHUB_MACHINE_ORDERS kill switch, the
 # per-key caps stored on the key, and a caller-supplied client_order_id the server namespaces
 # to ext-<key_id>-<caller> so a retry can never double-place and a machine can never mint an
 # idea-/manual-/protective id. Market orders shipped in v1 (step 2); limit orders in v1.1
-# (step 5), their notional priced at the limit. Stops/GTC stay hub-internal throughout.
+# (step 5), their notional priced at the limit. Protective stops joined 2026-11-02 (Kevin's
+# staged mirror book had no way to rest its stops): order_type "stop" + stop_price + gtc is
+# the one protective shape the door takes, fenced to shares actually held (stop_capacity),
+# namespaced to the ext-<key>-stop- tag family paper_orders sanctions, and priced for the
+# notional cap at the stop. order_class and trailing stops still 422 here.
 class _MachineOrderIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")  # protective shapes (stop_price, order_class…) 422 here
+    model_config = ConfigDict(extra="forbid")  # order_class and other broker shapes 422 here
 
     symbol: str = Field(min_length=1, max_length=10)
     qty: int = Field(ge=1, le=100_000)
@@ -1025,6 +1042,7 @@ class _MachineOrderIn(BaseModel):
     order_type: str = "market"
     time_in_force: str = "day"
     limit_price: float | None = Field(default=None, gt=0)
+    stop_price: float | None = Field(default=None, gt=0)
     idea_id: int | None = None
 
 
@@ -1055,17 +1073,40 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         refused("validation", 422, f"not a ticker: {body.symbol!r}")
     if body.side not in ("buy", "sell"):
         refused("validation", 422, "side must be buy or sell")
-    if body.time_in_force not in ("opg", "cls", "day"):
-        refused("validation", 422, "time_in_force must be opg, cls or day")
-    if body.order_type not in ("market", "limit"):
-        refused("order_type", 422, "machine orders are market or limit only")
+    if body.order_type not in ("market", "limit", "stop"):
+        refused("order_type", 422, "machine orders are market, limit or stop only")
+    if body.order_type == "stop":
+        if body.time_in_force != "gtc":
+            refused("order_type", 422, "a machine stop is good-till-cancelled: time_in_force must be gtc")
+        if body.stop_price is None:
+            refused("order_type", 422, "a stop order needs a stop_price")
+        if body.limit_price is not None:
+            refused("order_type", 422, "limit_price is for limit orders")
+    else:
+        if body.time_in_force not in ("opg", "cls", "day"):
+            refused("validation", 422, "time_in_force must be opg, cls or day")
+        if body.stop_price is not None:
+            refused("order_type", 422, "stop_price is for stop orders")
     if body.order_type == "limit" and body.limit_price is None:
         refused("order_type", 422, "a limit order needs a limit_price")
     if body.order_type == "market" and body.limit_price is not None:
         refused("order_type", 422, "limit_price is for limit orders")
     if body.qty > int(key["max_qty"]):
         refused("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")
-    if body.order_type == "limit":
+    if body.order_type == "stop":
+        # The position fence: a machine stop protects shares actually held, net of
+        # resting orders on that side. Unreadable positions fail closed.
+        try:
+            capacity = machine_api.stop_capacity(symbol, body.side)
+        except AccountNotConnected:
+            refused("account", 424, "the paper account is not connected")
+        except Exception:  # noqa: BLE001 -- an unverifiable position is an unplaceable stop
+            refused("position_unverified", 424, "positions could not be read; the stop cannot be checked")
+        if body.qty > capacity:
+            refused("position", 422,
+                    f"a {body.side} stop for {body.qty} exceeds the {capacity} uncovered shares held in {symbol}")
+        price = body.stop_price  # the cap prices a stop at its stop, like a limit at its limit
+    elif body.order_type == "limit":
         price = body.limit_price  # the cap prices a limit at its limit (spec §1.4): no estimate involved
     else:
         try:
@@ -1078,11 +1119,18 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     if machine_api.placed_today(supabase, key["id"]) >= int(key["daily_cap"]):
         refused("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")
 
-    client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+    if body.order_type == "stop":
+        client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"
+    else:
+        client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+    submit_kwargs = {}
+    if body.order_type == "stop":
+        submit_kwargs["stop_price"] = body.stop_price
     try:
         order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
                                     order_type=body.order_type, time_in_force=body.time_in_force,
-                                    limit_price=body.limit_price if body.order_type == "limit" else None)
+                                    limit_price=body.limit_price if body.order_type == "limit" else None,
+                                    **submit_kwargs)
     except paper_orders.OrdersDisabled as exc:
         refused("paper_switch_off", 409, str(exc))
     except paper_orders.DuplicateOrder:
@@ -1129,15 +1177,14 @@ def _machine_order_view(event: dict, order: dict | None) -> dict:
     if order is None:
         return {"client_order_id": event["client_order_id"], "status": "unknown",
                 "event_id": event["id"], "placed_at": event["at"]}
-    return {"client_order_id": event["client_order_id"], "alpaca_order_id": order["id"],
-            "event_id": event["id"],
-            "symbol": order.get("symbol"), "qty": order.get("qty"), "side": order.get("side"),
-            "status": order.get("status"), "submitted_at": order.get("submitted_at"),
-            "filled_avg_price": order.get("filled_avg_price")}
+    from tradehub.api.machine_api import broker_order_view
+
+    return {**broker_order_view(order), "client_order_id": event["client_order_id"],
+            "event_id": event["id"], "placed_at": event["at"]}
 
 
 @app.get("/api/v1/orders", tags=["Machine API"])
-def list_machine_orders(limit: int = 50, before: int | None = None,
+def list_machine_orders(limit: int = 50, before: int | None = None, status: str | None = None,
                         authorization: str | None = Header(None), supabase=Depends(get_supabase)):
     from tradehub.api import machine_api, machine_keys
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
@@ -1147,18 +1194,44 @@ def list_machine_orders(limit: int = 50, before: int | None = None,
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
     machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders")
+    if status not in (None, "open", "all"):
+        raise HTTPException(status_code=422, detail="status must be open or all")
     events = machine_api.placed_events(supabase, key["id"])
     if before is not None:
         events = [e for e in events if e["id"] < before]
-    page = events[: max(1, min(limit, 200))]
     try:
         broker = machine_api.broker_orders()
         reachable = True
     except AccountNotConnected:
         broker, reachable = {}, False
+    views = [_machine_order_view(e, broker.get(e["client_order_id"])) for e in events]
+    if status == "open":
+        views = [v for v in views if v["status"] in machine_api.OPEN_STATUSES]
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders", "read")
-    return {"orders": [_machine_order_view(e, broker.get(e["client_order_id"])) for e in page],
-            "broker_reachable": reachable}
+    return {"orders": views[: max(1, min(limit, 200))], "broker_reachable": reachable}
+
+
+@app.get("/api/v1/orders/open", tags=["Machine API"])
+def list_open_orders(authorization: str | None = Header(None), supabase=Depends(get_supabase)):
+    """The staged book as the broker sees it (2026-11-02): every order resting on the
+    paper account, whatever placed it -- machine API, the hub's protective machinery, or
+    the Alpaca app. Declared before /orders/{client_order_id} so "open" is never read
+    as a caller id."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/open")
+    try:
+        orders = machine_api.open_broker_orders()
+        reachable = True
+    except AccountNotConnected:
+        orders, reachable = [], False
+    machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/open", "read")
+    return {"orders": orders, "broker_reachable": reachable}
 
 
 @app.get("/api/v1/orders/{client_order_id}", tags=["Machine API"])
