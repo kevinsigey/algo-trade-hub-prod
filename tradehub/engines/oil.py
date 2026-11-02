@@ -143,23 +143,3 @@ def oil_prob(market: KalshiMarket, last_value: float, horizon_days: int, cl_x: f
     mu = last_value + horizon_days * (model.alpha + model.beta * x)
     sigma = model.sigma * math.sqrt(horizon_days)
     return prob_in_interval(mu, sigma, yes_interval(market, OIL_RESOLUTION))
-
-
-HOURLY_RESOLUTION = 0.01  # KXWTIH strikes step in cents, like the daily
-MIN_HOURLY_SIGMA = 0.10   # $/hour floor: a dead-calm tape still moves by the hour
-
-
-def hourly_sigma(bars: list[tuple[datetime, float]]) -> float | None:
-    """Dollar sigma for one hour of WTI: the stdev of 5-minute log returns,
-    scaled by sqrt(12) and the last price. None below 30 usable returns."""
-    closes = [c for _ts, c in bars if c > 0]
-    rets = [math.log(b / a) for a, b in zip(closes, closes[1:])]
-    if len(rets) < 30:
-        return None
-    mean = sum(rets) / len(rets)
-    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
-    return max(MIN_HOURLY_SIGMA, (var ** 0.5) * math.sqrt(12) * closes[-1])
-
-
-def hourly_prob(market: KalshiMarket, mu: float, sigma: float) -> float:
-    return prob_in_interval(mu, sigma, yes_interval(market, HOURLY_RESOLUTION))
