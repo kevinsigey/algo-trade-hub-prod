@@ -34,6 +34,11 @@ export interface MacroTrailPoint {
   actual: number | null;
 }
 
+export interface MacroU3 {
+  call: MacroCall | null;
+  record: MacroRecord | null;
+}
+
 export interface MacroCard {
   key: string;
   title: string;
@@ -45,6 +50,7 @@ export interface MacroCard {
   trail: MacroTrailPoint[];
   trail_kind: "value" | "probability";
   next_release: string | null;
+  u3?: MacroU3 | null;
 }
 
 export interface MacroResponse {

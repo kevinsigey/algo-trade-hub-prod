@@ -98,3 +98,22 @@ def test_empty_sources_degrade_to_null_sections_never_zeros():
                    journal_forecasts=[], journal_settlements=[])
     for card in cards.values():
         assert card["call"] is None and card["record"] is None and card["trail"] == []
+
+
+def test_jobs_card_folds_in_the_u3_call_and_record_when_rows_exist():
+    forecasts = FORECASTS + [
+        {"forecaster": "unrate_nowcast", "forecaster_version": "unrate-level-v1",
+         "target": "KXU3-26NOV-T4.5", "probability": 0.31, "frozen_at": "2026-11-30T13:00:00Z"},
+        {"forecaster": "kalshi_implied_unrate", "forecaster_version": "mkt",
+         "target": "KXU3-26NOV-T4.5", "probability": 0.36, "frozen_at": "2026-11-30T13:00:00Z"},
+    ]
+    scores = SCORES + [{"forecaster": "unrate_nowcast", "forecaster_version": "unrate-level-v1",
+                        "n_settled": 3, "brier": 0.20, "brier_baseline": 0.18, "gap": 0.02, "gap_se": 0.03}]
+    jobs = _build(journal_forecasts=forecasts, journal_scores=scores)["jobs"]
+    assert jobs["u3"]["call"]["label"] == "KXU3-26NOV-T4.5"
+    assert jobs["u3"]["call"]["ours"] == 0.31 and jobs["u3"]["call"]["market"] == 0.36
+    assert jobs["u3"]["record"]["n_settled"] == 3
+
+
+def test_jobs_card_u3_is_none_without_unrate_rows():
+    assert _build()["jobs"]["u3"] is None

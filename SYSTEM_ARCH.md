@@ -362,3 +362,13 @@ strike types (claims strikes are ≥ at round thousands), and "weekly" joins the
 journal cadences with the same 50-settled gate as monthly. A forecaster-side
 guard forecasts only when the print history ends with the immediately
 preceding release — a gapped history freezes nothing.
+
+Unemployment level (2026-11-01, the macro audit's second build): KXU3 gets
+`unrate_nowcast`@`unrate-level-v1` — the next U3 first print as a Normal whose
+mean is the walk-forward OLS of the monthly change on the last change
+(persistent changes), fit on the labor stack's own ALFRED first-print levels,
+beside `kalshi_implied_unrate`, `baseline_persistence_unrate` and a cautious
+row from day one. It is the market-graded successor to `unrate_direction`
+(climatology-graded, journal-only, untouched). Per the audit, it earns no
+fourth Macro card: the Jobs card carries a `u3` block (live strike call +
+journal record), composed from the same journal rows as the probability cards.

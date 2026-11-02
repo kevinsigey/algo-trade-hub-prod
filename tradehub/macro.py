@@ -55,7 +55,8 @@ def _month_label(ref: str) -> str:
         return str(ref)
 
 
-def _jobs_card(rows: Sequence[Mapping[str, Any]], record: dict | None, today: date) -> dict[str, Any]:
+def _jobs_card(rows: Sequence[Mapping[str, Any]], record: dict | None, today: date,
+               u3: dict | None = None) -> dict[str, Any]:
     ordered = sorted(rows, key=lambda r: r.get("reference_month") or "")
     settled = [r for r in ordered if r.get("first_print") is not None]
     live = [r for r in ordered if r.get("first_print") is None]
@@ -82,13 +83,13 @@ def _jobs_card(rows: Sequence[Mapping[str, Any]], record: dict | None, today: da
              for r in settled[-TRAIL_N:]]
     return {"key": "jobs", "title": "Jobs nowcast", "predicts": "Next nonfarm payrolls print",
             "detail_href": "/jobs", "display_only": False, "call": call, "record": record,
-            "trail": trail, "trail_kind": "value", "next_release": next_release}
+            "trail": trail, "trail_kind": "value", "next_release": next_release, "u3": u3}
 
 
-def _prob_card(*, key: str, title: str, predicts: str, detail_href: str, display_only: bool,
-               forecaster: str, market_forecaster: str,
-               forecasts: Sequence[Mapping[str, Any]], outcomes: Mapping[str, float],
-               record: dict | None) -> dict[str, Any]:
+def _prob_parts(*, forecaster: str, market_forecaster: str,
+                forecasts: Sequence[Mapping[str, Any]], outcomes: Mapping[str, float]):
+    """(call, trail) for one probability forecaster paired with its market row:
+    the live unsettled call and the settled trail, both by target."""
     ours = [f for f in forecasts if f.get("forecaster") == forecaster]
     # Settlements are keyed by target alone (one realised outcome per target),
     # and the market's freeze pairs with ours by target -- its latest freeze
@@ -127,6 +128,15 @@ def _prob_card(*, key: str, title: str, predicts: str, detail_href: str, display
         trail.append({"label": str(f.get("target")), "ours": f.get("probability"),
                       "market": (mkt or {}).get("probability"),
                       "actual": outcomes[f.get("target")]})
+    return call, trail
+
+
+def _prob_card(*, key: str, title: str, predicts: str, detail_href: str, display_only: bool,
+               forecaster: str, market_forecaster: str,
+               forecasts: Sequence[Mapping[str, Any]], outcomes: Mapping[str, float],
+               record: dict | None) -> dict[str, Any]:
+    call, trail = _prob_parts(forecaster=forecaster, market_forecaster=market_forecaster,
+                              forecasts=forecasts, outcomes=outcomes)
     return {"key": key, "title": title, "predicts": predicts, "detail_href": detail_href,
             "display_only": display_only, "call": call, "record": record,
             "trail": trail, "trail_kind": "probability", "next_release": None}
@@ -147,8 +157,18 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
     oil_scores = [s for (name, _v), s in scores.items() if name == "oil_wti"]
     oil_record = _journal_record(max(oil_scores, key=lambda s: s.get("n_settled") or 0) if oil_scores else None)
 
+    # KXU3 folds into the Jobs card (the audit's call: the unemployment level is
+    # the same release's second number, not a fourth card). Call and record come
+    # from the journal rows; absent until the forecaster has frozen or settled.
+    u3_scores = [s for (name, _v), s in scores.items() if name == "unrate_nowcast"]
+    u3_record = _journal_record(max(u3_scores, key=lambda s: s.get("n_settled") or 0) if u3_scores else None)
+    u3_call, _u3_trail = _prob_parts(forecaster="unrate_nowcast",
+                                     market_forecaster="kalshi_implied_unrate",
+                                     forecasts=journal_forecasts, outcomes=outcomes)
+    u3 = {"call": u3_call, "record": u3_record} if (u3_call or u3_record) else None
+
     cards = [
-        _jobs_card(jobs_rows, _scoreboard_record(runs.get("labor_nowcast")), today),
+        _jobs_card(jobs_rows, _scoreboard_record(runs.get("labor_nowcast")), today, u3=u3),
         _prob_card(key="cpi", title="CPI", predicts="Next CPI release (headline)",
                    detail_href="/cpi", display_only=True,
                    forecaster="cpi_nowcast", market_forecaster="kalshi_implied_cpi",
