@@ -30,7 +30,7 @@ def claude_reply(spec=SPEC, requested=(), unexpressed=(), model="claude-sonnet-4
     return SimpleNamespace(status_code=status, json=lambda: body, raise_for_status=raise_for_status)
 
 
-def reply(content, finish="stop", model="nvidia/nemotron-3.5-super-vl:free", status=200):
+def reply(content, finish="stop", model="nvidia/nemotron-3-ultra-550b-a55b:free", status=200):
     def raise_for_status():
         if status >= 400:
             raise requests.HTTPError(f"{status} Client Error")
@@ -71,14 +71,14 @@ def test_request_shape_and_parse(key):
     post = FakePost(reply(env_json(requested=["GLD"])))
     spec, model, dropped, unexpressed = draft_spec("Gold does better than stocks when rates are going up.",
                                                    post=post)
-    assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free"
+    assert spec == SPEC and model == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert dropped == []  # SPY ("stocks") is the benchmark, not a dropped leg
     assert unexpressed == []
     url, kw = post.calls[0]
     assert url == "https://openrouter.ai/api/v1/chat/completions"
     assert kw["headers"]["Authorization"] == "Bearer test-key"
     body = kw["json"]
-    assert body["models"] == list(MODELS) and MODELS[0] == "nvidia/nemotron-3.5-super-vl:free"
+    assert body["models"] == list(MODELS) and MODELS[0] == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert body["response_format"]["type"] == "json_schema"
     # The contract sent to the model is the generated envelope schema, never a paraphrase.
     assert body["response_format"]["json_schema"]["schema"] == DraftEnvelope.model_json_schema()
@@ -166,7 +166,7 @@ def test_claude_first_forced_schema(claude_key):
 def test_claude_failure_falls_back_to_openrouter(claude_key):
     post = RouterPost(claude_reply(status=500), reply(env_json(requested=["GLD"])))
     spec, model, dropped, _ = draft_spec("Gold does better when rates rise.", post=post)
-    assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free" and dropped == []
+    assert spec == SPEC and model == "nvidia/nemotron-3-ultra-550b-a55b:free" and dropped == []
     assert [u for u, _ in post.calls] == ["https://api.anthropic.com/v1/messages",
                                           "https://openrouter.ai/api/v1/chat/completions"]
 
@@ -230,7 +230,7 @@ def test_gemini_first_schema_shaped(gemini_key):
 def test_gemini_failure_falls_back_to_openrouter(gemini_key):
     post = TriPost(gemini_reply(status=500), claude_reply(), reply(env_json(requested=["GLD"])))
     spec, model, dropped, _ = draft_spec("Gold does better when rates rise.", post=post)
-    assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free" and dropped == []
+    assert spec == SPEC and model == "nvidia/nemotron-3-ultra-550b-a55b:free" and dropped == []
     assert [u.split("?")[0] for u, _ in post.calls] == [
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
         "https://openrouter.ai/api/v1/chat/completions"]
