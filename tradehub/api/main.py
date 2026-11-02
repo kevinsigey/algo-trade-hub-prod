@@ -13,6 +13,8 @@ Then visit: http://localhost:8000/docs  (Swagger UI — auto-generated)
 
 import logging
 import os
+import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -621,6 +623,43 @@ def agent_debates(_admin: dict = Depends(admin.require_admin)):
     latest = last_complete_day(datetime.now(timezone.utc)).isoformat()
     return agents_payload.feed(agents_store.list_runs(), agents_store.load_grades(),
                                latest_session=latest)
+
+
+class _DebateRunIn(BaseModel):
+    ticker: str = Field(min_length=1, max_length=12)
+
+
+_DEBATE_IN_FLIGHT: set[str] = set()
+_DEBATE_LOCK = threading.Lock()
+
+
+@app.post("/api/agent-debates/run", tags=["Workshop"], status_code=202)
+def agent_debate_run(body: _DebateRunIn, _admin: dict = Depends(admin.require_admin)):
+    """Start a debate from the page. A run takes minutes (an LLM panel), so it goes to a
+    background thread; every outcome -- success, framework failure, the daily cap -- lands
+    as a stored run record the feed then shows. One run per ticker at a time; the runner
+    itself enforces the 10/day cap and the hub's debate quota."""
+    from tradehub.agents import runner as agents_runner
+    from tradehub.workshop.data import last_complete_day
+
+    ticker = body.ticker.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
+        raise HTTPException(status_code=422, detail="that does not look like a ticker")
+    with _DEBATE_LOCK:
+        if ticker in _DEBATE_IN_FLIGHT:
+            raise HTTPException(status_code=409, detail=f"a debate on {ticker} is already running")
+        _DEBATE_IN_FLIGHT.add(ticker)
+
+    def _go() -> None:
+        try:
+            latest = last_complete_day(datetime.now(timezone.utc)).isoformat()
+            agents_runner.run_debate(ticker, latest_session=latest)
+        finally:
+            with _DEBATE_LOCK:
+                _DEBATE_IN_FLIGHT.discard(ticker)
+
+    threading.Thread(target=_go, daemon=True, name=f"debate-{ticker}").start()
+    return {"started": ticker}
 
 
 @app.get("/api/agent-debates/{run_id}/report", tags=["Workshop"])

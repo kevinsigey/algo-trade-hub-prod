@@ -147,6 +147,37 @@ def test_runner_imports_a_fake_frameworks_output(agents_dir, tmp_path, monkeypat
     assert report is not None and "Bull case" in report and "Risk verdict" in report
 
 
+def test_api_run_starts_one_debate_per_ticker(agents_dir, monkeypatch):
+    import threading as th
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from tradehub.api import admin, main
+    gate = th.Event()
+    calls: list[str] = []
+
+    def fake_run(ticker, latest_session=None):
+        calls.append(ticker)
+        gate.wait(5)
+
+    monkeypatch.setattr(runner, "run_debate", fake_run)
+    main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k@example.com",
+                                                                  "is_admin": True}
+    client = TestClient(main.app)
+    r = client.post("/api/agent-debates/run", json={"ticker": "nvda"})
+    assert r.status_code == 202 and r.json() == {"started": "NVDA"}
+    assert client.post("/api/agent-debates/run", json={"ticker": "NVDA"}).status_code == 409
+    assert client.post("/api/agent-debates/run", json={"ticker": "not a ticker!"}).status_code == 422
+    gate.set()
+    for _ in range(50):  # the background thread finishes and frees the ticker
+        if calls == ["NVDA"] and not main._DEBATE_IN_FLIGHT:
+            break
+        time.sleep(0.1)
+    assert calls == ["NVDA"] and not main._DEBATE_IN_FLIGHT
+    assert client.post("/api/agent-debates/run", json={"ticker": "NVDA"}).status_code == 202
+
+
 def test_api_feed_is_labelled(agents_dir):
     from fastapi.testclient import TestClient
 

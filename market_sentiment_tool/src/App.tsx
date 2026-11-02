@@ -24,11 +24,12 @@ import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
 import Workshop from "@/pages/Workshop";
 import WorkshopIdea from "@/pages/WorkshopIdea";
+import Debates from "@/pages/Debates";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark, MessagesSquare } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -110,6 +111,11 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           {/* Trading HQ step 2: plain-words idea -> drafted test -> verdict. */}
           <NavLink to="/workshop" className={linkClass}>
             <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
+          </NavLink>
+          {/* TradingAgents (Kevin, 2026-11-02): the debates get their own tab beside the Workshop --
+              an opinion panel with its own graded record, not a step in the idea pipeline. */}
+          <NavLink to="/debates" className={linkClass}>
+            <MessagesSquare className="w-5 h-5 text-muted-foreground" /> Agent debates
           </NavLink>
           {/* "Engine Scoreboard", not "Shadow Scoreboard": the page scores ENGINES against their
               markets, and "shadow" already names two other things here. */}
@@ -289,6 +295,7 @@ function App() {
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
+          <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
