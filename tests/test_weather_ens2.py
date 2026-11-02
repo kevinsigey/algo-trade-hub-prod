@@ -1,4 +1,5 @@
-"""ens-v2 (phase-3 §3.2 step 1): per-station bias + learned kernel width,
+"""ens-v2.1 (phase-3 §3.2 step 1; bumped from ens-v2 on 2026-11-01 with the
+weather audit levers, before v2 settled a contract): per-station bias + learned kernel width,
 fitted walk-forward on (ECMWF previous-run, ACIS actual) pairs. Below the
 pair floor the freeze is exactly ens-v1's and the payload says unfitted."""
 from __future__ import annotations
@@ -84,7 +85,7 @@ def test_v2_unfitted_freezes_exactly_like_v1_and_says_so():
     [e1] = v1.targets(NOW)
     [e2] = v2.targets(NOW)
     f1, f2 = v1.forecast(e1, NOW), v2.forecast(e2, NOW)
-    assert (v2.name, v2.version) == ("weather_high", "ens-v2")
+    assert (v2.name, v2.version) == ("weather_high", "ens-v2.1")
     assert f2.probability == f1.probability
     assert f2.payload["fitted"] is False and f2.payload["kernel_sigma"] == KERNEL_SIGMA
 
@@ -119,9 +120,9 @@ def test_registry_adds_a_blend_row_for_ens_v2_only():
     from tradehub.journal.registry import FORECASTERS
     blends = [(f.name, f.version) for f in FORECASTERS if f.name.endswith("_cautious")
               and f.name.startswith("weather_")]
-    assert ("weather_high_cautious", "ens-v2+w25") in blends
-    assert ("weather_low_cautious", "ens-v2+w25") in blends
-    assert ("weather_rain_cautious", "ens-v2+w25") in blends
+    assert ("weather_high_cautious", "ens-v2.1+w25") in blends
+    assert ("weather_low_cautious", "ens-v2.1+w25") in blends
+    assert ("weather_rain_cautious", "ens-v2.1+w25") in blends
     assert not any(v.startswith("ens-v1") for _n, v in blends)  # v1's record stays raw
 
 
@@ -129,5 +130,5 @@ def test_registry_builds_v2_beside_v1():
     from tradehub.journal.forecasters.weather import build_weather
     names = [(f.name, getattr(f, "version", None)) for f in build_weather(FakeLive([]), _final("yes"),
                                                                          WeatherInputs(get_json=None))]
-    assert ("weather_high", "ens-v1") in names and ("weather_high", "ens-v2") in names
-    assert ("weather_rain", "ens-v2") in names
+    assert ("weather_high", "ens-v1") in names and ("weather_high", "ens-v2.1") in names
+    assert ("weather_rain", "ens-v2.1") in names

@@ -136,6 +136,10 @@ class Inputs(WeatherInputs):
     def hindcast(self, sid, today):
         return {}
 
+    def nbm(self, sid, today):
+        from datetime import date as _date
+        return {_date(2026, 10, 9): {"high": 78.0, "low": 58.0, "pop": 30.0}}
+
 
 def _inputs():
     start = CLOSE - timedelta(hours=24)
@@ -202,8 +206,55 @@ def test_the_registry_runs_every_weather_family_with_unique_keys():
         for name in (f"weather_{kind}", f"kalshi_implied_weather_{kind}", f"baseline_climatology_weather_{kind}"):
             assert any(k[0] == name for k in keys), name
     assert len(set(keys)) == len(keys)
-    # Weather cautious rows exist only as the ens-v2 blend (phase-3 §3.2 step 3):
-    # version "ens-v2+w25", never on the ens-v1 line or the baselines.
+    # Weather cautious rows exist only as the ens-v2.1 blend (phase-3 §3.2 step 3;
+    # the model line was bumped 2026-11-01 with the audit levers, before v2 had
+    # settled a contract): version "ens-v2.1+w25", never on v1 or the baselines.
     cautious = [k for k in keys if k[0].startswith("weather_") and k[0].endswith("_cautious")]
-    assert cautious and all(k[1] == "ens-v2+w25" for k in cautious)
+    assert cautious and all(k[1] == "ens-v2.1+w25" for k in cautious)
+    # The NWS blend is graded beside the ensembles for every kind (audit lever 2).
+    for kind in ("high", "low", "rain"):
+        assert (f"weather_{kind}_nbm", "nbm-v1") in keys
     assert isinstance(WeatherClimatology, type)
+
+
+def test_the_nbm_row_prices_the_blends_own_value_with_the_unfitted_kernel():
+    from tradehub.journal.forecasters.weather import WeatherNbm
+    live = FakeLive([_lm("KXHIGHNY-26OCT09-T76", "greater", floor=76),
+                     _lm("KXRAIN-26OCT09-NYC", "greater", floor=0)])
+    fc = WeatherNbm("high", live, _final("yes"), _inputs())
+    [entry] = fc.targets(NOW)
+    f = fc.forecast(entry, NOW)
+    assert (fc.name, fc.version) == ("weather_high_nbm", "nbm-v1")
+    assert f.payload["nbm_value"] == 78.0
+    assert f.probability == pytest.approx(0.7734, abs=1e-3)  # Phi((78 - 76.5) / 2)
+    rain = WeatherNbm("rain", live, _final("yes"), _inputs())
+    rf = rain.forecast(rain.targets(NOW)[0], NOW)
+    assert rf.probability == pytest.approx(0.30)  # the blend's day PoP, as-is
+
+
+def test_ens_v21_rain_applies_the_platt_calibration_fit_on_settled_v1_rows():
+    from tradehub.journal.forecasters.weather import RainCalibrator, WeatherEnsembleV2
+
+    class FakeClient:
+        def table(self, name):
+            raise AssertionError("the calibrator reads through the store helpers, not tables")
+
+    # 60 settled v1 rain rows: raw 0.9 -> mostly YES, raw 0.1 -> mostly NO.
+    rows = ([{"target": f"t{i}", "probability": 0.9} for i in range(30)]
+            + [{"target": f"f{i}", "probability": 0.1} for i in range(30)])
+    outcomes = {**{f"t{i}": (1 if i % 5 else 0) for i in range(30)},
+                **{f"f{i}": (0 if i % 5 else 1) for i in range(30)}}
+    import tradehub.journal.forecasters.weather as wmod
+    orig_f, orig_s = wmod.fetch_forecasts, wmod.fetch_settlements
+    wmod.fetch_forecasts = lambda client, name, version: rows
+    wmod.fetch_settlements = lambda client, targets: outcomes
+    try:
+        cal = RainCalibrator(lambda: FakeClient())
+        live = FakeLive([_lm("KXRAIN-26OCT09-NYC", "greater", floor=0)])
+        fc = WeatherEnsembleV2("rain", live, _final("yes"), _inputs(), cal)
+        assert fc.version == "ens-v2.1"
+        f = fc.forecast(fc.targets(NOW)[0], NOW)
+        assert f.payload["rain_calibration"] is not None and f.payload["rain_calibration"]["n"] == 60
+        assert f.payload["fitted"] is True
+    finally:
+        wmod.fetch_forecasts, wmod.fetch_settlements = orig_f, orig_s

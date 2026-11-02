@@ -74,7 +74,7 @@ FORECASTERS: list[Forecaster] = [
     # wave 3 (spec §8): NFL and CFB feed consumers, each beside its Kalshi-implied baseline
     *build_sports(),
     # daily weather (highs, lows, rain): NOAA/ECMWF ensembles beside the Kalshi mid and station climatology
-    *build_weather(_LIVE),
+    *build_weather(_LIVE, store=get_client),
     # ERCOT daily peak demand: a temperature regression beside the Kalshi mid and a weekday baseline
     *build_ercot(_LIVE),
     # AAA daily gasoline: the RBOB regression beside the Kalshi mid and a persistence baseline
@@ -107,13 +107,17 @@ FORECASTERS += [CalibratedForecaster(f, get_client) for f in list(FORECASTERS)
 
 # Phase-3 §3.2 step 3: the weather blend row -- MarketShrunk over the ens-v2
 # forecasters only, so each weather family gains a `weather_*_cautious` row at
-# version "ens-v2+w25": probability = market + 0.25 * (ens-v2 - market), the
+# version "ens-v2.1+w25" (the model was bumped to ens-v2.1 on 2026-11-01 with
+# the audit's levers -- recency-weighted fit, Platt rain calibration, per-model
+# payload capture -- before v2 had settled a single contract, so the promotion
+# gate restarts cleanly on the improved line): probability = market + 0.25 *
+# (model - market), the
 # house's pre-registered shrink weight (shrunk.py's ruling: set once, never
 # tuned on journal results). Version-pinned because ens-v1 and ens-v2 share
 # forecaster names; v1 gets no blend row -- its record stays the raw one the
 # phase-3 measurements were taken on.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
-                if getattr(f, "version", None) == "ens-v2" and f.name.startswith("weather_")]
+                if getattr(f, "version", None) == "ens-v2.1" and f.name.startswith("weather_")]
 
 # Oil (2026-11-01): the cautious row from day one -- the audit's note on gas was that it
 # never got one, so its only journal presence was the raw row that lost paired by ~11x.
