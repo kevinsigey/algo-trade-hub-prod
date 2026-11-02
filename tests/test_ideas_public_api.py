@@ -55,6 +55,18 @@ def test_detail_and_identical_404s(api):
     assert [r["verdict"] for r in got["runs"]] == ["FAIL", "PASS"] and got["runs"][1]["headline"] == "h2"
     assert got["killed_at"] and len(got["shadow"]["curve"]) == 1
     assert [t["symbol"] for t in got["trades"]] == ["GLD"]
+
+
+def test_kind_groups_and_run_detail_ride_the_record(api):
+    # Grouping (Kevin, 2026-11-02): the list carries each idea's type, read off the
+    # latest run's spec; the detail carries the run's full stored evidence.
+    rows = api.get("/api/ideas").json()
+    assert {r["title"]: r["kind"] for r in rows} == {"Bonds as ballast": "long_only",
+                                                     "Gold beats SPY": "long_only"}
+    got = api.get("/api/ideas/1").json()
+    detail = got["runs"][1]["detail"]
+    assert detail["curve"] == [] and detail["shuffle"]["p"] == 0.01
+    assert detail["context"] == [] and detail["claim"] is None
     private, missing = api.get("/api/ideas/2"), api.get("/api/ideas/99")
     assert private.status_code == missing.status_code == 404 and private.json() == missing.json()
 

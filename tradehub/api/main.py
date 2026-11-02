@@ -947,6 +947,21 @@ def _today() -> date:
     return date.today()
 
 
+def _idea_kind(spec: dict | None) -> str:
+    """The idea's type, for grouping the Ideas tab (Kevin, 2026-11-02): an event study,
+    a long/short rule, a wrapped portfolio (core + idea share), or a long-only rule --
+    read off the latest run's spec, the same place the claim comes from."""
+    if not spec:
+        return "long_only"
+    if spec.get("kind") == "event":
+        return "event"
+    if spec.get("short"):
+        return "long_short"
+    if spec.get("portfolio"):
+        return "wrapped"
+    return "long_only"
+
+
 def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     latest = runs[-1] if runs else None
     status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else \
@@ -958,6 +973,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
             live["state"] = "killed"  # the record ended on purpose; not stale
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
             "claim": latest["spec"].get("claim") if latest else None,
+            "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
             "killed_at": idea.get("killed_at"), "live": live}
@@ -1007,7 +1023,20 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
     row["shadow"] = row.pop("live")
     row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
                     "headline": r["result"].get("headline"), "p": (r["result"].get("shuffle") or {}).get("p"),
-                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"].get("claim")}
+                    "bar": (r["result"].get("shuffle") or {}).get("bar"), "claim": r["spec"].get("claim"),
+                    # The full detail (Kevin, 2026-11-02): it was always in the stored
+                    # result -- the record page just never carried it. The curve and the
+                    # same evidence blocks the Workshop verdict card shows.
+                    "detail": {"curve": r["result"].get("curve") or [],
+                               "reason": r["result"].get("reason"), "variations": r["result"].get("variations"),
+                               "claim": r["result"].get("claim"), "shuffle": r["result"].get("shuffle"),
+                               "t_test": r["result"].get("t_test"), "periods": r["result"].get("periods"),
+                               "walk_forward": r["result"].get("walk_forward"),
+                               "context": r["result"].get("context") or [],
+                               "data_start": r["result"].get("data_start"), "data_end": r["result"].get("data_end"),
+                               "split_date": r["result"].get("split_date"),
+                               "n_events": r["result"].get("n_events"), "per_ticker": r["result"].get("per_ticker"),
+                               "notes": r["result"].get("notes")}}
                    for r in found["runs"]]
     try:
         trades = service.closed(supabase)["trades"]
