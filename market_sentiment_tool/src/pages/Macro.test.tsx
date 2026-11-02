@@ -41,3 +41,26 @@ describe("recordVerdict", () => {
     expect(recordVerdict(null)).toBe("Record unavailable");
   });
 });
+
+describe("Macro jobs card U3 fold", () => {
+  it("renders the unemployment block inside the jobs card when present", async () => {
+    const jobs = {
+      key: "jobs", title: "Jobs nowcast", predicts: "Next nonfarm payrolls print", detail_href: "/jobs",
+      display_only: false,
+      call: { label: "Nov 2026 payrolls", ours: 165.0, market: 158.0, last_actual: 150.0, as_of: "2026-12-03" },
+      record: { source: "scoreboard", n_settled: 40, brier_ours: 0.18, brier_market: 0.17,
+        gate_status: "SHADOW", promotion_status: "SHADOW", diagnostics_flags: [] },
+      trail: [], trail_kind: "value", next_release: "2026-12-04",
+      u3: {
+        call: { label: "KXU3-26NOV-T4.5", ours: 0.31, market: 0.36, last_actual: null, as_of: "2026-11-30T13:00:00Z" },
+        record: { source: "journal", n_settled: 3, brier_ours: 0.2, brier_market: 0.18,
+          gate_status: null, promotion_status: null, diagnostics_flags: [] },
+      },
+    } as const;
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", cards: [jobs] });
+    render(<MemoryRouter><Macro /></MemoryRouter>);
+    expect(await screen.findByText(/Unemployment \(KXU3\)/)).toBeInTheDocument();
+    expect(screen.getByText(/KXU3-26NOV-T4\.5/)).toBeInTheDocument();
+    expect(screen.getByText(/31%/)).toBeInTheDocument();
+  });
+});

@@ -23,6 +23,7 @@ from tradehub.journal.forecasters.housing import HousingForecaster
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster, QuitsDirection, UnrateDirection
 from tradehub.journal.forecasters.news_tone import EnergyToneForecaster, xle_source
 from tradehub.journal.forecasters.oil import build_oil
+from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
 from tradehub.journal.forecasters.shrunk import MarketShrunk
 from tradehub.journal.forecasters.sports import SportsFeedForecaster, build_sports
@@ -53,6 +54,9 @@ FORECASTERS: list[Forecaster] = [
     KalshiImplied("labor", ("KXPAYROLLS",), "monthly", _LIVE, fetch_market),
     UnrateDirection(_LIVE, _LABOR),
     QuitsDirection(_LABOR),
+    # KXU3 level (2026-11-01 audit: build): the market-graded successor to the direction
+    # row -- the level model, the market itself and persistence on the same labor data
+    *build_unrate(_LIVE, fetch_market, _LABOR),
     # plan (d): sentiment meter (spec §6)
     SentimentMeter(_SPX),
     # plan (e): walk-forward quant (spec §7); same target and settlement as the meter
@@ -85,7 +89,7 @@ FORECASTERS: list[Forecaster] = [
 
 # plan 15: the market-linked models again, each pulled toward the Kalshi price (see forecasters/shrunk.py).
 # Their own scorecards, beside the pure models', which are untouched.
-_SHRINKABLE = {"cpi_nowcast", "fomc_mapped", "labor_nowcast", "claims_nowcast"}
+_SHRINKABLE = {"cpi_nowcast", "fomc_mapped", "labor_nowcast", "claims_nowcast", "unrate_nowcast"}
 # Order matters and is relied on: `run_journal` walks the list, so each wrapper finds the model's own
 # frozen row already in the store (see forecasters/shrunk.py). The store is passed as a callable
 # because this module is imported with no credentials in hand.

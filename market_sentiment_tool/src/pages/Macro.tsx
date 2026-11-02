@@ -79,6 +79,29 @@ function CardView({ card }: { card: MacroCard }) {
         )}
       </div>
 
+      {card.u3 && (
+        <div className="mt-4 border-t border-border pt-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Unemployment (KXU3)
+          </p>
+          {card.u3.call ? (
+            <p className="mt-1 text-sm tabular-nums">
+              {card.u3.call.label} — Ours <strong>{fmtVal(card.u3.call.ours, "probability")}</strong>
+              {" · "}Kalshi <strong>{fmtVal(card.u3.call.market, "probability")}</strong>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">No live call.</p>
+          )}
+          {card.u3.record && (
+            <p className="text-xs tabular-nums text-muted-foreground">
+              {card.u3.record.n_settled ?? 0} settled · Brier ours{" "}
+              {card.u3.record.brier_ours?.toFixed(3) ?? "—"} vs market{" "}
+              {card.u3.record.brier_market?.toFixed(3) ?? "—"}
+            </p>
+          )}
+        </div>
+      )}
+
       {card.trail.length > 0 && (
         <div className="mt-4">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
