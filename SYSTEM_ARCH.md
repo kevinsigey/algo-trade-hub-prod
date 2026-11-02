@@ -398,10 +398,22 @@ event tickers carry the release date, not the reference month; the
 forecaster's adjacency guard runs on release dates. Journal-only — no Macro
 card was asked for or built.
 
-Oil page (2026-11-01, Kevin's call): oil gets its own tracking page at /oil,
-the /cpi pattern -- the journal's WTI rows (model, cautious, Kalshi-implied,
-persistence) with the shared detail view and a Next-settlement preview
-(NextRelease learned the oil family: $ strikes, the last-settlement headline,
-the 2h freeze lead in its copy). The Macro oil card's detail link moves from
-/journal to /oil, and with the grid down to two cards (Jobs, Oil) the xl
-third column is gone so the pair fills the row.
+Weather levers (2026-11-01, the weather audit's unused-lever list, built as
+ens-v2.1): the ensemble model line is bumped ens-v2 -> ens-v2.1 before v2 had
+settled a single contract, so the 200-per-family promotion gate restarts
+cleanly on the improved line (the cautious pin follows: ens-v2.1+w25).
+(1) The per-station error fit is recency-weighted -- exponential decay,
+half-life 20 pairs -- so a seasonally drifting bias is tracked by recent
+errors (audit lever 4). (2) Rain gets its first fit: a Platt calibration of
+the member share, fit walk-forward on the journal's own settled ens-v1 rain
+rows and applied to v2.1's share (lever 3); below 40 settled pairs or a
+non-positive slope, the raw share freezes and the payload says so.
+(3) The NWS National Blend is graded as a pseudo-forecaster
+(`weather_*_nbm`@`nbm-v1`, NBM point + the unfitted v1 kernel for
+temperature, day-max PoP for rain) -- measured beside the ensembles before
+anything is blended (lever 2). (4) v2.1 payloads now carry per-model member
+means, so a future journal-native per-model refit has data to fit on
+(lever 1's blocker was that only counts were stored). The audit's lever 5
+(shorter freeze lead) stays rejected, and the El Niño feature was tested and
+rejected the same day (16,029 archive pairs: phase mean |error| identical,
+upper bound -0.0002 Brier) -- see the research note, not the code.

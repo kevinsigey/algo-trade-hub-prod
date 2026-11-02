@@ -16,6 +16,9 @@ from __future__ import annotations
 import statistics
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
 from typing import Any
 
 from tradehub.backtest.http import default_get_json
@@ -33,6 +36,8 @@ from tradehub.journal.kalshi_linked import (
     quote_payload,
     settle_on_kalshi,
 )
+from tradehub.engines.weather import apply_probability_calibration, fit_probability_calibration
+from tradehub.journal.store import fetch_forecasts, fetch_settlements
 from tradehub.markets import KalshiMarket, prob_in_interval, yes_interval
 
 VERSION = "ens-v1"
@@ -137,6 +142,7 @@ class WeatherInputs:
         self._ensembles: dict[str, Any] = {}
         self._ensembles_v2: dict[str, Any] = {}
         self._hindcasts: dict[str, dict] = {}
+        self._nbm: dict[str, dict] = {}
 
     def _fetch_station(self, sid: str, start: date, end: date) -> dict[str, Any]:
         return fetch_station(sid, start, end, self._get_json)
@@ -165,6 +171,19 @@ class WeatherInputs:
             except Exception:  # noqa: BLE001 - a failed hindcast read fits nothing, never crashes the run
                 self._hindcasts[sid] = {}
         return self._hindcasts[sid]
+
+    def nbm(self, sid: str, today: date) -> dict[date, dict[str, float]]:
+        """NBM day values for the station (the graded NWS reference row),
+        fetched at most once per station per process; a failed read is an
+        empty map, never a crash."""
+        if sid not in self._nbm:
+            lat, lon, _days = self.station(sid, today)
+            from tradehub.data.nbm import fetch_nbm, parse_nbm_days
+            try:
+                self._nbm[sid] = parse_nbm_days(fetch_nbm(lat, lon, self._get_json))
+            except Exception:  # noqa: BLE001 - a failed NBM read grades nothing, never crashes the run
+                self._nbm[sid] = {}
+        return self._nbm[sid]
 
     def station(self, sid: str, today: date) -> tuple[float, float, dict]:
         if sid not in self._stations:
@@ -252,6 +271,7 @@ def ensemble_prob_by_model(market: KalshiMarket, kind: str, by_model: dict[str, 
 
 FIT_WINDOW_DAYS = 60
 FIT_MIN_PAIRS = 20  # mirrors engines.weather.MIN_ERROR_PAIRS: below it, no fit is claimed
+FIT_HALF_LIFE_PAIRS = 20  # ens-v2.1: exponential recency weighting of the fit pairs (audit lever 4)
 
 
 def fit_station_error(inputs: WeatherInputs, sid: str, kind: str, today: date):
@@ -274,12 +294,52 @@ def fit_station_error(inputs: WeatherInputs, sid: str, kind: str, today: date):
             dated.append((day, hv[kind], actual))
     dated.sort()
     pairs = [(fc, actual) for _day, fc, actual in dated[-FIT_WINDOW_DAYS:]]
+    n = len(pairs)
+    weights = [0.5 ** ((n - 1 - i) / FIT_HALF_LIFE_PAIRS) for i in range(n)]
     return fit_error_model(pairs, min_pairs=FIT_MIN_PAIRS,
-                           fallback=ErrorModel(0.0, KERNEL_SIGMA)), len(pairs)
+                           fallback=ErrorModel(0.0, KERNEL_SIGMA), weights=weights), n
+
+
+class RainCalibrator:
+    """Platt coefficients for the rain share, fit on the journal's OWN settled
+    ens-v1 rain rows (frozen probability vs outcome), refit at most once per
+    ET day. The store is a callable returning the journal client (the registry
+    pattern -- no client is built at import); the runner's bind_store adopts
+    the run's actual client. Any failure reads as "no calibration": the raw
+    share freezes instead, never a crash."""
+
+    def __init__(self, store: Callable[[], Any] | None = None):
+        self._store_factory = store
+        self._memo: dict[date, tuple[tuple[float, float], int] | None] = {}
+
+    def bind_store(self, supa) -> None:
+        self._store_factory = lambda: supa
+        self._memo = {}
+
+    def coefficients(self, now: datetime) -> tuple[tuple[float, float], int] | None:
+        if self._store_factory is None:
+            return None
+        today = now.astimezone(ET).date()
+        if today not in self._memo:
+            self._memo = {today: self._fit()}
+        return self._memo[today]
+
+    def _fit(self) -> tuple[tuple[float, float], int] | None:
+        try:
+            client = self._store_factory()
+            rows = fetch_forecasts(client, "weather_rain", VERSION)
+            outcomes = fetch_settlements(client, [r["target"] for r in rows])
+            pairs = [(float(r["probability"]), float(outcomes[r["target"]]))
+                     for r in rows if r["target"] in outcomes]
+        except Exception:  # noqa: BLE001 - an unreadable store calibrates nothing
+            return None
+        params = fit_probability_calibration(pairs)
+        return (params, len(pairs)) if params is not None else None
 
 
 class WeatherEnsembleV2(_WeatherBase):
-    """ens-v2 (phase-3 §3.2): ens-v1's member-share machinery with (step 1) a
+    """ens-v2.1 (phase-3 §3.2 + the 2026-11-01 weather audit's levers): ens-v1's
+    member-share machinery with (step 1) a
     fitted per-station bias and kernel width instead of the fixed
     pre-results 2.0F kernel and no correction, and (step 2) a wider shelf
     (GEFS 0.25 + ECMWF IFS + ICON EPS) weighted equally per MODEL rather
@@ -288,11 +348,16 @@ class WeatherEnsembleV2(_WeatherBase):
     under the pair floor freezes with v1's parameters and fitted=false.
     Rain's bias/kernel treatment is §3.2's later step (per-city rework)."""
 
-    version = "ens-v2"
+    version = "ens-v2.1"
 
-    def __init__(self, kind, live, fetch, inputs):
+    def __init__(self, kind, live, fetch, inputs, calibrator: RainCalibrator | None = None):
         super().__init__(kind, live, fetch, inputs)
         self.name = self.family
+        self._calibrator = calibrator
+
+    def bind_store(self, supa) -> None:
+        if self._calibrator is not None:
+            self._calibrator.bind_store(supa)
 
     def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
         lm = self._open.get(entry.target)
@@ -311,16 +376,29 @@ class WeatherEnsembleV2(_WeatherBase):
         prob = ensemble_prob_by_model(mkt, self.kind, by_model,
                                       sigma=error.sigma if fitted else KERNEL_SIGMA,
                                       bias=error.bias if fitted else 0.0)
+        calibration = None
+        if self.kind == "rain" and self._calibrator is not None:
+            fit = self._calibrator.coefficients(now)
+            if fit is not None:
+                params, calib_n = fit
+                prob = apply_probability_calibration(params, prob)
+                calibration = {"a": round(params[0], 4), "b": round(params[1], 4), "n": calib_n}
+                fitted = True
         return Forecast(self.name, self.version, entry.target, prob,
                         market_prob=quote_mid(lm),
                         payload={**quote_payload(lm), "station": sid, "n_members": len(values),
                                  "ensemble_mean": round(statistics.fmean(values), 3),
                                  "models": list(MODELS_V2), "weighting": "equal_per_model",
                                  "members_by_model": {m: len(vs) for m, vs in by_model.items()},
+                                 "model_means": {m: round(statistics.fmean(vs), 2)
+                                                 for m, vs in by_model.items() if vs},
                                  "kernel_sigma": error.sigma if fitted else KERNEL_SIGMA,
                                  "bias": error.bias if fitted else 0.0,
                                  "fit_pairs": n_pairs, "fitted": fitted,
-                                 "fit_source": "ecmwf previous-runs vs ACIS actuals",
+                                 "fit_weighting": "exp; half-life 20 pairs",
+                                 "rain_calibration": calibration,
+                                 "fit_source": ("platt on settled ens-v1 rain rows" if calibration
+                                                else "ecmwf previous-runs vs ACIS actuals"),
                                  "strike_type": mkt.strike_type,
                                  "floor_strike": mkt.floor_strike,
                                  "cap_strike": mkt.cap_strike,
@@ -355,13 +433,60 @@ class WeatherClimatology(_WeatherBase):
                                  "no_sub_title": mkt.no_sub_title})
 
 
-def build_weather(live, fetch: Callable[[str], Any] = fetch_market, inputs: WeatherInputs | None = None) -> list:
+class WeatherNbm(_WeatherBase):
+    """The NWS National Blend as a graded pseudo-forecaster (audit lever 2:
+    measure it here before blending anything). Temperature: the blend's point
+    value dressed with ens-v1's unfitted kernel -- the row prices NBM's own
+    accuracy, not a fitted model. Rain: the blend's day-max PoP, the same
+    measurable-rain question ens-v1's share answers."""
+
+    version = "nbm-v1"
+
+    def __init__(self, kind, live, fetch, inputs):
+        super().__init__(kind, live, fetch, inputs)
+        self.name = f"{self.family}_nbm"
+
+    def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
+        lm = self._open.get(entry.target)
+        if lm is None:
+            return None
+        sid = station_for(lm.market)
+        days = self._inputs.nbm(sid, now.date())
+        day = days.get(target_day(lm.market))
+        if day is None:
+            return None
+        mkt = lm.market
+        if self.kind == "rain":
+            if day.get("pop") is None:
+                return None
+            prob = min(0.999, max(0.001, day["pop"] / 100.0))
+            value = day["pop"]
+        else:
+            value = day.get(self.kind)
+            if value is None or abs(value) > 1e8:
+                return None
+            prob = prob_in_interval(value, KERNEL_SIGMA, yes_interval(mkt, TEMP_RESOLUTION))
+        return Forecast(self.name, self.version, entry.target, prob,
+                        market_prob=quote_mid(lm),
+                        payload={**quote_payload(lm), "station": sid, "nbm_value": value,
+                                 "source": "NWS NBM via Open-Meteo (ncep_nbm_conus)",
+                                 "strike_type": mkt.strike_type,
+                                 "floor_strike": mkt.floor_strike,
+                                 "cap_strike": mkt.cap_strike,
+                                 "yes_sub_title": mkt.yes_sub_title,
+                                 "no_sub_title": mkt.no_sub_title})
+
+
+def build_weather(live, fetch: Callable[[str], Any] = fetch_market, inputs: WeatherInputs | None = None,
+                  store: Callable[[], Any] | None = None) -> list:
     inputs = inputs or WeatherInputs()
+    calibrator = RainCalibrator(store) if store is not None else None
     out: list = []
     for kind in KINDS:
         out += [WeatherEnsemble(kind, live, fetch, inputs),
-                WeatherEnsembleV2(kind, live, fetch, inputs),
+                WeatherEnsembleV2(kind, live, fetch, inputs, calibrator),
                 KalshiImplied(f"weather_{kind}", series_for(kind), "daily", live, fetch,
                               keep=lambda lm: station_for(lm.market) is not None),
-                WeatherClimatology(kind, live, fetch, inputs)]
+                WeatherClimatology(kind, live, fetch, inputs),
+                WeatherNbm(kind, live, fetch, inputs)]
     return out

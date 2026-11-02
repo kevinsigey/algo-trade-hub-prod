@@ -54,13 +54,76 @@ def fit_error_model(
     pairs: list[tuple[float, float]],
     min_pairs: int = MIN_ERROR_PAIRS,
     fallback: ErrorModel = DEFAULT_ERROR,
+    weights: list[float] | None = None,
 ) -> ErrorModel:
+    """Bias/sigma from (forecast, actual) pairs. `weights` (one per pair,
+    oldest first) recency-weights the fit -- ens-v2.1 passes an exponential
+    decay so a drifting station bias is tracked by its recent errors; None
+    keeps the original equal-weight fit byte-identical."""
     if len(pairs) < min_pairs:
         return fallback
     errors = [actual - forecast for forecast, actual in pairs]
-    bias = statistics.fmean(errors)
-    sigma = statistics.stdev(errors)
+    if weights is None:
+        bias = statistics.fmean(errors)
+        sigma = statistics.stdev(errors)
+    else:
+        total = sum(weights)
+        bias = sum(w * e for w, e in zip(weights, errors, strict=True)) / total
+        denom = total - sum(w * w for w in weights) / total
+        var = (sum(w * (e - bias) ** 2 for w, e in zip(weights, errors, strict=True)) / denom
+               if denom > 0 else 0.0)
+        sigma = var ** 0.5
     return ErrorModel(bias=bias, sigma=max(MIN_SIGMA, sigma))
+
+
+MIN_CALIB_PAIRS = 40
+
+
+def fit_probability_calibration(pairs: list[tuple[float, float]],
+                                min_pairs: int = MIN_CALIB_PAIRS) -> tuple[float, float] | None:
+    """Platt scaling on logit(p): outcome ~ sigmoid(a + b * logit(p)), fit by
+    Newton iterations on the log-loss. Returns (a, b), or None below the pair
+    floor or when the fitted slope is not positive (a non-positive slope says
+    the raw probabilities carry no usable signal to rescale)."""
+    import math
+    usable = [(p, y) for p, y in pairs if 0.0 < p < 1.0]
+    if len(usable) < min_pairs:
+        return None
+    xs = [math.log(p / (1.0 - p)) for p, _ in usable]
+    ys = [y for _, y in usable]
+    a, b = 0.0, 1.0
+    for _ in range(50):
+        ga = gb = haa = hab = hbb = 0.0
+        for x, y in zip(xs, ys, strict=True):
+            z = a + b * x
+            s = 1.0 / (1.0 + math.exp(-z)) if z > -500 else 0.0
+            w = max(s * (1.0 - s), 1e-9)
+            r = s - y
+            ga += r
+            gb += r * x
+            haa += w
+            hab += w * x
+            hbb += w * x * x
+        det = haa * hbb - hab * hab
+        if abs(det) < 1e-12:
+            return None
+        da = (hbb * ga - hab * gb) / det
+        db = (haa * gb - hab * ga) / det
+        a -= da
+        b -= db
+        if abs(da) < 1e-10 and abs(db) < 1e-10:
+            break
+    if b <= 0:
+        return None
+    return a, b
+
+
+def apply_probability_calibration(params: tuple[float, float], p: float) -> float:
+    import math
+    a, b = params
+    p = min(1.0 - 1e-6, max(1e-6, p))
+    z = a + b * math.log(p / (1.0 - p))
+    return 1.0 / (1.0 + math.exp(-z)) if z > -500 else 0.0
 
 
 def walk_forward_error_model(
