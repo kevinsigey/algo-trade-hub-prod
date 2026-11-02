@@ -146,7 +146,10 @@ VITE_API_BASE_URL="..."
 `tradehub/agents/` is a fenced side module: schema/store/importer/grader/payload for
 TradingAgents debate artifacts, a subprocess runner (framework isolated in its own
 venv; keys from env only), a CLI (`tradehub/scripts/agent_debate.py`), and two admin
-read routes (`GET /api/agent-debates`, `.../{run_id}/report`) feeding the Workshop
+read routes (`GET /api/agent-debates`, `.../{run_id}/report`) feeding the debates' own
+tab (2026-11-02: moved out of the Workshop page to `/debates`, beside it in the Admin
+nav, with the explanation on the page and a run route -- `POST /api/agent-debates/run`
+starts a debate on a background thread, one per ticker, outcomes stored as run records)
 page's Agent debates section. It imports no order/broker/portfolio code and nothing
 in the order path imports it (test-enforced). Debate verdicts never feed model
 probabilities, the scoreboard, or the trackers; grades (+5d/+20d direction hits,
