@@ -31,6 +31,11 @@ def main() -> int:
     config = dict(DEFAULT_CONFIG)
     config.update({"llm_provider": provider, "deep_think_llm": model, "quick_think_llm": model,
                    "max_debate_rounds": 1, "max_risk_discuss_rounds": 1})
+    backend_url = os.getenv("TRADEHUB_AGENTS_BACKEND_URL", "").strip()
+    if backend_url:
+        # An OpenAI-compatible endpoint (the OpenRouter fallback points this at
+        # https://openrouter.ai/api/v1 with provider "openai").
+        config["backend_url"] = backend_url
     graph = TradingAgentsGraph(debug=False, config=config)
     state, decision = graph.propagate(ticker, as_of)
     # The state holds the debate's working dicts; keep only JSON-safe text fields.

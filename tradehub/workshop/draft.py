@@ -28,9 +28,12 @@ from tradehub.workshop.spec import IdeaSpec
 URL = "https://openrouter.ai/api/v1/chat/completions"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-# Free models OpenRouter listed with structured outputs on 2026-10-30, best first. Override: OPENROUTER_MODELS.
-MODELS = ("nvidia/nemotron-3.5-super-vl:free", "dots-studio/dots-3-note-preview:free",
-          "xingchen-agi/xing4.0-29b-a4b:free")
+# Free REASONING models on OpenRouter (verified free + reasoning-capable on the
+# models endpoint 2026-11-02), best first. Kevin's rule (2026-11-02): fallbacks
+# are reasoning models — when the primary provider is down, quality comes from
+# a model that thinks, not the nearest free chat model. Override: OPENROUTER_MODELS.
+MODELS = ("nvidia/nemotron-3-ultra-550b-a55b:free", "thinkingmachines/inkling:free",
+          "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "google/gemma-4-31b-it:free")
 MODEL = MODELS[0]
 SYSTEM = (
     "You turn one plain-words trading idea into a backtest spec. Use only daily ETF/stock tickers and FRED series ids "
@@ -237,9 +240,22 @@ def _draft_openrouter(text: str, *, post=requests.post) -> tuple[DraftEnvelope, 
     if choice.get("finish_reason") == "content_filter" or not content.strip():
         raise DraftUnavailable("refused", "the model declined to draft this idea")
     try:
-        return DraftEnvelope.model_validate_json(content), data.get("model") or MODEL
+        return _parse_envelope(content), data.get("model") or MODEL
     except Exception as exc:  # noqa: BLE001
         raise DraftUnavailable("error", f"the draft failed: {type(exc).__name__}") from exc
+
+
+def _parse_envelope(content: str) -> DraftEnvelope:
+    """Validate the reply as the envelope. Reasoning models may narrate around
+    the JSON (or fence it) despite the schema request, so on a strict failure
+    retry with the outermost {...} span before giving up."""
+    try:
+        return DraftEnvelope.model_validate_json(content)
+    except Exception:
+        start, end = content.find("{"), content.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        return DraftEnvelope.model_validate_json(content[start:end + 1])
 
 
 def draft_spec(text: str, *, post=requests.post) -> tuple[IdeaSpec, str, list[str], list[str]]:

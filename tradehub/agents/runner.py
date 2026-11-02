@@ -56,6 +56,43 @@ def _root_cause(stderr: str | None) -> str:
     return f"framework error: {(tail[-1] if tail else 'unknown framework error')[:300]}"
 
 
+# Signatures of "the primary provider is unavailable" (quota, rate limit,
+# outage) as opposed to "the debate itself failed". Only the first kind earns
+# the OpenRouter fallback retry.
+_PROVIDER_DOWN = ("RESOURCE_EXHAUSTED", "generate_content_free_tier_requests",
+                  "429", "RateLimit", "rate_limit", "503", "UNAVAILABLE",
+                  "APIConnectionError", "ConnectError", "InternalServerError")
+
+
+def _provider_down(stderr: str | None) -> bool:
+    text = stderr or ""
+    return any(sig in text for sig in _PROVIDER_DOWN)
+
+
+def _fallback_env() -> dict[str, str] | None:
+    """The OpenRouter fallback environment for the framework subprocess, or
+    None when it cannot apply: no OpenRouter key, or the primary is already
+    the OpenAI-compatible endpoint. OpenRouter is OpenAI-compatible, so the
+    framework's "openai" provider + backend_url reaches it, with the
+    OpenRouter key riding as OPENAI_API_KEY. The model is a free REASONING
+    model (Kevin's rule, 2026-11-02): the shared list's head unless
+    TRADEHUB_AGENTS_FALLBACK_MODEL overrides it."""
+    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        return None
+    if os.getenv("TRADEHUB_AGENTS_PROVIDER", "").strip().lower() in ("openai", "openrouter"):
+        return None
+    from tradehub.workshop.draft import _models
+    env = dict(os.environ)
+    env.update({
+        "TRADEHUB_AGENTS_PROVIDER": "openai",
+        "TRADEHUB_AGENTS_MODEL": os.getenv("TRADEHUB_AGENTS_FALLBACK_MODEL", "").strip() or _models()[0],
+        "TRADEHUB_AGENTS_BACKEND_URL": "https://openrouter.ai/api/v1",
+        "OPENAI_API_KEY": key,
+    })
+    return env
+
+
 def _store_failure(ticker: str, as_of: str, historical: bool, error: str, now: datetime) -> RunRecord:
     run_at_ct, run_at_utc, slug = _stamps(now)
     record = RunRecord(run_id=f"{ticker.lower()}-{slug}", ticker=ticker, run_at_ct=run_at_ct,
@@ -90,7 +127,23 @@ def run_debate(ticker: str, as_of: str | None = None, *, now: datetime | None = 
     except Exception as exc:  # noqa: BLE001 -- a spawn failure is a stored failure, not a crash
         return _store_failure(ticker, as_of, historical, f"framework spawn failed: {type(exc).__name__}", now)
     if proc.returncode != 0:
-        return _store_failure(ticker, as_of, historical, _root_cause(proc.stderr), now)
+        # Primary provider unavailable (quota/outage): one retry on the
+        # OpenRouter free reasoning models before the failure is stored.
+        fallback = _fallback_env() if _provider_down(proc.stderr) else None
+        if fallback is not None:
+            try:
+                retry = spawn([str(python), str(_RUNNER), ticker, as_of], capture_output=True,
+                              text=True, timeout=TIMEOUT_SECONDS, env=fallback)
+            except Exception:  # noqa: BLE001 -- a failed retry falls through to the stored failure
+                retry = None
+            if retry is not None and retry.returncode == 0:
+                proc = retry
+            elif retry is not None:
+                return _store_failure(ticker, as_of, historical,
+                                      f"{_root_cause(proc.stderr)} OpenRouter fallback also failed: "
+                                      f"{_root_cause(retry.stderr)}", now)
+        if proc.returncode != 0:
+            return _store_failure(ticker, as_of, historical, _root_cause(proc.stderr), now)
     try:
         raw = json.loads(proc.stdout.strip().splitlines()[-1])
     except Exception:  # noqa: BLE001

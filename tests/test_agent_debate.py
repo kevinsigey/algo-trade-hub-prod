@@ -2,6 +2,7 @@
 grading math, the falsification banner, and stored failures."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -178,6 +179,59 @@ def test_runner_names_quota_exhaustion_plainly(agents_dir, monkeypatch):
                             latest_session="2026-11-02", spawn=_fail_spawn(stderr))
     assert rec.status == "failed_error"
     assert "quota exhausted" in (rec.error or "") and "20 requests/day" in (rec.error or "")
+
+
+_QUOTA_STDERR = ("langchain_google_genai.chat_models.GoogleRateLimitError: Error calling model "
+                 "'gemini-3.8-flash' (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED\n"
+                 "During task with name 'News Analyst' and id 'abc-123'\n")
+
+
+def test_runner_falls_back_to_openrouter_on_quota(agents_dir, monkeypatch):
+    # Kevin's rule (2026-11-02): when Google is down, debates keep going on a
+    # free OpenRouter REASONING model instead of dying with the daily quota.
+    monkeypatch.setattr(runner, "framework_python", lambda: Path(sys.executable))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    monkeypatch.delenv("TRADEHUB_AGENTS_PROVIDER", raising=False)
+    calls = []
+
+    def spawn(cmd, **kw):
+        calls.append(kw.get("env") or {})
+        if (kw.get("env") or {}).get("TRADEHUB_AGENTS_BACKEND_URL"):
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(RAW), stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=_QUOTA_STDERR)
+
+    rec = runner.run_debate("NVDA", "2026-11-02", now=datetime(2026, 11, 2, tzinfo=UTC),
+                            latest_session="2026-11-02", spawn=spawn)
+    assert rec.status == "complete" and len(calls) == 2
+    fb = calls[1]
+    assert fb["TRADEHUB_AGENTS_PROVIDER"] == "openai"
+    assert fb["TRADEHUB_AGENTS_BACKEND_URL"] == "https://openrouter.ai/api/v1"
+    assert fb["OPENAI_API_KEY"] == "or-test-key"
+    assert fb["TRADEHUB_AGENTS_MODEL"].endswith(":free")
+
+
+def test_runner_reports_both_failures_when_fallback_also_fails(agents_dir, monkeypatch):
+    monkeypatch.setattr(runner, "framework_python", lambda: Path(sys.executable))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    rec = runner.run_debate("NVDA", "2026-11-02", now=datetime(2026, 11, 2, tzinfo=UTC),
+                            latest_session="2026-11-02", spawn=_fail_spawn(_QUOTA_STDERR))
+    assert rec.status == "failed_error"
+    assert "quota exhausted" in (rec.error or "") and "fallback also failed" in (rec.error or "")
+
+
+def test_runner_does_not_fallback_for_a_debate_failure(agents_dir, monkeypatch):
+    monkeypatch.setattr(runner, "framework_python", lambda: Path(sys.executable))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+    calls = []
+
+    def spawn(cmd, **kw):
+        calls.append(kw)
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="ValueError: no news for the ticker\n")
+
+    rec = runner.run_debate("NVDA", "2026-11-02", now=datetime(2026, 11, 2, tzinfo=UTC),
+                            latest_session="2026-11-02", spawn=spawn)
+    assert rec.status == "failed_error" and len(calls) == 1
+    assert "ValueError: no news" in (rec.error or "")
 
 
 def test_api_run_starts_one_debate_per_ticker(agents_dir, monkeypatch):
