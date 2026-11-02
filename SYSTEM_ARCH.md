@@ -283,7 +283,8 @@ the standing gate for any BTC daily-direction forecaster proposal.
 
 Workshop idea detail leads with a summary header (latest verdict +
 headline, run count, lifecycle state from the idea's own timestamps);
-the LifecyclePanel moves behind a "Lifecycle & live-paper gate" fold,
+the LifecyclePanel originally moved behind a "Lifecycle & live-paper gate" fold
+(superseded 2026-11-02: it renders open under the lifecycle steps),
 and older runs collapse to one line each (variation, verdict, date,
 headline) with the latest run expanded. Portfolio's full position table
 collapses behind its header (the composition summary above it already
@@ -295,6 +296,21 @@ Journal settled-list grouping: SKIPPED BY DECISION -- the journal's
 league table is already grouped by forecaster family by design, and
 there is no separate flat settled list on the page to regroup; the
 per-forecaster detail lives in JournalDetail.
+
+## Workshop tracking step (2026-11-02)
+
+The idea lifecycle is Test → Publish → **Track** → Live, and each idea page
+leads with those steps and the next action. Tracking is its own set-once
+step (`ideas.tracked_at` / `tracked_run_id`, migration
+`20261102000002_ideas_tracking.sql`): a PASS rule run can be tracked from
+the Workshop (`POST /api/workshop/ideas/{id}/track`; event studies are
+refused), and the shadow job then records the rule day by day from
+`tracked_at` -- the same `idea_shadow_days` record the live anchor later
+takes over, so tracking and going live share one continuous forward
+record. Tracking places no orders; the live-paper gate (63 new days +
+sizing) is unchanged and now reads a record that may already be running.
+The LifecyclePanel is no longer behind a fold. The public Ideas record
+gained a `tracking` status between `backtest` and `live`.
 
 ## Drafter provider order: Gemini first (2026-11-01)
 

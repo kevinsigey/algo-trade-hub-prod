@@ -53,6 +53,30 @@ def test_first_run_starts_the_day_after_go_live(db):
     assert [r["day"] for r in store.shadow_days(db, 1)] == ["2026-11-03", "2026-11-04"]
 
 
+@pytest.fixture
+def db_tracked():
+    d = DB()
+    store.create_idea(d, "AAA beats SPY", "words")
+    d.table("idea_runs").insert({"idea_id": 1, "variation": 1, "spec": SPEC, "verdict": "PASS",
+                                 "result": {}, "data_end": "2026-10-29"}).execute()
+    d.db["ideas"][0].update({"tracked_at": "2026-11-02T15:00:00+00:00", "tracked_run_id": 1})
+    return d
+
+
+def test_tracked_idea_records_from_the_day_after_tracking(db_tracked):
+    out = _run(evening("2026-11-04"), db_tracked, closes=fake_closes(prices()), fred=None)
+    assert out == {1: 2}
+    assert [r["day"] for r in store.shadow_days(db_tracked, 1)] == ["2026-11-03", "2026-11-04"]
+
+
+def test_tracking_then_going_live_keeps_one_record(db_tracked):
+    closes = fake_closes(prices())
+    assert _run(evening("2026-11-04"), db_tracked, closes=closes, fred=None) == {1: 2}
+    db_tracked.db["ideas"][0].update({"live_at": "2026-11-04T15:00:00+00:00", "live_run_id": 1, "size_pct": 10})
+    assert _run(evening("2026-11-05"), db_tracked, closes=closes, fred=None) == {1: 1}
+    assert [r["day"] for r in store.shadow_days(db_tracked, 1)] == ["2026-11-03", "2026-11-04", "2026-11-05"]
+
+
 def test_gap_is_filled_in_order_and_rerun_adds_nothing(db):
     closes = fake_closes(prices())
     _run(evening("2026-11-03"), db, closes=closes, fred=None)

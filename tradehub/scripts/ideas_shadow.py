@@ -1,8 +1,9 @@
-"""Cron entrypoint: append each live idea's shadow-track days (Trading HQ step 3, spec §4.6).
+"""Cron entrypoint: append each tracked or live idea's shadow-track days (Trading HQ step 3, spec §4.6).
 
-The hub applies the idea's confirmed rules (the run that cleared the live-paper gate) to every trading day after
-go-live and records what the idea would have done. Missed days are caught up in order; a day where a held ticker
-has no close gets no row; today counts only after 17:00 New York, so a partial bar is never recorded.
+The hub applies the idea's confirmed rules (the tracked run, or the run that cleared the live-paper gate)
+to every trading day after tracking started (or go-live) and records what the idea would have done.
+Missed days are caught up in order; a day where a held ticker has no close gets no row; today counts
+only after 17:00 New York, so a partial bar is never recorded.
 """
 
 from __future__ import annotations
@@ -22,10 +23,19 @@ from tradehub.workshop.data import NY, last_complete_day
 FRED_LEAD = timedelta(days=3 * 366)  # same FRED lead-in as the backtest route (main._fred_start)
 
 
+def _anchor(idea: dict) -> tuple[int, str]:
+    """(run_id, start timestamp) the shadow record is anchored to: the live run once live,
+    the tracked run before that. Tracking and going live write the same record."""
+    if idea.get("live_at"):
+        return idea["live_run_id"], idea["live_at"]
+    return idea["tracked_run_id"], idea["tracked_at"]
+
+
 def _rows(idea: dict, supa, cutoff: date, closes, fred, bars=None, analyst=None) -> list[dict]:
     # The confirmed rule runs from its own start date, exactly as in the backtest, so every lookback is warm.
-    spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
-    live_day = datetime.fromisoformat(idea["live_at"]).astimezone(NY).date()
+    run_id, start_at = _anchor(idea)
+    spec = IdeaSpec.model_validate(store.get_run(supa, run_id)["spec"])
+    live_day = datetime.fromisoformat(start_at).astimezone(NY).date()
     after = max([live_day] + [date.fromisoformat(r["day"]) for r in store.shadow_days(supa, idea["id"])])
     prices = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start, bars_fn=bars)
     series = data.rule_series(spec, spec.start - FRED_LEAD, fred=fred, analyst_fn=analyst)
@@ -41,7 +51,7 @@ def run(now: datetime, supa, *, closes=data.closes, fred=data.fred_series, bars=
     cutoff = last_complete_day(now)
     added: dict[int, int] = {}
     failed: dict[int, str] = {}
-    for idea in store.live_ideas(supa):
+    for idea in store.live_ideas(supa) + store.tracked_ideas(supa):
         try:
             added[idea["id"]] = len(store.append_shadow(supa, idea["id"], _rows(idea, supa, cutoff, closes, fred,
                                                                                 bars, analyst)))

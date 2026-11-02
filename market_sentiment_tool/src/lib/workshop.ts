@@ -216,6 +216,8 @@ export interface Idea {
   plain_words: string;
   created_at: string;
   published_at?: string | null;
+  tracked_at?: string | null;
+  tracked_run_id?: number | null;
   live_at?: string | null;
   killed_at?: string | null;
   size_pct?: number | null;
@@ -271,6 +273,10 @@ export interface IdeaRow {
   created_at: string;
   runs: number;
   latest_verdict: Verdict | null;
+  published_at: string | null;
+  tracked_at: string | null;
+  live_at: string | null;
+  killed_at: string | null;
 }
 
 export class ApiError extends Error {
@@ -493,8 +499,9 @@ export interface PublicIdea {
   claim: Claim | null;
   latest_verdict: Verdict | null;
   variations: number;
-  status: "backtest" | "live" | "killed";
+  status: "backtest" | "tracking" | "live" | "killed";
   live_at: string | null;
+  tracked_at: string | null;
   killed_at: string | null;
   live: ShadowSummary | null;
 }
@@ -508,6 +515,7 @@ export interface PublicIdeaDetail extends Omit<PublicIdea, "live"> {
 
 export const STATUS_LABEL: Record<PublicIdea["status"], string> = {
   backtest: "Backtest only",
+  tracking: "Tracking — forward record running",
   live: "Live on paper",
   killed: "Killed",
 };

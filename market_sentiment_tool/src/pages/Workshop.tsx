@@ -56,6 +56,21 @@ export function TradeLabels({ ideas }: { ideas: IdeaRow[] }) {
   );
 }
 
+/** Where an idea stands in its lifecycle, as a chip beside the verdict. Drafts show no chip. */
+export function LifecycleChip({ row }: { row: IdeaRow }) {
+  const chip = row.killed_at
+    ? { label: "Killed", cls: toneClass.bad }
+    : row.live_at
+      ? { label: "Live", cls: toneClass.ok }
+      : row.tracked_at
+        ? { label: "Tracking", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300" }
+        : row.published_at
+          ? { label: "Published", cls: toneClass.flat }
+          : null;
+  if (!chip) return null;
+  return <span className={`rounded-full border px-2 py-0.5 font-semibold ${chip.cls}`}>{chip.label}</span>;
+}
+
 /** Kevin's Workshop: type an idea in plain words, then test it. Admin only (wrapped in RequireAdmin). */
 export default function Workshop() {
   const navigate = useNavigate();
@@ -126,6 +141,7 @@ export default function Workshop() {
               <span className="text-slate-200">{i.title}</span>
               <span className="flex shrink-0 items-center gap-3 text-xs text-slate-400">
                 {i.runs} {i.runs === 1 ? "run" : "runs"}
+                <LifecycleChip row={i} />
                 <span className={`rounded-full border px-2 py-0.5 font-semibold ${toneClass[verdictTone(i.latest_verdict)]}`}>
                   {i.latest_verdict ?? "Not run"}
                 </span>

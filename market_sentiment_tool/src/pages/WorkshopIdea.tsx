@@ -803,7 +803,44 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
 
 const button = "rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900 disabled:opacity-50";
 
-/** Publish, the live-paper gate, the order tag and the kill button (spec §4.5-4.6). Each step happens once. */
+/** The lifecycle steps, in order, with the state of each. The path is the page's point:
+ * test it, publish it, track it, then -- once the gate clears -- let it trade on paper. */
+function LifecycleSteps({ idea, runs, passed }: { idea: IdeaDetail["idea"]; runs: IdeaDetail["runs"]; passed: boolean }) {
+  const steps = [
+    { label: "Tested", done: runs.length > 0, note: runs.length > 0 ? (passed ? "latest run passed" : "latest run did not pass") : "no runs yet" },
+    { label: "Published", done: !!idea.published_at, note: idea.published_at ? idea.published_at.slice(0, 10) : "optional — the public record" },
+    { label: "Tracking", done: !!idea.tracked_at, note: idea.tracked_at ? `since ${idea.tracked_at.slice(0, 10)}` : "forward record, no orders" },
+    { label: "Live on paper", done: !!idea.live_at, note: idea.live_at ? `since ${idea.live_at.slice(0, 10)}` : "needs the gate below" },
+  ];
+  const next = idea.killed_at
+    ? "This idea was killed. Its record is final."
+    : idea.live_at
+      ? "Live on paper. Its orders, the auto-orders switch and the kill button are below."
+      : idea.tracked_at
+        ? "Tracking now: the forward record grows every trading day. Going live unlocks below once the gate clears — 63 new trading days and a size."
+        : passed
+          ? "Next step: start tracking. The forward record begins today and is what the live gate will read. Publishing is separate and optional."
+          : runs.length > 0
+            ? "The latest run did not pass, so this idea can't be tracked or go live yet. Try a variation, or re-run the test."
+            : "Run the test first. A pass unlocks tracking.";
+  return (
+    <div>
+      <ol className="flex flex-wrap items-center gap-2" aria-label="Lifecycle steps">
+        {steps.map((s, i) => (
+          <li key={s.label} className="flex items-center gap-2">
+            {i > 0 && <span aria-hidden="true" className="text-slate-600">→</span>}
+            <span className={`rounded-full border px-2.5 py-1 text-xs ${s.done ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-slate-700 text-slate-400"}`}>
+              <span className="font-semibold">{s.label}</span> · {s.note}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 text-sm text-slate-300">{next}</p>
+    </div>
+  );
+}
+
+/** Publish, tracking, the live-paper gate, the order tag and the kill button (spec §4.5-4.6). Each step happens once. */
 export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: IdeaDetail; onChange: () => void }) {
   const { idea, runs, tag, shadow } = detail;
   const [size, setSize] = useState("");
@@ -811,6 +848,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const passed = runs.length > 0 && runs[runs.length - 1].verdict === "PASS";
+  const trackable = passed && !isEvent(runs[runs.length - 1]?.spec);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -824,6 +862,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
       setBusy(false);
     }
   };
+  const startTracking = () => act(() => adminJson(`/api/workshop/ideas/${id}/track`, { method: "POST", body: JSON.stringify({}) }));
   const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
   const goLive = () => act(() => adminJson(`/api/workshop/ideas/${id}/live`, { method: "POST", body: JSON.stringify({ size_pct: Number(size) }) }));
   const toggleAuto = () => {
@@ -838,6 +877,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
 
   return (
     <section className="mt-6 space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <LifecycleSteps idea={idea} runs={runs} passed={passed} />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {idea.published_at ? (
           <span className="text-slate-400">Published {idea.published_at.slice(0, 10)} · <Link to={`/ideas/${id}`} className="text-emerald-300 hover:underline">public record</Link></span>
@@ -847,6 +887,30 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
           </button>
         )}
       </div>
+
+      {idea.tracked_at && !idea.live_at && (
+        <div>
+          <h2 className="text-sm font-semibold text-white">Tracking</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Tracking since {idea.tracked_at.slice(0, 10)} — every trading day, the hub records what this rule would
+            have done, next to SPY. No orders are placed while tracking; this record is what the live gate reads.
+          </p>
+          {shadow && <div className="mt-2"><PaperLine live={shadow} /></div>}
+        </div>
+      )}
+
+      {trackable && !idea.tracked_at && (
+        <div>
+          <h2 className="text-sm font-semibold text-white">Tracking</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Start the forward record today: every trading day from here, the hub records what this rule would have
+            done, next to SPY. No orders — tracking is observation, and it is the record the live gate reads.
+          </p>
+          <button type="button" className={`${button} mt-3`} disabled={busy} onClick={startTracking}>
+            Start tracking
+          </button>
+        </div>
+      )}
 
       {passed && !idea.live_at && (
         <div>
@@ -942,6 +1006,7 @@ function lifecycleLabel(data: IdeaDetail): string {
   const i = data.idea;
   if (i.killed_at) return `Killed ${ctDateTime(i.killed_at)}`;
   if (i.live_at) return `Live on paper since ${ctDateTime(i.live_at)}${i.size_pct != null ? ` · ${i.size_pct}% size` : ""}${i.auto_orders ? " · auto-orders on" : ""}`;
+  if (i.tracked_at) return `Tracking since ${ctDateTime(i.tracked_at)} · not live yet`;
   if (i.published_at) return `Published ${ctDateTime(i.published_at)} · not live yet`;
   return "In testing · not published";
 }
@@ -1091,10 +1156,10 @@ export default function WorkshopIdea() {
       {data && <SummaryHeader data={data} />}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
       {data && id && (
-        <details className="mt-6">
-          <summary className="cursor-pointer text-sm font-semibold text-white">Lifecycle & live-paper gate</summary>
+        <section className="mt-6" aria-label="Lifecycle">
+          <h2 className="text-sm font-semibold text-white">Lifecycle — publish, track, go live</h2>
           <LifecyclePanel id={id} detail={data} onChange={load} />
-        </details>
+        </section>
       )}
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
