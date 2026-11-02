@@ -556,6 +556,35 @@ class _ImportIn(BaseModel):
     unexpressed: list[str] = []
 
 
+@app.get("/api/workshop/tone", tags=["Workshop"])
+def workshop_tone(_admin: dict = Depends(admin.require_admin)):
+    """Every sector basket's current tone read (the Workshop tone panel):
+    the latest completed day's GDELT tone and its trailing-60-day z -- the
+    exact numbers the journal's sector tone rows freeze on. A basket that
+    cannot be read (GDELT throttling, thin window) reports nulls, never an
+    error: the panel shows the gap."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+
+    from tradehub.journal.forecasters.news_tone import SECTORS, WINDOW_DAYS, tone_zscore
+    from tradehub.workshop.news import news_tone_series
+
+    today = _dt.now(_ZI("America/New_York")).date()
+    sectors = []
+    for sector, (basket, etf) in SECTORS.items():
+        row = {"sector": sector, "basket": basket, "etf": etf,
+               "tone_day": None, "tone": None, "z": None}
+        try:
+            found = tone_zscore(news_tone_series(basket, today - timedelta(days=WINDOW_DAYS + 40)), today)
+        except Exception:  # noqa: BLE001 -- a GDELT outage is a gap in the panel, not a 500
+            found = None
+        if found is not None:
+            z, tone_day, tone_value = found
+            row.update(tone_day=tone_day.isoformat(), tone=round(tone_value, 3), z=round(z, 3))
+        sectors.append(row)
+    return {"as_of": today.isoformat(), "sectors": sectors}
+
+
 @app.post("/api/workshop/draft/import", tags=["Workshop"])
 def workshop_draft_import(body: _ImportIn, _admin: dict = Depends(admin.require_admin)):
     """The second drafting door (spec §2.2): a full spec drafted out-of-band -- in practice
