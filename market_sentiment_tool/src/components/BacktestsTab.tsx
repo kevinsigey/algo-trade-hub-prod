@@ -284,6 +284,7 @@ export default function BacktestsTab() {
   }
 
   const summary = summarise(data);
+  const rows = data.rows ?? [];
   const entries = data.catalogue?.entries ?? [];
   const count = (status: EngineStatus) => entries.filter((e) => e.status === status).length;
 
@@ -307,7 +308,7 @@ export default function BacktestsTab() {
           )}
         </div>
 
-        {data.rows.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="mt-4 text-slate-400">
             No recorded backtest runs yet. Run{" "}
             <code>python -m tradehub.scripts.backtest_engines --engine &lt;engine&gt; --record</code> to
@@ -318,7 +319,7 @@ export default function BacktestsTab() {
             {/* Every engine the API returned, in the API's order. No filter, no sort, no tail
                 collapsed: this board exists to show the losing tail. A card's headline always
                 carries the engine's standing; the click only opens its backtest detail. */}
-            {data.rows.map((row) => (
+            {rows.map((row) => (
               <EngineCard key={`${row.engine}-${row.mode}-${row.engine_version}`} row={row} />
             ))}
           </div>
