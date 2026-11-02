@@ -231,8 +231,76 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
         </details>
       </section>
 
+      <StagedOrders />
+
       <OrderForm />
     </>
+  );
+}
+
+type OpenOrder = {
+  alpaca_order_id: string | null; client_order_id: string | null; symbol: string | null;
+  side: string | null; type: string | null; time_in_force: string | null;
+  qty: number | null; filled_qty: number | null; limit_price: number | null;
+  stop_price: number | null; status: string | null; submitted_at: string | null;
+};
+
+/**
+ * Staged orders: everything resting on the paper account right now -- the staged
+ * opening-auction entries, the protective stops, anything placed in the Alpaca app --
+ * read from the broker, not from the hub's own records. Signed-in only, like the
+ * order form: /api/admin/me gates it, and a failed read simply shows nothing.
+ */
+function StagedOrders() {
+  const [orders, setOrders] = useState<OpenOrder[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminJson<{ email: string }>("/api/admin/me")
+      .then(() => adminJson<{ orders: OpenOrder[] }>("/api/portfolio/open-orders"))
+      .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  if (orders === null) return null;
+  const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
+  return (
+    <section className="mt-12">
+      <h2 className="text-lg font-semibold text-white">Staged orders</h2>
+      <p className="mt-1 text-sm text-slate-400">
+        Everything resting on the paper account, read from the broker: staged entries, protective stops, orders placed in the Alpaca app.
+      </p>
+      {orders.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">Nothing resting right now.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-xs uppercase tracking-wide text-slate-500">
+                <th className="py-1 pr-3">Symbol</th><th className="py-1 pr-3">Side</th>
+                <th className="py-1 pr-3">Type</th><th className="py-1 pr-3">Qty</th>
+                <th className="py-1 pr-3">Price</th><th className="py-1 pr-3">TIF</th>
+                <th className="py-1">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${o.submitted_at}`} className="border-t border-slate-800 text-slate-200">
+                  <td className="py-1.5 pr-3 font-medium text-white">{o.symbol}</td>
+                  <td className="py-1.5 pr-3">{o.side}</td>
+                  <td className="py-1.5 pr-3">{o.type}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{o.filled_qty ? `${o.filled_qty}/` : ""}{o.qty}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{price(o) != null ? `$${price(o)!.toFixed(2)}` : "—"}</td>
+                  <td className="py-1.5 pr-3">{o.time_in_force}</td>
+                  <td className="py-1.5">{o.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

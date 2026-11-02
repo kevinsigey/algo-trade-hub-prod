@@ -40,6 +40,33 @@ def authenticate(supa, authorization: str | None) -> dict:
     return key
 
 
+def stop_capacity(symbol: str, side: str) -> int:
+    """Whole shares a new machine protective stop may cover for `symbol`/`side`.
+
+    A stop the machine door places must protect a position that exists: the held
+    quantity on the position's own side (long for a sell stop, short for a buy stop),
+    net of shares already reserved by resting orders on that side -- so a stop can
+    never become a fresh short or double-sell if its entry failed or the position
+    was already closed. Reads go through alpaca_paper.paper_get; any failure
+    propagates, and the caller fails closed.
+    """
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    held = 0.0
+    for position in paper_get("/v2/positions") or []:
+        if (position.get("symbol") or "").upper() == symbol:
+            held = float(position.get("qty") or 0)
+    if side == "sell" and held <= 0:
+        return 0
+    if side == "buy" and held >= 0:
+        return 0
+    reserved = 0.0
+    for order in paper_get("/v2/orders", {"status": "open", "limit": 500}) or []:
+        if (order.get("symbol") or "").upper() == symbol and order.get("side") == side:
+            reserved += float(order.get("qty") or 0)
+    return max(0, int(abs(held)) - int(reserved))
+
+
 def require_scope(supa, key: dict, scope: str, route: str) -> None:
     if scope not in key.get("scopes", []):
         machine_keys.record_event(supa, key["id"], route, "refused:scope",
@@ -101,6 +128,37 @@ def owns_event(supa, key_id: int, namespaced_id: str) -> dict | None:
         if event["client_order_id"] == namespaced_id:
             return event
     return None
+
+
+OPEN_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled",
+                           "held", "accepted_for_bidding"})
+
+
+def broker_order_view(order: dict) -> dict:
+    """One broker order, normalized for the staged-orders views: what it is, what it
+    costs, how much has filled -- the fields a staged book is checked against."""
+    def num(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    return {"alpaca_order_id": order.get("id"), "client_order_id": order.get("client_order_id"),
+            "symbol": order.get("symbol"), "side": order.get("side"),
+            "type": order.get("type"), "time_in_force": order.get("time_in_force"),
+            "qty": num(order.get("qty")), "filled_qty": num(order.get("filled_qty")),
+            "limit_price": num(order.get("limit_price")), "stop_price": num(order.get("stop_price")),
+            "status": order.get("status"), "submitted_at": order.get("submitted_at"),
+            "filled_avg_price": num(order.get("filled_avg_price"))}
+
+
+def open_broker_orders() -> list[dict]:
+    """Every order resting on the paper account, whatever placed it (machine API, the
+    hub's protective machinery, or the Alpaca app): the staged book as the broker sees it."""
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    page = paper_get("/v2/orders", {"status": "open", "direction": "asc", "limit": 500}) or []
+    return [broker_order_view(o) for o in page]
 
 
 def broker_orders() -> dict[str, dict]:

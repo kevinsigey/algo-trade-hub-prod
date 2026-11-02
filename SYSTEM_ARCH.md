@@ -465,3 +465,30 @@ the basis is part of what the records measure. (Reconciliation note: the
 hourly build above and this Brent sibling were built in parallel lanes and
 merged the same evening; the hourly design that stands is the
 settlements-sigma one described above, hourly gate 200 settled.)
+
+## Machine API protective stops (2026-11-02)
+
+Kevin's staged Alpaca mirror book exposed the machine door's gap: entries
+stage as opg/cls/day market and limit orders, but the book's protective
+stops had no way through -- the broker form takes no stop price and
+paper_orders fenced stops to the hub's own `idea-<n>-stop-` tags. The door
+now takes exactly one protective shape: order_type "stop" + stop_price +
+time_in_force "gtc", namespaced to a second sanctioned tag family,
+`ext-<key>-stop-...`, which paper_orders accepts beside the idea family
+(cancel ownership follows the tags: cancel_machine_order owns ext-,
+cancel() owns idea-). The API fences a machine stop to the account's
+uncovered held shares (`machine_api.stop_capacity`: position on the right
+side, net of resting orders), fails closed when positions cannot be read,
+and prices the notional cap at the stop. order_class and trailing stops
+still refuse. `tradehub/scripts/mirror_stops.py` reconciles a stop spec
+against filled positions after the open -- sized to what filled, skipped
+where a stop at the same price already rests -- so a stop placed before
+its entry fills can never become a fresh short.
+
+Seeing the staged book (2026-11-02): the machine order view now carries the staged
+fields (type, time-in-force, qty/filled, limit/stop prices) and `GET /api/v1/orders`
+takes `?status=open` to keep only resting orders. `GET /api/v1/orders/open` and the
+signed-in `GET /api/portfolio/open-orders` read the broker's whole open-orders book —
+every resting order whatever placed it (machine API, protective machinery, Alpaca app) —
+and the Portfolio page renders it as a **Staged orders** panel. The broker is the source
+of truth for what is staged; the hub's audit trail only knows its own placements.

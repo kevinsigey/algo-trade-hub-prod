@@ -135,6 +135,57 @@ def test_protective_and_limit_shapes_die_at_the_schema(api):
     assert sent == []
 
 
+def test_a_stop_places_against_held_shares_under_the_stop_tag(api, monkeypatch):
+    """2026-11-02: a machine stop (stop + stop_price + gtc) places when the account
+    holds uncovered shares, namespaced into the ext-<key>-stop- family."""
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 115)
+    r = _post(client, headers, side="sell", qty=100, order_type="stop",
+              time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 200
+    assert sent[0]["client_order_id"] == "ext-1-stop-run-1"
+    assert sent[0]["order_type"] == "stop" and sent[0]["stop_price"] == 65.55
+    assert sent[0]["time_in_force"] == "gtc"
+
+
+def test_a_stop_refuses_beyond_the_uncovered_position(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 40)
+    r = _post(client, headers, side="sell", qty=100, order_type="stop",
+              time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 422 and "uncovered shares" in r.json()["detail"] and sent == []
+    assert any(e["outcome"] == "refused:position" for e in _events(db))
+
+
+def test_stop_shapes_that_are_not_protective_stops_refuse(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 500)
+    for over in ({"order_type": "stop", "time_in_force": "day", "stop_price": 65.55},
+                 {"order_type": "stop", "time_in_force": "gtc"},
+                 {"order_type": "market", "time_in_force": "gtc"},
+                 {"order_type": "market", "stop_price": 65.55},
+                 {"order_type": "trailing_stop", "time_in_force": "gtc", "stop_price": 65.55}):
+        r = _post(client, headers, side="sell", qty=10, **over)
+        assert r.status_code == 422, over
+    assert sent == []
+
+
+def test_a_stop_fails_closed_when_positions_cannot_be_read(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+
+    def boom(symbol, side):
+        raise RuntimeError("alpaca down")
+
+    monkeypatch.setattr(machine_api, "stop_capacity", boom)
+    r = _post(client, headers, side="sell", qty=10, order_type="stop",
+              time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 424 and sent == []
+
+
 def test_a_limit_order_places_through_submit(api):
     client, db, sent = api
     headers = _key(db)
@@ -273,6 +324,73 @@ def test_the_list_pages_by_event_id(api4):
     page2 = client.get("/api/v1/orders", headers=headers,
                        params={"limit": 2, "before": page1[-1]["event_id"]}).json()["orders"]
     assert [o["client_order_id"] for o in page2] == ["ext-1-p-1"]
+
+
+def test_the_list_carries_the_staged_fields(api4):
+    client, db, _, _ = api4
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    view = client.get("/api/v1/orders", headers=headers).json()["orders"][0]
+    # The staged-book fields (2026-11-02): what kind of order it is, at what price, how
+    # much has filled -- the old view carried none of them.
+    for field in ("type", "time_in_force", "qty", "filled_qty", "limit_price", "stop_price"):
+        assert field in view
+    assert view["qty"] == 2.0 and view["filled_qty"] is None
+
+
+def test_the_open_filter_keeps_only_resting_orders(api4, monkeypatch):
+    client, db, _, _ = api4
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    resting = client.get("/api/v1/orders", headers=headers,
+                         params={"status": "open"}).json()["orders"]
+    assert [o["client_order_id"] for o in resting] == ["ext-1-run-1"]  # broker says "new"
+    from tradehub.portfolio import alpaca_paper
+    monkeypatch.setattr(alpaca_paper, "paper_get", lambda path, params=None: [])
+    # Outside the broker window the status reads unknown: never presented as resting.
+    assert client.get("/api/v1/orders", headers=headers,
+                      params={"status": "open"}).json()["orders"] == []
+    assert client.get("/api/v1/orders", headers=headers,
+                      params={"status": "bogus"}).status_code == 422
+
+
+def test_open_orders_lists_the_whole_broker_book(api4, monkeypatch):
+    from tradehub.portfolio import alpaca_paper
+
+    manual = {"id": "alpaca-9", "client_order_id": "9f2e-manual", "symbol": "XOM",
+              "qty": "49", "filled_qty": "0", "side": "sell", "type": "stop",
+              "time_in_force": "gtc", "stop_price": "175.00", "limit_price": None,
+              "status": "new", "submitted_at": "2026-11-02T14:31:00+00:00",
+              "filled_avg_price": None}
+
+    def fake_get(path, params=None):
+        if path == "/v2/orders" and (params or {}).get("status") == "open":
+            return [BROKER_ORDER, manual]
+        return [BROKER_ORDER] if path == "/v2/orders" else {}
+
+    monkeypatch.setattr(alpaca_paper, "paper_get", fake_get)
+    client, db, _, _ = api4
+    headers = _key(db)
+    body = client.get("/api/v1/orders/open", headers=headers).json()
+    assert body["broker_reachable"] is True
+    by_symbol = {o["symbol"]: o for o in body["orders"]}
+    # The manual app order is in the staged book even though the API never placed it.
+    assert by_symbol["XOM"]["stop_price"] == 175.0
+    assert by_symbol["XOM"]["time_in_force"] == "gtc"
+    assert by_symbol["XLE"]["client_order_id"] == "ext-1-run-1"
+
+
+def test_the_admin_open_orders_endpoint_reads_the_broker_book(api4, monkeypatch):
+    from tradehub.api import admin, main
+    from tradehub.portfolio import alpaca_paper
+
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None: [BROKER_ORDER] if path == "/v2/orders" else {})
+    main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
+    client, db, _, _ = api4
+    resp = client.get("/api/portfolio/open-orders")
+    assert resp.status_code == 200
+    assert resp.json()["orders"][0]["symbol"] == "XLE"
 
 
 def test_get_one_accepts_caller_or_namespaced_id_and_404s_for_anyone_else(api4):
