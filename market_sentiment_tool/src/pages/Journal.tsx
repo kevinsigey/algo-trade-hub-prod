@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import BacktestsTab from "@/components/BacktestsTab";
 import JournalSports from "@/components/JournalSports";
 import { LeagueTable } from "@/components/LeagueTable";
 import { ModelCards } from "@/components/ModelCards";
@@ -23,7 +24,7 @@ import { beatingCount, league } from "@/lib/league";
  * Nothing here computes a score: the server does, and `lib/league.ts` only changes the sign of the gap.
  */
 
-type Tab = "models" | "league" | "time" | "weather" | "sports" | "waiting";
+type Tab = "models" | "league" | "time" | "weather" | "sports" | "waiting" | "backtests";
 
 function Number_({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
@@ -40,7 +41,10 @@ export default function Journal() {
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backtests, setBacktests] = useState(false);
-  const [tab, setTab] = useState<Tab>("models");
+  // The merged backtest pages (/scoreboard, /models) redirect to ?view=backtests.
+  const [tab, setTab] = useState<Tab>(() =>
+    new URLSearchParams(window.location.search).get("view") === "backtests" ? "backtests" : "models",
+  );
 
   useEffect(() => {
     Promise.all([
@@ -88,6 +92,7 @@ export default function Journal() {
     ["weather", "Weather"],
     ["sports", "Sports"],
     ["waiting", `Waiting (${waiting.length})`],
+    ["backtests", "Backtests"],
   ];
 
   return (
@@ -139,6 +144,10 @@ export default function Journal() {
       <div className={tab === "weather" ? "" : "hidden"}><WeatherPanel /></div>
 
       <div className={tab === "sports" ? "" : "hidden"}><JournalSports scores={data.forecasters} /></div>
+
+      {/* Mounted only when open: its text is a second board, and the page's word
+          budget counts what is mounted. */}
+      {tab === "backtests" && <BacktestsTab />}
 
       {waiting.length > 0 ? (
         <section aria-label="Waiting" className={tab === "waiting" ? "" : "hidden"}>

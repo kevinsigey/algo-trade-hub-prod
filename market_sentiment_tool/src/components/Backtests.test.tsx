@@ -13,7 +13,7 @@ const openCard = (name: RegExp) => {
   return card;
 };
 
-import Scoreboard from "@/pages/Scoreboard";
+import BacktestsTab from "@/components/BacktestsTab";
 import type { ScoreboardResponse, ScoreboardRow } from "@/lib/scoreboard";
 
 /**
@@ -105,7 +105,7 @@ function mockScoreboard(handler: () => { ok: boolean; status: number; body?: unk
 
 async function renderWith(payload: ScoreboardResponse) {
   mockScoreboard(() => ({ ok: true, status: 200, body: payload }));
-  const rendered = render(<Scoreboard />);
+  const rendered = render(<BacktestsTab />);
   // `rows?` because the counts line agrees its noun with the count, so it reads "1 row ·" on a
   // one-row board and "3 rows ·" on a bigger one. A readiness wait pinned to the plural form is a
   // test that fails on a correct change, which is what this was.
@@ -191,7 +191,7 @@ describe("obligation 4: the reader can see that the board is a reduction, not th
       }),
     }));
 
-    render(<Scoreboard />);
+    render(<BacktestsTab />);
 
     const summary = await screen.findByText(/rows? ·/);
     expect(summary).toHaveTextContent("read 4 runs");
@@ -449,7 +449,7 @@ describe("empty, loading and failed reads", () => {
       }),
     }));
 
-    render(<Scoreboard />);
+    render(<BacktestsTab />);
 
     await waitFor(() =>
       expect(
@@ -466,7 +466,7 @@ describe("empty, loading and failed reads", () => {
       body: { detail: "table 'backtest_runs' is not in the database. Apply 20260416000004_backtest_runs.sql and redeploy." },
     }));
 
-    render(<Scoreboard />);
+    render(<BacktestsTab />);
 
     await waitFor(() => expect(screen.getByText(/20260416000004_backtest_runs\.sql/)).toBeInTheDocument());
     // The migration name comes from the API, which owns that mapping; the page does not repeat it.
@@ -477,9 +477,10 @@ describe("empty, loading and failed reads", () => {
     // A fetch that never settles, so the assertion is genuinely about the in-flight state and no
     // state update lands after the test ends (which React reports as an act() warning).
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
-    render(<Scoreboard />);
+    render(<BacktestsTab />);
 
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    // The tab's own loading line; the sports record below it carries its own.
+    expect(screen.getByText("Loading backtests…")).toBeInTheDocument();
     expect(screen.queryByText("No engine beats the market on Brier.")).not.toBeInTheDocument();
     // No verdict, and no numbers yet either -- an empty shell is not a finding.
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
