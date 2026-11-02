@@ -213,8 +213,8 @@ describe("the sidebar link and the route agree", () => {
     // The flagship page (v2 spec §11). Pinned like /models: a page nobody can reach answers nothing.
     await renderAppAt("/journal");
 
-    expect(screen.getByRole("heading", { name: "Prediction Journal", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /journal/i })).toHaveAttribute("href", "/journal");
+    expect(screen.getByRole("heading", { name: "Model Tracker", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
   });
 
   it("carries the no-orders line above every page", async () => {
@@ -229,7 +229,7 @@ describe("the sidebar link and the route agree", () => {
     // The Prediction Lab was cut (v2 spec §9). Old links must land somewhere real, not on an empty shell.
     await renderAppAt("/lab");
 
-    expect(screen.getByRole("heading", { name: "Prediction Journal", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Model Tracker", level: 1 })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/journal");
     expect(screen.queryByRole("link", { name: /prediction lab/i })).not.toBeInTheDocument();
   });

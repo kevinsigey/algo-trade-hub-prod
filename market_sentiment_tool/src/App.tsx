@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 // Pages
-import Home from "@/pages/Home";
+import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
 import Models from "@/pages/Models";
 import Scoreboard from "@/pages/Scoreboard";
@@ -28,7 +28,7 @@ import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, Compass, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -68,7 +68,7 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
 
       <nav onClick={onNavigate} className="flex-1 overflow-y-auto px-4 space-y-5 mt-2">
         <Group label="Portfolio">
-          <NavLink to="/" end className={linkClass}>
+          <NavLink to="/portfolio" className={linkClass}>
             <LayoutDashboard className="w-5 h-5" /> Portfolio
           </NavLink>
           <NavLink to="/portfolio/closed" className={linkClass}>
@@ -82,11 +82,10 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
         </Group>
         <Group label="Predictions">
           <NavLink to="/journal" className={linkClass}>
-            {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record. */}
-            <BookOpen className="w-5 h-5 text-foreground" /> Journal
-          </NavLink>
-          <NavLink to="/predictions" className={linkClass}>
-            <Compass className="w-5 h-5 text-muted-foreground" /> Overview
+            {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record.
+                Renamed to Model Tracker in Kevin's 2026-11-01 redesign: the page leads with
+                one card per model; the Journal league table is a tab inside it. Route unchanged. */}
+            <BookOpen className="w-5 h-5 text-foreground" /> Model Tracker
           </NavLink>
           <NavLink to="/sports" className={linkClass}>
             <Trophy className="w-5 h-5 text-muted-foreground" /> Sports
@@ -279,13 +278,15 @@ function App() {
       <AppShell>
         <Guarded>
         <Routes>
-          {/* Trading HQ (spec 2026-10-29): the paper portfolio is the home page; the old home is the
-              Predictions overview. */}
-          <Route path="/" element={<Portfolio />} />
+          {/* Home is the Overview (Kevin's 2026-11-01 redesign: what is live, which models moved,
+              what happens next). The portfolio keeps its own page; the old /predictions overview
+              duplicated the journal's standings and is retired into a redirect. */}
+          <Route path="/" element={<Overview />} />
+          <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/portfolio/closed" element={<ClosedTrades />} />
           <Route path="/ideas" element={<Ideas />} />
           <Route path="/ideas/:id" element={<IdeaRecord />} />
-          <Route path="/predictions" element={<Home />} />
+          <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
