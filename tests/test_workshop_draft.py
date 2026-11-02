@@ -216,10 +216,10 @@ def gemini_key(monkeypatch):
 def test_gemini_first_schema_shaped(gemini_key):
     post = FakePost(gemini_reply(requested=["GLD"]))
     spec, model, dropped, unexpressed = draft_spec("Gold does better when rates rise.", post=post)
-    assert spec == SPEC and model == "gemini-2.5-flash" and dropped == [] and unexpressed == []
+    assert spec == SPEC and model == "gemini-3.8-flash" and dropped == [] and unexpressed == []
     url, kw = post.calls[0]
     assert url == ("https://generativelanguage.googleapis.com/v1beta/models/"
-                   "gemini-2.5-flash:generateContent") and len(post.calls) == 1
+                   "gemini-3.8-flash:generateContent") and len(post.calls) == 1
     assert kw["headers"]["x-goog-api-key"] == "test-gemini-key"
     body = kw["json"]
     assert body["generationConfig"]["responseJsonSchema"] == DraftEnvelope.model_json_schema()
@@ -232,7 +232,7 @@ def test_gemini_failure_falls_back_to_openrouter(gemini_key):
     spec, model, dropped, _ = draft_spec("Gold does better when rates rise.", post=post)
     assert spec == SPEC and model == "nvidia/nemotron-3.5-super-vl:free" and dropped == []
     assert [u.split("?")[0] for u, _ in post.calls] == [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
         "https://openrouter.ai/api/v1/chat/completions"]
 
 
@@ -247,7 +247,7 @@ def test_gemini_beats_claude_when_both_keys_set(gemini_key, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     post = TriPost(gemini_reply(requested=["GLD"]), claude_reply(), reply(env_json()))
     _, model, _, _ = draft_spec("Gold does better when rates rise.", post=post)
-    assert model == "gemini-2.5-flash" and len(post.calls) == 1
+    assert model == "gemini-3.8-flash" and len(post.calls) == 1
 
 
 def test_envelope_note_demands_capability_requests():

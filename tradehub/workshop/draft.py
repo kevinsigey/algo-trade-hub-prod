@@ -173,7 +173,7 @@ def _draft_gemini(text: str, *, post=requests.post) -> tuple[DraftEnvelope, str]
     key = os.getenv("GEMINI_API_KEY", "").strip()
     if not key:
         raise DraftUnavailable("no_key", "GEMINI_API_KEY is not set on the server")
-    model = os.getenv("GEMINI_DRAFT_MODEL", "").strip() or "gemini-2.5-flash"
+    model = os.getenv("GEMINI_DRAFT_MODEL", "").strip() or "gemini-3.8-flash"
     # The REST surface is camelCase throughout (systemInstruction, generationConfig) --
     # the field names are Google's, verified against the generateContent reference.
     body = {

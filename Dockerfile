@@ -15,6 +15,11 @@ RUN npm run build
 # ── Stage 2: Python runtime (API + scheduled jobs share this image) ────────
 FROM python:3.12-slim
 WORKDIR /app
+# git: the TradingAgents setup (tradehub/agents/setup_agents) clones its
+# framework inside the running container; without git in the image that
+# setup dies on every rebuild and has to be redone by hand (2026-11-02).
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml ./
 RUN uv pip install --system --no-cache -r pyproject.toml
