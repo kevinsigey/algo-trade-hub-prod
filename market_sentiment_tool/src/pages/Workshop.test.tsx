@@ -187,6 +187,26 @@ describe("Workshop live-paper gate", () => {
     await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/live"), JSON.stringify({ size_pct: 20 })]));
   });
 
+  it("offers Start tracking on a pass and posts to the track endpoint", async () => {
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+      "/api/workshop/ideas/1/track": { body: { ...IDEA, tracked_at: "2026-11-02T15:00:00Z", tracked_run_id: 1 } },
+    });
+    openIdea();
+    expect(await screen.findByText(/Next step: start tracking/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start tracking" }));
+    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/ideas/1/track"), JSON.stringify({})]));
+  });
+
+  it("shows the tracking state instead of the button once tracking", async () => {
+    const tracked = { ...IDEA, tracked_at: "2026-11-01T15:00:00Z", tracked_run_id: 1 };
+    const shadow = { days: 2, since: "2026-11-02", as_of: "2026-11-03", state: "live", return_pct: 0.5, bench_return_pct: 0.1, claim: null, failing: false, curve: [] };
+    serve({ "/api/workshop/ideas/1": { body: { idea: tracked, runs: [PASS_RUN], tag: "idea-1-", shadow } } });
+    openIdea();
+    expect(await screen.findByText(/Tracking since 2026-11-01 — every trading day/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start tracking" })).toBeNull();
+  });
+
   it("shows the order tag once live and asks before killing", async () => {
     const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20 };
     const shadow = { days: 3, since: "2026-11-03", as_of: "2026-11-05", state: "live", return_pct: 1.2, bench_return_pct: 0.4, claim: null, failing: false, curve: [] };

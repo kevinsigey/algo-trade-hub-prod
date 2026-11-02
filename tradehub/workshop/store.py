@@ -32,6 +32,12 @@ def go_live(supa, idea_id: int, run_id: int, size_pct: float, gate: dict) -> dic
     return _set_once(supa, idea_id, "live_at", {"live_run_id": run_id, "size_pct": size_pct, "gate": gate})
 
 
+def track(supa, idea_id: int, run_id: int) -> dict:
+    """Start the forward shadow record for a passed run. No orders, no gate: tracking is
+    observation, and it is set once like every other lifecycle step."""
+    return _set_once(supa, idea_id, "tracked_at", {"tracked_run_id": run_id})
+
+
 def kill(supa, idea_id: int) -> dict:
     return _set_once(supa, idea_id, "killed_at", {"auto_orders": False})  # a killed idea never trades again
 
@@ -43,6 +49,13 @@ def _all_ideas(supa) -> list[dict]:
 
 def live_ideas(supa) -> list[dict]:
     return [i for i in _all_ideas(supa) if i.get("live_at") and not i.get("killed_at")]
+
+
+def tracked_ideas(supa) -> list[dict]:
+    """Tracked but not yet live: the shadow job records these from tracked_at. Once an idea
+    goes live it leaves this set -- the live anchor takes over the same record."""
+    return [i for i in _all_ideas(supa)
+            if i.get("tracked_at") and not i.get("live_at") and not i.get("killed_at")]
 
 
 def published_ideas(supa) -> list[dict]:
@@ -95,7 +108,9 @@ def list_ideas(supa) -> list[dict]:
         if r["variation"] > latest.get(r["idea_id"], (0, ""))[0]:
             latest[r["idea_id"]] = (r["variation"], r["verdict"])
     return [{"id": i["id"], "title": i["title"], "created_at": i["created_at"],
-             "runs": latest.get(i["id"], (0, None))[0], "latest_verdict": latest.get(i["id"], (0, None))[1]}
+             "runs": latest.get(i["id"], (0, None))[0], "latest_verdict": latest.get(i["id"], (0, None))[1],
+             "published_at": i.get("published_at"), "tracked_at": i.get("tracked_at"),
+             "live_at": i.get("live_at"), "killed_at": i.get("killed_at")}
             for i in ideas]
 
 

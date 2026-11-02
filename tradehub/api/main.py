@@ -639,6 +639,7 @@ def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=De
     for r in rows:
         i = ideas.get(r["id"], {})
         r["live_at"] = i.get("live_at")
+        r["tracked_at"] = i.get("tracked_at")
         r["killed_at"] = i.get("killed_at")
         r["auto_orders"] = i.get("auto_orders")
         r["size_pct"] = i.get("size_pct")
@@ -652,21 +653,20 @@ def _found(supabase, idea_id: int) -> dict:
     return found
 
 
-def _live_spec(supabase, idea: dict) -> IdeaSpec:
-    return IdeaSpec.model_validate(workshop_store.get_run(supabase, idea["live_run_id"])["spec"])
-
-
 def _shadow(supabase, idea: dict) -> dict:
-    live_day = datetime.fromisoformat(idea["live_at"]).astimezone(NY).date()
-    return shadow_summary(_live_spec(supabase, idea), workshop_store.shadow_days(supabase, idea["id"]), _today(),
-                          live_day)
+    """The forward record, anchored to tracking until the idea goes live, then to the live run."""
+    run_id = idea.get("live_run_id") or idea.get("tracked_run_id")
+    start = idea.get("live_at") or idea.get("tracked_at")
+    spec = IdeaSpec.model_validate(workshop_store.get_run(supabase, run_id)["spec"])
+    start_day = datetime.fromisoformat(start).astimezone(NY).date()
+    return shadow_summary(spec, workshop_store.shadow_days(supabase, idea["id"]), _today(), start_day)
 
 
 @app.get("/api/workshop/ideas/{idea_id}", tags=["Workshop"])
 def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     found = _found(supabase, idea_id)
     idea = found["idea"]
-    shadow = _shadow(supabase, idea) if idea.get("live_at") else None
+    shadow = _shadow(supabase, idea) if (idea.get("live_at") or idea.get("tracked_at")) else None
     from tradehub.portfolio.paper_orders import orders_enabled
 
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
@@ -730,6 +730,34 @@ def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), 
         return workshop_store.publish(supabase, idea_id)
     except workshop_store.AlreadySet as exc:
         raise HTTPException(status_code=409, detail="already published") from exc
+
+
+class _TrackIn(BaseModel):
+    run_id: int | None = None
+
+
+@app.post("/api/workshop/ideas/{idea_id}/track", tags=["Workshop"])
+def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.require_admin),
+                   supabase=Depends(get_supabase)):
+    """Start the forward shadow record for a PASS run: observation only, no orders, no gate.
+    Tracking is the step between a pass and going live -- the record that later feeds the gate."""
+    found = _found(supabase, idea_id)
+    idea = found["idea"]
+    if idea.get("tracked_at"):
+        raise HTTPException(status_code=409, detail="already tracking")
+    runs = found["runs"]
+    run = next((r for r in runs if r["id"] == body.run_id), None) if body.run_id is not None \
+        else (runs[-1] if runs else None)
+    if run is None:
+        raise HTTPException(status_code=409, detail="no run to track")
+    if run["verdict"] != "PASS":
+        raise HTTPException(status_code=409, detail="only a PASS run can be tracked")
+    if (run.get("spec") or {}).get("kind") == "event":
+        raise HTTPException(status_code=409, detail="event studies are research only: they don't track forward")
+    try:
+        return workshop_store.track(supabase, idea_id, run["id"])
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already tracking") from exc
 
 
 @app.post("/api/workshop/ideas/{idea_id}/live", tags=["Workshop"])
@@ -882,16 +910,18 @@ def _today() -> date:
 
 def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     latest = runs[-1] if runs else None
-    status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else "backtest"
+    status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else \
+        "tracking" if idea.get("tracked_at") else "backtest"
     live = None
-    if idea.get("live_at"):
+    if idea.get("live_at") or idea.get("tracked_at"):
         live = _shadow(supabase, idea)
         if idea.get("killed_at"):
             live["state"] = "killed"  # the record ended on purpose; not stale
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
             "claim": latest["spec"].get("claim") if latest else None,
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
-            "live_at": idea.get("live_at"), "killed_at": idea.get("killed_at"), "live": live}
+            "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
+            "killed_at": idea.get("killed_at"), "live": live}
 
 
 @app.get("/api/ideas", tags=["Ideas"])

@@ -187,6 +187,23 @@ def test_publish_and_kill_are_once(passed):
     assert c.post("/api/workshop/ideas/99/publish").status_code == 404
 
 
+def test_track_needs_a_pass_and_is_once(passed):
+    c, db, i, _, _ = passed
+    r = c.post(f"/api/workshop/ideas/{i}/track", json={})
+    assert r.status_code == 200 and r.json()["tracked_at"] and r.json()["tracked_run_id"] == 1
+    assert c.post(f"/api/workshop/ideas/{i}/track", json={}).status_code == 409
+    got = c.get(f"/api/workshop/ideas/{i}").json()
+    assert got["shadow"] is not None and got["shadow"]["days"] == 0  # the record exists before go-live
+    assert c.post("/api/workshop/ideas/99/track", json={}).status_code == 404
+
+
+def test_track_refuses_a_fail_run(api):
+    c, _, _ = api
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})  # RESULT is a FAIL
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/track", json={}).status_code == 409
+
+
 def test_idea_detail_has_tag_and_shadow(passed):
     c, db, i, _, _ = passed
     got = c.get(f"/api/workshop/ideas/{i}").json()
