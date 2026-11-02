@@ -174,9 +174,20 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
     cpi_call, _cpi_trail = _prob_parts(forecaster="cpi_nowcast",
                                        market_forecaster="kalshi_implied_cpi",
                                        forecasts=journal_forecasts, outcomes=outcomes)
+    # PPI joins the quick strip (Kevin's redesign, 2026-11-02): it was journal-only, with
+    # no home on the page that carries the macro engines. It has no scoreboard run and no
+    # detail page, so its record reads from the journal scores and the strip links there.
+    ppi_call, _ppi_trail = _prob_parts(forecaster="ppi_nowcast",
+                                       market_forecaster="kalshi_implied_ppi",
+                                       forecasts=journal_forecasts, outcomes=outcomes)
+    ppi_scores = [s for (name, _v), s in scores.items() if name == "ppi_nowcast"]
+    ppi_record = _journal_record(max(ppi_scores, key=lambda s: s.get("n_settled") or 0) if ppi_scores else None)
     quick = [{"key": "cpi", "title": "CPI", "detail_href": "/cpi", "display_only": True,
               "note": "Cleveland Fed nowcast, wrapped -- display only",
-              "call": cpi_call, "record": _scoreboard_record(runs.get("cpi_nowcast"))}]
+              "call": cpi_call, "record": _scoreboard_record(runs.get("cpi_nowcast"))},
+             {"key": "ppi", "title": "PPI", "detail_href": "/journal", "display_only": True,
+              "note": "producer prices -- journal-graded; the full record lives in the Model Tracker",
+              "call": ppi_call, "record": ppi_record}]
 
     cards = [
         _jobs_card(jobs_rows, _scoreboard_record(runs.get("labor_nowcast")), today, u3=u3),

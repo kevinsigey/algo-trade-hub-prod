@@ -8,13 +8,16 @@ import { US_STATE_PATHS, US_VIEWBOX } from "@/lib/usStates";
 import { cityHeadline, markerLayout, type WeatherCity, type WeatherMapResponse } from "@/lib/weatherMap";
 import {
   WEATHER_INTRO,
+  bucketPickLine,
   formatOutcome,
   formatProb,
+  pickSentence,
   weatherStats,
   weatherLabel,
   weatherChip,
   type Chip,
 } from "@/lib/weather";
+import type { JournalResponse, JournalScore } from "@/lib/journal";
 
 const toneClass: Record<Chip["tone"], string> = {
   ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
@@ -104,6 +107,9 @@ function WeatherMap() {
             ))}
           </tbody>
         </table>
+        {bucketPickLine(k.buckets) && (
+          <p className="mt-2 text-sm text-slate-300">{bucketPickLine(k.buckets)}</p>
+        )}
       </div>
     ) : null;
 
@@ -162,6 +168,65 @@ function WeatherMap() {
   );
 }
 
+/**
+ * The ensemble's real record (Kevin's redesign, 2026-11-02): settled Brier by family
+ * for ens-v2.1 against v1, Kalshi (the paired baseline on the same contracts) and
+ * climatology -- read from the journal, the same rows the Model Tracker scores.
+ * An independent read: if it fails, the section simply does not render.
+ */
+function EnsembleRecord() {
+  const [rows, setRows] = useState<JournalScore[] | null>(null);
+  useEffect(() => {
+    getJson<JournalResponse>("/api/journal")
+      .then((r) => setRows(Array.isArray(r?.forecasters) ? r.forecasters : []))
+      .catch(() => setRows([]));
+  }, []);
+  if (!rows || rows.length === 0) return null;
+  const families = [
+    { label: "High temperature", name: "weather_high" },
+    { label: "Low temperature", name: "weather_low" },
+    { label: "Rain", name: "weather_rain" },
+  ];
+  const find = (name: string, version: string) =>
+    rows.find((r) => r.forecaster === name && r.forecaster_version === version);
+  const clim = (name: string) => rows.find((r) => r.forecaster === `baseline_climatology_${name}`);
+  const b = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(3));
+  const built = families
+    .map((f) => ({ ...f, v21: find(f.name, "ens-v2.1"), v1: find(f.name, "ens-v1"), c: clim(f.name) }))
+    .filter((f) => f.v21 || f.v1 || f.c);
+  if (built.length === 0) return null;
+  return (
+    <section aria-label="Ensemble record" className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+      <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">Ensemble record — settled contracts</h2>
+      <p className="mt-1 text-xs text-slate-500">Brier score: lower is better, 0.25 is a coin flip. Kalshi is scored on the same contracts as ens-v2.1.</p>
+      <table className="mt-2 w-full text-sm tabular-nums">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <th className="py-1 font-medium">Family</th>
+            <th className="py-1 text-right font-semibold text-slate-200">ens-v2.1</th>
+            <th className="py-1 text-right font-medium">ens-v1</th>
+            <th className="py-1 text-right font-medium">Kalshi</th>
+            <th className="py-1 text-right font-medium">Climatology</th>
+            <th className="py-1 text-right font-medium">Settled (v2.1)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {built.map((f) => (
+            <tr key={f.name} className="border-t border-slate-800/60">
+              <td className="py-1.5 text-slate-300">{f.label}</td>
+              <td className="py-1.5 text-right font-semibold text-slate-50">{b(f.v21?.brier)}</td>
+              <td className="py-1.5 text-right text-slate-300">{b(f.v1?.brier)}</td>
+              <td className="py-1.5 text-right text-slate-300">{b(f.v21?.brier_baseline)}</td>
+              <td className="py-1.5 text-right text-slate-300">{b(f.c?.brier)}</td>
+              <td className="py-1.5 text-right text-slate-400">{f.v21 ? f.v21.n_settled : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 export default function Weather() {
   const { today, settled, loading, error } = useWeather();
   const s = weatherStats(today, settled);
@@ -197,6 +262,8 @@ export default function Weather() {
               <Stat label="Settled" value={s.settledCount} sub="with outcome" />
             </div>
 
+            <EnsembleRecord />
+
             <WeatherMap />
 
             {today.length === 0 && settled.length === 0 ? (
@@ -222,6 +289,9 @@ export default function Weather() {
                               {weatherLabel(row)}
                             </div>
                             <div className="text-xs text-slate-500">{weatherChip(row)}</div>
+                            {pickSentence(row.ensemble, row.climatology) && (
+                              <div className="mt-0.5 text-xs text-slate-400">{pickSentence(row.ensemble, row.climatology)}</div>
+                            )}
                           </div>
                           <div className="flex items-center gap-4 text-sm tabular-nums">
                             <span className="text-slate-300">ens {formatProb(row.ensemble)}</span>

@@ -15,6 +15,99 @@ import { recordVerdict, type MacroCard, type MacroResponse } from "@/lib/macro";
 const fmtVal = (v: number | null, kind: "value" | "probability") =>
   v == null ? "—" : kind === "probability" ? `${Math.round(v * 100)}%` : v.toLocaleString();
 
+const OURS = "#34d399";
+const MARKET = "#94a3b8";
+const ACTUAL = "#f8fafc";
+
+/** Ours-vs-market as paired horizontal bars (a probability call, e.g. the U3 strike). */
+function SplitBar({ ours, market }: { ours: number | null; market: number | null }) {
+  if (ours === null && market === null) return null;
+  const row = (label: string, v: number | null, color: string) => (
+    <div className="flex items-center gap-2 text-xs tabular-nums">
+      <span className="w-12 shrink-0 text-muted-foreground">{label}</span>
+      <div className="h-2.5 flex-1 rounded bg-muted/40">
+        {v !== null && <div className="h-2.5 rounded" style={{ width: `${Math.max(2, v * 100)}%`, background: color }} />}
+      </div>
+      <span className="w-10 shrink-0 text-right">{v === null ? "—" : `${Math.round(v * 100)}%`}</span>
+    </div>
+  );
+  return (
+    <div className="mt-2 space-y-1" role="img" aria-label={`Ours ${ours === null ? "—" : `${Math.round(ours * 100)}%`} versus Kalshi ${market === null ? "—" : `${Math.round(market * 100)}%`}`}>
+      {row("Ours", ours, OURS)}
+      {row("Kalshi", market, MARKET)}
+    </div>
+  );
+}
+
+/** The trail as a chart (redesign, 2026-11-02): values get grouped bars per print
+ * (ours / Kalshi / actual); probabilities get two lines plus the outcome dots. */
+function TrailChart({ card }: { card: MacroCard }) {
+  const pts = card.trail.filter((p) => p.ours !== null || p.market !== null || p.actual !== null);
+  if (pts.length === 0) return null;
+  const W = 320;
+  const H = 96;
+  if (card.trail_kind === "probability") {
+    const X = (i: number) => (pts.length === 1 ? W / 2 : (i / (pts.length - 1)) * (W - 16) + 8);
+    const Y = (v: number) => H - 8 - v * (H - 20);
+    const line = (key: "ours" | "market") =>
+      pts.map((p, i) => (p[key] === null ? "" : `${i === 0 ? "M" : "L"}${X(i)},${Y(p[key] as number)}`)).join(" ");
+    return (
+      <figure>
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Recent calls: our probability against the market's, with outcomes">
+          <line x1="8" x2={W - 8} y1={Y(0.5)} y2={Y(0.5)} stroke="#475569" strokeDasharray="3 3" strokeWidth="0.75" />
+          <path d={line("market")} fill="none" stroke={MARKET} strokeWidth="1.75" />
+          <path d={line("ours")} fill="none" stroke={OURS} strokeWidth="1.75" />
+          {pts.map((p, i) => p.actual !== null && (
+            <circle key={p.label} cx={X(i)} cy={Y(p.actual)} r="3" fill="#fbbf24" />
+          ))}
+        </svg>
+        <figcaption className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+          <span>{pts[0].label}</span>
+          <span className="flex gap-3">
+            <span style={{ color: OURS }}>— ours</span>
+            <span style={{ color: MARKET }}>— Kalshi</span>
+            <span className="text-amber-400">● outcome</span>
+          </span>
+          <span>{pts[pts.length - 1].label}</span>
+        </figcaption>
+      </figure>
+    );
+  }
+  const vals = pts.flatMap((p) => [p.ours, p.market, p.actual]).filter((v): v is number => v !== null);
+  const lo = Math.min(0, ...vals);
+  const hi = Math.max(...vals, 1);
+  const groupW = (W - 16) / pts.length;
+  const barW = Math.min(14, groupW / 4);
+  const Y = (v: number) => H - 14 - ((v - lo) / (hi - lo)) * (H - 26);
+  const bars = (p: MacroCard["trail"][number], gi: number) =>
+    ([["ours", OURS], ["market", MARKET], ["actual", ACTUAL]] as const).map(([key, color], bi) => {
+      const v = p[key];
+      if (v === null) return null;
+      const x = 8 + gi * groupW + groupW / 2 + (bi - 1) * (barW + 1.5) - barW / 2;
+      const y0 = Y(Math.max(lo, 0));
+      const y = Y(v);
+      return <rect key={key} x={x} y={Math.min(y, y0)} width={barW} height={Math.max(1.5, Math.abs(y0 - y))} fill={color} rx="1" />;
+    });
+  return (
+    <figure>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Recent prints: our nowcast against the market mean and the first print">
+        <line x1="8" x2={W - 8} y1={Y(0)} y2={Y(0)} stroke="#475569" strokeWidth="0.75" />
+        {pts.map((p, i) => bars(p, i))}
+        {pts.map((p, i) => (
+          <text key={p.label} x={8 + i * groupW + groupW / 2} y={H - 2} textAnchor="middle" fontSize="8.5" fill="#94a3b8">
+            {p.label}
+          </text>
+        ))}
+      </svg>
+      <figcaption className="mt-1 flex gap-3 text-[11px] text-muted-foreground">
+        <span style={{ color: OURS }}>■ ours</span>
+        <span style={{ color: MARKET }}>■ Kalshi</span>
+        <span style={{ color: ACTUAL }}>■ actual print</span>
+      </figcaption>
+    </figure>
+  );
+}
+
 function CardView({ card }: { card: MacroCard }) {
   const rec = card.record;
   return (
@@ -85,10 +178,13 @@ function CardView({ card }: { card: MacroCard }) {
             Unemployment (KXU3)
           </p>
           {card.u3.call ? (
-            <p className="mt-1 text-sm tabular-nums">
-              {card.u3.call.label} — Ours <strong>{fmtVal(card.u3.call.ours, "probability")}</strong>
-              {" · "}Kalshi <strong>{fmtVal(card.u3.call.market, "probability")}</strong>
-            </p>
+            <>
+              <p className="mt-1 text-sm tabular-nums">
+                {card.u3.call.label} — Ours <strong>{fmtVal(card.u3.call.ours, "probability")}</strong>
+                {" · "}Kalshi <strong>{fmtVal(card.u3.call.market, "probability")}</strong>
+              </p>
+              <SplitBar ours={card.u3.call.ours} market={card.u3.call.market} />
+            </>
           ) : (
             <p className="mt-1 text-sm text-muted-foreground">No live call.</p>
           )}
@@ -107,17 +203,9 @@ function CardView({ card }: { card: MacroCard }) {
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             {card.trail_kind === "value" ? "Recent prints" : "Recent calls"}
           </p>
-          <ul className="mt-1 space-y-0.5 text-xs tabular-nums text-muted-foreground">
-            {card.trail.map((p) => (
-              <li key={p.label} className="flex justify-between gap-2">
-                <span>{p.label}</span>
-                <span>
-                  ours {fmtVal(p.ours, card.trail_kind)} · mkt {fmtVal(p.market, card.trail_kind)} ·{" "}
-                  {card.trail_kind === "value" ? `actual ${fmtVal(p.actual, "value")}` : p.actual === 1 ? "resolved YES" : p.actual === 0 ? "resolved NO" : "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-1">
+            <TrailChart card={card} />
+          </div>
         </div>
       )}
       <p className="mt-4 text-xs font-medium text-primary">Open the full page →</p>

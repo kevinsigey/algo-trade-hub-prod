@@ -57,6 +57,38 @@ export interface WeatherStat {
   cities: number;
 }
 
+/**
+ * The pick vs climatology, in plain words (Kevin's redesign, 2026-11-02). The rows
+ * already print ens / kalshi / clim as numbers; this says what the ensemble is
+ * actually calling relative to the historical norm -- the comparison a reader
+ * cannot do in their head from three percentages.
+ */
+export function pickSentence(ens: number | null | undefined, clim: number | null | undefined): string | null {
+  if (ens == null || clim == null) return null;
+  const e = formatProb(ens);
+  const c = formatProb(clim);
+  if (ens - clim >= 0.05) return `Our pick leans yes — the ensemble gives it ${e}, climatology ${c}.`;
+  if (clim - ens >= 0.05) return `Our pick leans no — the ensemble gives it ${e}, climatology ${c}.`;
+  return `Our pick matches climatology — ensemble ${e}, climatology ${c}.`;
+}
+
+/** The map card's one-line pick: the ensemble's most likely bucket, against its climatology. */
+export function bucketPickLine(
+  buckets: { label: string; ours: number | null; clim: number | null }[],
+): string | null {
+  const priced = buckets.filter((b) => b.ours != null);
+  if (priced.length === 0) return null;
+  const top = priced.reduce((a, b) => ((b.ours as number) > (a.ours as number) ? b : a));
+  if (top.clim == null) return `Pick: ${top.label} — the ensemble's most likely outcome at ${formatProb(top.ours)}.`;
+  const lean =
+    (top.ours as number) - top.clim >= 0.05
+      ? "the ensemble rates it much likelier than the historical norm"
+      : top.clim - (top.ours as number) >= 0.05
+        ? "the ensemble rates it much less likely than the historical norm"
+        : "about the historical norm";
+  return `Pick: ${top.label} at ${formatProb(top.ours)} — climatology gives it ${formatProb(top.clim)}, ${lean}.`;
+}
+
 /** The big numbers. Formatting only; no score is derived here. */
 export function weatherStats(today: WeatherTodayRow[], settled: WeatherSettledRow[]): WeatherStat {
   const cities = new Set(today.map((r) => parseWeatherTarget(r.target).city)).size;

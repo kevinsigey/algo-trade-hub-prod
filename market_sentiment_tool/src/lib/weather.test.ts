@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   WEATHER_INTRO,
+  bucketPickLine,
   formatProb,
   formatOutcome,
+  pickSentence,
   weatherStats,
   weatherLabel,
   weatherChip,
@@ -215,5 +217,25 @@ describe("rows frozen before market details were recorded still read sensibly", 
     expect(weatherLabel(old("kalshi:KXHIGHNY-26OCT20-T65"))).toBe("NYC high tail at 65°F");
     expect(weatherChip(old("kalshi:KXHIGHNY-26OCT20-T65"))).toBe("NYC high 65");
     expect(weatherChip(old("kalshi:KXHIGHNY-26OCT20-T65"))).not.toMatch(/[≤≥]/);
+  });
+});
+
+describe("pick vs climatology, in plain words", () => {
+  it("names the lean both ways and the match", () => {
+    expect(pickSentence(0.65, 0.5)).toMatch(/leans yes/);
+    expect(pickSentence(0.4, 0.55)).toMatch(/leans no/);
+    expect(pickSentence(0.52, 0.5)).toMatch(/matches climatology/);
+    expect(pickSentence(null, 0.5)).toBeNull();
+    expect(pickSentence(0.5, null)).toBeNull();
+  });
+
+  it("bucket pick line takes the most likely bucket against its norm", () => {
+    const line = bucketPickLine([
+      { label: "84–85°", ours: 0.2, clim: 0.3 },
+      { label: "86–87°", ours: 0.46, clim: 0.22 },
+    ]);
+    expect(line).toMatch(/Pick: 86–87° at 46%/);
+    expect(line).toMatch(/much likelier than the historical norm/);
+    expect(bucketPickLine([{ label: "x", ours: null, clim: 0.2 }])).toBeNull();
   });
 });
