@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-CADENCES = ("hourly", "daily", "weekly", "monthly", "meeting")
+CADENCES = ("daily", "weekly", "monthly", "meeting", "hourly")
 
 
 def require_aware(value: datetime, name: str) -> datetime:

@@ -165,3 +165,21 @@ def test_the_registry_carries_oil_and_its_cautious_row():
     assert ("oil_wti", "wti-v1") in names
     assert ("oil_wti_cautious", "wti-v1+w25") in names
     assert ("baseline_persistence_oil", "v1") in names
+
+
+def test_the_brent_sibling_runs_the_daily_model_on_kxbrentd():
+    from tradehub.journal.forecasters.oil import build_brent
+
+    live = FakeLive([_lm("KXBRENTD-26NOV0217-T106", 106.0)])
+    # the settled fixtures are KXWTI-shaped event names; BrentDaily's anchor logic
+    # reads event dates off them the same way (series is a label to the fake)
+    inputs = OilInputs(live, closes_fn=_closes, series="KXBRENTD")
+    brent, ki, persistence = build_brent(live, lambda t: None, inputs)
+    assert (brent.name, brent.version) == ("oil_brent", "brent-v1")
+    assert ki.name == "kalshi_implied_brent" and persistence.name == "baseline_persistence_brent"
+    entries = brent.targets(NOW)
+    assert entries, "the Brent market inside the freeze window must be a target"
+    f = brent.forecast(entries[0], NOW)
+    assert f is not None and 0.0 < f.probability < 1.0
+    p = persistence.forecast(persistence.targets(NOW)[0], NOW)
+    assert p is not None and "KXBRENTD" in p.payload["basis"]

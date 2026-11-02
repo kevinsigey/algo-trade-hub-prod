@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Any
 
 from tradehub.core.kalshi_feed import fetch_market
-from tradehub.data.wti import wti_closes
+from tradehub.data.wti import brent_closes, wti_closes
 from tradehub.engines.oil import (
     OIL_DECISION_LEAD,
     OIL_SERIES,
@@ -62,8 +62,9 @@ class OilInputs:
     `now`, the gas inputs' rule: a cache that outlives a run could freeze off a settlement
     that is not out yet)."""
 
-    def __init__(self, live, *, closes_fn: Callable[[], list] = wti_closes):
+    def __init__(self, live, *, closes_fn: Callable[[], list] = wti_closes, series: str = SERIES):
         self._live, self._closes_fn = live, closes_fn
+        self.series = series
         self._now: datetime | None = None
         self._settled: list = []
         self._closes: list = []
@@ -72,7 +73,7 @@ class OilInputs:
         if now == self._now:
             return
         self._now = now
-        self._settled = [o for o in self._live.settled_values(SERIES) if o.published_at <= now]
+        self._settled = [o for o in self._live.settled_values(self.series) if o.published_at <= now]
         self._closes = self._closes_fn()
 
     def settled(self, now: datetime) -> list:
@@ -92,7 +93,7 @@ class _OilBase:
         self._open: dict[str, Any] = {}
 
     def targets(self, now: datetime) -> list[CalendarEntry]:
-        self._open = {kalshi_target(lm.market.ticker): lm for lm in self._live.open_markets(SERIES)
+        self._open = {kalshi_target(lm.market.ticker): lm for lm in self._live.open_markets(self._inputs.series)
                       if in_freeze_window(lm, now, LEAD)}
         return [entry_for(lm, self.name, self.cadence) for lm in self._open.values()]
 
@@ -133,6 +134,7 @@ class OilWti(_OilBase):
 
 class OilPersistence(_OilBase):
     version = "v1"
+    SETTLE_LABEL = "KXWTI"
 
     def __init__(self, live, fetch, inputs):
         super().__init__(live, fetch, inputs)
@@ -156,7 +158,7 @@ class OilPersistence(_OilBase):
                         market_prob=quote_mid(lm),
                         payload={**quote_payload(lm), "last_settlement": last.value,
                                  "horizon_days": horizon, "sigma": sigma,
-                                 "basis": "last KXWTI settlement as the level, sigma of past "
+                                 "basis": f"last {self.SETTLE_LABEL} settlement as the level, sigma of past "
                                           "per-day settlement changes"})
 
 
@@ -165,3 +167,30 @@ def build_oil(live, fetch: Callable[[str], Any] = fetch_market, inputs: OilInput
     return [OilWti(live, fetch, inputs),
             KalshiImplied(FAMILY, (SERIES,), "daily", live, fetch, lead=LEAD),
             OilPersistence(live, fetch, inputs)]
+
+
+BRENT_SERIES = "KXBRENTD"
+BRENT_FAMILY = "brent"
+
+
+class BrentDaily(OilWti):
+    """The Brent sibling (KXBRENTD, settles on the Pyth Brent index): the same
+    fitted change model, anchored on Kalshi's settled Brent values with BZ=F
+    as the feature tape. Basis risk vs the Pyth index is the row's to price."""
+
+    name, version = "oil_brent", "brent-v1"
+
+
+class BrentPersistence(OilPersistence):
+    SETTLE_LABEL = "KXBRENTD"
+
+    def __init__(self, live, fetch, inputs):
+        super().__init__(live, fetch, inputs)
+        self.name = baseline_name(PERSISTENCE, BRENT_FAMILY)
+
+
+def build_brent(live, fetch: Callable[[str], Any] = fetch_market, inputs: OilInputs | None = None) -> list:
+    inputs = inputs or OilInputs(live, closes_fn=brent_closes, series=BRENT_SERIES)
+    return [BrentDaily(live, fetch, inputs),
+            KalshiImplied(BRENT_FAMILY, (BRENT_SERIES,), "daily", live, fetch, lead=LEAD),
+            BrentPersistence(live, fetch, inputs)]
