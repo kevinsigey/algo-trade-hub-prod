@@ -53,8 +53,19 @@ export interface MacroCard {
   u3?: MacroU3 | null;
 }
 
+export interface MacroQuick {
+  key: string;
+  title: string;
+  detail_href: string;
+  display_only: boolean;
+  note: string;
+  call: MacroCall | null;
+  record: MacroRecord | null;
+}
+
 export interface MacroResponse {
   as_of: string;
+  quick: MacroQuick[];
   cards: MacroCard[];
 }
 

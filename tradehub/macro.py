@@ -167,13 +167,19 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
                                      forecasts=journal_forecasts, outcomes=outcomes)
     u3 = {"call": u3_call, "record": u3_record} if (u3_call or u3_record) else None
 
+    # CPI leaves the card grid (Kevin's call, 2026-11-01): it is a wrapped
+    # Cleveland Fed nowcast -- display-only by the audit's own verdict -- so it
+    # becomes a one-line quick strip across the top, not a co-equal card. Its
+    # record still reads from the scoreboard run, on the strip.
+    cpi_call, _cpi_trail = _prob_parts(forecaster="cpi_nowcast",
+                                       market_forecaster="kalshi_implied_cpi",
+                                       forecasts=journal_forecasts, outcomes=outcomes)
+    quick = [{"key": "cpi", "title": "CPI", "detail_href": "/cpi", "display_only": True,
+              "note": "Cleveland Fed nowcast, wrapped -- display only",
+              "call": cpi_call, "record": _scoreboard_record(runs.get("cpi_nowcast"))}]
+
     cards = [
         _jobs_card(jobs_rows, _scoreboard_record(runs.get("labor_nowcast")), today, u3=u3),
-        _prob_card(key="cpi", title="CPI", predicts="Next CPI release (headline)",
-                   detail_href="/cpi", display_only=True,
-                   forecaster="cpi_nowcast", market_forecaster="kalshi_implied_cpi",
-                   forecasts=journal_forecasts, outcomes=outcomes,
-                   record=_scoreboard_record(runs.get("cpi_nowcast"))),
         # No Gas card: both 2026-11-01 audits graded the gas model a completed,
         # decisive loss (paired ~11x the market; persistence ties it), so the page
         # stops presenting it as a prediction. The journal forecaster keeps its
@@ -183,4 +189,4 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
                    forecaster="oil_wti", market_forecaster="kalshi_implied_oil",
                    forecasts=journal_forecasts, outcomes=outcomes, record=oil_record),
     ]
-    return {"as_of": today.isoformat(), "cards": cards}
+    return {"as_of": today.isoformat(), "quick": quick, "cards": cards}

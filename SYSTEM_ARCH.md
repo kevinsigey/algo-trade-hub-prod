@@ -372,3 +372,17 @@ row from day one. It is the market-graded successor to `unrate_direction`
 (climatology-graded, journal-only, untouched). Per the audit, it earns no
 fourth Macro card: the Jobs card carries a `u3` block (live strike call +
 journal record), composed from the same journal rows as the probability cards.
+
+Macro cleanup (2026-11-01, the audit's drops executed on Kevin's call):
+`fomc_mapped` is retired — a fixed core-CPI mapping with no model, the first
+retirement candidate in its own docstring; its Kalshi-implied row and cautious
+copy leave the registry with it (KXFEDDECISION stays available to a future
+real Fed model, and its journal history is untouched). `quits_direction` and
+`housing_direction` are parked the same way: classes and tests stay, the
+registry no longer freezes or grades them (quits had 0 settled in five weeks;
+housing prints two months stale against a ~4-year gate path; JOLTS signal
+already enters payrolls as features). On the Macro page, CPI leaves the card
+grid for a one-line "Quick" strip across the top — it is a wrapped Cleveland
+Fed nowcast, display-only by the audit's verdict, and the strip carries its
+call and record without presenting it as a co-equal engine. The card grid is
+now Jobs (with the U3 block) and Oil.

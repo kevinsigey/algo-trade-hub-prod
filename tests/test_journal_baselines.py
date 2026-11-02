@@ -405,16 +405,15 @@ def test_the_registry_publishes_both_baselines_for_every_non_market_direction_fa
     forecasters = list(FORECASTERS)
     keys = [(f.name, f.version) for f in forecasters]
     assert len(set(keys)) == len(keys), "(name, version) is the journal key"
-    families = {"spx", "vix", "gold", "eurusd", "housing"}
+    families = {"spx", "vix", "gold", "eurusd"}  # housing parked 2026-11-01 (macro audit)
     assert {baseline_name(k, f) for k in ("persistence", "climatology") for f in families} <= {n for n, _ in keys}
     by_name = {f.name: f for f in forecasters}
     assert by_name[baseline_name("persistence", "vix")].cadence == by_name["vix_direction"].cadence == "daily"
-    assert by_name[baseline_name("climatology", "housing")].cadence == by_name["housing_direction"].cadence
     # The baselines read the SAME closes/history objects as the models they price. That is what makes
     # the climatology number they freeze identical to the one the calendar carries.
     assert by_name[baseline_name("persistence", "vix")]._closes is by_name["vix_direction"]._closes
     assert by_name[baseline_name("climatology", "spx")]._closes is by_name["spy_quant"]._closes
-    assert by_name[baseline_name("persistence", "housing")]._housing is by_name["housing_direction"]
+    assert "housing_direction" not in by_name  # parked 2026-11-01: no model, no baselines
     # Each family keeps its own calendar: EUR/USD follows the ECB reference days, not the NYSE.
     eurusd = by_name["eurusd_direction"]._closes.source.is_session
     assert by_name[baseline_name("persistence", "eurusd")]._is_session is eurusd is is_target_day

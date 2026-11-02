@@ -19,7 +19,7 @@ const CARD = {
 
 describe("Macro page", () => {
   beforeEach(() => {
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", cards: [CARD] });
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [CARD] });
   });
 
   it("leads with the call, carries the display-only honesty line, and demotes at small samples", async () => {
@@ -57,10 +57,25 @@ describe("Macro jobs card U3 fold", () => {
           gate_status: null, promotion_status: null, diagnostics_flags: [] },
       },
     } as const;
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", cards: [jobs] });
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
     expect(await screen.findByText(/Unemployment \(KXU3\)/)).toBeInTheDocument();
     expect(screen.getByText(/KXU3-26NOV-T4\.5/)).toBeInTheDocument();
     expect(screen.getByText(/31%/)).toBeInTheDocument();
+  });
+});
+
+describe("Macro quick strip", () => {
+  it("renders display-only CPI as a one-line strip item, not a card", async () => {
+    const quick = [{
+      key: "cpi", title: "CPI", detail_href: "/cpi", display_only: true,
+      note: "Cleveland Fed nowcast, wrapped -- display only",
+      call: { label: "KXCPI-26NOV", ours: 0.62, market: 0.58, last_actual: null, as_of: "2026-10-30T13:00:00Z" },
+      record: null,
+    }];
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick, cards: [] });
+    render(<MemoryRouter><Macro /></MemoryRouter>);
+    expect(await screen.findByText("Quick")).toBeInTheDocument();
+    expect(screen.getByText(/Cleveland Fed nowcast/)).toBeInTheDocument();
   });
 });
