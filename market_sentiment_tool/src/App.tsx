@@ -73,12 +73,17 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
             <LayoutDashboard className="w-5 h-5" /> Portfolio
           </NavLink>
           <NavLink to="/portfolio/closed" className={linkClass}>
-            <History className="w-5 h-5 text-muted-foreground" /> Closed trades
+            <History className="w-5 h-5 text-muted-foreground" /> Trades and Orders
           </NavLink>
         </Group>
         <Group label="Ideas">
           <NavLink to="/ideas" className={linkClass}>
             <Lightbulb className="w-5 h-5 text-muted-foreground" /> Ideas
+          </NavLink>
+          {/* Crypto research sits beside Ideas (Kevin's redesign, 2026-11-02): it is a
+              research desk feeding the idea pipeline, not a prediction surface. */}
+          <NavLink to="/crypto" className={linkClass}>
+            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto research
           </NavLink>
         </Group>
         <Group label="Predictions">
@@ -99,12 +104,6 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
           <NavLink to="/weather" className={linkClass}>
             <CloudSun className="w-5 h-5 text-muted-foreground" /> Weather
-          </NavLink>
-          {/* Phase-3 §5: the page is a research desk now, not a shadow backtester -- the sniper
-              worker it graded stopped in June 2026. "Crypto research" cannot be confused with the
-              scoreboard's gate status the way the old "Crypto Shadow" label could. */}
-          <NavLink to="/crypto" className={linkClass}>
-            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto research
           </NavLink>
         </Group>
         <Group label="Admin">

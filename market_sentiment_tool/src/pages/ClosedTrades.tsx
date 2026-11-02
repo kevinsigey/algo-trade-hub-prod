@@ -15,7 +15,7 @@ export default function ClosedTrades() {
       <Link to="/" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Portfolio
       </Link>
-      <h1 className="mt-3 text-2xl font-bold tracking-tight text-white">Closed trades</h1>
+      <h1 className="mt-3 text-2xl font-bold tracking-tight text-white">Trades and Orders</h1>
 
       {loading && (
         <div className="mt-8 flex items-center gap-2 text-slate-400">

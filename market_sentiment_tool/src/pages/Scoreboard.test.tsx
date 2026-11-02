@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+
+/** The board is headline cards since the 2026-11-02 redesign: a card's headline always
+ * carries the engine's standing; the click opens only its backtest detail (the bars
+ * and both gates in full). These helpers locate a card and, where a test asserts on
+ * detail, open it -- the obligations below are unchanged, only the shape moved. */
+const cardFor = (name: RegExp) =>
+  screen.getByRole("heading", { name }).closest("article") as HTMLElement;
+const openCard = (name: RegExp) => {
+  const card = cardFor(name);
+  fireEvent.click(within(card).getByRole("button"));
+  return card;
+};
 
 import Scoreboard from "@/pages/Scoreboard";
 import type { ScoreboardResponse, ScoreboardRow } from "@/lib/scoreboard";
@@ -12,7 +24,9 @@ import type { ScoreboardResponse, ScoreboardRow } from "@/lib/scoreboard";
  *    Brier." next to an unrendered `rows_not_comparable: 2` is incomplete, and only the rendering
  *    puts the caveat in front of a reader.
  * 2. A losing engine is never dropped and never softened. This page exists to show losses, so
- *    there is no hide-losers affordance and no collapse of the losing tail.
+ *    there is no hide-losers affordance and no collapse of the losing tail. (The 2026-11-02
+ *    headline cards collapse only an engine's backtest DETAIL; its headline -- verdict, both
+ *    Briers, simulated result, badge -- is always rendered, which is what this obligation binds.)
  * 3. `HEADLINE_NOT_COMPARABLE` is honoured as its own case: no claim about the market at all.
  * 4. `runs_read` and `engines` are rendered, so the board's own reduction is visible. The reduction
  *    fails toward EXCLUSION, so an engine can vanish and leave the headline reading confidently; the
@@ -193,7 +207,7 @@ describe("obligation 4: the reader can see that the board is a reduction, not th
 
     const page = document.body.textContent ?? "";
     expect(page).not.toMatch(/lead|experimental|excluded|not shown/i);
-    expect(screen.getAllByRole("rowheader")).toHaveLength(1);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
   });
 });
 
@@ -212,11 +226,10 @@ describe("obligation 2: a losing engine is never dropped and never softened", ()
     await renderWith(response({ rows: losers, rows_total: 3, engines: 3, rows_behind_market: 3 }));
 
     for (const engine of ["gas", "weather", "labor_nowcast"]) {
-      expect(screen.getByRole("rowheader", { name: new RegExp(engine) })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: new RegExp(engine) })).toBeInTheDocument();
     }
-    // The body of the table holds exactly the three rows and no summary row about the best of them.
-    const bodyRows = within(screen.getByRole("table")).getAllByRole("row");
-    expect(bodyRows).toHaveLength(4); // header + 3
+    // Exactly the three cards and no summary card about the best of them.
+    expect(screen.getAllByRole("article")).toHaveLength(3);
   });
 
   it("offers no control that could remove a row from the board", async () => {
@@ -225,14 +238,21 @@ describe("obligation 2: a losing engine is never dropped and never softened", ()
     );
 
     // A select, a checkbox or a text input is how a "hide losers" affordance arrives. There is no
-    // such control, and this fails the moment one is added.
-    expect(container.querySelectorAll("select, input, button")).toHaveLength(0);
+    // such control, and this fails the moment one is added. The only buttons are the cards' own
+    // detail toggles (the redesign's click-to-open), and opening every one removes nothing:
+    // all three engines are still on the board afterwards.
+    expect(container.querySelectorAll("select, input")).toHaveLength(0);
+    for (const b of screen.getAllByRole("button")) fireEvent.click(b);
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    for (const engine of ["gas", "weather", "labor_nowcast"]) {
+      expect(screen.getByRole("heading", { name: new RegExp(engine) })).toBeInTheDocument();
+    }
   });
 
   it("states each engine's loss in numbers and in the multiple, not in an adjective", async () => {
     await renderWith(response({ rows: losers, rows_total: 3, engines: 3, rows_behind_market: 3 }));
 
-    const gas = screen.getByRole("rowheader", { name: /gas/ }).closest("tr") as HTMLElement;
+    const gas = cardFor(/gas/);
     expect(gas).toHaveTextContent("4.29x the market's Brier — behind");
     expect(gas).toHaveTextContent("-$3.84");
     expect(gas).toHaveTextContent("0.11480");
@@ -273,8 +293,8 @@ describe("obligation 3: HEADLINE_NOT_COMPARABLE is its own case", () => {
       screen.getByText("No engine run could be compared: no market Brier was recorded at decision time."),
     ).toBeInTheDocument();
     // The engine is still on the page, with its numbers, and says the comparison was not made.
-    expect(screen.getByRole("rowheader", { name: /weather/ })).toBeInTheDocument();
-    const row = screen.getByRole("rowheader", { name: /weather/ }).closest("tr") as HTMLElement;
+    expect(screen.getByRole("heading", { name: /weather/ })).toBeInTheDocument();
+    const row = cardFor(/weather/);
     expect(row).toHaveTextContent("Not measured");
     expect(row).toHaveTextContent("—"); // the market Brier is a dash, not 0.00000
     expect(row).not.toHaveTextContent("0.00000");
@@ -285,7 +305,7 @@ describe("the two bars, both visible and both attributable", () => {
   it("labels each bar so a reader can tell which one a verdict was made against", async () => {
     await renderWith(response());
 
-    const row = screen.getByRole("rowheader", { name: /gas/ }).closest("tr") as HTMLElement;
+    const row = openCard(/gas/);
     expect(within(row).getByText("Own gate")).toBeInTheDocument();
     expect(within(row).getByText("Reviewer's settled floor")).toBeInTheDocument();
     expect(row).toHaveTextContent("42 of 200 settled — 158 more needed");
@@ -320,7 +340,7 @@ describe("the two bars, both visible and both attributable", () => {
       }),
     );
 
-    const row = screen.getByRole("rowheader", { name: /labor_nowcast/ }).closest("tr") as HTMLElement;
+    const row = openCard(/labor_nowcast/);
     // Two different verdicts, visibly attributed to two different bars.
     expect(within(row).getAllByText("Met")).toHaveLength(1);
     expect(within(row).getByText("Not met")).toBeInTheDocument();
@@ -352,7 +372,7 @@ describe("the two bars, both visible and both attributable", () => {
       }),
     );
 
-    const row = screen.getByRole("rowheader", { name: /gas/ }).closest("tr") as HTMLElement;
+    const row = openCard(/gas/);
     expect(within(row).getAllByText("Not measured")).toHaveLength(2);
     expect(within(row).queryByText("Met")).not.toBeInTheDocument();
     expect(within(row).queryByText("Not met")).not.toBeInTheDocument();
@@ -365,7 +385,7 @@ describe("the two gates are two things, and are not merged", () => {
       response({ rows: [gasRow({ gate_status: "PROMOTED", promotion_status: "SHADOW" })] }),
     );
 
-    const row = screen.getByRole("rowheader", { name: /gas/ }).closest("tr") as HTMLElement;
+    const row = openCard(/gas/);
     // The backtest gate passed...
     expect(row).toHaveTextContent("Backtest gate passed");
     // ...and the engine is still not promoted, because the track record does not say so.
@@ -383,7 +403,7 @@ describe("the two gates are two things, and are not merged", () => {
   it("puts the (engine, version) scope in the cell, in text a reader without a mouse can reach", async () => {
     await renderWith(response());
 
-    const row = screen.getByRole("rowheader", { name: /gas/ }).closest("tr") as HTMLElement;
+    const row = openCard(/gas/);
     // `promotion_status` is the shared lookup's verdict, keyed on (engine, engine_version), and this
     // cell is one of seven in a row keyed on (engine, mode). So the cell has to name WHICH pair --
     // and it has to name it in rendered text. Not in a comment, and not in the badge's `title=`,
@@ -406,9 +426,9 @@ describe("the two gates are two things, and are not merged", () => {
     const v2 = gasRow({ engine_version: "gas-v2", promotion_status: "PROMOTED" });
     await renderWith(response({ rows: [v1, v2], rows_total: 2, engines: 1 }));
 
-    const table = screen.getByRole("table");
-    expect(within(table).getByText("for gas · gas-v1")).toBeInTheDocument();
-    expect(within(table).getByText("for gas · gas-v2")).toBeInTheDocument();
+    for (const b of screen.getAllByRole("button")) fireEvent.click(b);
+    expect(screen.getByText("for gas · gas-v1")).toBeInTheDocument();
+    expect(screen.getByText("for gas · gas-v2")).toBeInTheDocument();
   });
 });
 

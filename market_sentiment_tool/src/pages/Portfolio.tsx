@@ -218,7 +218,7 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-semibold text-white">Every position · {count}</h2>
           <Link to="/portfolio/closed" className="inline-flex items-center gap-1 text-sm text-emerald-300 hover:text-emerald-200">
-            Closed trades <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            Trades and Orders <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>
         {/* §6: the composition above already says what we own; the full table

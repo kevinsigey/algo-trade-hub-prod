@@ -77,7 +77,7 @@ describe("the Trading HQ menu and routes", () => {
     await at("/");
     expect(screen.getByRole("heading", { name: "Overview", level: 1 })).toBeInTheDocument();
     for (const label of ["Portfolio", "Predictions", "Admin"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /closed trades/i })).toHaveAttribute("href", "/portfolio/closed");
+    expect(screen.getByRole("link", { name: /trades and orders/i })).toHaveAttribute("href", "/portfolio/closed");
     expect(screen.getByRole("link", { name: /^portfolio$/i })).toHaveAttribute("href", "/portfolio");
     expect(screen.getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
     expect(screen.getAllByText("The paper book is not connected.").length).toBeGreaterThan(0);

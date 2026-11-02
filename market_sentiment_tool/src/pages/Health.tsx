@@ -28,12 +28,15 @@ function ChipBadge({ chip }: { chip: ChipTone }) {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function Stat({ label, value, sub, meaning }: { label: string; value: string | number; sub?: string; meaning?: string }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
       <div className="text-[11px] uppercase tracking-wider text-slate-500">{label}</div>
       <div className="mt-1 text-3xl font-black tracking-tight text-white">{value}</div>
       {sub ? <div className="mt-1 text-xs text-slate-500">{sub}</div> : null}
+      {/* The box in plain words (Kevin's redesign, 2026-11-02): a number whose meaning
+          needs the source code is a number most readers skip. */}
+      {meaning ? <div className="mt-1 text-xs leading-snug text-slate-400">{meaning}</div> : null}
     </div>
   );
 }
@@ -188,9 +191,12 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
           label="Timers fresh"
           value={`${s.okTimers}/${s.totalTimers}`}
           sub={s.untrackedTimers > 0 ? `${s.untrackedTimers} not tracked` : undefined}
+          meaning="Scheduled jobs that ran on time. Short of the total means a job is overdue."
         />
-        <Stat label="Quiet families" value={s.silentFamilies} sub="daily, froze nothing" />
-        <Stat label="Problems" value={s.problemCount} />
+        <Stat label="Quiet families" value={s.silentFamilies} sub="daily, froze nothing"
+          meaning="Daily forecast families that froze nothing in their window — the engine may be down, or its window has not opened yet." />
+        <Stat label="Problems" value={s.problemCount}
+          meaning="Checks failing right now. Each one is spelled out under Problems below." />
         <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Order books</div>
           <div className="mt-1 flex items-center gap-2">
@@ -198,6 +204,9 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
               {formatAge(ob.newest_file_age_seconds)}
             </span>
             <ChipBadge chip={statusChip(ob.status)} />
+          </div>
+          <div className="mt-1 text-xs leading-snug text-slate-400">
+            Age of the newest market snapshot. Fresh books keep the market prices on every page honest.
           </div>
         </div>
       </div>
