@@ -22,22 +22,22 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 /**
- * A mount counter for the Scoreboard component, so a redirect loop is observable.
+ * A mount counter for the Journal (Model Tracker) component, so a redirect loop is observable.
  *
  * A `Navigate` that points at itself renders the page over and over, and in jsdom that does not
  * throw and does not fail an assertion -- it just never settles, which reads as a passing test with
  * a slightly odd warning. Counting mounts turns "it settles" into something assertable: `<Navigate>`
- * replaces itself in the tree, so a correct redirect renders Scoreboard exactly once, and a loop
+ * replaces itself in the tree, so a correct redirect renders the Tracker exactly once, and a loop
  * renders it many times.
  *
  * The mock wraps the real component rather than replacing it, so the heading this file asserts on
  * is still the real page's, and `App.tsx`'s route table is still the only one in play.
  */
-let scoreboardRenders = 0;
-vi.mock("@/pages/Scoreboard", async () => {
-  const actual = await vi.importActual<typeof import("@/pages/Scoreboard")>("@/pages/Scoreboard");
+let journalRenders = 0;
+vi.mock("@/pages/Journal", async () => {
+  const actual = await vi.importActual<typeof import("@/pages/Journal")>("@/pages/Journal");
   const Counting = (props: Record<string, unknown>) => {
-    scoreboardRenders += 1;
+    journalRenders += 1;
     return <actual.default {...props} />;
   };
   return { ...actual, default: Counting };
@@ -46,20 +46,20 @@ vi.mock("@/pages/Scoreboard", async () => {
 /**
  * The `/scoreboard`, `/models` and `/shadow` routes are load-bearing, so they are pinned.
  *
- * These pages are unreachability-sensitive. `/models` exists because the owner of the product
+ * These names are unreachability-sensitive. `/models` existed because the owner of the product
  * could not work out what the site was for, and a page nobody can reach does not answer that for
  * anybody. The other two are the pair that collided on 2026-09-28, when a visitor went to `/shadow`
- * for the scoreboard and got a 503 from a crypto backtester instead. For those two, "it renders"
- * is not the same claim as "it is reachable at the name a person would type", so the nav label and
- * the href are asserted together with the route. All three still exist, still import, still pass
- * their own tests, and are simply never seen if their route is deleted — and nothing else in this
- * suite renders `App`.
+ * for the scoreboard and got a 503 from a crypto backtester instead. On 2026-11-02 the owner
+ * merged the scoreboard and the models catalogue into the Model Tracker as its Backtests tab:
+ * the names still resolve -- to the tab, not to standalone pages -- and the nav entries are gone,
+ * because two tabs presenting one dataset next to the forward record confused more than they
+ * informed. What this file pins now is the landing: path, tab, and content, together.
  *
- * The route table is NOT re-declared here. A `MemoryRouter` test would have to repeat `<Route
- * path="/scoreboard" element={<Scoreboard />} />` to render anything, and a duplicated route table
- * passes when the real one loses a route -- which is exactly the deletion this file exists to
- * catch. So the real `BrowserRouter` is used and the path is set on the history before render,
- * which makes the only route table in play `App.tsx`'s own.
+ * The route table is NOT re-declared here. A `MemoryRouter` test would have to repeat the routes
+ * to render anything, and a duplicated route table passes when the real one loses a route -- which
+ * is exactly the deletion this file exists to catch. So the real `BrowserRouter` is used and the
+ * path is set on the history before render, which makes the only route table in play `App.tsx`'s
+ * own.
  */
 const EMPTY_BOARD: ModelsResponse = {
   as_of: "2026-09-27T00:00:00+00:00",
@@ -102,8 +102,11 @@ const EMPTY_BOARD: ModelsResponse = {
   },
 };
 
-function heading(): HTMLElement | null {
-  return screen.queryByRole("heading", { name: "Engine scoreboard", level: 1 });
+/** The merged board's headline, rendered by the Backtests tab once its read resolves. The tab
+ * has no h1 of its own -- the Tracker's "Model Tracker" h1 heads the page -- so the board's
+ * summary sentence is the marker that the tab, and not a loading shell, is on screen. */
+function boardHeadline(): HTMLElement | null {
+  return screen.queryByText(/No backtest runs are recorded yet/);
 }
 
 /** The crypto page's h1. A separate query so the shadow describe can assert its absence without
@@ -176,30 +179,31 @@ afterEach(() => {
   window.history.pushState({}, "", "/");
   // Reset the redirect-loop counter between tests. Without this, an earlier test's mount count
   // would be carried into a later `toBe(1)` and the guard would stop guarding.
-  scoreboardRenders = 0;
+  journalRenders = 0;
 });
 
 describe("the sidebar link and the route agree", () => {
-  it("resolves /scoreboard to the engine scoreboard", async () => {
+  it("resolves /scoreboard to the Model Tracker's Backtests tab", async () => {
     await renderAppAt("/scoreboard");
 
-    // The h1 is rendered only once the read resolves, so this is the page and not its loading shell.
-    expect(heading()).toBeInTheDocument();
-    // And the link that gets a reader there is present, and points at that same path.
-    expect(screen.getByRole("link", { name: /engine scoreboard/i })).toHaveAttribute(
-      "href",
-      "/scoreboard",
-    );
+    // The board is rendered only once the read resolves, so this is the tab and not a shell.
+    expect(boardHeadline()).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/journal");
+    expect(window.location.search).toBe("?view=backtests");
+    // The standalone nav entries are gone (the merge); the Tracker is the way in.
+    expect(screen.queryByRole("link", { name: /engine scoreboard/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
   });
 
-  it("resolves /models to the models page", async () => {
-    // The page that answers "what are the models and what are they doing". A page nobody can
-    // reach answers it for nobody, and it would keep passing its own nineteen tests after the
-    // route was deleted -- so the route and the nav entry are pinned together here.
+  it("resolves /models to the Model Tracker's Backtests tab, catalogue included", async () => {
+    // The page that answered "what are the models and what are they doing" is a tab now; the
+    // name still lands on its content -- the catalogue's unmeasured engine renders in the tab.
     await renderAppAt("/models");
 
-    expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /models/i })).toHaveAttribute("href", "/models");
+    expect(window.location.pathname).toBe("/journal");
+    expect(window.location.search).toBe("?view=backtests");
+    expect(screen.getByText("Gasoline — AAA US average, day over day")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^models$/i })).not.toBeInTheDocument();
   });
 
   it("resolves /ideas to the public Ideas record", async () => {
@@ -234,24 +238,22 @@ describe("the sidebar link and the route agree", () => {
     expect(screen.queryByRole("link", { name: /prediction lab/i })).not.toBeInTheDocument();
   });
 
-  it("renders no models page on a path with no route", async () => {
-    // The control. Without it the test above would also pass if the page rendered unconditionally
+  it("renders no tracker page on a path with no route", async () => {
+    // The control. Without it the tests above would also pass if the page rendered unconditionally
     // -- a bug the deletion it guards against and a missing guard both look like.
     await renderAppAt("/no-such-route");
 
-    expect(screen.queryByRole("heading", { name: "Models", level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Model Tracker", level: 1 })).not.toBeInTheDocument();
     // The shell still renders, so the absence is the route's doing and not a crashed tree.
-    expect(screen.getByRole("link", { name: /models/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /model tracker/i })).toBeInTheDocument();
   });
 
-  it("renders no scoreboard on a path with no route", async () => {
-    // The control. Without it, the test above would also pass if the page were rendered
-    // unconditionally -- a bug the deletion it guards against and a missing guard both look like.
+  it("renders no backtest board on a path with no route", async () => {
+    // The control for the board, same reasoning as above.
     await renderAppAt("/no-such-route");
 
-    expect(heading()).toBeNull();
-    // The shell still renders, so the absence is the route's doing and not a crashed tree.
-    expect(screen.getByRole("link", { name: /engine scoreboard/i })).toBeInTheDocument();
+    expect(boardHeadline()).toBeNull();
+    expect(screen.getByRole("link", { name: /model tracker/i })).toBeInTheDocument();
   });
 });
 
@@ -264,11 +266,12 @@ describe("the sidebar link and the route agree", () => {
  * assertion in this file still passes because the sidebar renders. So three things are checked,
  * and the middle one is the one that catches it:
  *
- *   1. The redirect LANDS ON THE CANONICAL COMPONENT -- the h1 is on screen. A redirect that
+ *   1. The redirect LANDS ON THE CANONICAL COMPONENT -- the board is on screen. A redirect that
  *      renders nothing would otherwise satisfy "the path changed" and pass.
- *   2. The final path is `/scoreboard`. A loop does not settle here, and a redirect to some third
- *      path would also fail.
- *   3. The Scoreboard component is rendered ONCE. `<Navigate>` swaps itself out of the tree rather
+ *   2. The final path is `/journal?view=backtests` (since the 2026-11-02 merge; before it, the
+ *      canonical path was `/scoreboard`). A loop does not settle here, and a redirect to some
+ *      third path would also fail.
+ *   3. The Journal component is rendered ONCE. `<Navigate>` swaps itself out of the tree rather
  *      than nesting, so a correct redirect never re-enters; a loop renders it over and over. The
  *      spy is what makes that observable, because a loop in a jsdom test does not throw -- it just
  *      stops settling.
@@ -277,32 +280,33 @@ describe("the sidebar link and the route agree", () => {
  * only one in play; the mock replaces the component it points at, not the routing.
  */
 describe("the /shadow-scoreboard redirect lands on the canonical route", () => {
-  it("renders the engine scoreboard itself, not a blank shell", async () => {
+  it("renders the backtest board itself, not a blank shell", async () => {
     await renderAppAt("/shadow-scoreboard");
 
     // The load-bearing assertion. A redirect to a path with no route, or to a route whose element
     // is another redirect, renders nothing here and this fails.
-    expect(heading()).toBeInTheDocument();
+    expect(boardHeadline()).toBeInTheDocument();
   });
 
-  it("settles on /scoreboard rather than re-entering itself", async () => {
+  it("settles on /journal?view=backtests rather than re-entering itself", async () => {
     await renderAppAt("/shadow-scoreboard");
 
-    expect(window.location.pathname).toBe("/scoreboard");
+    expect(window.location.pathname).toBe("/journal");
+    expect(window.location.search).toBe("?view=backtests");
     // And the loop guard: a self-referential Navigate would keep remounting this component.
-    expect(scoreboardRenders).toBe(1);
+    expect(journalRenders).toBe(1);
   });
 
   it("is a redirect and not a second route serving the same component", async () => {
-    // The duplication risk, pinned. Two `<Route>`s both pointing at `<Scoreboard />` would make
-    // both paths render the page, which is the ambiguity this rename exists to remove -- and it
-    // would be invisible to every other test here. What distinguishes them: at the alias the
-    // Scoreboard is NOT what the route table selected; the router swapped in a Navigate and then
-    // routed again. So exactly one Scoreboard render, and the path has moved on.
+    // The duplication risk, pinned. Two routes both rendering the Tracker would make both paths
+    // serve the page, which is the ambiguity this rename exists to remove -- and it would be
+    // invisible to every other test here. What distinguishes them: at the alias the Tracker is
+    // NOT what the route table selected; the router swapped in a Navigate and then routed again.
+    // So exactly one Journal render, and the path has moved on.
     await renderAppAt("/shadow-scoreboard");
 
-    expect(scoreboardRenders).toBe(1);
-    expect(heading()).toBeInTheDocument();
+    expect(journalRenders).toBe(1);
+    expect(boardHeadline()).toBeInTheDocument();
   });
 });
 
@@ -324,7 +328,7 @@ describe("the two pages that share the word 'shadow'", () => {
 
     expect(window.location.pathname).toBe("/crypto");
     expect(cryptoHeading()).toBeInTheDocument();
-    expect(heading()).toBeNull();
+    expect(boardHeadline()).toBeNull();
   });
 
   it("labels the crypto nav entry 'Crypto research' and points it at /crypto", async () => {
@@ -344,14 +348,14 @@ describe("the two pages that share the word 'shadow'", () => {
     await renderAppAt("/crypto");
 
     expect(cryptoHeading()).toBeInTheDocument();
-    expect(heading()).toBeNull();
+    expect(boardHeadline()).toBeNull();
   });
 
   it("renders neither page on a path with no route", async () => {
     await renderAppAt("/no-such-route");
 
     expect(cryptoHeading()).toBeNull();
-    expect(heading()).toBeNull();
+    expect(boardHeadline()).toBeNull();
     expect(screen.getByRole("link", { name: /crypto research/i })).toBeInTheDocument();
   });
 });

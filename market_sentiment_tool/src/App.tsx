@@ -3,8 +3,6 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "re
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
-import Models from "@/pages/Models";
-import Scoreboard from "@/pages/Scoreboard";
 import SportsEdges from "@/pages/SportsEdges";
 import Macro from "@/pages/Macro";
 import JobsNowcast from "@/pages/JobsNowcast";
@@ -29,7 +27,7 @@ import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, Cpu, LineChart, Scale, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark, MessagesSquare } from "lucide-react";
+import { LayoutDashboard, Activity, Wallet, LineChart, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark, MessagesSquare } from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -116,14 +114,9 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           <NavLink to="/debates" className={linkClass}>
             <MessagesSquare className="w-5 h-5 text-muted-foreground" /> Agent debates
           </NavLink>
-          {/* "Engine Scoreboard", not "Shadow Scoreboard": the page scores ENGINES against their
-              markets, and "shadow" already names two other things here. */}
-          <NavLink to="/scoreboard" className={linkClass}>
-            <Scale className="w-5 h-5 text-muted-foreground" /> Engine Scoreboard
-          </NavLink>
-          <NavLink to="/models" className={linkClass}>
-            <Cpu className="w-5 h-5 text-muted-foreground" /> Models
-          </NavLink>
+          {/* Engine Scoreboard and Models merged into the Model Tracker's Backtests tab
+              (Kevin's call, 2026-11-02) -- one backtest surface, reached from the Tracker.
+              Their routes remain as redirects for bookmarks and typed names. */}
           {/* Freshness of every timer and forecaster: "is anything running", not "who is winning". */}
           <NavLink to="/health" className={linkClass}>
             <HeartPulse className="w-5 h-5 text-teal-400" /> Health
@@ -306,7 +299,12 @@ function App() {
           <Route path="/shadow" element={<Navigate to="/crypto" replace />} />
           <Route path="/crypto" element={<Crypto />} />
           <Route path="/journal" element={<Journal />} />
-          <Route path="/models" element={<RequireAdmin><Models /></RequireAdmin>} />
+          {/* Merged into the Model Tracker (Kevin's call, 2026-11-02): the scoreboard and the
+              models catalogue were two admin tabs presenting the /api/scoreboard dataset next
+              to the Tracker's forward record. Both names now land on the Tracker's Backtests
+              tab; the RequireAdmin wrap stays, so a signed-out visit still meets the login
+              wall it met before, and the tab itself is the board. */}
+          <Route path="/models" element={<RequireAdmin><Navigate to="/journal?view=backtests" replace /></RequireAdmin>} />
           {/* The engine scoreboard, canonically at /scoreboard.
               `/engines` was the other candidate and was rejected: /models already lists every
               engine one row at a time, so /engines would have been a SECOND route that means "the
@@ -314,7 +312,7 @@ function App() {
               close, one level down. `/scoreboard` names the artifact rather than its contents, so
               it takes a new engine without the name going stale, and it already matches the
               endpoint (/api/scoreboard) and the file (Scoreboard.tsx), so it costs no rename. */}
-          <Route path="/scoreboard" element={<RequireAdmin><Scoreboard /></RequireAdmin>} />
+          <Route path="/scoreboard" element={<RequireAdmin><Navigate to="/journal?view=backtests" replace /></RequireAdmin>} />
           {/* `/shadow-scoreboard` -> `/scoreboard`, permanently.
               The owner's approval for this page was literally called "the shadow scoreboard", so
               that string is a name people will type. A redirect makes the NAME work without making
@@ -324,7 +322,7 @@ function App() {
               /shadow-scoreboard canonical, which left the ambiguity in a route instead of a nav
               label, where it is expensive to change. It is a redirect here and nothing else.
               Same component, same /api/scoreboard read, address bar updated to the real path. */}
-          <Route path="/shadow-scoreboard" element={<Navigate to="/scoreboard" replace />} />
+          <Route path="/shadow-scoreboard" element={<Navigate to="/journal?view=backtests" replace />} />
           <Route path="/sports" element={<SportsEdges />} />
           <Route path="/macro" element={<Macro />} />
           <Route path="/jobs" element={<JobsNowcast />} />

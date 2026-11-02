@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import Models from "@/pages/Models";
+import BacktestsTab from "@/components/BacktestsTab";
 import type { CatalogueEntry, ModelsResponse } from "@/lib/models";
 import type { ScoreboardRow } from "@/lib/scoreboard";
 import { copyWords } from "@/test/copyWords";
@@ -45,10 +45,10 @@ function stub(body: unknown = BODY, ok = true) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Models", () => {
+describe("Every engine catalogue (merged into the Backtests tab)", () => {
   it("lists every engine, measured or not, retired included, and says losing in words with the multiple", async () => {
     stub();
-    render(<Models />);
+    render(<BacktestsTab />);
     const gas = (await screen.findByText("Gasoline")).closest("tr")!;
     expect(within(gas).getByText("Behind")).toBeInTheDocument();
     expect(within(gas).getByText("4.0x")).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("Models", () => {
 
   it("headlines three counts without a paragraph", async () => {
     stub();
-    render(<Models />);
+    render(<BacktestsTab />);
     const totals = await screen.findByLabelText("Totals");
     expect(within(totals).getByText("beating the market").previousSibling).toHaveTextContent("0");
     expect(within(totals).getByText("behind the market").previousSibling).toHaveTextContent("1");
@@ -70,7 +70,7 @@ describe("Models", () => {
 
   it("opens the claim, the backtest and both settled bars only on request", async () => {
     stub();
-    render(<Models />);
+    render(<BacktestsTab />);
     expect(screen.queryByText("Own gate")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Gasoline" }));
     expect(screen.getByText("Predicts X.")).toBeInTheDocument();
@@ -80,18 +80,18 @@ describe("Models", () => {
 
   it("stays inside its word budget", async () => {
     stub();
-    const { container } = render(<Models />);
+    const { container } = render(<BacktestsTab />);
     await screen.findByText("Gasoline");
     expect(copyWords(container)).toBeLessThanOrEqual(45);
   });
 
   it("shows the API's error, and a missing catalogue as a fault rather than an empty table", async () => {
     stub({ detail: "backtest_runs is missing" }, false);
-    const { unmount } = render(<Models />);
+    const { unmount } = render(<BacktestsTab />);
     expect(await screen.findByText(/backtest_runs is missing/)).toBeInTheDocument();
     unmount();
     stub({ ...BODY, catalogue: { ...BODY.catalogue, entries: [] } });
-    render(<Models />);
+    render(<BacktestsTab />);
     expect(await screen.findByText("The model list did not arrive.")).toBeInTheDocument();
   });
 });
