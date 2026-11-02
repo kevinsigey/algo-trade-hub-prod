@@ -10,6 +10,10 @@ journal grades the Kalshi mid on the same contract (`KalshiImplied`) and a persi
 ponytail: this is a measurement, not an edge hunt. The legacy engine is 4x behind the market on settled
 contracts; the journal records whether that holds at a consistent lead and against persistence. A
 negative result here is a complete answer.
+
+A crude-feature successor was tested in a walk-forward replay and rejected before it shipped:
+the WTI level/duration features made the paired Brier worse, so the model stays v2. The registry
+adds only `gas_cautious`, the house w25 market shrink on the v2 line; v2's raw row stays untouched.
 """
 
 from __future__ import annotations

@@ -166,5 +166,9 @@ def test_the_registry_runs_the_gas_family_with_unique_keys():
     keys = [(f.name, f.version) for f in FORECASTERS]
     for name in ("gas", "kalshi_implied_gas", "baseline_persistence_gas"):
         assert any(k[0] == name for k in keys), name
+    # Kevin's 2026-11-02 call: the cautious row rides on v2; the replay-rejected
+    # crude-feature v3 model does not run.
+    assert ("gas_cautious", "v2+w25") in keys
+    assert not any(version == "gas-v3" for _, version in keys)
     assert len(set(keys)) == len(keys)
     assert LEAD == timedelta(hours=2) and SERIES == "KXAAAGASD" and GAS_RESOLUTION == 0.0001

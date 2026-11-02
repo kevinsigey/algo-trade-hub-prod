@@ -357,6 +357,16 @@ kalshi_implied_oil_hourly, baseline_persistence_oil_hourly, and
 oil_wti_hourly_cautious from day one; /oil gains an Hourly settlements
 section. Kalshi has no Brent hourly and no 15-minute oil ladder (15-minute
 is crypto-only), so hourly WTI is the intraday oil build.
+
+`gas_cautious` (2026-11-02) finally exists: a w25 MarketShrunk row pinned
+to `gas`@v2. The raw v2 row stays exactly as it was -- it is the audit's
+completed measurement (paired ~11x the market) -- and the cautious row is
+a separate, presentable shrink toward the market, not a rewrite of it. A
+crude-feature gas-v3 candidate (WTI level deviation + duration above its
+trailing mean) was built and tested in a walk-forward replay over 201
+settled days / 3,626 strikes, and Kevin dropped it on the evidence: v3
+Brier 0.1152 vs v2 0.1122, paired +0.0029 +/- 0.0012 (both beat
+persistence at 0.1242). The v3 model never shipped and runs nowhere.
 The same change removes the Macro page's Gas card (the journal forecaster
 keeps running and keeps its record): both audits graded gas a completed,
 decisive loss, and a page that presents it as a live prediction is less
