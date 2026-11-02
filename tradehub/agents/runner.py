@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,24 @@ def framework_python() -> Path | None:
 def _stamps(now: datetime) -> tuple[str, str, str]:
     return (now.astimezone(CT).isoformat(timespec="seconds"), now.astimezone(UTC).isoformat(timespec="seconds"),
             now.astimezone(CT).strftime("%Y%m%d-%H%M%S"))
+
+
+def _root_cause(stderr: str | None) -> str:
+    """The stored failure reason. A framework traceback's LAST line is the
+    LangGraph wrapper ("During task with name 'News Analyst'..."), which names
+    the stage, not the cause -- the deepest exception line above it is the
+    cause. Quota exhaustion (the failure Kevin will actually hit on the free
+    tier) gets a plain sentence instead of a raw API dump."""
+    text = stderr or ""
+    if "RESOURCE_EXHAUSTED" in text or "generate_content_free_tier_requests" in text:
+        return ("Gemini free-tier daily quota exhausted (20 requests/day for this model; "
+                "the Workshop drafter shares it) -- debates resume after Google's daily reset")
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    exc = [ln for ln in lines if re.match(r"^[\w.]+(Error|Exception|Timeout|Interrupt):", ln)]
+    if exc:
+        return f"framework error: {exc[-1][:300]}"
+    tail = [ln for ln in lines if not ln.startswith("During task")] or lines
+    return f"framework error: {(tail[-1] if tail else 'unknown framework error')[:300]}"
 
 
 def _store_failure(ticker: str, as_of: str, historical: bool, error: str, now: datetime) -> RunRecord:
@@ -71,8 +90,7 @@ def run_debate(ticker: str, as_of: str | None = None, *, now: datetime | None = 
     except Exception as exc:  # noqa: BLE001 -- a spawn failure is a stored failure, not a crash
         return _store_failure(ticker, as_of, historical, f"framework spawn failed: {type(exc).__name__}", now)
     if proc.returncode != 0:
-        tail = (proc.stderr or "").strip().splitlines()[-1:] or ["unknown framework error"]
-        return _store_failure(ticker, as_of, historical, f"framework error: {tail[0][:300]}", now)
+        return _store_failure(ticker, as_of, historical, _root_cause(proc.stderr), now)
     try:
         raw = json.loads(proc.stdout.strip().splitlines()[-1])
     except Exception:  # noqa: BLE001
