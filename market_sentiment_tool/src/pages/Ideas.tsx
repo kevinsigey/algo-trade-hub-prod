@@ -72,6 +72,7 @@ export default function Ideas() {
                     <Link to={`/ideas/${idea.id}`} className="after:absolute after:inset-0">{idea.title}</Link>
                   </h3>
                   {idea.claim && <p className="mt-0.5 text-sm text-slate-400">{claimLabel(idea.claim)}</p>}
+                  {idea.result_line && <p className="mt-0.5 text-sm font-medium tabular-nums text-slate-200">{idea.result_line}</p>}
                   {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
                   {idea.kind !== "event" && (
                     <div className="relative z-10 mt-3">

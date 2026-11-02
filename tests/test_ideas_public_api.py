@@ -12,9 +12,12 @@ from tradehub.workshop import store
 SPEC = {"title": "Gold beats SPY", "hold": ["GLD"], "claim": "beats_benchmark"}
 
 
-def run(db, idea_id, variation, verdict):
+def run(db, idea_id, variation, verdict, claim=None):
+    result = {"headline": f"h{variation}", "shuffle": {"p": 0.01, "bar": 0.05}}
+    if claim is not None:
+        result["claim"] = claim
     row = db.table("idea_runs").insert({"idea_id": idea_id, "variation": variation, "spec": SPEC, "verdict": verdict,
-                                        "result": {"headline": f"h{variation}", "shuffle": {"p": 0.01, "bar": 0.05}},
+                                        "result": result,
                                         "data_end": "2026-10-29"}).execute().data[0]
     # Saved, as every pre-save-by-choice run is: the record reads saved runs only.
     db.table("idea_run_saves").insert({"run_id": row["id"], "saved_at": row["created_at"]}).execute()
@@ -29,7 +32,7 @@ def api(monkeypatch):
     run(db, 1, 1, "FAIL")
     run(db, 1, 2, "PASS")
     run(db, 2, 1, "PASS")
-    run(db, 3, 1, "FAIL")
+    run(db, 3, 1, "FAIL", claim={"holds": False, "value": -4.1, "label": "-4.1 pts/yr vs SPY", "days": 900})
     db.db["ideas"][0].update({"published_at": "2026-11-01T00:00:00Z", "live_at": "2026-11-01T15:00:00+00:00",
                               "live_run_id": 2, "size_pct": 20, "killed_at": "2026-11-20T15:00:00+00:00"})
     db.db["ideas"][2]["published_at"] = "2026-11-02T00:00:00Z"
@@ -48,6 +51,10 @@ def test_list_shows_published_only_with_fails_and_kills(api):
     bonds, gold = rows
     assert bonds["status"] == "backtest" and bonds["latest_verdict"] == "FAIL" and bonds["live"] is None
     assert gold["status"] == "killed" and gold["variations"] == 2 and gold["claim"] == "beats_benchmark"
+    # The card's result line (Kevin, 2026-11-02): the claim outcome in words
+    # when the run stored one, the headline otherwise.
+    assert bonds["result_line"] == "-4.1 pts/yr vs SPY"
+    assert gold["result_line"] == "h2"
     assert gold["live"]["return_pct"] == pytest.approx(1.0) and gold["live"]["state"] == "killed"
     assert "Secret" not in api.get("/api/ideas").text
 
