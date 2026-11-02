@@ -14,7 +14,7 @@ const LIVE = {
 };
 const ROWS = [
   { id: 3, title: "Bonds as ballast", published_at: "2026-11-02", claim: "ballast", kind: "long_only", latest_verdict: "FAIL", variations: 1,
-    status: "backtest", live_at: null, killed_at: null, live: null },
+    result_line: "+25.8 pts/yr vs SPY", status: "backtest", live_at: null, killed_at: null, live: null },
   { id: 1, title: "Gold beats SPY", published_at: "2026-11-01", claim: "beats_benchmark", kind: "event", latest_verdict: "PASS", variations: 2,
     status: "live", live_at: "2026-11-02", killed_at: null, live: LIVE },
 ];
@@ -33,6 +33,7 @@ describe("Ideas record", () => {
     serve(ROWS);
     render(<MemoryRouter><Ideas /></MemoryRouter>);
     expect(await screen.findByText("Bonds as ballast")).toBeInTheDocument();
+    expect(screen.getByText("+25.8 pts/yr vs SPY")).toBeInTheDocument();  // the card's result line
     // Grouped by type (Kevin, 2026-11-02): the gold idea is an event study in the
     // fixture, the bonds idea a long-only rule.
     expect(screen.getByText(/Event studies/)).toBeInTheDocument();

@@ -1061,8 +1061,16 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
         live = _shadow(supabase, idea)
         if idea.get("killed_at"):
             live["state"] = "killed"  # the record ended on purpose; not stale
+    # The card's result line (Kevin, 2026-11-02): the newest saved run's claim
+    # outcome in words ("+25.8 pts/yr vs SPY"), so the best plays can be picked
+    # from the list without opening each idea. Headline when the run stored no
+    # claim object (event studies).
+    result_line = None
+    if latest:
+        claim = (latest.get("result") or {}).get("claim") or {}
+        result_line = claim.get("label") or (latest.get("result") or {}).get("headline")
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
-            "claim": latest["spec"].get("claim") if latest else None,
+            "claim": latest["spec"].get("claim") if latest else None, "result_line": result_line,
             "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),

@@ -546,6 +546,8 @@ export interface PublicIdea {
   title: string;
   published_at: string;
   claim: Claim | null;
+  /** The newest saved run's claim outcome in words ("+25.8 pts/yr vs SPY"). */
+  result_line?: string | null;
   kind: IdeaKind;
   latest_verdict: Verdict | null;
   variations: number;
