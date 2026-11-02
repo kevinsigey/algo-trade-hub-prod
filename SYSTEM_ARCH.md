@@ -386,3 +386,14 @@ grid for a one-line "Quick" strip across the top — it is a wrapped Cleveland
 Fed nowcast, display-only by the audit's verdict, and the strip carries its
 call and record without presenting it as a co-equal engine. The card grid is
 now Jobs (with the U3 block) and Oil.
+
+PPI YoY (2026-11-01, the macro audit's medium add, built last of the four):
+KXUSPPIYOY gets `ppi_nowcast`@`ppi-yoy-v1` — the next YoY first print as a
+Normal whose mean is the walk-forward OLS of the monthly change on the last
+change, over the YoY series computed point-in-time from ALFRED first prints
+of the final-demand index (PPIFIS). No free nowcast exists to wrap, so unlike
+CPI this is a fitted model, journal-graded beside `kalshi_implied_ppi`,
+`baseline_persistence_ppi` and a cautious row from day one. The series'
+event tickers carry the release date, not the reference month; the
+forecaster's adjacency guard runs on release dates. Journal-only — no Macro
+card was asked for or built.

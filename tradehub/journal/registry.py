@@ -21,6 +21,7 @@ from tradehub.journal.forecasters.gas import build_gas
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster, UnrateDirection
 from tradehub.journal.forecasters.news_tone import EnergyToneForecaster, xle_source
 from tradehub.journal.forecasters.oil import build_oil
+from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
 from tradehub.journal.forecasters.shrunk import MarketShrunk
@@ -84,11 +85,14 @@ FORECASTERS: list[Forecaster] = [
     # weekly jobless claims (2026-11-01 audit: build): the first-print level model beside
     # the Kalshi mid and a persistence baseline
     *build_claims(_LIVE),
+    # monthly PPI YoY (2026-11-01 audit: medium add): the fitted level model beside
+    # the Kalshi mid and a persistence baseline; journal-only, no Macro card
+    *build_ppi(_LIVE),
 ]
 
 # plan 15: the market-linked models again, each pulled toward the Kalshi price (see forecasters/shrunk.py).
 # Their own scorecards, beside the pure models', which are untouched.
-_SHRINKABLE = {"cpi_nowcast", "labor_nowcast", "claims_nowcast", "unrate_nowcast"}
+_SHRINKABLE = {"cpi_nowcast", "labor_nowcast", "claims_nowcast", "unrate_nowcast", "ppi_nowcast"}
 # Order matters and is relied on: `run_journal` walks the list, so each wrapper finds the model's own
 # frozen row already in the store (see forecasters/shrunk.py). The store is passed as a callable
 # because this module is imported with no credentials in hand.
