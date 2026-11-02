@@ -13,9 +13,11 @@ SPEC = {"title": "Gold beats SPY", "hold": ["GLD"], "claim": "beats_benchmark"}
 
 
 def run(db, idea_id, variation, verdict):
-    db.table("idea_runs").insert({"idea_id": idea_id, "variation": variation, "spec": SPEC, "verdict": verdict,
-                                  "result": {"headline": f"h{variation}", "shuffle": {"p": 0.01, "bar": 0.05}},
-                                  "data_end": "2026-10-29"}).execute()
+    row = db.table("idea_runs").insert({"idea_id": idea_id, "variation": variation, "spec": SPEC, "verdict": verdict,
+                                        "result": {"headline": f"h{variation}", "shuffle": {"p": 0.01, "bar": 0.05}},
+                                        "data_end": "2026-10-29"}).execute().data[0]
+    # Saved, as every pre-save-by-choice run is: the record reads saved runs only.
+    db.table("idea_run_saves").insert({"run_id": row["id"], "saved_at": row["created_at"]}).execute()
 
 
 @pytest.fixture

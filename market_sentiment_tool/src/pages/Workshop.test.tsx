@@ -23,7 +23,7 @@ const SPEC = {
   when: { source: "fred", series: "DGS10", measure: "change", lookback_days: 63, op: ">", threshold: 0.25 },
 };
 const RUN = {
-  id: 1, variation: 4, spec: SPEC, draft_model: "claude-opus-5-5", verdict: "FAIL", created_at: "2026-10-30T00:00:00Z",
+  id: 1, variation: 4, spec: SPEC, draft_model: "claude-opus-5-5", verdict: "FAIL", created_at: "2026-10-30T00:00:00Z", saved_at: "2026-10-30T00:00:00Z",
   result: {
     verdict: "FAIL", headline: "Worked on the years it was built on, not after.", reason: null, split_date: "2019-01-02",
     data_start: "2006-01-04", data_end: "2026-10-29", variations: 4,
@@ -52,6 +52,23 @@ afterEach(() => {
   session.token = "jwt";
   window.history.pushState({}, "", "/");
   try { localStorage.clear(); } catch { void 0; }
+});
+
+describe("save-by-choice", () => {
+  it("marks an unsaved run as a preview and saves it on request", async () => {
+    const preview = { ...RUN, saved_at: null };
+    const f = serve({
+      "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [preview], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [] } },
+      "/api/workshop/ideas/1/runs/1/save": { body: { ...RUN } },
+    });
+    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("Preview — not saved")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save this run" }));
+    await waitFor(() => {
+      const posts = f.mock.calls.filter(([u, init]) => String(u).includes("/runs/1/save") && (init as RequestInit | undefined)?.method === "POST");
+      expect(posts.length).toBe(1);
+    });
+  });
 });
 
 describe("workshop copy", () => {

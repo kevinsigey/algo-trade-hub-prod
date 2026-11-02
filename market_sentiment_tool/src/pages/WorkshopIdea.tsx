@@ -612,14 +612,51 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
   );
 }
 
-export function VerdictCard(props: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+export function VerdictCard(props: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   return isEvent(props.run.spec) ? <EventVerdictCard {...props} /> : <RuleVerdictCard {...props} />;
+}
+
+/**
+ * The save-by-choice bar (2026-11-02): an unsaved run is a preview -- visible here,
+ * counted nowhere. Saving is the deliberate step that puts it on the record.
+ */
+function SaveRunBar({ ideaId, run, onSaved }: { ideaId: string; run: Run; onSaved?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (run.saved_at) return null;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await adminJson(`/api/workshop/ideas/${ideaId}/runs/${run.id}/save`, { method: "POST" });
+      onSaved?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-400/40 bg-amber-950/20 px-3 py-2">
+      <span className="text-sm font-semibold text-amber-200">Preview — not saved</span>
+      <span className="text-xs text-amber-200/70">This run counts nowhere yet: not the record, not the gate, not tracking.</span>
+      <button
+        type="button"
+        onClick={save}
+        disabled={busy}
+        className="ml-auto rounded-full border border-amber-400/50 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-400/10 disabled:opacity-50"
+      >
+        {busy ? "Saving…" : "Save this run"}
+      </button>
+      {error && <span role="alert" className="text-xs text-rose-300">{error}</span>}
+    </div>
+  );
 }
 
 const sgn = (v: number | null | undefined, d = 2) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}`);
 
 /** An event study's verdict: the claim on built vs unseen events, random dates, shrunk per-ticker means, events. */
-function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+function EventVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   const r = run.result;
   const spec = run.spec as unknown as EventSpec;
   const [error, setError] = useState<string | null>(null);
@@ -635,6 +672,7 @@ function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; o
           </div>
         </div>
       </div>
+      <SaveRunBar ideaId={ideaId} run={run} onSaved={onSaved} />
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
 
       {r.claim && r.shuffle && (
@@ -696,7 +734,7 @@ function EventVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; o
   );
 }
 
-function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void }) {
+function RuleVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   const r = run.result;
   const tone = verdictTone(run.verdict);
   return (
@@ -712,6 +750,7 @@ function RuleVerdictCard({ ideaId, run, onVary }: { ideaId: string; run: Run; on
           </div>
         </div>
       </div>
+      <SaveRunBar ideaId={ideaId} run={run} onSaved={onSaved} />
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
       {(r.notes ?? []).map((n) => (
         <p key={n} className="mt-2 text-sm text-amber-200/90">{n}</p>
@@ -847,8 +886,12 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   const [gate, setGate] = useState<GateResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const passed = runs.length > 0 && runs[runs.length - 1].verdict === "PASS";
-  const trackable = passed && !isEvent(runs[runs.length - 1]?.spec);
+  // The lifecycle reads the latest SAVED run: a preview changes nothing here
+  // until it is saved (save-by-choice, 2026-11-02).
+  const savedRuns = runs.filter((r) => r.saved_at);
+  const latestSaved = savedRuns[savedRuns.length - 1];
+  const passed = latestSaved !== undefined && latestSaved.verdict === "PASS";
+  const trackable = passed && !isEvent(latestSaved?.spec);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -937,12 +980,12 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
         </div>
       )}
 
-      {(passed || idea.live_at) && (runs[runs.length - 1]?.spec.options?.length ?? 0) > 0 && (
+      {(passed || idea.live_at) && (latestSaved?.spec.options?.length ?? 0) > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-white">Manual legs</h3>
           <p className="mt-1 text-xs text-slate-400">The hub trades the shares. Option legs are yours to place yourself (paper) while the rule has the idea in, and to close when it goes out:</p>
           <ul className="mt-1 list-inside list-disc text-sm text-slate-300">
-            {(runs[runs.length - 1]?.spec.options ?? []).map((l, i) => <li key={i}>{legText(l)}</li>)}
+            {(latestSaved?.spec.options ?? []).map((l, i) => <li key={i}>{legText(l)}</li>)}
           </ul>
         </div>
       )}
@@ -1026,6 +1069,7 @@ function SummaryHeader({ data }: { data: IdeaDetail }) {
           <span className="min-w-0 flex-1 text-sm text-slate-200">{latest.result.headline}</span>
           <span className="text-xs text-slate-400">
             {data.runs.length} run{data.runs.length === 1 ? "" : "s"} · latest {ctDateTime(latest.created_at)}
+            {!latest.saved_at && " · preview, not saved"}
           </span>
         </>
       ) : (
@@ -1224,13 +1268,13 @@ export default function WorkshopIdea() {
       )}
       {data && [...data.runs].reverse().map((r, idx) =>
         idx === 0 ? (
-          <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+          <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
         ) : (
           <details key={r.id} className="mt-6">
             <summary className="cursor-pointer text-sm text-slate-300">
-              Variation {r.variation} · {r.verdict} · {ctDateTime(r.created_at)} — {r.result.headline}
+              Variation {r.variation} · {r.verdict}{r.saved_at ? "" : " · preview, not saved"} · {ctDateTime(r.created_at)} — {r.result.headline}
             </summary>
-            <VerdictCard ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+            <VerdictCard ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
           </details>
         ),
       )}
