@@ -28,7 +28,9 @@ export function strikeOf(target: string, family: string): string {
   const raw = target.split("-T").pop() ?? "";
   const n = Number(raw);
   if (Number.isNaN(n)) return raw;
-  return family === "labor" ? `${n >= 1000 ? Math.round(n / 1000) : n}k` : `${n}%`;
+  if (family === "labor") return `${n >= 1000 ? Math.round(n / 1000) : n}k`;
+  if (family === "oil") return `$${n}`;
+  return `${n}%`;
 }
 
 export function headline(rows: Preview[], family: string): string | null {
@@ -36,10 +38,11 @@ export function headline(rows: Preview[], family: string): string | null {
   if (!p) return null;
   if (family === "labor" && typeof p.mu_k === "number") return `${Math.round(p.mu_k)}k jobs`;
   if (family === "cpi" && typeof p.nowcast === "number") return `${p.nowcast.toFixed(2)}% m/m`;
+  if (family === "oil" && typeof p.last_settlement === "number") return `last settle $${p.last_settlement.toFixed(2)}`;
   return null;
 }
 
-export function NextRelease({ family, title, previews }: { family: "labor" | "cpi"; title: string; previews?: Preview[] }) {
+export function NextRelease({ family, title, previews }: { family: string; title: string; previews?: Preview[] }) {
   const [rows, setRows] = useState<Preview[] | null>(previews ?? null);
   const [failed, setFailed] = useState(false);
 
@@ -65,7 +68,7 @@ export function NextRelease({ family, title, previews }: { family: "labor" | "cp
     <section aria-label={title} className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-slate-200">{title}</h2>
-        <p className="text-xs text-slate-500">Current estimate, not locked in. It locks 24 hours before the report and is scored after.</p>
+        <p className="text-xs text-slate-500">Current estimate, not locked in. It locks {family === "oil" ? "2 hours before the settlement" : "24 hours before the report"} and is scored after.</p>
       </div>
       {groups.map((g) => {
         const set = mine.filter((r) => `${r.forecaster}|${r.forecaster_version}` === g && eventOf(r) === eventOf(nextEvent.get(g)!))

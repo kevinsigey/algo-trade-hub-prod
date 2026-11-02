@@ -9,6 +9,7 @@ import SportsEdges from "@/pages/SportsEdges";
 import Macro from "@/pages/Macro";
 import JobsNowcast from "@/pages/JobsNowcast";
 import Cpi from "@/pages/Cpi";
+import Oil from "@/pages/Oil";
 import Journal from "@/pages/Journal";
 import Health from "@/pages/Health";
 import MachineKeys from "@/pages/MachineKeys";
@@ -319,6 +320,7 @@ function App() {
           <Route path="/macro" element={<Macro />} />
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />
+          <Route path="/oil" element={<Oil />} />
           <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
           <Route path="/machine-keys" element={<RequireAdmin><MachineKeys /></RequireAdmin>} />
           <Route path="/weather" element={<Weather />} />
