@@ -1068,7 +1068,11 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     result_line = None
     if latest:
         claim = (latest.get("result") or {}).get("claim") or {}
-        result_line = claim.get("label") or (latest.get("result") or {}).get("headline")
+        # Stored claim shape: {built: {...}, unseen: {...}} for rule runs -- the
+        # comparison that counts is the UNSEEN (out-of-sample) split's label.
+        # Flat {label} for simpler results; headline only when neither exists.
+        result_line = ((claim.get("unseen") or {}).get("label") or claim.get("label")
+                       or (latest.get("result") or {}).get("headline"))
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
             "claim": latest["spec"].get("claim") if latest else None, "result_line": result_line,
             "kind": _idea_kind(latest["spec"] if latest else None),
