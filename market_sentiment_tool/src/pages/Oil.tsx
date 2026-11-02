@@ -17,6 +17,7 @@ import { STATUS_WORDS, skillText, totals, viewRows, type Status } from "@/lib/jo
  */
 const STATUS_TONE: Record<Status, Tone> = { waiting: "quiet", early: "quiet", ahead: "good", behind: "bad", promoted: "good" };
 const OIL = new Set(["oil_wti", "oil_wti_cautious", "kalshi_implied_oil", "baseline_persistence_oil"]);
+const OIL_HOURLY = new Set(["oil_wti_hourly", "oil_wti_hourly_cautious", "kalshi_implied_oil_hourly", "baseline_persistence_oil_hourly"]);
 
 export default function Oil() {
   const [data, setData] = useState<JournalResponse | null>(null);
@@ -30,6 +31,7 @@ export default function Oil() {
   if (!data) return <div className="p-8 text-slate-400">Loading…</div>;
 
   const rows = viewRows(data.forecasters.filter((s) => OIL.has(s.forecaster)));
+  const hourlyRows = viewRows(data.forecasters.filter((s) => OIL_HOURLY.has(s.forecaster)));
   const t = totals(rows);
 
   return (
@@ -60,6 +62,27 @@ export default function Oil() {
           <JournalDetail row={row} />
         </section>
       ))}
+
+      {hourlyRows.length > 0 && (
+        <>
+          <header className="border-t border-slate-800 pt-6">
+            <h2 className="text-2xl font-bold text-white">Hourly settlements</h2>
+            <p className="mt-2 text-slate-400">The same journal, one hour at a time: each hour's WTI price, locked in before the top of the hour, beside the Kalshi price.</p>
+          </header>
+          {hourlyRows.map((row) => (
+            <section key={row.key} aria-label={row.label} className="border-t border-slate-800 pt-4">
+              <div className="flex items-baseline justify-between gap-4">
+                <h2 className="text-lg font-semibold text-slate-100">{row.label}</h2>
+                <div className="flex items-center gap-3">
+                  <span className="text-lg tabular-nums text-slate-100">{skillText(row.skill)}</span>
+                  <Chip tone={STATUS_TONE[row.status]}>{STATUS_WORDS[row.status]}</Chip>
+                </div>
+              </div>
+              <JournalDetail row={row} />
+            </section>
+          ))}
+        </>
+      )}
     </div>
   );
 }

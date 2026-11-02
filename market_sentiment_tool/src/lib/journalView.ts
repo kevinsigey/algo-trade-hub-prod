@@ -10,7 +10,7 @@ export { EARLY_N };
  */
 
 /** Mirrors `MIN_SETTLED` in tradehub/journal/scoring.py, for the "x of y" progress hint only. */
-export const NEEDED: Record<JournalScore["cadence"], number> = { daily: 200, monthly: 50, meeting: 50 };
+export const NEEDED: Record<JournalScore["cadence"], number> = { hourly: 200, daily: 200, weekly: 50, monthly: 50, meeting: 50 };
 
 export type Status = "waiting" | "early" | "ahead" | "behind" | "promoted";
 
