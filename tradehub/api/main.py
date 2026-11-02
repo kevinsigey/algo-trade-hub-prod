@@ -45,7 +45,8 @@ from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
 from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers as playbook_dropped
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
-    run_test, tickers_for
+    run_test, target_and_reason, tickers_for
+from tradehub.workshop.playcheck import play_check as _play_check_math
 from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
 from tradehub.workshop.spec import IdeaSpec, blank_spec
@@ -917,6 +918,74 @@ def workshop_save_run(idea_id: int, run_id: int, _admin: dict = Depends(admin.re
     if not any(r["id"] == run_id for r in found["runs"]):
         raise HTTPException(status_code=404, detail="no such run")
     return workshop_store.save_run(supabase, run_id)
+
+
+def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float) -> dict:
+    """The one-click play check (Kevin, 2026-11-02): read-only. The idea's target
+    book at `size_pct` against the live paper portfolio, with a cash verdict.
+    Never stages or places anything."""
+    if spec_dict.get("kind") == "event":
+        raise HTTPException(status_code=409, detail="event studies are research only: there is no book to run")
+    try:
+        spec = IdeaSpec(**spec_dict)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"the run's spec no longer validates: {exc}") from exc
+    try:
+        prices_frame = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                      bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    weights, why = target_and_reason(spec, prices_frame, fred, workshop_div_yields(spec, prices_frame))
+    prices = {t: float(prices_frame[t].dropna().iloc[-1]) for t in prices_frame.columns
+              if t in prices_frame and len(prices_frame[t].dropna())}
+
+    from tradehub.portfolio import service
+
+    book = service.portfolio(supabase)
+    if book.get("state") == "not_connected" or not book.get("positions"):
+        return {"available": False, "size_pct": size_pct,
+                "note": "No paper account is connected, so there is no book to check the play against."}
+    equity = float(book["scoreboard"]["equity"])
+    cash_row = next((r for r in book["positions"] if r["symbol"] == "Cash"), None)
+    cash = float(cash_row["market_value"]) if cash_row else 0.0
+    out = _play_check_math(weights=weights, why="" if why == "no data" else why, prices=prices,
+                           equity=equity, cash=cash, positions=book["positions"], size_pct=size_pct,
+                           own_title=idea["title"], otherwise=spec.otherwise,
+                           legs=list(spec.hold) + list(spec.short))
+    out.update({"available": True, "as_of": book.get("as_of"), "idea_id": idea["id"], "title": idea["title"],
+                "options_legs": [leg.model_dump(mode="json") for leg in spec.options],
+                "notes": ["Prices are latest closes, not live quotes."]})
+    if any(r["target_value"] < 0 for r in out["rows"]):
+        out["notes"].append("Short legs: borrow availability is not checked.")
+    if spec.options:
+        out["notes"].append("Option legs are model-priced and placed manually; they are not in the share math.")
+    return out
+
+
+@app.get("/api/workshop/ideas/{idea_id}/play-check", tags=["Workshop"])
+def workshop_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
+                        _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """Play check on the Workshop's working spec: the newest run, saved or preview
+    -- it is the spec on screen, and the check changes nothing either way."""
+    found = _found(supabase, idea_id)
+    if not found["runs"]:
+        raise HTTPException(status_code=409, detail="no run yet: there is no spec to check")
+    return _play_check(supabase, found["idea"], found["runs"][-1]["spec"], size_pct)
+
+
+@app.get("/api/ideas/{idea_id}/play-check", tags=["Ideas"])
+def public_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
+                      supabase=Depends(get_supabase)):
+    """Play check on the published record: the newest SAVED run's spec, and only
+    for published ideas (private and missing look the same, as everywhere here)."""
+    found = workshop_store.get_idea(supabase, idea_id)
+    if found is None or not found["idea"].get("published_at"):
+        raise HTTPException(status_code=404, detail="no such idea")
+    saved = workshop_store.saved_only(found["runs"])
+    if not saved:
+        raise HTTPException(status_code=409, detail="no saved run to check")
+    return _play_check(supabase, found["idea"], saved[-1]["spec"], size_pct)
 
 
 @app.post("/api/workshop/ideas/{idea_id}/event-runs", tags=["Workshop"])

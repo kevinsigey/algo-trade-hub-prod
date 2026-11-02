@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { PlayCheckButton } from "@/components/PlayCheck";
 import { getJson } from "@/lib/getJson";
 import { fmtUsd } from "@/lib/paperPortfolio";
 import { claimLabel, STATUS_LABEL, verdictTone, type PublicIdeaDetail } from "@/lib/workshop";
@@ -166,6 +167,11 @@ export default function IdeaRecord() {
         {data.killed_at && ` · killed ${data.killed_at.slice(0, 10)}`}
       </p>
       <p className="mt-3 text-slate-300">“{data.plain_words}”</p>
+      {data.kind !== "event" && (
+        <div className="mt-4">
+          <PlayCheckButton ideaId={data.id} source="public" title={data.title} />
+        </div>
+      )}
 
       {data.shadow && (
         <section className="mt-8">

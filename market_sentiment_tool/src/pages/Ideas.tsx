@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
+import { PlayCheckButton } from "@/components/PlayCheck";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { EARLY_N } from "@/lib/sample";
 import { claimLabel, KIND_LABEL, STATUS_LABEL, verdictTone, type IdeaKind, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
@@ -61,17 +62,22 @@ export default function Ideas() {
             </h2>
             <ul className="mt-3 grid gap-3 sm:grid-cols-2">
               {group.map((idea) => (
-                <li key={idea.id}>
-                  <Link to={`/ideas/${idea.id}`} className="block h-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
-                      <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
-                      <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
+                <li key={idea.id} className="relative h-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
+                    <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
+                    <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
+                  </div>
+                  <h3 className="mt-2 font-semibold text-white">
+                    <Link to={`/ideas/${idea.id}`} className="after:absolute after:inset-0">{idea.title}</Link>
+                  </h3>
+                  {idea.claim && <p className="mt-0.5 text-sm text-slate-400">{claimLabel(idea.claim)}</p>}
+                  {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
+                  {idea.kind !== "event" && (
+                    <div className="relative z-10 mt-3">
+                      <PlayCheckButton ideaId={idea.id} source="public" title={idea.title} />
                     </div>
-                    <h3 className="mt-2 font-semibold text-white">{idea.title}</h3>
-                    {idea.claim && <p className="mt-0.5 text-sm text-slate-400">{claimLabel(idea.claim)}</p>}
-                    {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
-                  </Link>
+                  )}
                 </li>
               ))}
             </ul>

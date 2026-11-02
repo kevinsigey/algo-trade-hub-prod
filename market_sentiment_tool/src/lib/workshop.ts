@@ -282,6 +282,43 @@ export interface IdeaRow {
   killed_at: string | null;
 }
 
+/** The one-click play check (Kevin, 2026-11-02): the idea's target book at a
+ * size against the live paper portfolio. Read-only -- it places nothing. */
+export interface PlayCheckRow {
+  ticker: string;
+  weight: number | null;
+  price: number | null;
+  target_value: number;
+  target_shares: number | null;
+  held_shares: number;
+  held_value: number;
+  delta_value: number;
+  delta_shares: number | null;
+  overlap_ideas: string[];
+  cap_breach: boolean;
+}
+
+export interface PlayCheckResult {
+  available: boolean;
+  note?: string;
+  state?: "in" | "out";
+  exit_reason?: string | null;
+  otherwise?: string;
+  size_pct: number;
+  equity?: number;
+  cash?: number;
+  rows?: PlayCheckRow[];
+  buys?: number;
+  sells?: number;
+  verdict?: "affordable" | "affordable_after_sells" | "not_affordable";
+  shortfall?: number;
+  cap_breaches?: { ticker: string; pct: number; cap: number }[];
+  verdict_line?: string;
+  as_of?: string | null;
+  options_legs?: OptionLeg[];
+  notes?: string[];
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number, public body: Record<string, unknown> | null) {
     super(message);
