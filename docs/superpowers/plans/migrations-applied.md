@@ -58,8 +58,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 34 | `20261031000003_shadow_exit.sql` |
 | 35 | `20261101000001_api_keys.sql` |
 | 36 | `20261101000002_run_diagnostics.sql` |
+| 37 | `20261102000001_journal_calendars_cadence.sql` |
 
-**Watermark: `20261101000002_run_diagnostics.sql`**
+**Watermark: `20261102000001_journal_calendars_cadence.sql`**
 
 ## How to record a new one
 

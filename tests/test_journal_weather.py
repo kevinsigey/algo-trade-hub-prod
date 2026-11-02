@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from journal_fakes import FakeJournalDB
 
-from tradehub.data.acis import parse_station
+from tradehub.data.acis import acis_sid, fetch_station, parse_station
 from tradehub.data.ensemble import day_members, parse_members
 from tradehub.data.kalshi_live import LiveMarket
 from tradehub.edges import Quote
@@ -61,6 +61,33 @@ def test_acis_parses_trace_as_zero_and_missing_as_none():
     assert (lat, lon) == (40.77898, -73.96925)
     assert days[date(2024, 10, 9)] == {"high": 80.0, "low": 60.0, "rain": 0.0}   # trace settles as NO rain
     assert days[date(2023, 10, 9)]["low"] is None
+
+
+def test_acis_sid_maps_kalshi_cli_ids_to_bare_codes():
+    assert acis_sid("CLINYC") == "NYC"
+    assert acis_sid("CLIMDW") == "MDW"
+    assert acis_sid("KORD") == "KORD"        # non-CLI ids pass through untouched
+    assert acis_sid("USW00094728") == "USW00094728"
+
+
+def test_fetch_station_asks_acis_for_the_bare_code():
+    asked = {}
+
+    def stub(_url, params):
+        asked.update(params)
+        return ACIS
+
+    payload = fetch_station("CLINYC", date(2025, 10, 1), date(2025, 10, 9), stub)
+    assert asked["sid"] == "NYC"
+    assert payload is ACIS
+
+
+def test_fetch_station_raises_readably_on_an_acis_error_payload():
+    def stub(_url, _params):
+        return {"error": "no data available"}
+
+    with pytest.raises(ValueError, match="no data available"):
+        fetch_station("CLINYC", date(2025, 10, 1), date(2025, 10, 9), stub)
 
 
 def test_ensemble_members_are_the_climate_day_max_min_and_total():
