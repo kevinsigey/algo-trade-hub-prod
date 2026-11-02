@@ -38,6 +38,21 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
       .catch(() => setReport("The report could not be loaded."))
       .finally(() => setBusy(false));
   };
+  // A failed run is a compact line, never a full card (Kevin, 2026-11-02):
+  // eight "not recorded" panels and a raw report dump bury the record. The
+  // reason is the whole content; grades and cases do not exist for it.
+  if (card.status !== "complete") {
+    return (
+      <li>
+        <article className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl border border-rose-900/50 bg-rose-950/10 px-4 py-2.5">
+          <span className="text-base font-bold tracking-tight text-white">{card.ticker}</span>
+          <span className="rounded-full border border-rose-400/40 px-2 py-0.5 text-xs font-semibold text-rose-300">failed</span>
+          <span className="min-w-0 flex-1 text-xs leading-relaxed text-slate-300">{card.error ?? card.status}</span>
+          <span className="text-xs text-slate-500">Run {card.run_at_ct.replace("T", " ").slice(0, 16)} CT · as of {card.as_of_date}</span>
+        </article>
+      </li>
+    );
+  }
   const g5 = gradeChip("+5d", card.grades["+5d"]);
   const g20 = gradeChip("+20d", card.grades["+20d"]);
   return (

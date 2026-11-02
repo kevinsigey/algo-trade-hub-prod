@@ -147,6 +147,39 @@ def test_runner_imports_a_fake_frameworks_output(agents_dir, tmp_path, monkeypat
     assert report is not None and "Bull case" in report and "Risk verdict" in report
 
 
+def _fail_spawn(stderr):
+    def spawn(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=stderr)
+    return spawn
+
+
+def test_runner_stores_the_root_cause_not_the_langgraph_wrapper(agents_dir, monkeypatch):
+    # The real failure shape (2026-11-02): the deepest exception is the cause;
+    # the traceback's last line only names the stage that was running.
+    monkeypatch.setattr(runner, "framework_python", lambda: Path(sys.executable))
+    stderr = ("Traceback (most recent call last):\n"
+              "  File \"x.py\", line 1, in <module>\n"
+              "ValueError: yahoo finance returned no news for the ticker\n"
+              "During task with name 'News Analyst' and id 'abc-123'\n")
+    rec = runner.run_debate("GOOGL", "2026-11-02", now=datetime(2026, 11, 2, tzinfo=UTC),
+                            latest_session="2026-11-02", spawn=_fail_spawn(stderr))
+    assert rec.status == "failed_error"
+    assert "ValueError: yahoo finance returned no news" in (rec.error or "")
+    assert "During task" not in (rec.error or "")
+
+
+def test_runner_names_quota_exhaustion_plainly(agents_dir, monkeypatch):
+    monkeypatch.setattr(runner, "framework_python", lambda: Path(sys.executable))
+    stderr = ("langchain_google_genai.chat_models.GoogleRateLimitError: Error calling model "
+              "'gemini-3.8-flash' (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED. quota exceeded "
+              "for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests\n"
+              "During task with name 'News Analyst' and id 'abc-123'\n")
+    rec = runner.run_debate("NVDA", "2026-11-02", now=datetime(2026, 11, 2, tzinfo=UTC),
+                            latest_session="2026-11-02", spawn=_fail_spawn(stderr))
+    assert rec.status == "failed_error"
+    assert "quota exhausted" in (rec.error or "") and "20 requests/day" in (rec.error or "")
+
+
 def test_api_run_starts_one_debate_per_ticker(agents_dir, monkeypatch):
     import threading as th
     import time

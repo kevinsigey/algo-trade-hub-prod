@@ -43,6 +43,20 @@ afterEach(() => {
 });
 
 describe("Agent debates page", () => {
+  it("renders a failed run as one compact line, not a full card of 'not recorded'", async () => {
+    const failed = { ...FEED, cards: [{ ...FEED.cards[0], run_id: "nvda-9", ticker: "NVDA", status: "failed_error",
+      decision: "not recorded", error: "Gemini free-tier daily quota exhausted (20 requests/day for this model; the Workshop drafter shares it) -- debates resume after Google's daily reset",
+      bull_case: "not recorded", bear_case: "not recorded" }] };
+    serve({ "/api/agent-debates": { body: failed } });
+    render(<MemoryRouter><Debates /></MemoryRouter>);
+    expect(await screen.findByText("NVDA")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText(/quota exhausted/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Bull case" })).toBeNull();
+    expect(screen.queryByText("not recorded")).toBeNull();
+  });
+
+
   it("explains itself and renders cards with the fence labels and the separate record", async () => {
     serve({ "/api/agent-debates": { body: FEED } });
     render(<MemoryRouter><Debates /></MemoryRouter>);
