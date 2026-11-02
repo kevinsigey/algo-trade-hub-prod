@@ -76,7 +76,7 @@ describe("Portfolio", () => {
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     expect(screen.getAllByText("No idea yet (manual)").length).toBe(2);
     expect(screen.getByText("Every position · 1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Closed trades/ })).toHaveAttribute("href", "/portfolio/closed");
+    expect(screen.getByRole("link", { name: /Trades and Orders/ })).toHaveAttribute("href", "/portfolio/closed");
   });
 });
 

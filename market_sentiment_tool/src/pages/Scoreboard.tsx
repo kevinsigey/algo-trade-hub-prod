@@ -65,49 +65,70 @@ import {
  * `tradehub/scoreboard.py` and rides in on the response. This file decides layout and nothing else.
  */
 
-/** One scoreboard row. The two bars are `@/components/SettledBars`, shared with `/models`. */
-function Row({ row }: { row: ScoreboardRow }) {
+/**
+ * One engine as a headline card (Kevin's redesign, 2026-11-02): the verdict, both
+ * Briers, the simulated result and the promotion badge are always on the card --
+ * nothing about an engine's standing is ever behind the click. The click opens the
+ * backtest detail: the settled bars and both gates in full. Every engine the API
+ * returns gets a card, in the API's order; there is still no filter, no sort, and
+ * no summary that names only the best engine.
+ */
+function EngineCard({ row }: { row: ScoreboardRow }) {
+  const [open, setOpen] = useState(false);
   return (
-    <tr className="border-t border-slate-800 align-top">
-      <th scope="row" className="py-3 pr-3 text-left font-normal">
-        <div className="font-medium text-slate-100">{row.engine}</div>
-        <div className="text-xs text-slate-500">
-          {row.mode}
-          {row.engine_version ? ` · ${row.engine_version}` : ""}
+    <article className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="block w-full text-left"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-base font-semibold text-slate-50">{row.engine}</h3>
+          <span className="text-xs text-slate-500">
+            {row.mode}
+            {row.engine_version ? ` · ${row.engine_version}` : ""}
+            {row.date_from && row.date_to ? ` · ${row.date_from.slice(0, 10)} → ${row.date_to.slice(0, 10)}` : ""}
+          </span>
         </div>
-        {row.date_from && row.date_to && (
-          <div className="text-[11px] text-slate-600">
-            {row.date_from.slice(0, 10)} → {row.date_to.slice(0, 10)}
-          </div>
-        )}
-      </th>
-      <td className="py-3 pr-3 font-mono text-slate-200">{formatBrier(row.brier_ours)}</td>
-      <td className="py-3 pr-3 font-mono text-slate-400">{formatBrier(row.brier_market)}</td>
-      <td className="py-3 pr-3 text-slate-300">
-        {brierVerdict(row)}
-        <div className="text-[11px] text-slate-500">
-          {formatCount(row.n_decisions)} decisions · {formatCount(row.n_fills)} filled
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+          <span className="font-mono text-lg text-slate-100">
+            {formatBrier(row.brier_ours)}
+            <span className="ml-1 text-xs text-slate-500">ours</span>
+          </span>
+          <span className="font-mono text-lg text-slate-400">
+            {formatBrier(row.brier_market)}
+            <span className="ml-1 text-xs text-slate-500">market</span>
+          </span>
+          <span className="text-sm text-slate-200">{brierVerdict(row)}</span>
+          {/* Labelled as simulated: this product places no orders, so a currency figure with no such
+              label would read as money available to someone. */}
+          <span className="font-mono text-sm text-slate-300">
+            {formatSimulatedMoney(row.pnl_after_fees)}
+            <span className="ml-1 text-[11px] text-slate-500">
+              simulated · drawdown {formatSimulatedMoney(row.max_drawdown)}
+            </span>
+          </span>
         </div>
-      </td>
-      {/* Labelled as simulated: this product places no orders, so a currency figure with no such
-          label would read as money available to someone. */}
-      <td className="py-3 pr-3 font-mono text-slate-300">
-        {formatSimulatedMoney(row.pnl_after_fees)}
-        <div className="text-[11px] text-slate-500">
-          drawdown {formatSimulatedMoney(row.max_drawdown)}
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <GateBadge edge={{ gate_status: row.promotion_status }} />
+          <span className="text-[11px] text-slate-500">
+            {formatCount(row.n_decisions)} decisions · {formatCount(row.n_fills)} filled
+          </span>
+          <span className="ml-auto text-xs font-medium text-slate-400">{open ? "Hide the backtest detail" : "Backtest detail"}</span>
         </div>
-      </td>
-      <td className="py-3 pr-3">
-        <SettledBars row={row} />
-      </td>
-      <td className="py-3 pr-3">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-          Backtest gate
-        </div>
-        <div className="text-[11px] text-slate-300">{backtestGateLabel(row.gate_status)}</div>
-        <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-          Promotion
-        </div>
+      </button>
+      {open && (
+        <div className="mt-4 border-t border-slate-800 pt-4">
+          <SettledBars row={row} />
+          <div className="mt-4">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Backtest gate
+            </div>
+            <div className="text-[11px] text-slate-300">{backtestGateLabel(row.gate_status)}</div>
+            <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Promotion
+            </div>
         {/* The scope, in the cell and in VISIBLE TEXT, naming the pair rather than "this".
 
             Two reasons it is not prose in a comment, which is what it was before the review found it:
@@ -126,13 +147,13 @@ function Row({ row }: { row: ScoreboardRow }) {
             `gas-v1` into a different string than the one the lookup is keyed on.
 
             `—` rather than a guess: the API's `is_experiment_version` fails toward EXCLUSION, so a
-            run with an absent or empty version never reaches this table and the dash is a guard for
+            run with an absent or empty version never reaches this board and the dash is a guard for
             the type, not a state a reader will see. */}
         <div className="text-[10px] text-slate-500">
           for {row.engine} · {row.engine_version ?? "—"}
         </div>
-        {/* The shared lookup's verdict, for the engine and version named above. */}
-        <GateBadge edge={{ gate_status: row.promotion_status }} />
+        {/* The shared lookup's verdict -- the badge itself rides on the card's headline,
+            beside this scope line's pair; it is not repeated here. */}
         {row.gate_reasons.length > 0 && (
           <ul className="mt-2 list-disc pl-4 text-[11px] text-slate-500">
             {row.gate_reasons.map((reason) => (
@@ -145,20 +166,12 @@ function Row({ row }: { row: ScoreboardRow }) {
             Diagnostics: {diagnosticFlags(row).join(" · ")}
           </div>
         )}
-      </td>
-    </tr>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
-
-const HEAD = [
-  "Engine",
-  "Brier (ours)",
-  "Brier (market)",
-  "Against the market",
-  "Simulated (backtest)",
-  "Distance to the gate",
-  "Gate",
-];
 
 const TONES = {
   behind: "border-amber-900/60 bg-amber-950/20 text-amber-100",
@@ -234,31 +247,14 @@ export default function Scoreboard() {
           produce one.
         </p>
       ) : (
-        <table className="w-full text-sm">
-          <caption className="sr-only">
-            Per-engine Brier against the market, both bars of its settled distance, and both gates.
-          </caption>
-          <thead>
-            <tr className="border-b border-slate-800">
-              {HEAD.map((label) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className="py-2 pr-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          {/* Every row the API returned, in the API's order. No filter, no sort, no tail collapsed:
-              this page exists to show the losing tail. */}
-          <tbody>
-            {data.rows.map((row) => (
-              <Row key={`${row.engine}-${row.mode}-${row.engine_version}`} row={row} />
-            ))}
-          </tbody>
-        </table>
+        <div className="flex flex-col gap-3">
+          {/* Every engine the API returned, in the API's order. No filter, no sort, no tail
+              collapsed: this page exists to show the losing tail. A card's headline always
+              carries the engine's standing; the click only opens its backtest detail. */}
+          {data.rows.map((row) => (
+            <EngineCard key={`${row.engine}-${row.mode}-${row.engine_version}`} row={row} />
+          ))}
+        </div>
       )}
     </div>
   );
