@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 import { GateBadge } from "@/components/GateBadge";
 import type { SeriesEntry } from "@/lib/journal";
@@ -11,6 +12,9 @@ import { STATUS_LABEL, byGroup, edgeText, type LeagueRow, type LeagueStatus } fr
  * table itself stays one tab over, unchanged; these cards read the same server-computed rows
  * (`lib/league`) and the same over-time series the Over time tab charts, so the two views can
  * never disagree. Waiting predictors are cards too, muted, saying what they are waiting for.
+ * Since 2026-11-02 the cards sit under their group headers, closed: the header carries the
+ * group's quick summary (behind of measured, beating, best edge, scored), so the tab reads
+ * as three standings until a group is opened.
  */
 
 const STATUS_TONE: Record<LeagueStatus, string> = {
@@ -154,31 +158,72 @@ function Card({ row, series }: { row: LeagueRow; series: SeriesEntry[] }) {
   );
 }
 
+/**
+ * The group header's quick summary (Kevin, 2026-11-02): how the group stands
+ * without opening it -- behind of measured first (his words), then beating and
+ * level, the unmeasured tail, the best edge in the group, and the total scored.
+ */
+function groupSummary(rows: LeagueRow[]): string {
+  const count = (s: LeagueStatus) => rows.filter((r) => r.status === s).length;
+  const measured = count("beating") + count("level") + count("behind");
+  const parts = [`${count("behind")} behind of ${measured} measured`, `${count("beating")} beating`];
+  if (count("level") > 0) parts.push(`${count("level")} level`);
+  if (count("early") > 0) parts.push(`${count("early")} too early`);
+  if (count("waiting") > 0) parts.push(`${count("waiting")} waiting`);
+  const best = rows.filter((r) => r.edge !== null).sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0))[0];
+  if (best) parts.push(`best edge ${edgeText(best.edge, null)} (${best.label})`);
+  const scored = rows.reduce((n, r) => n + r.scored, 0);
+  if (scored > 0) parts.push(`${scored.toLocaleString()} scored`);
+  return parts.join(" · ");
+}
+
+function GroupSection({ label, blurb, rows, series }: { label: string; blurb: string; rows: LeagueRow[]; series: SeriesEntry[] }) {
+  // Closed by default (Kevin, 2026-11-02): the Tracker leads with the group
+  // standings; the cards are one press away, not a scroll away.
+  const [open, setOpen] = useState(false);
+  const sorted = [...rows].sort((a, b) => {
+    const aw = a.status === "waiting" ? 1 : 0;
+    const bw = b.status === "waiting" ? 1 : 0;
+    return aw - bw || b.scored - a.scored;
+  });
+  return (
+    <section aria-label={`${label} cards`} className="border border-border bg-card/40">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left hover:bg-card"
+      >
+        <span className="font-display text-2xl uppercase tracking-wide text-foreground">{label}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {rows.length} models · {groupSummary(rows)}
+        </span>
+        <ChevronDown className={`ml-auto h-5 w-5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      <p className="px-4 pb-3 text-xs text-muted-foreground">{blurb}</p>
+      {open && (
+        <div className="grid gap-4 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-3">
+          {sorted.map((row) => (
+            <Card key={row.id} row={row} series={series} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function ModelCards({ rows, series }: { rows: LeagueRow[]; series: SeriesEntry[] }) {
   const groups = byGroup(rows);
   if (rows.length === 0) {
     return <p className="py-8 text-center text-muted-foreground">No predictors tracked yet.</p>;
   }
   return (
-    <div className="space-y-10">
-      {groups.map(({ group: g, rows: groupRows }) => {
-        if (groupRows.length === 0) return null;
-        const sorted = [...groupRows].sort((a, b) => {
-          const aw = a.status === "waiting" ? 1 : 0;
-          const bw = b.status === "waiting" ? 1 : 0;
-          return aw - bw || b.scored - a.scored;
-        });
-        return (
-          <section key={g.id} aria-label={`${g.label} cards`}>
-            <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">{g.label}</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {sorted.map((row) => (
-                <Card key={row.id} row={row} series={series} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+    <div className="space-y-4">
+      {groups.map(({ group: g, rows: groupRows }) =>
+        groupRows.length === 0 ? null : (
+          <GroupSection key={g.id} label={g.label} blurb={g.blurb} rows={groupRows} series={series} />
+        ),
+      )}
     </div>
   );
 }
