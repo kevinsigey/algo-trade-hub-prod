@@ -26,7 +26,7 @@ from tradehub.journal.forecasters.news_tone import (
     etf_source,
     xle_source,
 )
-from tradehub.journal.forecasters.oil import build_oil
+from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
@@ -97,8 +97,10 @@ FORECASTERS: list[Forecaster] = [
     # WTI daily crude (2026-11-01 audit: build): the CL=F regression beside the Kalshi mid
     # and a persistence baseline
     *build_oil(_LIVE),
-    # WTI hourly (2026-11-01, Kevin's queue): the live-price/sigma model beside the Kalshi
-    # mid and a persistence baseline; the first hourly-cadence family in the journal
+    # Brent daily (KXBRENTD) + WTI hourly (KXWTIH), 2026-11-01: the daily model's
+    # sibling on the Pyth Brent index, and the spot/realized-vol hourly row Kevin
+    # asked for (Kalshi has no Brent hourly and no 15-minute oil series at all)
+    *build_brent(_LIVE),
     *build_oil_hourly(_LIVE),
     # weekly jobless claims (2026-11-01 audit: build): the first-print level model beside
     # the Kalshi mid and a persistence baseline
@@ -142,7 +144,6 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # Version-pinned to wti-v1 so a future wti-v2 does not silently inherit the blend.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if f.name == "oil_wti" and getattr(f, "version", None) == "wti-v1"]
-
-# Hourly oil (2026-11-01): the same day-one cautious row, pinned to wti-hourly-v1.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
-                if f.name == "oil_wti_hourly" and getattr(f, "version", None) == "wti-hourly-v1"]
+                if (f.name, getattr(f, "version", None)) in
+                {("oil_brent", "brent-v1"), ("oil_wti_hourly", "wti-hourly-v1")}]
