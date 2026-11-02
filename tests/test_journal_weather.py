@@ -137,6 +137,8 @@ def test_the_station_comes_from_the_series_and_the_rain_suffix():
     assert station_for(_lm("KXHIGHTSATX-26NOV02-T89", "greater", 89).market) == "SAT"
     assert station_for(_lm("KXRAIN-26OCT09-PHIL", "greater", 0).market) == "PHL"
     assert station_for(_lm("KXRAIN-26OCT09-TTN", "greater", 0).market) == "TTN"
+    # West Palm Beach rain settles at Palm Beach International; ACIS has no WPB id (2026-11-01).
+    assert station_for(_lm("KXRAIN-26NOV02-WPB", "greater", 0).market) == "PBI"
     assert station_for(_lm("KXHIGHZZZ-26OCT09-T1", "greater", 1).market) is None
     assert STATIONS["KXLOWTAUS"] == ("low", "AUS")
 
