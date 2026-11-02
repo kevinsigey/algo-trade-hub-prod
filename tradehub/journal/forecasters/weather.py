@@ -77,7 +77,10 @@ STATIONS: dict[str, tuple[str, str]] = {
 }
 RAIN_SERIES = "KXRAIN"
 RAIN_STATION = {"SATX": "SAT", "PHIL": "PHL", "NOLA": "MSY", "MIN": "MSP", "LV": "LAS", "DC": "DCA",
-                "DAL": "DFW", "CHI": "ORD"}
+                "DAL": "DFW", "CHI": "ORD",
+                # Kalshi's West Palm Beach suffix; ACIS has no WPB id -- the climate station is
+                # Palm Beach International (verified live 2026-11-01: PBI resolves, WPB errors).
+                "WPB": "PBI"}
 KINDS = ("high", "low", "rain")
 
 
