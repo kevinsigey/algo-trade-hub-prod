@@ -153,3 +153,10 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # Hourly oil (2026-11-01): the same day-one cautious row, pinned to wti-hourly-v1.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if f.name == "oil_wti_hourly" and getattr(f, "version", None) == "wti-hourly-v1"]
+
+# Gas cautious (2026-11-02): gas finally gets its cautious row, pinned to the v2 line.
+# The crude-feature v3 candidate was rejected by its walk-forward replay (paired Brier
+# +0.0029 +/- 0.0012 vs v2), so it never shipped. MarketShrunk adds a separate row; the
+# raw v2 record -- the audit's completed measurement -- stays exactly as it was.
+FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
+                if f.name == "gas" and getattr(f, "version", None) == "v2"]
