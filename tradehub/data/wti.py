@@ -50,6 +50,35 @@ def _call_history(history_fn: Callable[..., Any], start: date | None, end: date 
     return history_fn()
 
 
+def _default_intraday_history() -> Any:
+    import yfinance as yf
+
+    return yf.Ticker(WTI_SYMBOL).history(period="1d", interval="1m", auto_adjust=False)
+
+
+def wti_last_price(
+    *,
+    history_fn: Callable[[], Any] = _default_intraday_history,
+) -> Observation | None:
+    """The latest CL=F 1-minute close as an Observation stamped with its bar time.
+
+    The hourly WTI model's live anchor: Kalshi's hourly markets settle on the Pyth WTI
+    1-minute candle close at the top of the hour, and CL=F is the tape whose close the
+    daily engine already validated against Kalshi settlements. The bar timestamp is the
+    observation time, so the forecaster can refuse a stale print instead of pricing an
+    hour-old price as if it were live.
+    """
+    frame = history_fn()
+    if frame is None or "Close" not in frame:
+        return None
+    for stamp, close in reversed(list(frame["Close"].items())):
+        if close is None or close != close:  # NaN check without requiring pandas.
+            continue
+        stamp = stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+        return Observation("WTI:CL=F:last", float(close), stamp.astimezone(timezone.utc))
+    return None
+
+
 def wti_closes(
     start: date | None = None,
     end: date | None = None,

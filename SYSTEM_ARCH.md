@@ -344,6 +344,19 @@ traded 223,133 contracts) and Yahoo CL=F matched its settlement to the
 cent, keyless; KXWTID/KXBRENT do not exist, KXOIL has no open markets.
 Known v1 limitation, stated in tradehub/data/wti.py: CL=F is the
 continuous series, so one close a month carries the contract roll.
+
+`oil_wti_hourly`@wti-hourly-v1 (2026-11-01, Kevin's queue) adds the hourly
+ladder, KXWTIH -- the journal's first hourly cadence (the runner already
+runs hourly): each strike prices as a Normal centred on the live CL=F
+1-minute print with the trailing hourly sigma of Kalshi's own settled
+values (only settlements exactly one hour apart count, so halts never
+inflate it), scaled by sqrt(time-to-close), frozen inside a 65-minute
+lead. Settled values come through the bounded `settled_values_recent`
+(the series settles ~30 markets an event). Beside it:
+kalshi_implied_oil_hourly, baseline_persistence_oil_hourly, and
+oil_wti_hourly_cautious from day one; /oil gains an Hourly settlements
+section. Kalshi has no Brent hourly and no 15-minute oil ladder (15-minute
+is crypto-only), so hourly WTI is the intraday oil build.
 The same change removes the Macro page's Gas card (the journal forecaster
 keeps running and keeps its record): both audits graded gas a completed,
 decisive loss, and a page that presents it as a live prediction is less

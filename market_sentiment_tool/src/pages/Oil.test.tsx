@@ -50,6 +50,18 @@ describe("/oil", () => {
     expect(screen.getByText("-0.20")).toBeTruthy();
   });
 
+  it("shows hourly rows under their own heading, apart from the daily rows", async () => {
+    serve([
+      score(),
+      score({ forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v1", cadence: "hourly", n_targets: 40 }),
+      score({ forecaster: "kalshi_implied_oil_hourly", forecaster_version: "v1", cadence: "hourly" }),
+    ]);
+    render(<Oil />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Hourly settlements" })).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "WTI crude oil (hourly settlement)" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
+  });
+
   it("says the page is unavailable when the journal cannot be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ detail: "down" }) }) as Response));
     render(<Oil />);

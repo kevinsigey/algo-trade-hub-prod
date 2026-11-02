@@ -64,3 +64,31 @@ class KalshiLive(KalshiHistoryClient):
 
     def settled_values(self, series_ticker: str) -> list[Observation]:
         return settlement_observations(self.settled_markets(series_ticker))
+
+    def settled_values_recent(self, series_ticker: str, max_events: int,
+                              max_pages: int = 6) -> list[Observation]:
+        """Settled values for the most recent `max_events` events, newest first page order.
+
+        High-cadence series (hourly WTI settles ~30 markets an event, hundreds a day)
+        make the full-history `settled_values` pull grow without bound; a sigma fit only
+        ever reads the trailing window. Pages come back newest-first (verified live
+        2026-11-01: page one of KXWTIH settled held the latest hours), so pagination
+        stops as soon as enough distinct events are in hand, with `max_pages` as the
+        hard bound on what one call can cost.
+        """
+        raws: list[dict[str, Any]] = []
+        events: set[str] = set()
+        cursor = None
+        for _ in range(max_pages):
+            params: dict[str, Any] = {"series_ticker": series_ticker, "status": "settled",
+                                      "limit": PAGE_LIMIT}
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/markets", params)
+            page = data.get("markets") or []
+            raws.extend(page)
+            events.update(raw.get("event_ticker") for raw in page)
+            cursor = data.get("cursor")
+            if not cursor or len(events) >= max_events:
+                break
+        return settlement_observations(raws)

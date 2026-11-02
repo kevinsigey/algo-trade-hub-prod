@@ -17,7 +17,7 @@ def test_contract_rejects_naive_times_and_bad_values():
     with pytest.raises(ValueError, match="timezone-aware"):
         CalendarEntry("t", "fam", "daily", datetime(2026, 10, 1, 8))  # noqa: DTZ001
     with pytest.raises(ValueError, match="cadence"):
-        CalendarEntry("t", "fam", "hourly", datetime(2026, 10, 1, tzinfo=UTC))
+        CalendarEntry("t", "fam", "minutely", datetime(2026, 10, 1, tzinfo=UTC))
     with pytest.raises(ValueError, match="probability"):
         Forecast("f", "v1", "t", 1.2)
     with pytest.raises(ValueError, match="outcome"):
