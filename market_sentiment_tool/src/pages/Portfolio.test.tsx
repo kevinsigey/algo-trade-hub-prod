@@ -55,7 +55,9 @@ describe("Portfolio", () => {
     }));
     page(<Portfolio />);
     expect(await screen.findByText(/^Paper account · not traded yet/)).toBeInTheDocument();
-    expect(screen.getAllByText("$100,000").length).toBe(2); // the Account figure and the Cash row
+    // The boxes layout (2026-11-02): the equity figure, the Account box's Cash
+    // rail row, and the positions table's Cash row all read $100,000 here.
+    expect(screen.getAllByText("$100,000").length).toBe(3);
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("+0.0%")).toBeNull();
   });

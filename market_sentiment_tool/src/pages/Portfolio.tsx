@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { adminJson } from "@/lib/workshop";
 import { ArrowRight, Loader2 } from "lucide-react";
@@ -14,24 +14,33 @@ import {
   fmtUsd,
   stateLabel,
   tone,
+  type ClosedPayload,
   type PortfolioPayload,
   type PositionRow,
 } from "@/lib/paperPortfolio";
 
-function Big({ label, value, className = "text-white" }: { label: string; value: string; className?: string }) {
+/** One IBKR-style box (Kevin, 2026-11-02): the whole portfolio on one screen
+ * as dense boxes instead of divided sections -- more information, more
+ * visuals, no scrolling through stacked sections to find a number. */
+function Box({ title, right, children, className = "" }: {
+  title: string; right?: ReactNode; children: ReactNode; className?: string;
+}) {
   return (
-    <div className="min-w-[9rem]">
-      <div className="text-sm text-slate-400">{label}</div>
-      <div className={`mt-1 text-4xl font-semibold tabular-nums tracking-tight ${className}`}>{value}</div>
-    </div>
+    <section className={`rounded-xl border border-slate-800 bg-slate-900/60 p-4 ${className}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h2>
+        {right}
+      </div>
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }
 
-function Small({ label, value }: { label: string; value: string }) {
+function RailRow({ label, value, className = "text-slate-100" }: { label: string; value: string; className?: string }) {
   return (
-    <div className="flex-1 rounded-lg border border-slate-800 px-4 py-3">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className="mt-0.5 text-xl font-semibold tabular-nums text-white">{value}</div>
+    <div className="flex items-baseline justify-between gap-3 py-1 text-sm">
+      <span className="text-slate-400">{label}</span>
+      <span className={`tabular-nums font-medium ${className}`}>{value}</span>
     </div>
   );
 }
@@ -55,29 +64,32 @@ function Block(props: { x?: number; y?: number; width?: number; height?: number;
 
 function PositionsTable({ rows }: { rows: PositionRow[] }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[36rem] text-sm tabular-nums">
+    <div className="max-h-[27rem] overflow-auto">
+      <table className="w-full min-w-[34rem] text-sm tabular-nums">
         <thead className="text-left text-slate-400">
           <tr>
-            <th className="py-2 pr-4 font-medium">Holding</th>
-            <th className="py-2 pr-4 text-right font-medium">Shares</th>
-            <th className="py-2 pr-4 text-right font-medium">Value</th>
-            <th className="py-2 pr-4 text-right font-medium">% of book</th>
-            <th className="py-2 pr-4 text-right font-medium">P&amp;L</th>
-            <th className="py-2 font-medium">From idea</th>
+            <th className="py-1.5 pr-4 font-medium">Holding</th>
+            <th className="py-1.5 pr-4 text-right font-medium">Shares</th>
+            <th className="py-1.5 pr-4 text-right font-medium">Value</th>
+            <th className="py-1.5 pr-4 text-right font-medium">% of book</th>
+            <th className="py-1.5 pr-4 text-right font-medium">P&amp;L</th>
+            <th className="py-1.5 font-medium">From idea</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.symbol} className="border-t border-slate-800/80">
-              <td className="py-2 pr-4 font-semibold text-white">{r.symbol}</td>
-              <td className="py-2 pr-4 text-right text-slate-300">{r.qty ?? ""}</td>
-              <td className="py-2 pr-4 text-right text-slate-200">{fmtUsd(r.market_value, { whole: true })}</td>
-              <td className="py-2 pr-4 text-right text-slate-300">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(0)}%`}</td>
-              <td className={`py-2 pr-4 text-right ${tone(r.unrealized_pl)}`}>
+            <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/80">
+              <td className="py-1.5 pr-4 font-semibold text-white">
+                {r.symbol}
+                {r.side === "short" && <span className="ml-1.5 text-xs font-normal text-slate-400">short</span>}
+              </td>
+              <td className="py-1.5 pr-4 text-right text-slate-300">{r.qty ?? ""}</td>
+              <td className="py-1.5 pr-4 text-right text-slate-200">{fmtUsd(r.market_value, { whole: true })}</td>
+              <td className="py-1.5 pr-4 text-right text-slate-300">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(0)}%`}</td>
+              <td className={`py-1.5 pr-4 text-right ${tone(r.unrealized_pl)}`}>
                 {r.unrealized_pl == null ? "" : fmtUsd(r.unrealized_pl, { signed: true })}
               </td>
-              <td className="py-2 text-slate-300">{r.idea ?? ""}</td>
+              <td className="py-1.5 text-slate-300">{r.idea ?? ""}</td>
             </tr>
           ))}
         </tbody>
@@ -103,9 +115,11 @@ export default function Portfolio() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
-      <p className="mt-1 text-sm text-slate-400">A paper account, in full. Are we beating SPY?</p>
+    <div className="mx-auto max-w-[92rem] px-4 py-6 md:px-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
+        <p className="text-sm text-slate-400">A paper account, in full, on one screen. Are we beating SPY?</p>
+      </div>
 
       <StrategyHqStrip />
 
@@ -117,7 +131,7 @@ export default function Portfolio() {
       {error && <p className="mt-8 text-rose-300">Could not read the portfolio: {error}</p>}
 
       {data && data.state === "not_connected" && (
-        <div className="mt-8 rounded-xl border border-slate-800 p-6">
+        <div className="mt-6 rounded-xl border border-slate-800 p-6">
           <div className="text-xl font-semibold text-white">Paper account not connected</div>
           <p className="mt-1 max-w-prose text-sm text-slate-400">
             The paper trading account is not linked yet. Numbers appear here from its first snapshot, never before.
@@ -132,26 +146,42 @@ export default function Portfolio() {
 
 function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: number; title: string; size_pct: number | null }[] }) {
   const s = data.scoreboard;
+  const cashRow = data.positions.find((p) => p.symbol === "Cash");
+  const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
+  const unrealized = data.positions.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0);
+  const anyPl = data.positions.some((p) => p.unrealized_pl != null);
   const holdings = data.positions.map((p) => ({ name: p.symbol, size: Math.abs(p.market_value), pct: p.pct_of_book }));
   const count = data.positions.filter((p) => p.symbol !== "Cash").length;
+  const stats: { label: string; value: string; className?: string }[] = [
+    { label: "Since start", value: fmtPct(s.return_pct), className: tone(s.return_pct) },
+    { label: "SPY same period", value: fmtPct(s.spy_return_pct) },
+    { label: "Ahead of SPY", value: fmtPts(s.ahead_pts), className: tone(s.ahead_pts) },
+    { label: "Max drawdown", value: fmtPct(s.max_drawdown_pct) },
+    { label: "Sharpe", value: s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
+    { label: "Win rate", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
+  ];
 
   return (
-    <>
-      <section className="mt-8">
-        <div className="flex flex-wrap gap-x-10 gap-y-4">
-          <Big label="Account" value={fmtUsd(s.equity, { whole: true })} />
-          <Big label="Since start" value={fmtPct(s.return_pct)} className={tone(s.return_pct)} />
-          <Big label="SPY same period" value={fmtPct(s.spy_return_pct)} />
-          <Big label="Ahead of SPY" value={fmtPts(s.ahead_pts)} className={tone(s.ahead_pts)} />
+    <div className="mt-4 grid gap-3 xl:grid-cols-12">
+      <Box title="Account" className="xl:col-span-3"
+           right={data.account_number ? <span className="text-xs text-slate-500">{data.account_number}</span> : undefined}>
+        <div className="text-3xl font-semibold tabular-nums tracking-tight text-white">{fmtUsd(s.equity, { whole: true })}</div>
+        <div className="mt-2 divide-y divide-slate-800/70">
+          <RailRow label="Cash" value={cashRow ? fmtUsd(cashRow.market_value, { whole: true }) : "—"} />
+          <RailRow label="Invested" value={investedPct == null ? "—" : `${investedPct.toFixed(0)}%`} />
+          <RailRow label="Unrealized P&L" value={anyPl ? fmtUsd(unrealized, { signed: true }) : "—"} className={tone(unrealized)} />
+          <RailRow label="Positions" value={String(count)} />
         </div>
         <p className={`mt-3 text-xs ${data.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>
           {stateLabel(data.state, data.as_of)}
         </p>
+      </Box>
 
+      <Box title="Performance — portfolio vs SPY" className="xl:col-span-6">
         {data.curve.length > 1 ? (
-          <div className="mt-6 h-56" aria-label="Portfolio vs SPY since start">
+          <div className="h-44" aria-label="Portfolio vs SPY since start">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.curve} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+              <LineChart data={data.curve} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <XAxis dataKey="t" hide />
                 <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} stroke="#64748b" fontSize={11} width={40} />
                 <Tooltip
@@ -165,76 +195,98 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
             </ResponsiveContainer>
           </div>
         ) : (
-          <p className="mt-6 text-sm text-slate-400">The curve starts after the second snapshot.</p>
+          <p className="text-sm text-slate-400">The curve starts after the second snapshot.</p>
         )}
-
-        <div className="mt-4 flex flex-wrap gap-3">
-          <Small label="Max drawdown" value={fmtPct(s.max_drawdown_pct)} />
-          <Small label="Sharpe" value={s.sharpe == null ? "—" : s.sharpe.toFixed(2)} />
-          <Small label="Win rate" value={s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%`} />
+        <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {stats.map((st) => (
+            <div key={st.label} className="rounded-lg border border-slate-800 px-2.5 py-2">
+              <div className="text-[11px] leading-tight text-slate-400">{st.label}</div>
+              <div className={`mt-0.5 text-base font-semibold tabular-nums ${st.className ?? "text-white"}`}>{st.value}</div>
+            </div>
+          ))}
         </div>
-      </section>
+      </Box>
 
-      <section className="mt-12">
-        <h2 className="text-lg font-semibold text-white">What we own, and which idea put it there</h2>
-        <div className="mt-4 flex flex-col gap-6 md:flex-row">
-          <div className="h-48 md:flex-[1.4]">
-            <ResponsiveContainer width="100%" height="100%">
-              <Treemap data={holdings} dataKey="size" isAnimationActive={false} content={<Block />} />
-            </ResponsiveContainer>
-          </div>
-          <ul className="space-y-2 md:flex-1">
-            {data.composition.map((c) => (
-              <li key={c.idea} className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-800 px-4 py-2.5 text-sm">
-                <span className="text-slate-200">{c.idea}</span>
-                <span className="tabular-nums text-slate-400">
-                  {c.pct_of_book.toFixed(0)}% · <span className={tone(c.unrealized_pl)}>{fmtUsd(c.unrealized_pl, { signed: true })}</span>
-                </span>
-              </li>
-            ))}
-            {data.composition.length === 0 && <li className="text-sm text-slate-400">All cash.</li>}
-          </ul>
+      <Box title="Composition" className="xl:col-span-3">
+        <div className="h-36" aria-label="Holdings by size">
+          <ResponsiveContainer width="100%" height="100%">
+            <Treemap data={holdings} dataKey="size" isAnimationActive={false} content={<Block />} />
+          </ResponsiveContainer>
         </div>
-      </section>
+        <ul className="mt-2 max-h-44 space-y-1 overflow-auto">
+          {data.composition.map((c) => (
+            <li key={c.idea} className="flex items-baseline justify-between gap-3 rounded-md border border-slate-800 px-2.5 py-1.5 text-xs">
+              <span className="text-slate-200">{c.idea}</span>
+              <span className="tabular-nums text-slate-400">
+                {c.pct_of_book.toFixed(0)}% · <span className={tone(c.unrealized_pl)}>{fmtUsd(c.unrealized_pl, { signed: true })}</span>
+              </span>
+            </li>
+          ))}
+          {data.composition.length === 0 && <li className="text-xs text-slate-400">All cash.</li>}
+        </ul>
+      </Box>
 
-      {liveIdeas.length > 0 && (
-        <section className="mt-12">
-          <div className="flex items-baseline justify-between gap-2">
-            <h2 className="text-lg font-semibold text-white">Ideas trading on this account</h2>
-            <Link to="/workshop" className="text-sm text-emerald-300 hover:text-emerald-200">Workshop →</Link>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {liveIdeas.map((idea) => (
-              <li key={idea.id} className="flex items-baseline justify-between gap-3 rounded-lg border border-slate-800 px-4 py-2.5 text-sm">
-                <Link to={`/workshop/${idea.id}`} className="text-slate-200 hover:text-emerald-300">{idea.title}</Link>
-                <span className="tabular-nums text-slate-400">{idea.size_pct ?? "—"}%</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <Box title={`Every position · ${count}`} className="xl:col-span-8"
+           right={(
+             <Link to="/portfolio/closed" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+               Trades and Orders <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+             </Link>
+           )}>
+        <PositionsTable rows={data.positions} />
+      </Box>
 
-      <section className="mt-12">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-lg font-semibold text-white">Every position · {count}</h2>
-          <Link to="/portfolio/closed" className="inline-flex items-center gap-1 text-sm text-emerald-300 hover:text-emerald-200">
-            Trades and Orders <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        </div>
-        {/* §6: the composition above already says what we own; the full table
-            is one click down instead of a screen of scroll. */}
-        <details className="mt-3">
-          <summary className="cursor-pointer text-sm text-slate-300">Show the full position table</summary>
-          <div className="mt-3">
-            <PositionsTable rows={data.positions} />
-          </div>
-        </details>
-      </section>
-
-      <StagedOrders />
+      <div className="flex flex-col gap-3 xl:col-span-4">
+        {liveIdeas.length > 0 && (
+          <Box title="Ideas trading on this account"
+               right={<Link to="/workshop" className="text-xs text-emerald-300 hover:text-emerald-200">Workshop →</Link>}>
+            <ul className="space-y-1">
+              {liveIdeas.map((idea) => (
+                <li key={idea.id} className="flex items-baseline justify-between gap-3 rounded-md border border-slate-800 px-2.5 py-1.5 text-xs">
+                  <Link to={`/workshop/${idea.id}`} className="text-slate-200 hover:text-emerald-300">{idea.title}</Link>
+                  <span className="tabular-nums text-slate-400">{idea.size_pct ?? "—"}%</span>
+                </li>
+              ))}
+            </ul>
+          </Box>
+        )}
+        <RecentTrades />
+        <StagedOrders />
+      </div>
 
       <OrderForm />
-    </>
+    </div>
+  );
+}
+
+/** The last few closed trades, as a box (the full record stays one click
+ * away on Trades and Orders). */
+function RecentTrades() {
+  const { data } = useApi<ClosedPayload>("/api/portfolio/closed");
+  if (!data || data.state === "not_connected" || !Array.isArray(data.trades)) return null;
+  const total = data.trades.reduce((sum, t) => sum + t.pnl, 0);
+  const recent = [...data.trades].slice(-6).reverse();
+  return (
+    <Box title="Recent closed trades"
+         right={<span className={`text-xs tabular-nums ${tone(total)}`}>{data.trades.length} closed · {fmtUsd(total, { signed: true })}</span>}>
+      {recent.length === 0 ? (
+        <p className="text-xs text-slate-400">No closed trades yet.</p>
+      ) : (
+        <ul className="space-y-1">
+          {recent.map((t, i) => (
+            <li key={`${t.symbol}-${t.exited_at}-${i}`} className="flex items-baseline justify-between gap-3 text-xs">
+              <span className="text-slate-200">
+                <span className="font-semibold text-white">{t.symbol}</span>
+                {t.qty < 0 && <span className="ml-1 text-slate-400">short</span>}
+                <span className="ml-2 text-slate-500">{t.exited_at.slice(0, 10)} · {t.held_days}d</span>
+              </span>
+              <span className={`tabular-nums ${tone(t.pnl)}`}>
+                {fmtUsd(t.pnl, { signed: true })} <span className="text-slate-500">({fmtPct(t.return_pct)})</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Box>
   );
 }
 
@@ -266,18 +318,14 @@ function StagedOrders() {
   if (orders === null) return null;
   const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
   return (
-    <section className="mt-12">
-      <h2 className="text-lg font-semibold text-white">Staged orders</h2>
-      <p className="mt-1 text-sm text-slate-400">
-        Everything resting on the paper account, read from the broker: staged entries, protective stops, orders placed in the Alpaca app.
-      </p>
+    <Box title="Staged orders">
       {orders.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">Nothing resting right now.</p>
+        <p className="text-xs text-slate-500">Nothing resting right now.</p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-left text-sm">
+        <div className="max-h-56 overflow-auto">
+          <table className="w-full text-left text-xs">
             <thead>
-              <tr className="text-xs uppercase tracking-wide text-slate-500">
+              <tr className="text-[11px] uppercase tracking-wide text-slate-500">
                 <th className="py-1 pr-3">Symbol</th><th className="py-1 pr-3">Side</th>
                 <th className="py-1 pr-3">Type</th><th className="py-1 pr-3">Qty</th>
                 <th className="py-1 pr-3">Price</th><th className="py-1 pr-3">TIF</th>
@@ -300,7 +348,7 @@ function StagedOrders() {
           </table>
         </div>
       )}
-    </section>
+    </Box>
   );
 }
 
@@ -362,12 +410,11 @@ function OrderForm() {
   }
 
   return (
-    <section className="mt-12">
-      <h2 className="text-lg font-semibold text-white">Place an order by hand</h2>
-      <p className="mt-1 text-sm text-slate-400">
+    <Box title="Place an order by hand" className="xl:col-span-12">
+      <p className="text-xs text-slate-400">
         Paper account, market or limit. Tag it with an idea and it lands in that idea&apos;s order log.
       </p>
-      <div className="mt-4 flex flex-wrap items-end gap-3">
+      <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className={labelCls}>Symbol
           <input aria-label="Symbol" className={inputCls} value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="XLE" />
         </label>
@@ -411,6 +458,6 @@ function OrderForm() {
       </div>
       {note && <p className="mt-3 text-sm text-emerald-300">{note}</p>}
       {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
-    </section>
+    </Box>
   );
 }
