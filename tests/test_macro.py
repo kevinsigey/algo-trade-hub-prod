@@ -93,7 +93,7 @@ def test_oil_card_pairs_with_the_kalshi_oil_row_and_reads_the_journal_record():
     assert oil["title"] == "Oil" and oil["display_only"] is False
     assert oil["record"]["source"] == "journal" and oil["record"]["n_settled"] == 12
     assert oil["call"]["ours"] == 0.61 and oil["call"]["market"] == 0.58
-    assert oil["detail_href"] == "/journal"
+    assert oil["detail_href"] == "/oil"
 
 
 def test_empty_sources_degrade_to_null_sections_never_zeros():

@@ -397,3 +397,11 @@ CPI this is a fitted model, journal-graded beside `kalshi_implied_ppi`,
 event tickers carry the release date, not the reference month; the
 forecaster's adjacency guard runs on release dates. Journal-only — no Macro
 card was asked for or built.
+
+Oil page (2026-11-01, Kevin's call): oil gets its own tracking page at /oil,
+the /cpi pattern -- the journal's WTI rows (model, cautious, Kalshi-implied,
+persistence) with the shared detail view and a Next-settlement preview
+(NextRelease learned the oil family: $ strikes, the last-settlement headline,
+the 2h freeze lead in its copy). The Macro oil card's detail link moves from
+/journal to /oil, and with the grid down to two cards (Jobs, Oil) the xl
+third column is gone so the pair fills the row.

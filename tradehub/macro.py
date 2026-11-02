@@ -183,9 +183,9 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
         # No Gas card: both 2026-11-01 audits graded the gas model a completed,
         # decisive loss (paired ~11x the market; persistence ties it), so the page
         # stops presenting it as a prediction. The journal forecaster keeps its
-        # record; only the card is gone. Oil takes the third slot.
+        # record; only the card is gone. Oil takes the second slot.
         _prob_card(key="oil", title="Oil", predicts="WTI crude settlement (daily)",
-                   detail_href="/journal", display_only=False,
+                   detail_href="/oil", display_only=False,
                    forecaster="oil_wti", market_forecaster="kalshi_implied_oil",
                    forecasts=journal_forecasts, outcomes=outcomes, record=oil_record),
     ]

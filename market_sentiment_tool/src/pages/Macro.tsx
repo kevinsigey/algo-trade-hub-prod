@@ -160,7 +160,7 @@ export default function Macro() {
               ))}
             </div>
           )}
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
             {data.cards.map((c) => <CardView key={c.key} card={c} />)}
           </div>
           <p className="mt-4 text-xs text-muted-foreground">As of {data.as_of}. Records pair each engine against the market on the same prints.</p>
