@@ -64,6 +64,31 @@ describe("weather page", () => {
     expect(screen.getByText(/Los Angeles high tail at 80°F/)).toBeTruthy();
   });
 
+  it("says the pick against climatology in plain words and shows the ensemble record", async () => {
+    const journal = {
+      as_of: "2026-11-01",
+      forecasters: [
+        { forecaster: "weather_high", forecaster_version: "ens-v2.1", brier: 0.141, brier_baseline: 0.098, n_settled: 412 },
+        { forecaster: "weather_high", forecaster_version: "ens-v1", brier: 0.187, brier_baseline: 0.093, n_settled: 900 },
+        { forecaster: "baseline_climatology_weather_high", forecaster_version: "v1", brier: 0.210, brier_baseline: null, n_settled: 412 },
+      ],
+      headline: {},
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.includes("/api/journal")
+        ? journal
+        : { as_of: "2026-10-18T12:00:00+00:00", today: TODAY, settled: SETTLED };
+      return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body };
+    }));
+    renderWeather();
+    expect(await screen.findByText(/Our pick leans yes — the ensemble gives it 65%, climatology 55%/)).toBeTruthy();
+    expect(screen.getByText(/Our pick leans no — the ensemble gives it 45%, climatology 52%/)).toBeTruthy();
+    expect(await screen.findByText(/Ensemble record — settled contracts/)).toBeTruthy();
+    expect(screen.getByText("0.141")).toBeTruthy();
+    expect(screen.getByText("412")).toBeTruthy();
+  });
+
   it("shows settled history with outcome", async () => {
     vi.stubGlobal("fetch", mockWeather(TODAY, SETTLED));
     renderWeather();

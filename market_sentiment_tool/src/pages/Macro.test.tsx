@@ -28,7 +28,31 @@ describe("Macro page", () => {
     expect(screen.getByText(/not a board of opportunities/)).toBeInTheDocument();
     expect(screen.getByText(/Too early to say — 12 settled/)).toBeInTheDocument();
     expect(screen.getByText(/62%/)).toBeInTheDocument();
-    expect(screen.getByText(/resolved NO/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Recent calls: our probability/ })).toBeInTheDocument();
+  });
+
+  it("draws the jobs trail as grouped bars and the U3 call as a split bar", async () => {
+    const jobs = {
+      key: "jobs", title: "Jobs nowcast", predicts: "Next nonfarm payrolls print", detail_href: "/jobs",
+      display_only: false,
+      call: { label: "Nov 2026 payrolls", ours: 165.0, market: 158.0, last_actual: 150.0, as_of: "2026-12-03" },
+      record: { source: "scoreboard", n_settled: 40, brier_ours: 0.18, brier_market: 0.17,
+        gate_status: "SHADOW", promotion_status: "SHADOW", diagnostics_flags: [] },
+      trail: [
+        { label: "Sep 2026", ours: 120.0, market: 118.0, actual: 119.0 },
+        { label: "Oct 2026", ours: 150.0, market: 140.0, actual: 143.0 },
+      ],
+      trail_kind: "value", next_release: "2026-12-04",
+      u3: {
+        call: { label: "KXU3-26NOV-T4.5", ours: 0.31, market: 0.36, last_actual: null, as_of: "2026-11-30T13:00:00Z" },
+        record: null,
+      },
+    } as const;
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs] });
+    render(<MemoryRouter><Macro /></MemoryRouter>);
+    expect(await screen.findByRole("img", { name: /Recent prints: our nowcast/ })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Ours 31% versus Kalshi 36%/ })).toBeInTheDocument();
+    expect(screen.getByText("Sep 2026")).toBeInTheDocument();
   });
 });
 
@@ -61,7 +85,7 @@ describe("Macro jobs card U3 fold", () => {
     render(<MemoryRouter><Macro /></MemoryRouter>);
     expect(await screen.findByText(/Unemployment \(KXU3\)/)).toBeInTheDocument();
     expect(screen.getByText(/KXU3-26NOV-T4\.5/)).toBeInTheDocument();
-    expect(screen.getByText(/31%/)).toBeInTheDocument();
+    expect(screen.getAllByText(/31%/).length).toBeGreaterThan(0);
   });
 });
 

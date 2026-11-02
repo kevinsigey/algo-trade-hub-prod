@@ -67,10 +67,28 @@ def test_cpi_is_a_quick_strip_item_not_a_card():
     built = build_macro(jobs_rows=JOBS, scoreboard_rows=RUNS, journal_scores=SCORES,
                         journal_forecasts=FORECASTS, journal_settlements=SETTLEMENTS, today=TODAY)
     assert "cpi" not in {c["key"] for c in built["cards"]}
-    [cpi] = built["quick"]
+    [cpi] = [q for q in built["quick"] if q["key"] == "cpi"]
     assert cpi["display_only"] is True
     assert cpi["call"]["ours"] == 0.62 and cpi["call"]["market"] == 0.58
     assert cpi["record"]["n_settled"] == 24
+
+
+def test_ppi_has_a_quick_strip_home_with_its_journal_record():
+    # Kevin's redesign (2026-11-02): PPI was journal-only with no presence on /macro.
+    scores = SCORES + [{"forecaster": "ppi_nowcast", "forecaster_version": "ppi-yoy-v1", "n_settled": 3,
+                        "brier": 0.11, "brier_baseline": 0.10, "gap": 0.01, "gap_se": 0.02}]
+    forecasts = FORECASTS + [
+        {"forecaster": "ppi_nowcast", "forecaster_version": "ppi-yoy-v1", "target": "KXUSPPIYOY-26NOV",
+         "probability": 0.55, "frozen_at": "2026-10-30T13:00:00Z"},
+        {"forecaster": "kalshi_implied_ppi", "forecaster_version": "mkt", "target": "KXUSPPIYOY-26NOV",
+         "probability": 0.51, "frozen_at": "2026-10-30T13:00:00Z"},
+    ]
+    built = build_macro(jobs_rows=JOBS, scoreboard_rows=RUNS, journal_scores=scores,
+                        journal_forecasts=forecasts, journal_settlements=SETTLEMENTS, today=TODAY)
+    [ppi] = [q for q in built["quick"] if q["key"] == "ppi"]
+    assert ppi["call"]["ours"] == 0.55 and ppi["call"]["market"] == 0.51
+    assert ppi["record"]["source"] == "journal" and ppi["record"]["n_settled"] == 3
+    assert ppi["detail_href"] == "/journal"
 
 
 def test_no_gas_card_even_when_gas_rows_exist():

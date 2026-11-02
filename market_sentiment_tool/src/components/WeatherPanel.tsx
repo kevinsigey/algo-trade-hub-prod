@@ -52,9 +52,8 @@ export function WeatherPanel() {
 
   return (
     <section aria-label="Weather vs ERCOT vs Kalshi" className="space-y-4">
-      {/* The label and the empty state are chart furniture, not prose: the page has a word budget
-          for explaining, and this panel explains nothing -- it shows the numbers. The section's
-          aria-label names the region for assistive technology. */}
+      {/* Chart furniture plus, since Kevin's 2026-11-02 redesign, the labels the graph was
+          missing: named axes and one caption line saying how to read the dots. */}
       <header className="flex items-baseline justify-between">
         <div className="text-sm font-semibold uppercase tracking-wider text-slate-400">Weather & ERCOT</div>
         {settledDate && (
@@ -67,6 +66,7 @@ export function WeatherPanel() {
       )}
 
       {contracts.length > 0 && (
+        <>
         <ResponsiveContainer width="100%" height={260}>
           <ScatterChart data={contracts} margin={{ top: 20, right: 40, bottom: 40, left: 50 }}>
             <CartesianGrid stroke="#1e293b" />
@@ -77,6 +77,7 @@ export function WeatherPanel() {
               tick={{ fill: "#94a3b8", fontSize: 10 }}
               tickLine={false}
               axisLine={false}
+              label={{ value: "Our probability →", position: "insideBottom", offset: -32, fill: "#94a3b8", fontSize: 11 }}
             />
             <YAxis
               type="number"
@@ -85,6 +86,7 @@ export function WeatherPanel() {
               tick={{ fill: "#94a3b8", fontSize: 10 }}
               tickLine={false}
               axisLine={false}
+              label={{ value: "Kalshi probability", angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 11 }}
             />
             {/* 45-degree reference line: our probability = Kalshi's probability */}
             <ReferenceLine x={0} y={0} x2={1} y2={1} stroke="#64748b" strokeWidth={1} strokeDasharray="3 3" />
@@ -103,6 +105,12 @@ export function WeatherPanel() {
             />
           </ScatterChart>
         </ResponsiveContainer>
+        <p className="text-xs text-slate-500">
+          Each dot is a settled contract: our probability across, Kalshi's up. A dot on the dashed line means we
+          agreed with the market. <span className="text-emerald-400">Green</span> dots matched the outcome;{" "}
+          <span className="text-rose-400">red</span> missed.
+        </p>
+        </>
       )}
     </section>
   );
