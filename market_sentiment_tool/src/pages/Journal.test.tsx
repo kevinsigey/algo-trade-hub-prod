@@ -192,8 +192,10 @@ describe("Journal", () => {
     stubFetch();
     const { container } = render(<Journal />);
     await screen.findByLabelText("Totals");
-    // The league table carries a method line, a blurb per group and a column key; it is still short.
-    expect(copyWords(container)).toBeLessThanOrEqual(170);
+    // The league table carries a method line, a blurb per group and a column key; the Model
+    // Tracker cards view (2026-11-01 redesign) leads the page and adds the predictors' names
+    // as headings plus one waiting sentence. Re-based 170 -> 180 for that view; still short.
+    expect(copyWords(container)).toBeLessThanOrEqual(180);
   });
 
   it("shows the API's error instead of an empty ledger", async () => {
@@ -333,7 +335,8 @@ describe("Journal tabs and empty states", () => {
   it("moves selection and focus with the arrow keys", async () => {
     stubFetch();
     render(<Journal />);
-    const scored = await screen.findByRole("tab", { name: "League table" });
+    const scored = await screen.findByRole("tab", { name: "Journal" });
+    fireEvent.click(scored);
     scored.focus();
     fireEvent.keyDown(scored, { key: "ArrowRight" });
     const over = screen.getByRole("tab", { name: "Over time" });
@@ -342,7 +345,7 @@ describe("Journal tabs and empty states", () => {
     expect(scored).toHaveAttribute("tabindex", "-1");
     expect(document.activeElement).toBe(over);
     fireEvent.keyDown(over, { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: "League table" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Journal" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("says so in one sentence when nothing has been scored or is waiting", async () => {

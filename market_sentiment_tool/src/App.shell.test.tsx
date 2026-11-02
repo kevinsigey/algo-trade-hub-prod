@@ -86,7 +86,7 @@ describe("the shell on a phone", () => {
 
     const overlay = screen.getByTestId("sidebar-overlay");
     // The overlay is the nav, not a copy of its title: the links are the ones the rail has.
-    expect(within(overlay).getByRole("link", { name: /journal/i })).toHaveAttribute("href", "/journal");
+    expect(within(overlay).getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
     // And it is an overlay: fixed to the viewport, over a backdrop, and never at 768px and up.
     expect(overlay.className).toContain("fixed");
     expect(overlay.className).toContain("md:hidden");

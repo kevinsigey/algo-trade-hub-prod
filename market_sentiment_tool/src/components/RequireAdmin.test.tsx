@@ -72,14 +72,15 @@ describe("the admin gate", () => {
 });
 
 describe("the Trading HQ menu and routes", () => {
-  it("makes the portfolio the home page and groups the menu", async () => {
+  it("makes the overview the home page and groups the menu", async () => {
     stub(401);
     await at("/");
-    expect(screen.getByRole("heading", { name: "Portfolio", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Overview", level: 1 })).toBeInTheDocument();
     for (const label of ["Portfolio", "Predictions", "Admin"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /closed trades/i })).toHaveAttribute("href", "/portfolio/closed");
-    expect(screen.getByRole("link", { name: /overview/i })).toHaveAttribute("href", "/predictions");
-    expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /^portfolio$/i })).toHaveAttribute("href", "/portfolio");
+    expect(screen.getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
+    expect(screen.getAllByText("The paper book is not connected.").length).toBeGreaterThan(0);
   });
 
   it("has a sign-in page with no sign-up", async () => {

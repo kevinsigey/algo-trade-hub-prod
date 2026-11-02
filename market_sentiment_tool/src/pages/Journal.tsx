@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import JournalSports from "@/components/JournalSports";
 import { LeagueTable } from "@/components/LeagueTable";
+import { ModelCards } from "@/components/ModelCards";
 import { SkillOverTime } from "@/components/SkillOverTime";
 import { WeatherPanel } from "@/components/WeatherPanel";
 import { PreJournalContext } from "@/components/PreJournalContext";
@@ -12,14 +13,17 @@ import { viewRows } from "@/lib/journalView";
 import { beatingCount, league } from "@/lib/league";
 
 /**
- * /journal: the product. Every predictor's locked-in, scored record, measured against what it competes with.
+ * /journal: the Model Tracker (renamed from "Journal" in Kevin's 2026-11-01 redesign; the route
+ * stays /journal so bookmarks keep working). Every predictor's locked-in, scored record, measured
+ * against what it competes with.
  *
- * Header strip: the three numbers. Then the league table, grouped, one row per predictor, with edge
- * where positive always means "beats it". Over time, weather and the waiting list are one tab away.
+ * First page: one card per predictor -- headline edge first, the record behind a click. The league
+ * table keeps its own tab with its own metrics, and Over time stays a separate tab: the redesign
+ * keeps the three views distinct rather than merging them. Header strip: the three numbers.
  * Nothing here computes a score: the server does, and `lib/league.ts` only changes the sign of the gap.
  */
 
-type Tab = "league" | "time" | "weather" | "sports" | "waiting";
+type Tab = "models" | "league" | "time" | "weather" | "sports" | "waiting";
 
 function Number_({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
@@ -36,7 +40,7 @@ export default function Journal() {
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backtests, setBacktests] = useState(false);
-  const [tab, setTab] = useState<Tab>("league");
+  const [tab, setTab] = useState<Tab>("models");
 
   useEffect(() => {
     Promise.all([
@@ -78,7 +82,8 @@ export default function Journal() {
   };
 
   const tabs: [Tab, string][] = [
-    ["league", "League table"],
+    ["models", "Models"],
+    ["league", "Journal"],
     ["time", "Over time"],
     ["weather", "Weather"],
     ["sports", "Sports"],
@@ -88,7 +93,7 @@ export default function Journal() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-4 md:p-8">
       <header>
-        <h1 className="font-display text-5xl uppercase tracking-wide text-foreground">Prediction Journal</h1>
+        <h1 className="font-display text-5xl uppercase tracking-wide text-foreground">Model Tracker</h1>
         <p className="mt-2 max-w-2xl text-muted-foreground">
           Every forecast is locked in before the event and scored after. No orders are placed.
         </p>
@@ -119,6 +124,10 @@ export default function Journal() {
             {text}
           </button>
         ))}
+      </div>
+
+      <div className={tab === "models" ? "" : "hidden"}>
+        <ModelCards rows={table} series={series?.series ?? []} />
       </div>
 
       <div className={tab === "league" ? "" : "hidden"}>
