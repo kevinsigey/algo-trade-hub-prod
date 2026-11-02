@@ -736,9 +736,14 @@ class _LabelIn(BaseModel):
 
 
 def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | None]:
-    """The live-paper gate on the idea's latest run, recomputed from fresh prices every time it is asked."""
+    """The live-paper gate on the idea's latest SAVED run, recomputed from fresh prices
+    every time it is asked. A preview run never reaches the gate (save-by-choice)."""
     runs = _found(supabase, idea_id)["runs"]
-    latest = runs[-1] if runs else None
+    saved = workshop_store.saved_only(runs)
+    latest = saved[-1] if saved else None
+    if latest is None and runs:
+        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+                "reasons": ["no saved run yet: previews don't count toward the gate -- save a run first"]}, None
     if latest is not None and (latest.get("spec") or {}).get("kind") == "event":
         return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
                 "reasons": ["event studies are research only for now: they don't trade on paper"]}, None
@@ -785,8 +790,13 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
     if idea.get("tracked_at"):
         raise HTTPException(status_code=409, detail="already tracking")
     runs = found["runs"]
-    run = next((r for r in runs if r["id"] == body.run_id), None) if body.run_id is not None \
-        else (runs[-1] if runs else None)
+    if body.run_id is not None:
+        run = next((r for r in runs if r["id"] == body.run_id), None)
+        if run is not None and not run.get("saved_at"):
+            raise HTTPException(status_code=409, detail="save the run first: previews can't be tracked")
+    else:
+        saved = workshop_store.saved_only(runs)
+        run = saved[-1] if saved else None
     if run is None:
         raise HTTPException(status_code=409, detail="no run to track")
     if run["verdict"] != "PASS":
@@ -898,6 +908,17 @@ class _EventRunIn(BaseModel):
     draft_model: str | None = None
 
 
+@app.post("/api/workshop/ideas/{idea_id}/runs/{run_id}/save", tags=["Workshop"])
+def workshop_save_run(idea_id: int, run_id: int, _admin: dict = Depends(admin.require_admin),
+                      supabase=Depends(get_supabase)):
+    """Save a preview run (save-by-choice, 2026-11-02): the run joins the record --
+    public page, gate, tracking -- only once saved. Idempotent."""
+    found = _found(supabase, idea_id)
+    if not any(r["id"] == run_id for r in found["runs"]):
+        raise HTTPException(status_code=404, detail="no such run")
+    return workshop_store.save_run(supabase, run_id)
+
+
 @app.post("/api/workshop/ideas/{idea_id}/event-runs", tags=["Workshop"])
 def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(admin.require_admin),
                        supabase=Depends(get_supabase)):
@@ -983,7 +1004,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
 def get_ideas(supabase=Depends(get_supabase)):
     out = []
     for idea in workshop_store.published_ideas(supabase):
-        row = _public_idea(supabase, idea, workshop_store.get_idea(supabase, idea["id"])["runs"])
+        row = _public_idea(supabase, idea, workshop_store.saved_only(workshop_store.get_idea(supabase, idea["id"])["runs"]))
         if row["live"]:
             row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
         out.append(row)
@@ -992,7 +1013,10 @@ def get_ideas(supabase=Depends(get_supabase)):
 
 @app.get("/api/ideas/summary", tags=["Ideas"])
 def get_ideas_summary(supabase=Depends(get_supabase)):
-    runs = supabase.table("idea_runs").select("idea_id,variation,verdict").execute().data or []
+    # Saved runs only: the record line counts what was kept, not what was previewed.
+    saved_ids = {s["run_id"] for s in supabase.table("idea_run_saves").select("run_id").execute().data or []}
+    runs = [r for r in (supabase.table("idea_runs").select("id,idea_id,variation,verdict").execute().data or [])
+            if r["id"] in saved_ids]
     latest: dict[int, tuple[int, str]] = {}
     for r in runs:
         iid = r["idea_id"]
@@ -1018,7 +1042,7 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
         raise HTTPException(status_code=404, detail="no such idea")  # private and missing look the same
     from tradehub.portfolio import service
 
-    row = _public_idea(supabase, found["idea"], found["runs"])
+    row = _public_idea(supabase, found["idea"], workshop_store.saved_only(found["runs"]))
     row["plain_words"] = found["idea"]["plain_words"]
     row["shadow"] = row.pop("live")
     row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],
@@ -1037,7 +1061,7 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
                                "split_date": r["result"].get("split_date"),
                                "n_events": r["result"].get("n_events"), "per_ticker": r["result"].get("per_ticker"),
                                "notes": r["result"].get("notes")}}
-                   for r in found["runs"]]
+                   for r in workshop_store.saved_only(found["runs"])]
     try:
         trades = service.closed(supabase)["trades"]
     except Exception:  # noqa: BLE001 -- trades are context; the record stands without them

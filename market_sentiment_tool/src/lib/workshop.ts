@@ -208,6 +208,9 @@ export interface Run {
   verdict: Verdict;
   result: RunResult;
   created_at: string;
+  /** Save-by-choice (2026-11-02): null while the run is an unsaved preview. Only
+   * saved runs count toward the record, the gate, and tracking. */
+  saved_at: string | null;
 }
 
 export interface Idea {

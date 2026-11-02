@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 IDEAS, RUNS, SHADOW, LABELS = "ideas", "idea_runs", "idea_shadow_days", "order_labels"
+SAVES = "idea_run_saves"
 SWITCHES, ORDERS = "order_switches", "paper_orders"
 
 
@@ -97,14 +98,19 @@ def get_idea(supa, idea_id: int) -> dict | None:
     if not rows:
         return None
     runs = supa.table(RUNS).select("*").eq("idea_id", idea_id).order("variation").execute().data
-    return {"idea": rows[0], "runs": runs}
+    return {"idea": rows[0], "runs": _annotate_saved(supa, runs)}
 
 
 def list_ideas(supa) -> list[dict]:
     ideas = supa.table(IDEAS).select("*").order("created_at", desc=True).execute().data
-    runs = supa.table(RUNS).select("idea_id,variation,verdict").execute().data
+    runs = supa.table(RUNS).select("id,idea_id,variation,verdict").execute().data
+    # The list speaks for the record, so it reads saved runs only: a preview does
+    # not change an idea's standing until it is saved (save-by-choice, 2026-11-02).
+    saved_ids = {s["run_id"] for s in supa.table(SAVES).select("run_id").execute().data}
     latest: dict[int, tuple[int, str]] = {}
     for r in runs:
+        if r["id"] not in saved_ids:
+            continue
         if r["variation"] > latest.get(r["idea_id"], (0, ""))[0]:
             latest[r["idea_id"]] = (r["variation"], r["verdict"])
     return [{"id": i["id"], "title": i["title"], "created_at": i["created_at"],
@@ -117,12 +123,51 @@ def list_ideas(supa) -> list[dict]:
 def insert_run(supa, idea_id: int, variation: int, spec: dict, draft_model: str | None, result: dict) -> dict:
     row = {"idea_id": idea_id, "variation": variation, "spec": spec, "draft_model": draft_model,
            "verdict": result["verdict"], "result": result, "data_end": result.get("data_end")}
-    return supa.table(RUNS).insert(row).execute().data[0]
+    # A fresh run is a preview by definition (save-by-choice): the shape carries it.
+    return {**supa.table(RUNS).insert(row).execute().data[0], "saved_at": None}
 
 
 def get_run(supa, run_id: int) -> dict | None:
     rows = supa.table(RUNS).select("*").eq("id", run_id).execute().data
     return rows[0] if rows else None
+
+
+def _annotate_saved(supa, runs: list[dict]) -> list[dict]:
+    """Attach `saved_at` to each run from idea_run_saves (save-by-choice, 2026-11-02).
+    idea_runs is append-only, so the save is its own row in another table; this is the
+    one place that joins the two, and every reader downstream sees a plain field."""
+    if not runs:
+        return runs
+    saves = supa.table(SAVES).select("run_id,saved_at").execute().data
+    by_id = {s["run_id"]: s["saved_at"] for s in saves}
+    return [{**r, "saved_at": by_id.get(r["id"])} for r in runs]
+
+
+def saved_only(runs: list[dict]) -> list[dict]:
+    """The runs that count: saved ones, in order. Previews are visible in the
+    Workshop and nowhere else -- not the record, not the gate, not tracking."""
+    return [r for r in runs if r.get("saved_at")]
+
+
+def save_run(supa, run_id: int) -> dict | None:
+    """Save a preview run (save-by-choice, 2026-11-02): one insert into
+    idea_run_saves. Idempotent -- an already-saved run returns as it is."""
+    run = get_run(supa, run_id)
+    if run is None:
+        return None
+    existing = supa.table(SAVES).select("run_id,saved_at").eq("run_id", run_id).execute().data
+    if not existing:
+        stamp = datetime.now(UTC).isoformat()
+        try:
+            supa.table(SAVES).insert({"run_id": run_id, "saved_at": stamp}).execute()
+        except Exception:
+            # A racing save won; the row exists, which is all saving means.
+            existing = supa.table(SAVES).select("run_id,saved_at").eq("run_id", run_id).execute().data
+            if not existing:
+                raise
+        else:
+            existing = [{"run_id": run_id, "saved_at": stamp}]
+    return {**run, "saved_at": existing[0]["saved_at"]}
 
 
 def set_auto(supa, idea_id: int, on: bool, by: str) -> dict:

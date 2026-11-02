@@ -78,6 +78,11 @@ def test_two_runs_are_variations_1_and_2(api):
     assert [r1.json()["variation"], r2.json()["variation"]] == [1, 2]
     assert [x["variations"] for x in calls] == [1, 2] and calls[1]["seed"] == idea["id"] * 1000 + 2
     assert calls[0]["fred"] == {"DGS10": "series"}
+    # The Workshop list reads saved runs only: two previews leave the idea unrun there.
+    listed = c.get("/api/workshop/ideas").json()
+    assert listed[0]["runs"] == 0 and listed[0]["latest_verdict"] is None
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{r1.json()['id']}/save")
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{r2.json()['id']}/save")
     listed = c.get("/api/workshop/ideas").json()
     assert listed[0]["runs"] == 2 and listed[0]["latest_verdict"] == "FAIL"
     got = c.get(f"/api/workshop/ideas/{idea['id']}").json()
@@ -127,7 +132,8 @@ def passed(api, monkeypatch):
     c, db, _ = api
     monkeypatch.setattr(main, "run_test", lambda *a, **k: PASS_RESULT)
     idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
-    c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save")  # a recorded run, not a preview
     gate = {"status": "ready", "new_days": 70, "needed": 63, "claim": {"holds": True}, "size_ok": True, "reasons": []}
     seen = []
     monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, closes, fred, div_yields=None: "frame")
@@ -147,6 +153,31 @@ def test_lifecycle_routes_need_admin():
         assert getattr(c, method)(path).status_code == 401, path
 
 
+def test_preview_counts_nowhere_until_saved(api, monkeypatch):
+    """Save-by-choice (2026-11-02): a fresh run is a preview -- the gate, tracking and
+    the public record all ignore it -- until the save endpoint stamps it. Saving is
+    idempotent, and a run of another idea 404s."""
+    c, _, _ = api
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: PASS_RESULT)
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda spec, closes, fred, div_yields=None: "frame")
+    monkeypatch.setattr(main, "gate_check", lambda spec, frame, data_end, size_pct: {
+        "status": "ready", "new_days": 70, "needed": 63, "claim": {"holds": True}, "size_ok": True, "reasons": []})
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    other = c.post("/api/workshop/ideas", json={"title": "Other", "plain_words": "y"}).json()
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    assert run["saved_at"] is None
+    gate = c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()
+    assert gate["status"] == "fails" and "no saved run yet" in gate["reasons"][0]
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/track", json={}).status_code == 409
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/track", json={"run_id": run["id"]}).status_code == 409
+    assert c.post(f"/api/workshop/ideas/{other['id']}/runs/{run['id']}/save").status_code == 404
+    saved = c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save")
+    assert saved.status_code == 200 and saved.json()["saved_at"]
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save").status_code == 200  # idempotent
+    assert c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()["status"] == "ready"
+    assert c.post(f"/api/workshop/ideas/{idea['id']}/track", json={}).status_code == 200
+
+
 def test_gate_reads_the_latest_pass(passed):
     c, _, i, _, seen = passed
     r = c.get(f"/api/workshop/ideas/{i}/gate", params={"size_pct": 20})
@@ -158,7 +189,8 @@ def test_gate_reads_the_latest_pass(passed):
 def test_gate_fails_when_latest_run_did_not_pass(api):
     c, _, _ = api
     idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
-    c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC})  # RESULT is a FAIL
+    run = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()  # RESULT is a FAIL
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save")
     out = c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()
     assert out["status"] == "fails" and out["reasons"] == ["the latest run did not PASS"]
 
@@ -374,6 +406,7 @@ def test_event_study_run_and_its_guards(api, monkeypatch):
     assert r.status_code == 200 and r.json()["spec"]["kind"] == "event"
     assert got["closes"] == ("closes", ("XOM", "SPY")) and got["events"] == {"XOM": "earnings:XOM"} and got["variations"] == 1
     run = r.json()
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save")  # recorded: the gate reads saved runs
     # research only: the live gate refuses it, and the CSV is the event table
     gate = c.get(f"/api/workshop/ideas/{idea['id']}/gate").json()
     assert gate["status"] == "fails" and "research" in gate["reasons"][0]
@@ -427,10 +460,14 @@ def test_ideas_summary_counts_every_ideas_latest_run(api, monkeypatch):
     a = c.post("/api/workshop/ideas", json={"title": "Idea A", "plain_words": "a"}).json()
     b = c.post("/api/workshop/ideas", json={"title": "Idea B", "plain_words": "b"}).json()
     c.post("/api/workshop/ideas", json={"title": "Idea C", "plain_words": "c"})  # never run: not "tested"
-    c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC})  # FAIL (RESULT)
+    # The summary counts saved runs (save-by-choice): these are recorded runs.
+    for idea_id, spec in ((a["id"], SPEC),):
+        run = c.post(f"/api/workshop/ideas/{idea_id}/runs", json={"spec": spec}).json()  # FAIL (RESULT)
+        c.post(f"/api/workshop/ideas/{idea_id}/runs/{run['id']}/save")
     monkeypatch.setattr(main, "run_test", lambda *x, **k: {**RESULT, "verdict": "PASS"})
-    c.post(f"/api/workshop/ideas/{a['id']}/runs", json={"spec": SPEC})  # latest = PASS
-    c.post(f"/api/workshop/ideas/{b['id']}/runs", json={"spec": SPEC})  # PASS
+    for idea_id in (a["id"], b["id"]):
+        run = c.post(f"/api/workshop/ideas/{idea_id}/runs", json={"spec": SPEC}).json()  # PASS
+        c.post(f"/api/workshop/ideas/{idea_id}/runs/{run['id']}/save")
     got = TestClient(main.app).get("/api/ideas/summary").json()
     assert got == {"tested": 2, "passed": 2, "failed": 0, "not_enough_data": 0, "published": 0}
 
