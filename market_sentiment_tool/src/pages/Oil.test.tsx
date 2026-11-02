@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import Oil from "@/pages/Oil";
 import type { JournalFeed, JournalResponse, JournalScore } from "@/lib/journal";
@@ -35,6 +35,8 @@ describe("/oil", () => {
     ]);
     const { container } = render(<Oil />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "WTI crude oil", level: 1 })).toBeTruthy());
+    // The record sits behind the Daily dropdown now (2026-11-02 dashboard pass).
+    fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
     expect(screen.queryByText(/S&P/)).toBeNull();
     expect(screen.getByText(/Nothing locked in yet/)).toBeTruthy();
@@ -45,7 +47,9 @@ describe("/oil", () => {
     serve([score({ n_targets: 30, n_settled: 30, brier: 0.09, brier_baseline: 0.07, bss: -0.2 }),
            score({ forecaster: "baseline_persistence_oil", n_targets: 2 })]);
     render(<Oil />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)", level: 2 })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Daily settlement/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
+    expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
     expect(screen.getAllByText("Behind").length).toBeGreaterThan(0);
     expect(screen.getByText("-0.20")).toBeTruthy();
   });
@@ -57,9 +61,29 @@ describe("/oil", () => {
       score({ forecaster: "kalshi_implied_oil_hourly", forecaster_version: "v1", cadence: "hourly" }),
     ]);
     render(<Oil />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Hourly settlements" })).toBeTruthy());
+    // Both records are dropdowns now; the hourly rows live under their own.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Hourly settlements/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Hourly settlements/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (hourly settlement)" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
+  });
+
+  it("leads with the next hour's ladder: the 50% level and the strikes", async () => {
+    const ladder = [100, 101, 102].map((strike, i) => ({
+      target: `kalshi:KXWTIH-26NOV0214-T${strike}.00`, probability: [0.9, 0.5, 0.1][i], market_prob: null,
+      frozen_at: "2026-11-02T17:55:00+00:00", rebuilt: false, source_hash: "x",
+    }));
+    serve(
+      [score({ forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v1", cadence: "hourly", n_targets: 40 })],
+      { forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v1", forecasts: ladder },
+    );
+    render(<Oil />);
+    expect(await screen.findByText(/Our 50% level:/)).toBeTruthy();
+    // Twice: once in the call, once as the ladder's strike row.
+    expect(screen.getAllByText("$101.00").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("$100.00")).toBeTruthy();
+    expect(screen.getByText(/2 PM ET/)).toBeTruthy();
   });
 
   it("says the page is unavailable when the journal cannot be read", async () => {
