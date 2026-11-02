@@ -35,9 +35,26 @@ const series: SeriesEntry[] = [
   },
 ];
 
+/** Groups start closed since 2026-11-02; open them before asserting on cards. */
+function openGroups() {
+  for (const b of screen.getAllByRole("button")) {
+    if (b.getAttribute("aria-expanded") === "false") fireEvent.click(b);
+  }
+}
+
 describe("ModelCards", () => {
+  it("leads with the group summary and keeps the cards underneath it", () => {
+    render(<ModelCards rows={league(viewRows(scores))} series={series} />);
+    // The header carries the standing: behind of measured, beating, best edge, scored.
+    expect(screen.getByText(/behind of \d+ measured/)).toBeInTheDocument();
+    expect(screen.queryByText("+0.021")).toBeNull();
+    openGroups();
+    expect(screen.getByText("+0.021")).toBeInTheDocument();
+  });
+
   it("renders one card per predictor with its headline edge and status", () => {
     render(<ModelCards rows={league(viewRows(scores))} series={series} />);
+    openGroups();
     expect(screen.getAllByRole("article")).toHaveLength(4);
     expect(screen.getByText("+0.021")).toBeInTheDocument();
     expect(screen.getByText("Beating the baseline")).toBeInTheDocument();
@@ -50,12 +67,14 @@ describe("ModelCards", () => {
 
   it("shows a waiting predictor as a muted explanation, not a score", () => {
     render(<ModelCards rows={league(viewRows(scores))} series={series} />);
+    openGroups();
     expect(screen.getByText("Waiting for results")).toBeInTheDocument();
     expect(screen.getByText(/3 forecasts locked in\. Scoring starts with the first settlement\./)).toBeInTheDocument();
   });
 
   it("opens the record behind a click: variants and gate reasons", () => {
     render(<ModelCards rows={league(viewRows(scores))} series={series} />);
+    openGroups();
     const buttons = screen.getAllByRole("button", { name: "Details" });
     fireEvent.click(buttons[0]);
     expect(screen.getByText("needs a longer settled record")).toBeInTheDocument();
