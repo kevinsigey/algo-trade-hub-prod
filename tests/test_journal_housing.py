@@ -132,5 +132,7 @@ def test_the_registry_runs_housing():
     from tradehub.journal.registry import FORECASTERS
 
     keys = [(f.name, f.version) for f in FORECASTERS]
-    assert ("housing_direction", "housing-wf-v1") in keys and len(set(keys)) == len(keys)
+    # Housing parked 2026-11-01 (macro audit): the class still works (tests above);
+    # the registry no longer runs it.
+    assert ("housing_direction", "housing-wf-v1") not in keys and len(set(keys)) == len(keys)
     assert timedelta(days=5) > timedelta(0)

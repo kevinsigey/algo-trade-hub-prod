@@ -61,12 +61,15 @@ def test_jobs_card_carries_the_live_call_the_trail_and_the_record():
     assert jobs["record"]["diagnostics_flags"] == ["pay_rev_3m: mostly_zero"]
 
 
-def test_cpi_card_pairs_probabilities_by_target_and_marks_display_only():
-    cpi = _build()["cpi"]
+def test_cpi_is_a_quick_strip_item_not_a_card():
+    # Kevin's call (2026-11-01): display-only content leaves the card grid for a
+    # one-line strip across the top. The pairing and the record still hold there.
+    built = build_macro(jobs_rows=JOBS, scoreboard_rows=RUNS, journal_scores=SCORES,
+                        journal_forecasts=FORECASTS, journal_settlements=SETTLEMENTS, today=TODAY)
+    assert "cpi" not in {c["key"] for c in built["cards"]}
+    [cpi] = built["quick"]
     assert cpi["display_only"] is True
     assert cpi["call"]["ours"] == 0.62 and cpi["call"]["market"] == 0.58
-    assert cpi["trail"] == [{"label": "KXCPI-26OCT", "ours": 0.40, "market": 0.44, "actual": 0}]
-    assert cpi["trail_kind"] == "probability"
     assert cpi["record"]["n_settled"] == 24
 
 

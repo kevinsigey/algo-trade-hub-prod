@@ -164,5 +164,5 @@ def test_the_registry_runs_the_labor_forecasters():
     from tradehub.journal.registry import FORECASTERS
 
     keys = {(f.name, f.version) for f in FORECASTERS}
-    assert {("labor_nowcast", "labor-v1"), ("kalshi_implied_labor", "v1"), ("unrate_direction", "unrate-dir-v1"),
-            ("quits_direction", "quits-dir-v1")} <= keys
+    assert {("labor_nowcast", "labor-v1"), ("kalshi_implied_labor", "v1"), ("unrate_direction", "unrate-dir-v1")} <= keys
+    assert ("quits_direction", "quits-dir-v1") not in keys  # parked 2026-11-01 (macro audit)

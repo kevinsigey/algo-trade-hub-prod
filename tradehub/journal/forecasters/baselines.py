@@ -228,7 +228,7 @@ class MonthlyBaseline:
 
 
 def build_baselines(spx_closes: Closes, wave2: Mapping[str, Closes],
-                    housing: HousingForecaster, extra: Mapping[str, Closes] | None = None) -> list[Forecaster]:
+                    housing: HousingForecaster | None, extra: Mapping[str, Closes] | None = None) -> list[Forecaster]:
     """Both baselines for every non-market direction family, beside the model whose targets they price.
 
     Each family keeps its own session calendar (spec §8: EUR/USD settles on ECB reference days, the rest
@@ -243,4 +243,5 @@ def build_baselines(spx_closes: Closes, wave2: Mapping[str, Closes],
                                   is_session=is_target_day if family == "eurusd" else is_session,
                                   settle=settle)
                 for kind in KINDS]
-    return out + [MonthlyBaseline(housing, kind) for kind in KINDS]
+    # Housing parked 2026-11-01 (macro audit): no MonthlyBaseline rows while it is.
+    return out + ([MonthlyBaseline(housing, kind) for kind in KINDS] if housing is not None else [])

@@ -144,6 +144,22 @@ export default function Macro() {
       {!data && !error && <p className="mt-4 text-sm text-muted-foreground">Loading the macro board…</p>}
       {data && (
         <>
+          {data.quick.length > 0 && (
+            <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Quick</span>
+              {data.quick.map((q) => (
+                <Link key={q.key} to={q.detail_href} className="text-sm tabular-nums hover:underline">
+                  <span className="font-medium">{q.title}</span>
+                  {q.call ? (
+                    <> — Ours <strong>{fmtVal(q.call.ours, "probability")}</strong>{" · "}Kalshi <strong>{fmtVal(q.call.market, "probability")}</strong></>
+                  ) : (
+                    <> — no live call</>
+                  )}
+                  <span className="text-xs text-muted-foreground"> ({q.note})</span>
+                </Link>
+              ))}
+            </div>
+          )}
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {data.cards.map((c) => <CardView key={c.key} card={c} />)}
           </div>

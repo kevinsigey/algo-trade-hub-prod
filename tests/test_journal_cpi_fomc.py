@@ -116,6 +116,8 @@ def test_the_registry_builds_without_network():
     from tradehub.journal.registry import FORECASTERS
 
     keys = {(f.name, f.version) for f in FORECASTERS}
-    assert {("cpi_nowcast", "cpi-v1"), ("cpi_nowcast", "cpi-core-v1"), ("fomc_mapped", "fomc-mapped-v1"),
-            ("kalshi_implied_cpi", "v1"), ("kalshi_implied_fomc", "v1")} <= keys
+    assert {("cpi_nowcast", "cpi-v1"), ("cpi_nowcast", "cpi-core-v1"),
+            ("kalshi_implied_cpi", "v1")} <= keys
+    # fomc_mapped retired 2026-11-01 (macro audit): no model row, no market row.
+    assert ("fomc_mapped", "fomc-mapped-v1") not in keys and ("kalshi_implied_fomc", "v1") not in keys
     assert len(keys) == len(FORECASTERS), "(name, version) must be unique: it is the journal key"
