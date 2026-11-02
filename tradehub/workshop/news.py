@@ -38,6 +38,30 @@ import pandas as pd
 BASKETS: dict[str, str] = {
     "ENERGY": '("natural gas" OR "Henry Hub" OR LNG OR OPEC OR "crude oil" OR EIA OR gasoline OR refinery)'
               " sourcelang:English sourcecountry:US",
+    # Sector baskets (2026-11-01, Kevin's generalization call): one GDELT query
+    # set per SPDR sector, same shape as ENERGY -- the journal grades each
+    # basket's tone against its sector ETF, and Workshop conditions can read
+    # any of them by name.
+    "FINANCIALS": '("bank earnings" OR "regional banks" OR "credit losses" OR JPMorgan OR "Bank of America" OR "Wells Fargo")'
+                  " sourcelang:English sourcecountry:US",
+    "TECHNOLOGY": '(semiconductor OR "chip stocks" OR Nvidia OR Apple OR Microsoft OR "AI stocks" OR "tech earnings")'
+                  " sourcelang:English sourcecountry:US",
+    "HEALTHCARE": '("drug pricing" OR FDA OR biotech OR "health insurers" OR UnitedHealth OR "Eli Lilly")'
+                  " sourcelang:English sourcecountry:US",
+    "UTILITIES": '("electric utilities" OR "power grid" OR "utility stocks" OR "electricity rates")'
+                 " sourcelang:English sourcecountry:US",
+    "INDUSTRIALS": '("defense stocks" OR airlines OR Boeing OR Caterpillar OR freight OR "industrial production")'
+                   " sourcelang:English sourcecountry:US",
+    "DISCRETIONARY": '("consumer spending" OR "retail sales" OR Amazon OR Tesla OR "retail earnings")'
+                     " sourcelang:English sourcecountry:US",
+    "STAPLES": '("grocery prices" OR "food prices" OR Walmart OR Costco OR "consumer staples")'
+               " sourcelang:English sourcecountry:US",
+    "MATERIALS": '("gold miners" OR copper OR steel OR "chemical stocks" OR mining stocks)'
+                 " sourcelang:English sourcecountry:US",
+    "COMMUNICATION": '(streaming OR Netflix OR Meta OR Alphabet OR "social media stocks")'
+                     " sourcelang:English sourcecountry:US",
+    "REALESTATE": '("housing market" OR "mortgage rates" OR REIT OR "home builders" OR rent prices)'
+                  " sourcelang:English sourcecountry:US",
 }
 
 DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"

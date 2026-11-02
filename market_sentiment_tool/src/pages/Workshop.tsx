@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
 import { adminJson, adminText, verdictTone, type AgentDebateCard, type AgentDebateFeed, type FillRow, type Idea, type IdeaRow } from "@/lib/workshop";
+import { SectorTonePanel } from "@/components/SectorTonePanel";
 
 export const toneClass = {
   ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
@@ -112,6 +113,8 @@ export default function Workshop() {
         {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} Turn into a test
       </button>
       {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+
+      <SectorTonePanel />
 
       <h2 className="mt-12 text-lg font-semibold text-white">Ideas</h2>
       {ideas === null && !error && <p className="mt-3 text-sm text-slate-400">Loading…</p>}

@@ -19,7 +19,13 @@ from tradehub.journal.forecasters.daily_direction import build_wave2, wave2_clos
 from tradehub.journal.forecasters.ercot import build_ercot
 from tradehub.journal.forecasters.gas import build_gas
 from tradehub.journal.forecasters.labor import LaborData, PayrollsForecaster, UnrateDirection
-from tradehub.journal.forecasters.news_tone import EnergyToneForecaster, xle_source
+from tradehub.journal.forecasters.news_tone import (
+    SECTORS,
+    EnergyToneForecaster,
+    build_sector_tone,
+    etf_source,
+    xle_source,
+)
 from tradehub.journal.forecasters.oil import build_oil
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
@@ -39,6 +45,8 @@ _SPX = SpxCloses()
 _WAVE2 = wave2_closes()
 # phase-2 §5.1: XLE closes for the energy news-tone row (its own object, shared with its baselines).
 _XLE = DailyCloses(xle_source())
+_SECTOR_CLOSES = {sector: DailyCloses(etf_source(etf))
+                  for sector, (_basket, etf) in SECTORS.items() if sector != "energy"}
 
 FORECASTERS: list[Forecaster] = [
     # plan (b): CPI + FOMC, each beside its Kalshi pseudo-forecaster (spec §5, ruling Q5)
@@ -67,10 +75,16 @@ FORECASTERS: list[Forecaster] = [
     *build_wave2(_WAVE2),
     # phase-2 §5.1: energy news tone -> XLE direction, the fixed logistic z map, graded as-is
     EnergyToneForecaster(_XLE),
+    # sector tone (2026-11-01, Kevin's generalization): the same fixed map for
+    # every other SPDR sector against its own ETF, each on its own record
+    *build_sector_tone(_SECTOR_CLOSES),
     # spec §8/§10: the naive baselines -- persistence and climatology for every non-market direction
     # family, each beside the model whose targets it prices, on the same closes and its own calendar.
     # Never promoted and never counted as evidence: see `forecasters/baselines.py` and `scoring.py`.
-    *build_baselines(_SPX, _WAVE2, None, {"xle": _XLE}),
+    *build_baselines(_SPX, _WAVE2, None,
+                     {"xle": _XLE,
+                      **{etf.lower(): _SECTOR_CLOSES[sector]
+                         for sector, (_b, etf) in SECTORS.items() if sector != "energy"}}),
     # wave 3 (spec §8): NFL and CFB feed consumers, each beside its Kalshi-implied baseline
     *build_sports(),
     # daily weather (highs, lows, rain): NOAA/ECMWF ensembles beside the Kalshi mid and station climatology

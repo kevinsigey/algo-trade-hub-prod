@@ -417,3 +417,17 @@ means, so a future journal-native per-model refit has data to fit on
 (shorter freeze lead) stays rejected, and the El Niño feature was tested and
 rejected the same day (16,029 archive pairs: phase mean |error| identical,
 upper bound -0.0002 Brier) -- see the research note, not the code.
+
+Sector news tone (2026-11-01, Kevin's generalization of the §5.1 energy row):
+the semantic analyzer was only ever grading energy. Every SPDR sector now
+has a GDELT basket in workshop/news.py (FINANCIALS, TECHNOLOGY, HEALTHCARE,
+UTILITIES, INDUSTRIALS, DISCRETIONARY, STAPLES, MATERIALS, COMMUNICATION,
+REALESTATE beside ENERGY) and a journal row running the identical fixed
+tone-z map against its own ETF (`<sector>_news_tone`@`tone-z-v1`, persistence
++ climatology baselines beside each) -- eleven graded sector signals instead
+of one, each accumulating its own record. Workshop conditions could already
+read any basket by name; the drafter's prose now lists them all, and the
+Workshop page gains a Sector news tone panel (GET /api/workshop/tone) showing
+each sector's latest tone and 60-day z -- the same numbers the journal rows
+freeze on. GDELT's ~92-day window caveat applies to every basket: no
+backtest validation is possible, forward review at ~60-100 sessions each.

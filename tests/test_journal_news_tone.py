@@ -91,3 +91,19 @@ def test_the_row_freezes_and_settles_through_the_runner():
     now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     out = run_journal(db, [fc], now)
     assert out["failures"] == []
+
+
+def test_sector_rows_run_the_same_fixed_map_on_their_own_basket_and_etf():
+    """The 2026-11-01 generalization: every SPDR sector gets the energy rule
+    verbatim -- its own basket in the payload, its own ETF's target key."""
+    from tradehub.journal.forecasters.news_tone import SECTORS, SectorToneForecaster, etf_source
+
+    tone = _tone(newest=3.0)
+    closes, _ = _closes()
+    fc = SectorToneForecaster("financials", "FINANCIALS", closes, tone_fn=lambda basket, start: tone)
+    assert (fc.name, fc.version) == ("financials_news_tone", "tone-z-v1")
+    energy = _forecaster(tone).forecast(_entry(), datetime(2026, 10, 19, 13, 0, tzinfo=UTC))
+    mine = fc.forecast(_entry(), datetime(2026, 10, 19, 13, 0, tzinfo=UTC))
+    assert mine.probability == energy.probability  # the identical fixed map
+    assert mine.payload["basket"] == "FINANCIALS" and energy.payload["basket"] == "ENERGY"
+    assert etf_source("XLF").family == "xlf" and len(SECTORS) == 11

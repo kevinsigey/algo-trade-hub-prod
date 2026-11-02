@@ -40,8 +40,30 @@ STALE_DAYS = 4          # newest tone day older than this before the session -> 
 SLOPE = 0.75            # the fixed logistic slope of the tone map; unfitted by design
 
 
+def etf_source(ticker: str, chart=fetch_chart) -> DailySource:
+    return DailySource(ticker.lower(), f"yahoo:{ticker}", lambda start: chart(ticker, start), is_session)
+
+
 def xle_source(chart=fetch_chart) -> DailySource:
-    return DailySource("xle", "yahoo:XLE", lambda start: chart("XLE", start), is_session)
+    return etf_source("XLE", chart)
+
+
+# Sector key -> (GDELT basket, sector ETF). Energy is the original row; the
+# rest are the 2026-11-01 generalization -- every SPDR sector gets the same
+# fixed tone map against its own ETF, graded on its own record.
+SECTORS: dict[str, tuple[str, str]] = {
+    "energy": ("ENERGY", "XLE"),
+    "financials": ("FINANCIALS", "XLF"),
+    "technology": ("TECHNOLOGY", "XLK"),
+    "healthcare": ("HEALTHCARE", "XLV"),
+    "utilities": ("UTILITIES", "XLU"),
+    "industrials": ("INDUSTRIALS", "XLI"),
+    "discretionary": ("DISCRETIONARY", "XLY"),
+    "staples": ("STAPLES", "XLP"),
+    "materials": ("MATERIALS", "XLB"),
+    "communication": ("COMMUNICATION", "XLC"),
+    "realestate": ("REALESTATE", "XLRE"),
+}
 
 
 def tone_zscore(tone: pd.Series, day: date) -> tuple[float, date, float] | None:
@@ -66,12 +88,17 @@ def tone_zscore(tone: pd.Series, day: date) -> tuple[float, date, float] | None:
     return (newest - mean) / std, newest_day.date(), newest
 
 
-class EnergyToneForecaster:
+class SectorToneForecaster:
+    """One sector's news tone -> its ETF's next-session direction, the fixed
+    map from the module docstring. `energy_news_tone` is the original row and
+    keeps its name; every sector runs the identical rule on its own basket."""
+
     cadence = "daily"
-    name = "energy_news_tone"
     version = "tone-z-v1"
 
-    def __init__(self, closes: DailyCloses, tone_fn=news_tone_series):
+    def __init__(self, sector: str, basket: str, closes: DailyCloses, tone_fn=news_tone_series):
+        self.name = f"{sector}_news_tone"
+        self.basket = basket
         self._closes, self._tone_fn = closes, tone_fn
 
     def targets(self, now: datetime) -> list[CalendarEntry]:
@@ -80,7 +107,7 @@ class EnergyToneForecaster:
     def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
         day = target_day(entry.target)
         try:
-            tone = self._tone_fn(BASKET, day - timedelta(days=WINDOW_DAYS + 40))
+            tone = self._tone_fn(self.basket, day - timedelta(days=WINDOW_DAYS + 40))
         except Exception:
             return None  # GDELT down/throttled with no cache: a gap, never a guess
         found = tone_zscore(tone, day)
@@ -90,9 +117,23 @@ class EnergyToneForecaster:
         clamped = max(-10.0, min(10.0, z))  # a near-zero window std must not blow the map up
         prob = 1.0 / (1.0 + math.exp(SLOPE * clamped))  # sigmoid(-SLOPE * z)
         return Forecast(self.name, self.version, entry.target, prob,
-                        payload={"basket": BASKET, "tone_day": tone_day.isoformat(),
+                        payload={"basket": self.basket, "tone_day": tone_day.isoformat(),
                                  "tone": tone_value, "z": z, "slope": SLOPE,
                                  "window_days": WINDOW_DAYS, "source": "gdelt:timelinetone"})
 
     def settle(self, target: str, now: datetime) -> Settlement | None:
         return settle_daily(target, now, self._closes)
+
+
+class EnergyToneForecaster(SectorToneForecaster):
+    """The original §5.1 row, kept as its own class: energy/XLE, name pinned."""
+
+    def __init__(self, closes: DailyCloses, tone_fn=news_tone_series):
+        super().__init__("energy", BASKET, closes, tone_fn)
+
+
+def build_sector_tone(closes_by_sector: dict[str, DailyCloses]) -> list[SectorToneForecaster]:
+    """Every non-energy sector's tone row (energy's is registered separately,
+    beside its original call site)."""
+    return [SectorToneForecaster(sector, basket, closes_by_sector[sector])
+            for sector, (basket, _etf) in SECTORS.items() if sector != "energy"]
