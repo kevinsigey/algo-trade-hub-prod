@@ -492,11 +492,21 @@ export interface ShadowSummary {
   exits?: { day: string; why: string }[];
 }
 
+export type IdeaKind = "event" | "long_short" | "wrapped" | "long_only";
+
+export const KIND_LABEL: Record<IdeaKind, string> = {
+  event: "Event studies",
+  long_short: "Long–short rules",
+  wrapped: "Wrapped portfolios",
+  long_only: "Long-only rules",
+};
+
 export interface PublicIdea {
   id: number;
   title: string;
   published_at: string;
   claim: Claim | null;
+  kind: IdeaKind;
   latest_verdict: Verdict | null;
   variations: number;
   status: "backtest" | "tracking" | "live" | "killed";
@@ -506,10 +516,30 @@ export interface PublicIdea {
   live: ShadowSummary | null;
 }
 
+/** The run's full stored evidence, carried on the record since 2026-11-02 -- the same
+ * blocks the Workshop verdict card renders (curve, claim, shuffle, walk-forward). */
+export interface PublicRunDetail {
+  curve: { t: string; idea: number; benchmark: number }[];
+  reason: string | null;
+  variations: number | null;
+  claim: RunResult["claim"];
+  shuffle: RunResult["shuffle"];
+  t_test: RunResult["t_test"];
+  periods: RunResult["periods"];
+  walk_forward: RunResult["walk_forward"];
+  context: RunResult["context"];
+  data_start: string | null;
+  data_end: string | null;
+  split_date: string | null;
+  n_events?: number | null;
+  per_ticker?: RunResult["per_ticker"];
+  notes?: string[] | null;
+}
+
 export interface PublicIdeaDetail extends Omit<PublicIdea, "live"> {
   plain_words: string;
   shadow: ShadowSummary | null;
-  runs: { variation: number; verdict: Verdict; created_at: string; headline: string | null; p: number | null; bar: number | null; claim: Claim }[];
+  runs: { variation: number; verdict: Verdict; created_at: string; headline: string | null; p: number | null; bar: number | null; claim: Claim; detail: PublicRunDetail }[];
   trades: { symbol: string; qty: number; entry_price: number; exit_price: number; pnl: number; return_pct: number; exited_at: string; held_days: number; idea: string }[];
 }
 

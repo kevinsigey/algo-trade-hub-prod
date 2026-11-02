@@ -3,8 +3,10 @@ import { Loader2 } from "lucide-react";
 
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { EARLY_N } from "@/lib/sample";
-import { claimLabel, STATUS_LABEL, verdictTone, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
+import { claimLabel, KIND_LABEL, STATUS_LABEL, verdictTone, type IdeaKind, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
 import { toneClass } from "@/pages/Workshop";
+
+const KIND_ORDER: IdeaKind[] = ["event", "long_short", "wrapped", "long_only"];
 
 export const signedPct = (v: number | null | undefined) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`);
 
@@ -36,7 +38,7 @@ export default function Ideas() {
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
   const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
+    <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Ideas</h1>
       <p className="mt-1 text-sm text-slate-400">Every idea published here stays here, pass, fail or killed.</p>
       {summary && (
@@ -47,22 +49,35 @@ export default function Ideas() {
       {loading && <Loader2 className="mt-8 h-5 w-5 animate-spin text-slate-400" aria-label="Loading" />}
       {error && <p role="alert" className="mt-8 text-sm text-rose-300">{error}</p>}
       {data && data.length === 0 && <p className="mt-8 text-sm text-slate-400">No ideas published yet.</p>}
-      <ul className="mt-6 space-y-3">
-        {data?.map((idea) => (
-          <li key={idea.id}>
-            <Link to={`/ideas/${idea.id}`} className="block rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
-                <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
-                <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
-              </div>
-              <h2 className="mt-2 font-semibold text-white">{idea.title}</h2>
-              {idea.claim && <p className="mt-0.5 text-sm text-slate-400">{claimLabel(idea.claim)}</p>}
-              {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      {/* Grouped by type, in a grid (Kevin, 2026-11-02): the flat list stopped scanning
+          once the published set grew past a screenful. */}
+      {KIND_ORDER.map((kind) => {
+        const group = (data ?? []).filter((i) => i.kind === kind);
+        if (group.length === 0) return null;
+        return (
+          <section key={kind} className="mt-8">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+              {KIND_LABEL[kind]} <span className="text-slate-600">· {group.length}</span>
+            </h2>
+            <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+              {group.map((idea) => (
+                <li key={idea.id}>
+                  <Link to={`/ideas/${idea.id}`} className="block h-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
+                      <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
+                      <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
+                    </div>
+                    <h3 className="mt-2 font-semibold text-white">{idea.title}</h3>
+                    {idea.claim && <p className="mt-0.5 text-sm text-slate-400">{claimLabel(idea.claim)}</p>}
+                    {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
