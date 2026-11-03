@@ -12,6 +12,8 @@ import { DebateFeed } from "@/components/AgentDebates";
  */
 export default function Debates() {
   const [ticker, setTicker] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lastTicker, setLastTicker] = useState("");
   const [running, setRunning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -33,15 +35,25 @@ export default function Debates() {
     return () => clearInterval(t);
   }, [running]);
 
-  const start = async () => {
-    const t = ticker.trim().toUpperCase();
+  const start = async (force = false) => {
+    const t = force ? lastTicker : ticker.trim().toUpperCase();
     if (!t) return;
     setError(null);
     try {
-      await adminJson<{ started: string }>("/api/agent-debates/run", {
-        method: "POST",
-        body: JSON.stringify({ ticker: t }),
-      });
+      const res = await adminJson<{ started?: string; reused?: string; age_hours?: number }>(
+        "/api/agent-debates/run",
+        { method: "POST", body: JSON.stringify({ ticker: t, force }) },
+      );
+      if (res.reused) {
+        // Inside the reuse window the existing debate stands (Kevin,
+        // 2026-11-03: replaced, not duplicated) -- say so, and offer the
+        // explicit fresh run instead of silently spending a panel.
+        setNotice(`${t} was debated ${res.age_hours}h ago — showing that debate instead of spending another run.`);
+        setLastTicker(t);
+        setRefreshKey((k) => k + 1);
+        return;
+      }
+      setNotice(null);
       setRunning(t);
       setTicker("");
     } catch (e) {
@@ -67,7 +79,7 @@ export default function Debates() {
         <p>
           A debate takes a few minutes (about 20 model calls). The hub caps debates at 10 a day; the Gemini free tier allows
           roughly 20 calls a day in total, shared with the Workshop drafter — so in practice expect about one full debate a
-          day unless billing is on. A failed run is stored and shown with its error, never hidden.
+          day unless billing is on. A failed run is shown once with its reason, then cleared.
         </p>
       </div>
 
@@ -87,7 +99,7 @@ export default function Debates() {
           />
           <button
             type="button"
-            onClick={start}
+            onClick={() => start()}
             disabled={!ticker.trim() || running !== null}
             className="inline-flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 font-medium text-violet-950 hover:bg-violet-400 disabled:opacity-50"
           >
@@ -97,6 +109,15 @@ export default function Debates() {
         {running && (
           <p className="mt-2 text-sm text-slate-300">
             Debating {running} — the panel takes a few minutes. You can leave this page; the result lands in the record below either way.
+          </p>
+        )}
+        {notice && (
+          <p className="mt-2 text-sm text-slate-300">
+            {notice}{" "}
+            <button type="button" onClick={() => start(true)}
+                    className="font-semibold text-violet-300 underline underline-offset-2">
+              Run a fresh debate anyway
+            </button>
           </p>
         )}
         {error && <p role="alert" className="mt-2 text-sm text-rose-300">{error}</p>}

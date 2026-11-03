@@ -15,6 +15,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from tradehub.agents import importer, store
+from tradehub.agents.anchor import market_anchor
 from tradehub.agents.schema import RunRecord
 
 CT = ZoneInfo("America/Chicago")
@@ -93,11 +94,12 @@ def _fallback_env() -> dict[str, str] | None:
     return env
 
 
-def _store_failure(ticker: str, as_of: str, historical: bool, error: str, now: datetime) -> RunRecord:
+def _store_failure(ticker: str, as_of: str, historical: bool, error: str, now: datetime,
+                   anchor: dict | None = None) -> RunRecord:
     run_at_ct, run_at_utc, slug = _stamps(now)
     record = RunRecord(run_id=f"{ticker.lower()}-{slug}", ticker=ticker, run_at_ct=run_at_ct,
                        run_at_utc=run_at_utc, as_of_date=as_of, historical=historical,
-                       status="failed_error", error=error)
+                       status="failed_error", error=error, market_anchor=anchor)
     store.save_run(record, f"# Agent debate: {ticker}\n\nRun failed: {error}\n")
     return record
 
@@ -118,14 +120,17 @@ def run_debate(ticker: str, as_of: str | None = None, *, now: datetime | None = 
         return _store_failure(ticker, as_of, historical,
                               "framework not installed: create the isolated env "
                               "(tradehub/agents/requirements.txt) or set TRADEHUB_AGENTS_PYTHON", now)
+    # The market's own numbers, fetched hub-side before the panel starts:
+    # whatever the debate goes on to claim about prices is held against this.
+    anchor = market_anchor(ticker, now=now)
     try:
         proc = spawn([str(python), str(_RUNNER), ticker, as_of], capture_output=True, text=True,
                      timeout=TIMEOUT_SECONDS, env=dict(os.environ))
     except subprocess.TimeoutExpired:
         return _store_failure(ticker, as_of, historical,
-                              f"framework run timed out after {TIMEOUT_SECONDS}s", now)
+                              f"framework run timed out after {TIMEOUT_SECONDS}s", now, anchor)
     except Exception as exc:  # noqa: BLE001 -- a spawn failure is a stored failure, not a crash
-        return _store_failure(ticker, as_of, historical, f"framework spawn failed: {type(exc).__name__}", now)
+        return _store_failure(ticker, as_of, historical, f"framework spawn failed: {type(exc).__name__}", now, anchor)
     if proc.returncode != 0:
         # Primary provider unavailable (quota/outage): one retry on the
         # OpenRouter free reasoning models before the failure is stored.
@@ -141,15 +146,23 @@ def run_debate(ticker: str, as_of: str | None = None, *, now: datetime | None = 
             elif retry is not None:
                 return _store_failure(ticker, as_of, historical,
                                       f"{_root_cause(proc.stderr)} OpenRouter fallback also failed: "
-                                      f"{_root_cause(retry.stderr)}", now)
+                                      f"{_root_cause(retry.stderr)}", now, anchor)
         if proc.returncode != 0:
-            return _store_failure(ticker, as_of, historical, _root_cause(proc.stderr), now)
+            return _store_failure(ticker, as_of, historical, _root_cause(proc.stderr), now, anchor)
     try:
         raw = json.loads(proc.stdout.strip().splitlines()[-1])
     except Exception:  # noqa: BLE001
-        return _store_failure(ticker, as_of, historical, "framework returned unreadable output", now)
+        return _store_failure(ticker, as_of, historical, "framework returned unreadable output", now, anchor)
     run_at_ct, run_at_utc, slug = _stamps(now)
     record = importer.build_record(raw, run_id=f"{ticker.lower()}-{slug}", run_at_ct=run_at_ct,
                                    run_at_utc=run_at_utc, as_of_date=as_of, historical=historical)
+    record = record.model_copy(update={"market_anchor": anchor})
     store.save_run(record, importer.build_report(raw))
+    # Replace, never duplicate (Kevin, 2026-11-03): a completed debate about
+    # the same session supersedes the older ones about that session. Runs
+    # about OTHER sessions are the graded series and stay.
+    for old in store.list_runs():
+        if (old.ticker == ticker and old.run_id != record.run_id
+                and old.as_of_date == as_of and old.status in ("complete", "partial")):
+            store.delete_run(old.run_id)
     return record
