@@ -557,3 +557,18 @@ def test_go_live_with_options_refuses_when_the_book_cannot_be_read(passed, monke
     r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 10})
     assert r.status_code == 409 and "No paper account" in r.json()["detail"]
     assert not db.db["ideas"][0].get("live_at")
+
+
+def test_a_run_stores_its_autopsy_and_survives_a_broken_one(api, monkeypatch):
+    c, db, _ = api
+    idea = c.post("/api/workshop/ideas", json={"title": "Gold", "plain_words": "x"}).json()
+    monkeypatch.setattr(main, "workshop_daily_frame", lambda *a, **k: "frame")
+    monkeypatch.setattr("tradehub.workshop.autopsy.autopsy", lambda *a, **k: {"status": "ok", "variation": k["variation"]})
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    assert r["result"]["autopsy"] == {"status": "ok", "variation": 1} and r["result"]["verdict"] == "FAIL"
+
+    def boom(*a, **k):
+        raise ValueError("no frame")
+    monkeypatch.setattr(main, "workshop_daily_frame", boom)
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
+    assert r["result"]["autopsy"]["status"] == "unavailable" and r["result"]["verdict"] == "FAIL"

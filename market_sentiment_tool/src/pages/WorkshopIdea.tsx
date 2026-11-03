@@ -44,6 +44,7 @@ import {
   type IdeaDetail,
   type IdeaSpec,
   type Run,
+  type RunAutopsy,
 } from "@/lib/workshop";
 
 const field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-white focus:border-emerald-400 focus:outline-none";
@@ -615,6 +616,32 @@ function DeeperLook({ ideaId, run }: { ideaId: string; run: Run }) {
   );
 }
 
+const IMPLICATES: Record<string, string> = {
+  gate: "market condition", entry: "entry timing", exit: "exit rule", sizing: "position sizing",
+};
+
+/** The run's failure pattern, on its verdict card and again above the form when revising. */
+export function AutopsyNote({ autopsy, revising = false }: { autopsy?: RunAutopsy | null; revising?: boolean }) {
+  if (!autopsy || autopsy.status === "unavailable") return null;
+  return (
+    <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm">
+      <h3 className="font-medium text-slate-200">{revising ? "What the last run's losses point at" : "Why it lost"}</h3>
+      {autopsy.status === "too_few" ? (
+        <p className="mt-1 text-slate-400">Too few losing trades to call a pattern ({autopsy.losers ?? 0} of {autopsy.trades ?? 0}).</p>
+      ) : autopsy.pattern ? (
+        <>
+          <p className="mt-1 text-slate-300">{autopsy.pattern.text} <span className="text-slate-400">Points at: {IMPLICATES[autopsy.pattern.implicates]}.</span></p>
+          {autopsy.suggestion
+            ? <p className="mt-1 text-slate-300">{autopsy.suggestion} <span className="text-slate-400">Each change counts as another attempt and raises the bar.</span></p>
+            : <p className="mt-1 text-slate-400">No more suggestions: this idea has used its 5.</p>}
+        </>
+      ) : (
+        <p className="mt-1 text-slate-400">No recurring pattern across {autopsy.losers} losing trades of {autopsy.trades}.</p>
+      )}
+    </div>
+  );
+}
+
 export function VerdictCard(props: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   return isEvent(props.run.spec) ? <EventVerdictCard {...props} /> : <RuleVerdictCard {...props} />;
 }
@@ -795,6 +822,8 @@ function RuleVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run
           </tbody>
         </table>
       )}
+
+      <AutopsyNote autopsy={r.autopsy} />
 
       {r.walk_forward && r.walk_forward.folds.length > 0 && (
         <div className="mt-2 space-y-0.5 text-xs text-slate-400">
@@ -1411,6 +1440,7 @@ export default function WorkshopIdea() {
           </button>
         </div>
       )}
+      {draft && data && data.runs.length > 0 && <AutopsyNote autopsy={data.runs[data.runs.length - 1].result.autopsy} revising />}
       {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} storageKey={id ? `workshop-draft-${id}` : undefined} />}
       {data && data.runs.length === 0 && !draft && !drafting && (
         <button type="button" onClick={() => setParams({ draft: "1" })} className="mt-6 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900">

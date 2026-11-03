@@ -48,7 +48,11 @@ export function NextRelease({ family, title, previews }: { family: string; title
 
   useEffect(() => {
     if (previews) return;
-    getJson<{ previews: Preview[] }>("/api/journal/previews").then((r) => setRows(r.previews ?? [])).catch(() => setFailed(true));
+    let cancelled = false;
+    getJson<{ previews: Preview[] }>("/api/journal/previews")
+      .then((r) => { if (!cancelled) setRows(r.previews ?? []); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
   }, [previews]);
 
   if (failed || rows === null) return null; // a preview is an extra; its absence must not break the page
