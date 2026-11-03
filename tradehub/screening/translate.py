@@ -13,6 +13,7 @@ import os
 import requests
 
 from tradehub.screening.catalog import OPS, catalog_dict
+from tradehub.screening.rules import rules_spec
 from tradehub.screening.spec import SpecError, validate_spec
 from tradehub.workshop.draft import _models
 
@@ -21,7 +22,7 @@ URL = "https://openrouter.ai/api/v1/chat/completions"
 EXAMPLE = {
     "name": "momentum_quality",
     "description": "Top-quartile 6-month momentum, positive earnings growth, leverage at or below the median.",
-    "universe": {"type": "index", "id": "sp500"},
+    "universe": {"type": "index", "index": "sp500"},
     "filters": [{"fn": "momentum", "params": {"months": 6}, "op": "pct_gte", "value": 75},
                 {"fn": "earnings_growth_yoy", "op": "gt", "value": 0},
                 {"fn": "debt_to_equity", "op": "pct_lte", "value": 50}],
@@ -58,10 +59,16 @@ def _system() -> str:
 
 
 def translate(query: str, *, post=requests.post) -> tuple[dict, str]:
+    """AI first; on any AI failure the deterministic rules answer instead
+    (the prototype's design) and the model name says so. Only a query
+    neither path can read raises."""
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key:
+        fallback = rules_spec(query)
+        if fallback is not None:
+            return fallback, "rules (no AI key configured)"
         raise TranslateUnavailable("the translator is not configured on the server (OPENROUTER_API_KEY)")
-    body = {"models": _models(),
+    body = {"models": _models()[:3],  # OpenRouter rejects routes with >3 models
             "messages": [{"role": "system", "content": _system()},
                          {"role": "user", "content": query}]}
     try:
@@ -70,13 +77,22 @@ def translate(query: str, *, post=requests.post) -> tuple[dict, str]:
         data = resp.json()
         content = (data["choices"][0].get("message") or {}).get("content") or ""
     except Exception as exc:  # noqa: BLE001
+        fallback = rules_spec(query)
+        if fallback is not None:
+            return fallback, f"rules (AI unavailable: {type(exc).__name__})"
         raise TranslateUnavailable(f"the translator failed: {type(exc).__name__}") from exc
     start, end = content.find("{"), content.rfind("}")
     if start < 0 or end <= start:
+        fallback = rules_spec(query)
+        if fallback is not None:
+            return fallback, "rules (AI reply was not a spec)"
         raise TranslateUnavailable("the translator returned no spec")
     try:
         spec = json.loads(content[start:end + 1])
         validate_spec(spec)
     except (json.JSONDecodeError, SpecError) as exc:
+        fallback = rules_spec(query)
+        if fallback is not None:
+            return fallback, "rules (AI spec was refused)"
         raise TranslateUnavailable(f"the translated spec does not validate: {exc}") from exc
     return spec, data.get("model") or "openrouter"

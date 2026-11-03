@@ -78,7 +78,10 @@ def test_request_shape_and_parse(key):
     assert url == "https://openrouter.ai/api/v1/chat/completions"
     assert kw["headers"]["Authorization"] == "Bearer test-key"
     body = kw["json"]
-    assert body["models"] == list(MODELS) and MODELS[0] == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    # OpenRouter rejects routes with >3 models (verified live 2026-11-02:
+    # 400 "'models' array must have 3 items or fewer"), so the request
+    # carries the first three of the configured chain.
+    assert body["models"] == list(MODELS)[:3] and MODELS[0] == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert body["response_format"]["type"] == "json_schema"
     # The contract sent to the model is the generated envelope schema, never a paraphrase.
     assert body["response_format"]["json_schema"]["schema"] == DraftEnvelope.model_json_schema()

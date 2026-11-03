@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Screening from "@/pages/Screening";
@@ -13,6 +13,26 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
+const CARDS = [
+  { id: "mom6", fn: "momentum", params: { months: 6 }, label: "Momentum 6M", group: "Momentum & trend",
+    blurb: "Six-month momentum.", unit: "%", divisor: 1, source: "yfinance prices",
+    ops: ["ge", "gt", "le", "lt", "pct_gte", "pct_lte"], preset: { op: "pct_gte", value: 75 } },
+  { id: "surprise", fn: "last_print_surprise_pct", params: {}, label: "Last earnings surprise", group: "Earnings",
+    blurb: "How far the last EPS landed from expectations.", unit: "%", divisor: 1, source: "earnings panel",
+    ops: ["ge", "gt", "le", "lt", "pct_gte", "pct_lte"], preset: { op: "gt", value: 0 } },
+  { id: "reaction", fn: "last_print_reaction_pct", params: {}, label: "Reaction to the last print", group: "Earnings",
+    blurb: "How the stock moved on its last earnings.", unit: "%", divisor: 1, source: "earnings panel",
+    ops: ["ge", "gt", "le", "lt", "pct_gte", "pct_lte"], preset: { op: "gt", value: 0 } },
+  { id: "pe", fn: "pe_ratio", params: {}, label: "P/E ratio", group: "Valuation",
+    blurb: "Price over trailing earnings.", unit: "x", divisor: 1, source: "yfinance.info",
+    ops: ["ge", "gt", "le", "lt", "pct_gte", "pct_lte"], preset: { op: "lt", value: 15 } },
+];
+
+const CATALOG = {
+  functions: [{ name: "pe_ratio", category: "value", kind: "field", params: {}, returns: "x", doc: "Price / EPS.", source: "yfinance.info" }],
+  universe_builders: [], ops: [], cards: CARDS,
+};
+
 const RUN = {
   columns: ["ticker", "pe_ratio", "score"],
   rows: [
@@ -25,16 +45,14 @@ const RUN = {
                        score: { fn: "score", source: "blend" } } },
 };
 
-function serve() {
+function serve(translateBody?: unknown) {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const body = url.includes("/api/screening/catalog")
-      ? { functions: [{ name: "pe_ratio", category: "value", kind: "field", params: {}, returns: "ratio", doc: "Price / EPS.", source: "EDGAR XBRL" }], universe_builders: [], ops: [] }
-      : url.includes("/api/screening/screens") && init?.method !== "POST"
-        ? []
-        : url.includes("/api/screening/run")
-          ? RUN
-          : {};
+    const body = url.includes("/api/screening/catalog") ? CATALOG
+      : url.includes("/api/screening/translate") ? translateBody
+      : url.includes("/api/screening/screens") && init?.method !== "POST" ? []
+      : url.includes("/api/screening/run") ? RUN
+      : {};
     return new Response(JSON.stringify(body), { status: 200 });
   });
   vi.stubGlobal("fetch", f);
@@ -43,37 +61,54 @@ function serve() {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe("Screening page", () => {
-  it("runs a spec, sorts by any column, flags best fits, and shows provenance", async () => {
-    serve();
+describe("Screening page (cards)", () => {
+  it("runs a preset-built screen, sorts, flags best fits, shows provenance", async () => {
+    const f = serve();
     render(<MemoryRouter><Screening /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: "Run the screen" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    expect(await screen.findByLabelText("Last earnings surprise value")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
     expect(await screen.findByText("3 survivors")).toBeInTheDocument();
-    // best fit = highest score (BBB 95, AAA 88, CCC 40 -> top 3 all fit here), badge present
+    const runCall = f.mock.calls.find(([u]) => String(u).includes("/api/screening/run"));
+    const sent = JSON.parse(String(runCall?.[1]?.body ?? "{}"));
+    const fns = (sent.spec.filters as { fn: string }[]).map((x) => x.fn);
+    expect(fns).toContain("momentum");
+    expect(fns).toContain("last_print_surprise_pct");
     expect(screen.getAllByText("Best fit").length).toBeGreaterThan(0);
-    // missing reads as a dash, never zero
     expect(screen.getByText("—")).toBeInTheDocument();
-    // sort by pe_ratio ascending: AAA(9) before BBB(11), CCC(null) last
     fireEvent.click(screen.getByRole("button", { name: /pe_ratio/ }));
     fireEvent.click(screen.getByRole("button", { name: /pe_ratio/ }));
     const cells = screen.getAllByRole("cell");
     const tickers = cells.filter((_, i) => i % 3 === 0).map((c) => c.textContent);
     expect(tickers[0]).toContain("AAA");
     expect(tickers[2]).toContain("CCC");
-    // provenance on row click
     fireEvent.click(screen.getByText("AAA"));
     expect(await screen.findByText(/EDGAR XBRL · as of 2026-10-30/)).toBeInTheDocument();
   });
 
-  it("labels each filter row with its catalog source", async () => {
+  it("adds a library card with its preset, and the JSON editor is gone", async () => {
     serve();
     render(<MemoryRouter><Screening /></MemoryRouter>);
-    // the default starter spec carries a momentum filter; the catalog stub only
-    // knows pe_ratio, so swap in a pe filter through the editor
-    const editor = screen.getByLabelText("The spec (editable JSON)");
-    fireEvent.change(editor, { target: { value: JSON.stringify({
-      name: "x", universe: { type: "list", tickers: ["AAA"] },
-      filters: [{ fn: "pe_ratio", op: "lt", value: 12 }] }) } });
-    await waitFor(() => expect(screen.getAllByText("EDGAR XBRL").length).toBeGreaterThan(0));
+    expect(screen.queryByLabelText("The spec (editable JSON)")).not.toBeInTheDocument();
+    const blurb = (await screen.findAllByText("Price over trailing earnings."))[0];
+    const cardEl = blurb.closest("div") as HTMLElement;
+    fireEvent.click(within(cardEl).getByRole("button", { name: /Add/ }));
+    const value = await screen.findByLabelText("P/E ratio value");
+    expect((value as HTMLInputElement).value).toBe("15");
+  });
+
+  it("translate fills the cards, including on the rules fallback", async () => {
+    serve({ spec: { name: "described_screen", universe: { type: "index", index: "sp500" }, limit: 10,
+                    filters: [{ fn: "momentum", params: { months: 6 }, op: "pct_gte", value: 75 },
+                              { fn: "last_print_surprise_pct", op: "gt", value: 0 }] },
+            model: "rules (AI unavailable: HTTPError)" });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    await screen.findAllByText("Price over trailing earnings."); // catalog loaded
+    fireEvent.change(screen.getByLabelText("Describe the screen in plain English"),
+      { target: { value: "stocks with strong momentum and beat earnings with positive guidance" } });
+    fireEvent.click(screen.getByRole("button", { name: "Translate" }));
+    expect(await screen.findByText(/built-in rules/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Momentum 6M value")).toBeInTheDocument();
+    expect(screen.getByLabelText("Last earnings surprise value")).toBeInTheDocument();
   });
 });
