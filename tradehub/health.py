@@ -21,11 +21,15 @@ order-book file that was never written is `None` (we do not know if a search hap
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # The hourly timers this product runs. The names match the VPS `tradehub-*` jobs.
 TIMERS: tuple[str, ...] = ("scan", "settle", "journal", "orderbooks")
@@ -286,9 +290,10 @@ def _latest_run(supa, engine: str) -> datetime | None:
         # The Python filter below stays as well -- it costs nothing and keeps the answer the
         # same against clients that ignore the query filters.
         result = (supa.table("scanner_runs").select("completed_at,status,engines_run")
-                  .eq("status", "completed").contains("engines_run", [engine])
+                  .eq("status", "completed").contains("engines_run", json.dumps([engine]))
                   .order("completed_at", desc=True).limit(50).execute())
     except Exception:  # noqa: BLE001 - health must never 500 on a missing table
+        log.exception("health: %s runs unreadable", engine)
         return None
     done = [_as_datetime(row.get("completed_at")) for row in getattr(result, "data", None) or []
             if row.get("status") == "completed" and engine in (row.get("engines_run") or [])]
@@ -303,19 +308,17 @@ def _frozen_counts(supa, since: datetime) -> dict[str, int] | None:
     An empty dict here means the table WAS read and genuinely held no rows in the window.
     """
     try:
-        result = (
-            supa.table("journal_forecasts")
-            .select("forecaster")
-            .gte("frozen_at", since.isoformat())
-            .execute()
-        )
+        # Counted in the database: this table takes ~19k rows a day and a plain select stops at
+        # PostgREST's 1000-row cap, so counting returned rows reports most families as silent.
+        rows = supa.rpc("journal_frozen_counts", {"since": since.isoformat()}).execute().data or []
     except Exception:  # noqa: BLE001 - health must never 500 on a missing table
+        log.exception("health: frozen counts unreadable")
         return None
     counts: dict[str, int] = {}
-    for row in getattr(result, "data", None) or []:
+    for row in rows:
         name = row.get("forecaster")
         if name:
-            counts[name] = counts.get(name, 0) + 1
+            counts[name] = counts.get(name, 0) + int(row.get("n") or 0)
     return counts
 
 
@@ -378,8 +381,8 @@ def build_history(*, completed_runs: list[tuple[str, str]], journal_days: set[st
     for kind, day in completed_runs:
         run_days.setdefault(kind, set()).add(day)
     frozen: dict[tuple[str, str], int] = {}
-    for name, day in frozen_rows:
-        frozen[(name, day)] = frozen.get((name, day), 0) + 1
+    for name, day, n in frozen_rows:
+        frozen[(name, day)] = frozen.get((name, day), 0) + n
     diag: dict[str, list[str]] = {}
     for day, flags in diag_rows:
         diag.setdefault(day, []).extend(flags)
@@ -436,8 +439,7 @@ def _history(supa, now: datetime, cadences: dict[str, str | None]) -> dict[str, 
                 .eq("status", "completed").gte("completed_at", since).execute().data or [])
         scores = (supa.table("journal_scores").select("computed_at")
                   .gte("computed_at", since).execute().data or [])
-        frozen_rows = (supa.table("journal_forecasts").select("forecaster,frozen_at")
-                       .gte("frozen_at", since).execute().data or [])
+        frozen_rows = supa.rpc("journal_frozen_counts", {"since": since}).execute().data or []
         diag_runs = (supa.table("backtest_runs").select("created_at,engine,diagnostics")
                      .not_.is_("diagnostics", "null").gte("created_at", since).execute().data or [])
     except Exception:  # noqa: BLE001 - health must never 500 on a missing table
@@ -445,7 +447,7 @@ def _history(supa, now: datetime, cadences: dict[str, str | None]) -> dict[str, 
     completed = [(kind, day_of(r["completed_at"])) for r in runs if r.get("completed_at")
                  for kind in (r.get("engines_run") or []) if kind in ("scan", "settle")]
     journal_days = {day_of(s["computed_at"]) for s in scores if s.get("computed_at")}
-    frozen = [(r["forecaster"], day_of(r["frozen_at"])) for r in frozen_rows if r.get("frozen_at")]
+    frozen = [(r["forecaster"], str(r["day"]), int(r["n"])) for r in frozen_rows]
     diags = []
     for r in diag_runs:
         d = r.get("diagnostics") or {}

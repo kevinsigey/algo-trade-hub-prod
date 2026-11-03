@@ -543,3 +543,44 @@ def test_an_entry_with_a_cutoff_in_the_past_is_not_upcoming_even_if_the_read_ret
         calendar_by_family={"sports_nfl": [{"cutoff_at": (NOW - timedelta(hours=12)).isoformat()}]},
     )
     assert report["families"]["sports_nfl"]["silent"] is False
+
+
+def test_latest_run_filters_the_jsonb_column_with_json():
+    # Deep dive 2026-11-03: engines_run is jsonb. A list makes postgrest-py send the array literal cs.{scan}, which
+    # Postgres refuses for jsonb; the error was swallowed, so Scan and Settle read "never" while running hourly.
+    from tradehub.health import _latest_run
+
+    class Recording(_RunsSupa):
+        def contains(self, column, value):
+            self.seen = (column, value)
+            return self
+    supa = Recording([])
+    _latest_run(supa, "scan")
+    assert supa.seen == ("engines_run", '["scan"]')
+
+
+class _RpcSupa:
+    def __init__(self, rows):
+        self.rows, self.called = rows, []
+
+    def rpc(self, name, params):
+        self.called.append((name, params))
+        rows = self.rows
+        return type("Q", (), {"execute": lambda _: type("R", (), {"data": rows})()})()
+
+
+def test_frozen_counts_come_from_the_database_not_capped_rows():
+    from tradehub.health import _frozen_counts
+    supa = _RpcSupa([{"forecaster": "gas", "day": "2026-11-02", "n": 3}, {"forecaster": "gas", "day": "2026-11-03", "n": 4},
+                     {"forecaster": "crypto_btc_hourly", "day": "2026-11-03", "n": 1500}])
+    got = _frozen_counts(supa, _ago(hours=24))
+    assert got == {"gas": 7, "crypto_btc_hourly": 1500} and supa.called[0][0] == "journal_frozen_counts"
+
+
+def test_frozen_counts_unreadable_is_unknown_not_zero():
+    from tradehub.health import _frozen_counts
+
+    class Broken:
+        def rpc(self, *a):
+            raise RuntimeError("down")
+    assert _frozen_counts(Broken(), _ago(hours=24)) is None

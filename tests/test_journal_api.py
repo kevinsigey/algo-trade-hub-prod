@@ -304,3 +304,15 @@ def test_weather_panel_degrades_when_tables_missing():
     res = _client(db).get("/api/journal/weather-panel")
     assert res.status_code == 200
     assert res.json()["contracts"] == []
+
+
+def test_macro_sees_its_forecasts_behind_a_flood_of_newer_rows(monkeypatch):
+    """The journal takes ~19k rows a day. Reading "the newest 1000 of anything" lost every macro row."""
+    seen = {}
+    monkeypatch.setattr("tradehub.macro.build_macro", lambda **kw: seen.update(kw) or {"cards": []})
+    db = FakeJournalDB(lambda: T0)
+    db.tables["journal_forecasts"].append({"id": 1, "forecaster": "cpi_nowcast", "frozen_at": "2026-10-01T00:00:00+00:00"})
+    for i in range(2, 1500):
+        db.tables["journal_forecasts"].append({"id": i, "forecaster": "crypto_btc_hourly", "frozen_at": "2026-11-03T00:00:00+00:00"})
+    _client(db).get("/api/macro")
+    assert [f["id"] for f in seen["journal_forecasts"]] == [1]
