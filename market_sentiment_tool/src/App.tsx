@@ -21,13 +21,36 @@ import Ideas from "@/pages/Ideas";
 import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
 import Workshop from "@/pages/Workshop";
+import Screening from "@/pages/Screening";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
 import { supabase } from "@/lib/supabase";
-import { LayoutDashboard, Activity, Wallet, LineChart, Trophy, Briefcase, BarChart3, BookOpen, HeartPulse, KeyRound, Menu, X, History, CloudSun, Lock, LogOut, FlaskConical, Lightbulb, Landmark, MessagesSquare } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  BookOpen,
+  Briefcase,
+  CloudSun,
+  FlaskConical,
+  HeartPulse,
+  History,
+  KeyRound,
+  Landmark,
+  LayoutDashboard,
+  Lightbulb,
+  LineChart,
+  ListFilter,
+  Lock,
+  LogOut,
+  Menu,
+  MessagesSquare,
+  Trophy,
+  Wallet,
+  X
+} from "lucide-react";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
@@ -111,6 +134,9 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
           {/* TradingAgents (Kevin, 2026-11-02): the debates get their own tab beside the Workshop --
               an opinion panel with its own graded record, not a step in the idea pipeline. */}
+          <NavLink to="/screening" className={linkClass}>
+            <ListFilter className="w-5 h-5 text-muted-foreground" /> Screening
+          </NavLink>
           <NavLink to="/debates" className={linkClass}>
             <MessagesSquare className="w-5 h-5 text-muted-foreground" /> Agent debates
           </NavLink>
@@ -287,6 +313,7 @@ function App() {
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
+          <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
