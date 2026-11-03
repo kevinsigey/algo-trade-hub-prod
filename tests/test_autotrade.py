@@ -2,8 +2,8 @@ from datetime import date
 
 import pytest
 
-from tradehub.portfolio.autotrade import close_out, plan
-from tradehub.workshop.spec import Execution
+from tradehub.portfolio.autotrade import close_out, option_structure_problems, plan
+from tradehub.workshop.spec import Execution, OptionLeg
 
 DAY = date(2026, 11, 2)
 MOO = Execution()
@@ -17,7 +17,7 @@ def test_equal_split_whole_shares_and_tags():
     out = plan(7, {"GLD": 0.5, "SLV": 0.5}, 20, 100_000, {"GLD": 300.0, "SLV": 30.0}, {}, {}, DAY, MOO)
     assert rows(out) == [("GLD", "buy", 33, "send"), ("SLV", "buy", 333, "send")]
     assert out[0]["client_order_id"] == "idea-7-auto-20261102-GLD-open"
-    assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "opg" and out[0]["limit_price"] is None
+    assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "day" and out[0]["limit_price"] is None
 
 
 def test_switch_sells_before_it_buys():
@@ -84,7 +84,7 @@ def test_never_opens_against_someone_elses_position():
 def test_close_out_is_always_market_at_the_open():
     # Review I7: a kill closes at the next open, whatever order type the idea traded with.
     out = close_out(7, {"GLD": 5}, {"GLD": 300.0}, DAY)
-    assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "opg" and out[0]["limit_price"] is None
+    assert out[0]["order_type"] == "market" and out[0]["time_in_force"] == "day" and out[0]["limit_price"] is None
 
 
 def test_protective_order_matches_the_exits():
@@ -121,3 +121,20 @@ def test_signature_reads_alpacas_resting_shapes():
     resting_tr = {"symbol": "GLD", "qty": "25", "side": "sell", "type": "trailing_stop", "order_class": "simple",
                   "trail_percent": "8", "stop_price": "193.2", "hwm": "210", "limit_price": None}
     assert signature(resting_tr) == signature(tr)
+
+
+def _option_legs(*spec):
+    return [OptionLeg(underlying=u, kind=k, side=side, strike_pct=pct, days_to_expiry=30) for u, k, side, pct in spec]
+
+
+def test_covered_call_too_small_to_write_is_a_problem():
+    legs = _option_legs(("SPY", "call", "sell", 105))
+    problems = option_structure_problems(legs, {"SPY": 1.0}, 10, 100_000, {"SPY": 700.0})
+    assert len(problems) == 1 and "14 shares" in problems[0] and "trade 0" in problems[0]
+
+
+def test_spread_forced_to_one_contract_is_a_problem_until_sized_to_match():
+    legs = _option_legs(("NVDA", "call", "buy", 100), ("NVDA", "call", "sell", 110))
+    half = option_structure_problems(legs, {"NVDA": 1.0}, 1, 1_000_000, {"NVDA": 200.0})
+    assert len(half) == 1 and "0.50 contracts" in half[0] and "2.0% of the book" in half[0]
+    assert option_structure_problems(legs, {"NVDA": 1.0}, 2, 1_000_000, {"NVDA": 200.0}) == []

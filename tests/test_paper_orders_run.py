@@ -93,7 +93,7 @@ def test_happy_path_sends_and_logs(db, monkeypatch):
     summary, failed = run(db, Alpaca(), sub, monkeypatch)
     assert failed == {} and statuses(db) == [(1, "GLD", "buy", 66, "sent")]
     symbol, side, qty, cid, kw = sub.calls[0]
-    assert cid == "idea-1-auto-20261103-GLD-open" and kw["time_in_force"] == "opg"
+    assert cid == "idea-1-auto-20261103-GLD-open" and kw["time_in_force"] == "day"
     assert db.db["paper_orders"][0]["alpaca_order_id"] == "alp-1"
 
 

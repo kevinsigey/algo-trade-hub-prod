@@ -46,6 +46,7 @@ from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
 from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers as playbook_dropped
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, target_and_reason, tickers_for
+from tradehub.portfolio.autotrade import option_structure_problems
 from tradehub.workshop.playcheck import play_check as _play_check_math
 from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
@@ -976,6 +977,12 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
                              "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                              "note": body.override_note or "63-day gate overridden on Kevin's explicit call",
                              "gate_status_was": gate["status"]}}
+    if (run.get("spec") or {}).get("options"):
+        check = _play_check(supabase, _found(supabase, idea_id)["idea"], run["spec"], body.size_pct, body.book)
+        if not check.get("available"):  # can't size it against the book, so can't say it's safe
+            raise HTTPException(status_code=409, detail=check.get("note") or "the book could not be read")
+        if check.get("structure_problems"):
+            raise HTTPException(status_code=409, detail=" ".join(check["structure_problems"]))
     if body.book != "main":
         return workshop_store.go_live_book(supabase, body.book, idea_id, run["id"],
                                            body.size_pct, gate)
@@ -1136,7 +1143,10 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: st
     if any(r["target_value"] < 0 for r in out["rows"]):
         out["notes"].append("Short legs: borrow availability is not checked.")
     if spec.options:
-        out["notes"].append("Option legs are model-priced and placed manually; they are not in the share math.")
+        out["notes"].append("Option legs are model-priced and not in the share math.")
+        # The rule may be out today; the structure is judged as if it were in.
+        full = {t: 1 / len(spec.hold) for t in spec.hold}
+        out["structure_problems"] = option_structure_problems(spec.options, full, size_pct, equity, prices)
     return out
 
 
