@@ -28,6 +28,8 @@ export interface PositionRow {
 export interface PortfolioPayload {
   state: PortfolioState;
   as_of: string | null;
+  /** Which paper book this payload reads ("main" | "big"); absent on old payloads. */
+  book?: string;
   account_number: string | null;
   scoreboard: Scoreboard;
   curve: { t: string; portfolio_pct: number; spy_pct: number }[];
@@ -68,6 +70,8 @@ export interface ActivityOrder {
 export interface ActivityPayload {
   state: PortfolioState;
   as_of: string | null;
+  /** Which paper book this payload reads ("main" | "big"); absent on old payloads. */
+  book?: string;
   open: ActivityOrder[];
   recent: ActivityOrder[];
   trades: ClosedTrade[];
@@ -76,7 +80,28 @@ export interface ActivityPayload {
 export interface ClosedPayload {
   state: PortfolioState;
   as_of: string | null;
+  /** Which paper book this payload reads ("main" | "big"); absent on old payloads. */
+  book?: string;
   trades: ClosedTrade[];
+}
+
+/** One book's headline for the Portfolio master view (GET /api/portfolio/books):
+ * the two paper accounts side by side, each opening into its own book page. */
+export interface BookHeadline {
+  book: string;
+  label: string;
+  detail: string;
+  state: PortfolioState;
+  as_of: string | null;
+  account_number: string | null;
+  equity: number | null;
+  return_pct: number | null;
+  positions: number;
+  live_ideas: number;
+}
+
+export interface BooksPayload {
+  books: BookHeadline[];
 }
 
 const DASH = "—";

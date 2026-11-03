@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
-import type { ActivityPayload, ClosedPayload, PortfolioPayload } from "@/lib/paperPortfolio";
+import type { ActivityPayload, BooksPayload, PortfolioPayload } from "@/lib/paperPortfolio";
 
 // Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
 vi.mock("@/lib/supabase", () => ({
@@ -140,7 +140,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
     fireEvent.change(screen.getByLabelText("Shares"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Place order" }));
     expect(await screen.findByText(/Order sent: buy 3 XLE \(manual-abc123\)/)).toBeInTheDocument();
-    expect(posted).toEqual([{ symbol: "XLE", qty: 3, side: "buy", order_type: "market", time_in_force: "day" }]);
+    expect(posted).toEqual([{ symbol: "XLE", qty: 3, side: "buy", order_type: "market", time_in_force: "day", book: "main" }]);
   });
 });
 
@@ -162,5 +162,82 @@ describe("ClosedTrades", () => {
     expect((await screen.findAllByText("+$250.00")).length).toBe(2); // the row and the total
     expect(screen.getByText("+12.5%")).toBeInTheDocument();
     expect(screen.getByText("3d")).toBeInTheDocument();
+  });
+
+  it("reads the $1M book's activity when the URL names it, and the toggle keeps the book", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ state: "live", as_of: "2026-11-10T20:41:00Z", book: "big", open: [], recent: [], trades: [] }), { status: 200 });
+    }));
+    render(<MemoryRouter initialEntries={["/portfolio/closed?book=big"]}><ClosedTrades /></MemoryRouter>);
+    expect(await screen.findByText("No closed trades yet.")).toBeInTheDocument();
+    expect(urls.some((u) => u.includes("/api/portfolio/activity?book=big"))).toBe(true);
+    expect(screen.getByRole("link", { name: "$1M book" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Main book" })).toHaveAttribute("href", "/portfolio/closed?book=main");
+  });
+});
+
+describe("Portfolio books (master view and the $1M book)", () => {
+  const BOOKS: BooksPayload = {
+    books: [
+      { book: "main", label: "Main book", detail: "$100k paper account", state: "live", as_of: "2026-11-10T20:41:00Z",
+        account_number: "PA2", equity: 104820, return_pct: 4.82, positions: 3, live_ideas: 2 },
+      { book: "big", label: "$1M book", detail: "$1M paper account", state: "not_connected", as_of: null,
+        account_number: null, equity: null, return_pct: null, positions: 0, live_ideas: 0 },
+    ],
+  };
+
+  function serveBooks(urls: string[]) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/portfolio/books")) return new Response(JSON.stringify(BOOKS), { status: 200 });
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      if (url.includes("/api/workshop/ideas")) return new Response(JSON.stringify([]), { status: 200 });
+      if (url.includes("/api/portfolio/closed")) return new Response(JSON.stringify({ state: "live", as_of: null, trades: [] }), { status: 200 });
+      if (url.includes("book=big")) {
+        return new Response(JSON.stringify(payload({
+          book: "big", account_number: "PA3",
+          scoreboard: { ...EMPTY_SCORE, equity: 1000000 },
+          positions: [{ symbol: "Cash", qty: null, side: null, market_value: 1000000, pct_of_book: 100, unrealized_pl: null, idea: null }],
+        })), { status: 200 });
+      }
+      return new Response(JSON.stringify(payload({
+        scoreboard: { ...EMPTY_SCORE, equity: 104820, return_pct: 4.82 },
+        positions: [{ symbol: "Cash", qty: null, side: null, market_value: 104820, pct_of_book: 100, unrealized_pl: null, idea: null }],
+      })), { status: 200 });
+    }));
+  }
+
+  it("opens as a master view: one card per book, the main book's full page below", async () => {
+    const urls: string[] = [];
+    serveBooks(urls);
+    page(<Portfolio />);
+    // The $1M card says plainly that it is not connected -- no invented numbers.
+    const bigCard = await screen.findByRole("link", { name: /\$1M book/ });
+    expect(bigCard).toHaveAttribute("href", "/portfolio?book=big");
+    expect(bigCard.textContent).toContain("Paper account not connected");
+    const mainCard = screen.getByRole("link", { name: /Main book/ });
+    expect(mainCard).toHaveAttribute("href", "/portfolio?book=main");
+    expect(mainCard.textContent).toContain("$104,820");
+    expect(mainCard.textContent).toContain("2 live ideas");
+    // Below the cards the main book's own page still renders (the record).
+    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+  });
+
+  it("scopes every read to the $1M book when ?book=big, with the switcher on top", async () => {
+    const urls: string[] = [];
+    serveBooks(urls);
+    render(<MemoryRouter initialEntries={["/portfolio?book=big"]}><Portfolio /></MemoryRouter>);
+    expect((await screen.findAllByText("$1,000,000")).length).toBeGreaterThanOrEqual(1);
+    expect(urls.some((u) => u.includes("/api/portfolio?book=big"))).toBe(true);
+    expect(urls.some((u) => u.includes("/api/portfolio/closed?book=big"))).toBe(true);
+    expect(screen.getByRole("link", { name: "Master — both books" })).toHaveAttribute("href", "/portfolio");
+    expect(screen.getByRole("link", { name: "$1M book" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Trades and Orders/ })).toHaveAttribute("href", "/portfolio/closed?book=big");
+    // The hand order form and staged orders are main-book doors; they stay off this page.
+    expect(screen.queryByText("Place an order by hand")).toBeNull();
+    expect(screen.queryByText("Staged orders")).toBeNull();
   });
 });

@@ -53,6 +53,11 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
         <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
+        {(idea.live_books ?? []).map((b) => (
+          <span key={b} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+            Live · {b === "big" ? "$1M" : "Main"}
+          </span>
+        ))}
         <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
         {showKind && <span className="text-xs text-slate-500">· {KIND_LABEL[idea.kind]}</span>}
       </div>

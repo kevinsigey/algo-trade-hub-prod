@@ -152,12 +152,12 @@ def broker_order_view(order: dict) -> dict:
             "filled_avg_price": num(order.get("filled_avg_price"))}
 
 
-def open_broker_orders() -> list[dict]:
+def open_broker_orders(book: str | None = None) -> list[dict]:
     """Every order resting on the paper account, whatever placed it (machine API, the
     hub's protective machinery, or the Alpaca app): the staged book as the broker sees it."""
     from tradehub.portfolio.alpaca_paper import paper_get
 
-    page = paper_get("/v2/orders", {"status": "open", "direction": "asc", "limit": 500}) or []
+    page = paper_get("/v2/orders", {"status": "open", "direction": "asc", "limit": 500}, book=book) or []
     return [broker_order_view(o) for o in page]
 
 

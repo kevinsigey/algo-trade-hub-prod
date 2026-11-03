@@ -434,12 +434,49 @@ async def get_pnl_summary(supabase=Depends(get_supabase)):
 
 # ── Trading HQ: the public Alpaca PAPER portfolio (spec 2026-10-29 §4.2) ─────
 # Plain `def`: the Alpaca reads are blocking `requests` calls, so FastAPI runs these in its threadpool.
+
+def _book_or_400(book: str) -> str:
+    from tradehub.portfolio.books import BOOKS
+
+    if book not in BOOKS:
+        raise HTTPException(400, f"unknown book {book!r} (known: {', '.join(BOOKS)})")
+    return book
+
+
+@app.get("/api/portfolio/books", tags=["Portfolio"])
+def get_portfolio_books(supabase=Depends(get_supabase)):
+    """The master view (Kevin, 2026-11-02): one headline card per book -- state, equity,
+    return, position count, live ideas -- clicking a card opens that book's own page."""
+    from tradehub.portfolio import books as _books
+    from tradehub.portfolio import service
+    from tradehub.workshop import store as _store
+
+    out = []
+    for name in _books.names():
+        payload = service.portfolio(supabase, book_name=name)
+        score = payload.get("scoreboard") or {}
+        try:
+            live = [a for a in _store.activations(supabase, name)
+                    if a.get("live_at") and not a.get("killed_at")]
+        except Exception:  # noqa: BLE001 -- the headline still reads without the count
+            live = []
+        out.append({"book": name, "label": _books.BOOKS[name]["label"],
+                    "detail": _books.BOOKS[name]["detail"],
+                    "state": payload.get("state"), "as_of": payload.get("as_of"),
+                    "account_number": payload.get("account_number"),
+                    "equity": score.get("equity"), "return_pct": score.get("return_pct"),
+                    "positions": len(payload.get("positions") or []),
+                    "live_ideas": len(live)})
+    return {"books": out}
+
+
 @app.get("/api/portfolio", tags=["Portfolio"])
-def get_portfolio(supabase=Depends(get_supabase)):
+def get_portfolio(book: str = "main", supabase=Depends(get_supabase)):
     from tradehub.portfolio import service
 
+    name = _book_or_400(book)  # before the try: a bad book is a 400, not a table fault
     try:
-        return service.portfolio(supabase)
+        return service.portfolio(supabase, book_name=name)
     except Exception as exc:  # noqa: BLE001
         raise _table_fault(service.SNAPSHOTS, exc) from exc
 
@@ -676,6 +713,7 @@ def agent_debate_report(run_id: str, _admin: dict = Depends(admin.require_admin)
 def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     rows = workshop_store.list_ideas(supabase)
     ideas = {i["id"]: i for i in supabase.table("ideas").select("*").execute().data or []}
+    big = {a["idea_id"]: a for a in workshop_store.activations(supabase, "big")}
     for r in rows:
         i = ideas.get(r["id"], {})
         r["live_at"] = i.get("live_at")
@@ -683,6 +721,10 @@ def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=De
         r["killed_at"] = i.get("killed_at")
         r["auto_orders"] = i.get("auto_orders")
         r["size_pct"] = i.get("size_pct")
+        a = big.get(r["id"]) or {}
+        r["books"] = {"big": {"live_at": a.get("live_at"), "size_pct": a.get("size_pct"),
+                              "auto_orders": bool(a.get("auto_orders")),
+                              "killed_at": a.get("killed_at")}}
     return rows
 
 
@@ -707,20 +749,47 @@ def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin),
     found = _found(supabase, idea_id)
     idea = found["idea"]
     shadow = _shadow(supabase, idea) if (idea.get("live_at") or idea.get("tracked_at")) else None
+    from tradehub.portfolio import books as _books
     from tradehub.portfolio.paper_orders import orders_enabled
 
+    # Per-book live state (Kevin, 2026-11-02): main reads off the idea row (the record);
+    # every other book reads its own activation. The panel renders one block per book.
+    book_state = {"main": {"live_at": idea.get("live_at"), "size_pct": idea.get("size_pct"),
+                           "auto_orders": bool(idea.get("auto_orders")),
+                           "killed_at": idea.get("killed_at"), "gate": idea.get("gate"),
+                           "orders_enabled": orders_enabled("main")}}
+    for name in _books.names():
+        if name == "main":
+            continue
+        act = workshop_store.activation(supabase, name, idea_id) or {}
+        book_state[name] = {"live_at": act.get("live_at"), "size_pct": act.get("size_pct"),
+                            "auto_orders": bool(act.get("auto_orders")),
+                            "killed_at": act.get("killed_at"), "gate": act.get("gate"),
+                            "orders_enabled": orders_enabled(name)}
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
+            "books": book_state,
             "orders": workshop_store.order_log(supabase, idea_id, 50)}
 
 
 class _AutoIn(BaseModel):
     on: bool
+    book: str = "main"
 
 
 @app.post("/api/workshop/ideas/{idea_id}/auto", tags=["Workshop"])
 def workshop_auto(idea_id: int, body: _AutoIn, user: dict = Depends(admin.require_admin),
                   supabase=Depends(get_supabase)):
     """Step 4: switch an idea's automatic PAPER orders on or off. On needs a live, unkilled idea."""
+    if body.book != "main":
+        _book_or_400(body.book)
+        act = workshop_store.activation(supabase, body.book, idea_id)
+        if body.on and (not act or not act.get("live_at") or act.get("killed_at")):
+            raise HTTPException(status_code=409,
+                                detail="only an idea live on that book and not killed there can trade")
+        if not act:
+            raise HTTPException(status_code=409, detail="the idea is not live on that book")
+        return workshop_store.set_auto_book(supabase, body.book, idea_id, body.on,
+                                            user.get("email", "admin"))
     idea = _found(supabase, idea_id)["idea"]
     if body.on and (not idea.get("live_at") or idea.get("killed_at")):
         raise HTTPException(status_code=409, detail="only a live idea that has not been killed can trade")
@@ -734,6 +803,9 @@ class _LiveIn(BaseModel):
     # an event study or a non-PASS run still refuse -- see workshop_go_live.
     override: bool = False
     override_note: str | None = Field(default=None, max_length=500)
+    # Which book goes live (Kevin, 2026-11-02): the books are independent --
+    # an idea can be live on either, both, or neither, at different sizes.
+    book: str = "main"
 
 
 class _LabelIn(BaseModel):
@@ -818,7 +890,12 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
 @app.post("/api/workshop/ideas/{idea_id}/live", tags=["Workshop"])
 def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.require_admin),
                      supabase=Depends(get_supabase)):
-    if _found(supabase, idea_id)["idea"].get("live_at"):
+    if body.book != "main":
+        _book_or_400(body.book)
+        act = workshop_store.activation(supabase, body.book, idea_id)
+        if act and act.get("live_at"):
+            raise HTTPException(status_code=409, detail="already live on that book")
+    elif _found(supabase, idea_id)["idea"].get("live_at"):
         raise HTTPException(status_code=409, detail="already live")
     gate, run = _gate(supabase, idea_id, body.size_pct)
     if gate["status"] != "ready":
@@ -835,6 +912,9 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
                              "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                              "note": body.override_note or "63-day gate overridden on Kevin's explicit call",
                              "gate_status_was": gate["status"]}}
+    if body.book != "main":
+        return workshop_store.go_live_book(supabase, body.book, idea_id, run["id"],
+                                           body.size_pct, gate)
     try:
         return workshop_store.go_live(supabase, idea_id, run["id"], body.size_pct, gate)
     except workshop_store.AlreadySet as exc:
@@ -842,7 +922,16 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
 
 
 @app.post("/api/workshop/ideas/{idea_id}/kill", tags=["Workshop"])
-def workshop_kill(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+def workshop_kill(idea_id: int, book: str = "main", _admin: dict = Depends(admin.require_admin),
+                  supabase=Depends(get_supabase)):
+    if book != "main":
+        _book_or_400(book)
+        act = workshop_store.activation(supabase, book, idea_id)
+        if not act or not act.get("live_at"):
+            raise HTTPException(status_code=409, detail="only an idea live on that book can be killed there")
+        if act.get("killed_at"):
+            raise HTTPException(status_code=409, detail="already killed on that book")
+        return workshop_store.kill_book(supabase, book, idea_id)
     if not _found(supabase, idea_id)["idea"].get("live_at"):
         raise HTTPException(status_code=409, detail="only a live idea can be killed")
     try:
@@ -1069,7 +1158,7 @@ def _idea_kind(spec: dict | None) -> str:
     return "long_only"
 
 
-def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
+def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | None = None) -> dict:
     latest = runs[-1] if runs else None
     status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else \
         "tracking" if idea.get("tracked_at") else "backtest"
@@ -1107,14 +1196,25 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
             "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
-            "killed_at": idea.get("killed_at"), "live": live}
+            "killed_at": idea.get("killed_at"), "live": live,
+            "live_books": (["main"] if idea.get("live_at") and not idea.get("killed_at") else [])
+            + (["big"] if (idea["id"] in big_live if big_live is not None
+                           else _big_activation_live(supabase, idea["id"])) else [])}
+
+
+def _big_activation_live(supabase, idea_id: int) -> bool:
+    act = workshop_store.activation(supabase, "big", idea_id)
+    return bool(act and act.get("live_at") and not act.get("killed_at"))
 
 
 @app.get("/api/ideas", tags=["Ideas"])
 def get_ideas(supabase=Depends(get_supabase)):
+    big_live = {a["idea_id"] for a in workshop_store.activations(supabase, "big")
+                if a.get("live_at") and not a.get("killed_at")}
     out = []
     for idea in workshop_store.published_ideas(supabase):
-        row = _public_idea(supabase, idea, workshop_store.saved_only(workshop_store.get_idea(supabase, idea["id"])["runs"]))
+        row = _public_idea(supabase, idea, workshop_store.saved_only(workshop_store.get_idea(supabase, idea["id"])["runs"]),
+                           big_live=big_live)
         if row["live"]:
             row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
         out.append(row)
@@ -1181,17 +1281,17 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
 
 
 @app.get("/api/portfolio/closed", tags=["Portfolio"])
-def get_portfolio_closed(supabase=Depends(get_supabase)):
+def get_portfolio_closed(book: str = "main", supabase=Depends(get_supabase)):
     from tradehub.portfolio import service
 
-    return service.closed(supabase)
+    return service.closed(supabase, book_name=_book_or_400(book))
 
 
 @app.get("/api/portfolio/activity", tags=["Portfolio"])
-def get_portfolio_activity(supabase=Depends(get_supabase)):
+def get_portfolio_activity(book: str = "main", supabase=Depends(get_supabase)):
     from tradehub.portfolio import service
 
-    return service.activity(supabase)
+    return service.activity(supabase, book_name=_book_or_400(book))
 
 
 class _OrderIn(BaseModel):
@@ -1202,6 +1302,7 @@ class _OrderIn(BaseModel):
     limit_price: float | None = Field(default=None, gt=0)
     time_in_force: str = "day"
     idea_id: int | None = None
+    book: str = "main"
 
 
 @app.post("/api/portfolio/orders", tags=["Portfolio"])
@@ -1230,12 +1331,14 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
         raise HTTPException(status_code=422, detail="time_in_force must be opg, cls or day")
     if body.order_type == "limit" and body.limit_price is None:
         raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
+    _book_or_400(body.book)
     tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
     client_order_id = tag + uuid4().hex[:12]
     try:
         order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
                                     order_type=body.order_type, time_in_force=body.time_in_force,
-                                    limit_price=body.limit_price if body.order_type == "limit" else None)
+                                    limit_price=body.limit_price if body.order_type == "limit" else None,
+                                    book=body.book)
     except paper_orders.OrdersDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except paper_orders.DuplicateOrder as exc:
@@ -1248,14 +1351,14 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
 
 
 @app.get("/api/portfolio/open-orders", tags=["Portfolio"])
-def get_portfolio_open_orders(user: dict = Depends(admin.require_admin)):
+def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.require_admin)):
     """Every order resting on the paper account, for the Portfolio page's staged-orders
     panel: the same broker-wide view the machine API exposes at /api/v1/orders/open."""
     from tradehub.api.machine_api import open_broker_orders
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
 
     try:
-        return {"orders": open_broker_orders()}
+        return {"orders": open_broker_orders(_book_or_400(book))}
     except AccountNotConnected as exc:
         raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
 

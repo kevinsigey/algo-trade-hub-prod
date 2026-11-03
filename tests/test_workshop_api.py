@@ -508,3 +508,31 @@ def test_draft_dropped_ignores_the_benchmark_and_handles_event_studies(api, monk
     r = c.post("/api/workshop/draft", json={"text": "hold RL, WSM, ABNB, DG, DLTR, BJ and MO as defensive ballast"})
     assert r.status_code == 200 and r.json()["spec"]["hold"] == ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"]
     assert r.json()["dropped"] == []
+
+
+def test_go_live_on_the_big_book_writes_an_activation_not_the_idea_row(passed):
+    # Kevin (2026-11-02): the books are independent -- going live on the $1M book
+    # records an activation for that book and leaves the main book's state untouched.
+    c, db, i, gate, _ = passed
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "big"})
+    assert r.status_code == 200 and r.json()["live_at"] and r.json()["size_pct"] == 5
+    assert db.db["ideas"][0].get("live_at") is None  # main book untouched
+    assert db.db["book_activations"][0]["book"] == "big"
+    # once per book: a second go-live on big refuses, main is still open
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "big"}).status_code == 409
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20}).status_code == 200
+    # auto + kill are per book too
+    assert c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"}).status_code == 200
+    assert db.db["book_activations"][0]["auto_orders"] is True
+    assert c.post(f"/api/workshop/ideas/{i}/kill?book=big").status_code == 200
+    assert db.db["book_activations"][0]["killed_at"]
+    assert db.db["ideas"][0].get("killed_at") is None  # still live on main
+    got = c.get(f"/api/workshop/ideas/{i}").json()
+    assert got["books"]["big"]["live_at"] and got["books"]["big"]["killed_at"]
+    assert got["books"]["main"]["live_at"] and got["books"]["main"]["size_pct"] == 20
+
+
+def test_big_book_auto_needs_a_big_book_activation(passed):
+    c, db, i, gate, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"}).status_code == 409
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "huge"}).status_code == 400

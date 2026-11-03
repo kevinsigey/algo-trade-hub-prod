@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 IDEAS, RUNS, SHADOW, LABELS = "ideas", "idea_runs", "idea_shadow_days", "order_labels"
 SAVES = "idea_run_saves"
 SWITCHES, ORDERS = "order_switches", "paper_orders"
+ACTIVATIONS = "book_activations"
 
 
 class AlreadySet(Exception):
@@ -187,12 +188,67 @@ def closing_ideas(supa) -> list[dict]:
     return [i for i in _all_ideas(supa) if i["id"] in ever_on and not (i.get("auto_orders") and not i.get("killed_at"))]
 
 
-def log_orders(supa, idea_id: int, day: str, rows: list[dict]) -> list[dict]:
+def log_orders(supa, idea_id: int, day: str, rows: list[dict], book: str = "main") -> list[dict]:
     if not rows:
         return []
     keep = ("symbol", "side", "qty", "client_order_id", "status", "reason", "alpaca_order_id")
-    return supa.table(ORDERS).insert([{"idea_id": idea_id, "day": day, **{k: r.get(k) for k in keep}}
+    return supa.table(ORDERS).insert([{"idea_id": idea_id, "day": day, "book": book,
+                                       **{k: r.get(k) for k in keep}}
                                       for r in rows]).execute().data
+
+
+def activation(supa, book: str, idea_id: int) -> dict | None:
+    rows = supa.table(ACTIVATIONS).select("*").eq("book", book).eq("idea_id", idea_id).execute().data
+    return rows[0] if rows else None
+
+
+def activations(supa, book: str) -> list[dict]:
+    return supa.table(ACTIVATIONS).select("*").eq("book", book).execute().data
+
+
+def go_live_book(supa, book: str, idea_id: int, run_id: int, size_pct: float, gate: dict) -> dict:
+    """Go live on one book. Set-once like the idea-row path: an existing live activation is
+    returned unchanged (the caller reports it as already live), never overwritten."""
+    existing = activation(supa, book, idea_id)
+    if existing and existing.get("live_at"):
+        return existing
+    row = {"book": book, "idea_id": idea_id, "live_at": datetime.now(UTC).isoformat(),
+           "live_run_id": run_id, "size_pct": size_pct, "gate": gate}
+    if existing:
+        return supa.table(ACTIVATIONS).update(row).eq("book", book).eq("idea_id", idea_id).execute().data[0]
+    return supa.table(ACTIVATIONS).insert(row).execute().data[0]
+
+
+def set_auto_book(supa, book: str, idea_id: int, on: bool, by: str) -> dict:
+    row = supa.table(ACTIVATIONS).update({"auto_orders": on}).eq("book", book).eq("idea_id", idea_id).execute().data[0]
+    supa.table(SWITCHES).insert({"idea_id": idea_id, "on": on, "by": by, "book": book}).execute()
+    return row
+
+
+def kill_book(supa, book: str, idea_id: int) -> dict:
+    return supa.table(ACTIVATIONS).update(
+        {"killed_at": datetime.now(UTC).isoformat(), "auto_orders": False}
+    ).eq("book", book).eq("idea_id", idea_id).execute().data[0]
+
+
+def _activation_idea(row: dict) -> dict:
+    """An activation shaped like the idea rows the order runner consumes."""
+    return {"id": row["idea_id"], "live_run_id": row["live_run_id"], "size_pct": row["size_pct"]}
+
+
+def auto_activations(supa, book: str) -> list[dict]:
+    return [_activation_idea(r) for r in activations(supa, book)
+            if r.get("live_at") and r.get("auto_orders") and not r.get("killed_at")]
+
+
+def closing_activations(supa, book: str) -> list[dict]:
+    """Activations whose orders were on at some point on this book and are now off: their
+    shares on the book get closed, mirroring closing_ideas for the main book."""
+    ever_on = {r["idea_id"] for r in supa.table(SWITCHES).select("idea_id,on").eq("book", book).execute().data
+               if r["on"]}
+    return [_activation_idea(r) for r in activations(supa, book)
+            if r["idea_id"] in ever_on and r.get("live_at")
+            and not (r.get("auto_orders") and not r.get("killed_at"))]
 
 
 def order_log(supa, idea_id: int, limit: int = 100) -> list[dict]:
