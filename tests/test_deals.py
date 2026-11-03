@@ -136,3 +136,84 @@ def test_edgar_prefill_parses_filed_facts():
     assert out["revenue_b"] == 400.0 and out["ebitda_b"] == 120.0
     assert out["net_cash_b"] == -70.0 and out["shares_b"] == 15.0
     assert out["filing_as_of"] == "2025-10-31" and "EDGAR" in out["source"]
+
+
+# ---- the structured AI summary (Kevin, 2026-11-03) ---------------------------
+
+GOOD_JSON = """{"headline": "Anthropic at $97.78 vs a $170 talk midpoint",
+"sections": [
+  {"title": "The deal", "paragraphs": ["A draft paragraph."], "bullets": [], "table": null},
+  {"title": "Valuation", "paragraphs": [], "bullets": [],
+   "table": {"columns": ["Case", "Per share"], "rows": [["Bear", "$61.00"], ["PW", "$97.78"]]}},
+  {"title": "Risks", "paragraphs": [], "bullets": ["Entry fails the test."], "table": null}],
+"takeaway": "Pass at the talk."}"""
+
+
+def test_parse_summary_doc_valid_and_fenced():
+    from tradehub.deals.summary import parse_summary_doc
+
+    doc = parse_summary_doc(GOOD_JSON)
+    assert doc is not None and doc["headline"].startswith("Anthropic")
+    assert doc["sections"][1]["table"]["rows"][1] == ["PW", "$97.78"]
+    fenced = parse_summary_doc(f"```json\n{GOOD_JSON}\n```")
+    assert fenced is not None and fenced["takeaway"] == "Pass at the talk."
+    assert parse_summary_doc("just some prose") is None
+    assert parse_summary_doc('{"headline": 4, "sections": []}') is None
+
+
+def test_fallback_doc_strips_markdown():
+    from tradehub.deals.summary import fallback_doc
+
+    doc = fallback_doc("# Title line\n\n## Section\nSome **bold** text.\n\n- a point")
+    joined = " ".join(doc["sections"][0]["paragraphs"])
+    assert "#" not in joined and "**" not in joined
+    assert doc["headline"] == "Title line"
+
+
+def test_doc_from_stored_wraps_legacy_text():
+    from tradehub.deals.summary import doc_from_stored
+
+    assert doc_from_stored(None) is None and doc_from_stored("  ") is None
+    legacy = doc_from_stored("DRAFT\n\nOld plain-text summary.")
+    assert legacy is not None and legacy["sections"][0]["title"] == "Summary"
+    structured = doc_from_stored(GOOD_JSON)
+    assert structured is not None and structured["sections"][1]["title"] == "Valuation"
+
+
+def test_draft_summary_returns_a_document(monkeypatch):
+    from tradehub.deals import summary as sm
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    class Resp:
+        def __init__(self, content):
+            self._content = content
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}], "model": "m"}
+
+    doc, model = sm.draft_summary("ipo", "X", {}, {}, post=lambda *a, **k: Resp(GOOD_JSON))
+    assert model == "m" and doc["sections"][1]["table"] is not None
+    doc2, _ = sm.draft_summary("ipo", "X", {}, {}, post=lambda *a, **k: Resp("## Heading\n\nProse."))
+    assert doc2["sections"][0]["paragraphs"]  # junk still renders as cleaned paragraphs
+
+
+def test_summary_stored_as_json_and_read_as_doc():
+    from tests.test_screening_screens import FakeSupabase
+
+    from tradehub.deals import store
+    from tradehub.deals.summary import parse_summary_doc
+
+    fake = FakeSupabase()
+    row = store.save_run(fake, "ipo", "X", {"a": 1}, {"pw_ps": 1.0})
+    doc = parse_summary_doc(GOOD_JSON)
+    out = store.set_summary(fake, row["id"], doc, "m")
+    assert out["summary_doc"]["headline"].startswith("Anthropic")
+    again = store.get_run(fake, row["id"])
+    assert again["summary_doc"]["takeaway"] == "Pass at the talk."
+    import json as _json
+
+    assert _json.loads(again["summary"])["headline"].startswith("Anthropic")
