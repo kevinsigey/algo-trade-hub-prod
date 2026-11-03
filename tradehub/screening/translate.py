@@ -43,7 +43,7 @@ def _system() -> str:
     return (
         "You translate a plain-English stock screen into ONE JSON spec. Output only the JSON object.\n"
         "Shape: {name, description, universe, filters, derived?, score?, context?, limit?}.\n"
-        "universe: {\"type\": \"index\", \"id\": \"sp500\"|\"nasdaq100\"|\"nasdaq_all\"} or "
+        "universe: {\"type\": \"index\", \"index\": \"sp500\"|\"nasdaq100\"|\"nasdaq_all\"} or "
         "{\"type\": \"list\", \"tickers\": [...]}.\n"
         f"filters: [{{\"fn\": <field name>, \"params\"?: {{}}, \"op\": <one of: {ops}>, \"value\": <number>}}]. "
         "pct_gte/pct_lte compare against the universe percentile (0-100); gt/gte/lt/lte compare raw values.\n"
@@ -89,6 +89,9 @@ def translate(query: str, *, post=requests.post) -> tuple[dict, str]:
         raise TranslateUnavailable("the translator returned no spec")
     try:
         spec = json.loads(content[start:end + 1])
+        universe = spec.get("universe") if isinstance(spec, dict) else None
+        if isinstance(universe, dict) and "index" not in universe and "id" in universe:
+            universe["index"] = universe.pop("id")  # the models' persistent alias for the key
         validate_spec(spec)
     except (json.JSONDecodeError, SpecError) as exc:
         fallback = rules_spec(query)
