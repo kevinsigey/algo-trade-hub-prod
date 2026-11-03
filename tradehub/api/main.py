@@ -3037,6 +3037,23 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
             "survivors": survivors}
 
 
+class _TranslateIn(BaseModel):
+    query: str = Field(min_length=3, max_length=2000)
+
+
+@app.post("/api/screening/translate", tags=["Screening"])
+def screening_translate(body: _TranslateIn, _admin: dict = Depends(admin.require_admin)):
+    """Plain English -> a validated screen spec (the spec stays visible and
+    editable; translation never runs anything by itself)."""
+    from tradehub.screening.translate import TranslateUnavailable, translate
+
+    try:
+        spec, model = translate(body.query)
+    except TranslateUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"spec": spec, "model": model}
+
+
 @app.post("/api/screening/run", tags=["Screening"])
 def screening_run(body: _ScreenRunIn, _admin: dict = Depends(admin.require_admin)):
     from tradehub.screening import run_spec

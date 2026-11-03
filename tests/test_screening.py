@@ -4,6 +4,7 @@ filters/scores, the runner discloses the universe cap, and the API serves the
 catalog + a run. The data layer is faked at the registry: two synthetic field
 functions stand in for yfinance so the pipeline runs offline."""
 
+import json
 from types import SimpleNamespace
 
 import pandas as pd
@@ -80,3 +81,30 @@ def test_catalog_and_run_endpoints(monkeypatch):
     assert len(names) >= 43 and "pe_ratio" in names
     bad = client.post("/api/screening/run", json={"spec": {**BASE, "filters": [{"fn": "nope", "op": "gt", "value": 1}]}})
     assert bad.status_code == 422 and "nope" in bad.json()["detail"]
+
+
+def test_translate_validates_the_models_spec(monkeypatch):
+    from tradehub.screening import translate as tr
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    good = {"name": "t", "universe": {"type": "list", "tickers": ["AAA"]},
+            "filters": [{"fn": "pe_ratio", "op": "lt", "value": 12}]}
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"model": "x/y:free", "choices": [{"message": {"content": "Here you go:\n" + json.dumps(good)}}]}
+
+    spec, model = tr.translate("cheap stocks", post=lambda *a, **k: Resp())
+    assert spec == good and model == "x/y:free"
+    bad = {"name": "t", "universe": {"type": "list", "tickers": ["AAA"]},
+           "filters": [{"fn": "nope", "op": "lt", "value": 1}]}
+
+    class BadResp(Resp):
+        def json(self):
+            return {"model": "x/y:free", "choices": [{"message": {"content": json.dumps(bad)}}]}
+
+    with pytest.raises(tr.TranslateUnavailable, match="nope"):
+        tr.translate("???", post=lambda *a, **k: BadResp())
