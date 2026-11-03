@@ -46,6 +46,15 @@ def _vessels(region) -> tuple[list[dict], str | None]:
         return [], None
 
 
+def _flow(slug: str, now: datetime) -> dict | None:
+    """IMF PortWatch daily transits for the region (portwatch.py): a daily,
+    week-lagged series, so it rides beside the 15-minute snapshot metrics
+    rather than inside them. Fail-soft None."""
+    from tradehub.geo.portwatch import load_flow
+
+    return load_flow(slug, today=now.date())
+
+
 def _aircraft(current: list[dict]) -> list[dict]:
     """Military aircraft positions: the snapshot already stores them in the
     adsb rows' detail (callsign, type, kind, lat, lon) -- surface them."""
@@ -71,7 +80,8 @@ def region_view(supa, slug: str, *, now: datetime | None = None) -> dict | None:
         vessels, vessels_as_of = _vessels(region)
         return {"region": slug, "name": region.title, "at": None, "feeds": {},
                 "metrics": [], "geometry": geometry,
-                "vessels": vessels, "vessels_as_of": vessels_as_of, "aircraft": []}
+                "vessels": vessels, "vessels_as_of": vessels_as_of, "aircraft": [],
+                "flow": _flow(slug, now)}
     at = latest[0]["taken_at"]
     current = [r for r in latest if r["taken_at"] == at]
     since = (now - timedelta(days=HISTORY_DAYS)).isoformat()
@@ -85,4 +95,5 @@ def region_view(supa, slug: str, *, now: datetime | None = None) -> dict | None:
             "metrics": with_baselines(current, history),
             "geometry": geometry,
             "vessels": vessels, "vessels_as_of": vessels_as_of,
-            "aircraft": _aircraft(current)}
+            "aircraft": _aircraft(current),
+            "flow": _flow(slug, now)}

@@ -57,6 +57,25 @@ describe("ChokepointsMap", () => {
     expect(container.querySelectorAll('[title="Fujairah"]').length).toBe(2);
   });
 
+  it("shows the PortWatch flow strip with its lag stated", async () => {
+    const withFlow = { ...VIEW, flow: {
+      source: "IMF PortWatch", name: "Strait of Hormuz", as_of: "2026-10-26", lag_days: 8,
+      n_tanker_latest: 21, n_total_latest: 55, capacity_tanker_latest: 900000,
+      n_tanker_7d: 19.5, n_total_7d: 51, capacity_tanker_7d: 850000,
+      tanker_baseline_30d: 26, tanker_delta_pct: -25.0, baseline_n: 30,
+      recent: Array.from({ length: 14 }, (_, i) => ({
+        date: `2026-10-${13 + i}`, n_tanker: 15 + i, n_total: 40 + i })),
+    } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(withFlow), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText(/Ship flow · IMF PortWatch/)).toBeInTheDocument();
+    expect(screen.getByText(/Tankers 19.5\/day/)).toBeInTheDocument();
+    expect(screen.getByText(/vs 26 baseline/)).toBeInTheDocument();
+    expect(screen.getByText(/Latest day 2026-10-26: 21 tankers · 55 ships/)).toBeInTheDocument();
+    expect(screen.getByText(/8-day lag/)).toBeInTheDocument();
+    expect(screen.getByText(/a floor, not a total/)).toBeInTheDocument();
+  });
+
   it("renders nothing when the read API is down", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
     const { container } = render(<ChokepointsMap />);

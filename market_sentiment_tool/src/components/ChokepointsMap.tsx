@@ -27,6 +27,15 @@ interface GeoAircraft {
   callsign: string; type: string | null; kind: string; lat: number; lon: number;
 }
 
+interface GeoFlow {
+  source: string; name?: string | null; as_of: string; lag_days: number;
+  n_tanker_latest: number | null; n_total_latest: number | null;
+  capacity_tanker_latest: number | null;
+  n_tanker_7d: number | null; n_total_7d: number | null; capacity_tanker_7d: number | null;
+  tanker_baseline_30d: number | null; tanker_delta_pct: number | null; baseline_n: number;
+  recent: { date: string; n_tanker: number | null; n_total: number | null }[];
+}
+
 interface GeoView {
   region: string; name: string; at: string | null;
   feeds: Record<string, string>;
@@ -35,6 +44,7 @@ interface GeoView {
   vessels?: GeoVessel[];
   vessels_as_of?: string | null;
   aircraft?: GeoAircraft[];
+  flow?: GeoFlow | null;
 }
 
 const FEED_LABEL: Record<string, string> = {
@@ -61,6 +71,22 @@ const FOLDED = new Set(["mil_tanker", "mil_isr"]);
 const HEALTH_DOT: Record<string, string> = {
   live: "bg-emerald-400", stale: "bg-amber-400", unknown: "bg-slate-500",
 };
+
+function FlowSpark({ recent }: { recent: GeoFlow["recent"] }) {
+  const vals = recent.map((r) => r.n_tanker).filter((v): v is number => v != null);
+  if (vals.length < 2) return null;
+  const max = Math.max(...vals, 1);
+  const w = 120, h = 26;
+  const pts = recent
+    .map((r, i) => (r.n_tanker == null ? null
+      : `${(i / (recent.length - 1)) * w},${h - 2 - (r.n_tanker / max) * (h - 4)}`))
+    .filter(Boolean).join(" ");
+  return (
+    <svg width={w} height={h} className="shrink-0" aria-label="Tankers per day, last 14 days">
+      <polyline points={pts} fill="none" stroke="#7dd3fc" strokeWidth="1.5" />
+    </svg>
+  );
+}
 
 type Layer = "gate" | "anchorages" | "terminals" | "ships" | "aircraft";
 
@@ -238,6 +264,40 @@ export default function ChokepointsMap() {
           Ship coverage is thin: {coverage.seen} ships seen, {coverage.inGate} in the transit gate, {coverage.typed} with a
           known type. Zero tankers here means the free feed can&apos;t see them, not that traffic stopped.
         </p>
+      )}
+
+      {view.flow && (
+        <div className="rounded-lg border border-slate-700 px-3 py-2.5" aria-label="Ship flow, IMF PortWatch">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-[13px] font-semibold uppercase tracking-wide text-slate-300">
+              Ship flow · {view.flow.source}
+            </span>
+            <span className="text-[15px] text-white">
+              Tankers {view.flow.n_tanker_7d ?? "—"}/day (7d avg)
+              {view.flow.tanker_baseline_30d != null && (
+                <span className="text-slate-400"> vs {view.flow.tanker_baseline_30d} baseline</span>
+              )}
+              {view.flow.tanker_delta_pct != null && (
+                <span className={view.flow.tanker_delta_pct >= 0 ? "text-emerald-300" : "text-amber-300"}>
+                  {" "}{view.flow.tanker_delta_pct >= 0 ? "▲" : "▼"} {Math.abs(view.flow.tanker_delta_pct)}%
+                </span>
+              )}
+            </span>
+            <span className="text-[13px] text-slate-400">
+              Latest day {view.flow.as_of}: {view.flow.n_tanker_latest ?? "—"} tankers ·{" "}
+              {view.flow.n_total_latest ?? "—"} ships
+              {view.flow.capacity_tanker_7d != null &&
+                ` · ${Math.round(view.flow.capacity_tanker_7d).toLocaleString()} t tanker capacity/day`}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <FlowSpark recent={view.flow.recent} />
+            <span className="text-[12px] text-slate-500">
+              Daily transits, published with a {view.flow.lag_days}-day lag and updated weekly ·
+              AIS-visible ships only — a floor, not a total
+            </span>
+          </div>
+        </div>
       )}
 
       {GEO_GROUPS.map((group) => {
