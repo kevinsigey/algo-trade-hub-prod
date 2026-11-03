@@ -592,6 +592,18 @@ export interface PublicIdea {
   result_p?: number | null;
   kind: IdeaKind;
   latest_verdict: Verdict | null;
+  /** Standing under the hub-wide standard (Kevin, 2026-11-03): the stored
+   * verdict re-judged against every test the hub has run (FDR bar) plus
+   * walk-forward. verdict_now is what counts; latest_verdict is history. */
+  verdict_now?: Verdict | null;
+  fdr_pass?: boolean | null;
+  wf_ok?: boolean | null;
+  /** Ideas betting on the same names are one bet, however wrapped. */
+  family?: { key: number; size: number; tickers: string[]; members: number[] } | null;
+  origin?: "manual" | "lab" | "screen" | null;
+  hindsight_selected?: boolean;
+  gate_overridden?: boolean;
+  registry?: { test_number: number | null; tests_total: number | null };
   variations: number;
   status: "backtest" | "tracking" | "live" | "killed";
   live_at: string | null;

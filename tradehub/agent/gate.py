@@ -109,9 +109,15 @@ def run_gate(supa, row: dict, *, run_fn=None, data_fns: dict | None = None) -> d
     fred_start = idea.start - timedelta(days=3 * 366)  # main.py's _fred_start rule
     series = rule_series(idea, fred_start, fred=fns["fred"], analyst_fn=fns["analyst"])
     yields = fns["div_yields"](idea, prices) if fns["div_yields"] else real_div_yields(idea, prices)
-    result = (run_fn or fns["run"])(idea, prices, series, variations=1,
-                                    seed=int(row["id"]) * 1000 + 1, div_yields=yields)
-    gate = {"expressible": True, "note": note, "at": at, "idea_spec": idea_dict, **_trim(result)}
+    # Attempts count per spec (Kevin, 2026-11-03): re-running the gate used
+    # to reset the bar (variations=1 every time), so a blocked spec could be
+    # re-rolled until the shuffle cooperated. Each attempt tightens the bar
+    # and changes the shuffle seed.
+    attempts = int((row.get("gate") or {}).get("attempts") or 0) + 1
+    result = (run_fn or fns["run"])(idea, prices, series, variations=attempts,
+                                    seed=int(row["id"]) * 1000 + attempts, div_yields=yields)
+    gate = {"expressible": True, "note": note, "at": at, "attempts": attempts,
+            "idea_spec": idea_dict, **_trim(result)}
     if gate["verdict"] == "PASS":
         return store.set_state(supa, row["id"], row["state"], gate=gate)
     updated = store.set_state(supa, row["id"], "blocked", gate=gate)

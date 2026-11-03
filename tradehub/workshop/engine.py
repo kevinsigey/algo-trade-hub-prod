@@ -224,7 +224,17 @@ def p_value(actual: float, perm: np.ndarray) -> tuple[float, float]:
     return (1 + int(np.sum(perm >= actual))) / (1 + len(perm)), 100 * float(np.sum(perm < actual)) / len(perm)
 
 
-def verdict_of(holds: bool, p: float, bar: float) -> str:
+def verdict_of(holds: bool, p: float, bar: float, wf: dict | None = None) -> str:
+    """PASS = the claim holds on unseen years AND p clears the bar AND --
+    when walk-forward folds were judged (workshop runs) -- the claim held
+    in at least half of them (Kevin, 2026-11-03: the folds were computed
+    but ignored, so an edge that only ever worked in the last stretch
+    passed). wf=None keeps the legacy callers (event studies)."""
+    if wf is not None:
+        from tradehub.workshop.registry import wf_ok
+
+        if not wf_ok(wf):
+            return "FAIL"
     return "PASS" if holds and p < bar else "FAIL"
 
 
@@ -548,7 +558,11 @@ def claim_check(spec: IdeaSpec, rows: pd.DataFrame) -> dict:
 
 def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: float | None) -> dict:
     """Live-paper gate (spec §5): the claim on data that arrived after the backtest (at most the last 12 months),
-    each position within the book limit. Kevin's button is the third part."""
+    each position within the book limit. Kevin's button is the third part.
+
+    The 63-new-day wait is retired (Kevin, 2026-11-03): it had become a
+    formality every activation overrode. The claim is judged on whatever
+    new data exists; only a complete absence of new data still waits."""
     new = frame[frame.index > pd.Timestamp(data_end)]
     reasons: list[str] = []
     per = None if size_pct is None else size_pct / len(spec.hold)
@@ -556,8 +570,8 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
     if size_ok is False:
         reasons.append(f"each position would be {per:.0f}% of the account; the limit is {MAX_POSITION_PCT}%")
     claim = None
-    if len(new) < MIN_GATE_DAYS:
-        reasons.insert(0, f"waiting for data: {len(new)} of {MIN_GATE_DAYS} new trading days since the backtest")
+    if len(new) == 0:
+        reasons.insert(0, "no new data since the backtest yet: the claim can't be judged on new data")
     else:
         claim = _clean(claim_check(spec, new.iloc[-GATE_WINDOW:]))
         if claim["holds"] is None:
@@ -572,7 +586,7 @@ def gate_check(spec: IdeaSpec, frame: pd.DataFrame, data_end: date, size_pct: fl
         status = "waiting"
     else:
         status = "ready"
-    return {"status": status, "new_days": len(new), "needed": MIN_GATE_DAYS, "claim": claim, "size_ok": size_ok,
+    return {"status": status, "new_days": len(new), "needed": 0, "claim": claim, "size_ok": size_ok,
             "reasons": reasons}
 
 
@@ -696,7 +710,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
         signs = rng.choice((-1.0, 1.0), size=(permutations, len(terms)))
         p, beats = p_value(float(np.mean(terms)) if len(terms) else math.nan, (signs * terms).mean(axis=1))
 
-    verdict = verdict_of(on_u[0], p, bar)
+    verdict = verdict_of(on_u[0], p, bar, walk_forward)
     if verdict == "PASS":
         headline = HEADLINES["pass"]
     elif on_u[0]:

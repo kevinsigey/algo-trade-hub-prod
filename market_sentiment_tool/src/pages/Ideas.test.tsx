@@ -30,15 +30,15 @@ afterEach(() => {
 });
 
 describe("Ideas record", () => {
-  it("lists every published idea, fails included, with its live record", async () => {
+  it("leads with what still stands; the fail stays on the record under Removed", async () => {
     serve(ROWS);
     render(<MemoryRouter><Ideas /></MemoryRouter>);
-    expect(await screen.findByText("Bonds as ballast")).toBeInTheDocument();
+    expect(await screen.findByText("Gold beats SPY")).toBeInTheDocument();
+    // The FAIL never passed, so it is trimmed out of the main list -- but the
+    // record keeps it, one click down (Kevin, 2026-11-03 trim).
+    expect(screen.getByText(/Removed under the current standard/)).toBeInTheDocument();
+    expect(screen.getByText("Bonds as ballast")).toBeInTheDocument();
     expect(screen.getByText("+25.8 pts/yr vs SPY")).toBeInTheDocument();  // the card's result line
-    // Grouped by type (Kevin, 2026-11-02): the gold idea is an event study in the
-    // fixture, the bonds idea a long-only rule.
-    expect(screen.getByText(/Event studies/)).toBeInTheDocument();
-    expect(screen.getByText(/Long-only rules/)).toBeInTheDocument();
     expect(screen.getByText("FAIL")).toBeInTheDocument();
     expect(screen.getByText("Backtest only")).toBeInTheDocument();
     // The live idea names each book it trades on; the backtest-only one names none.
@@ -49,19 +49,56 @@ describe("Ideas record", () => {
     expect(screen.getByText(/as of 2027-02-12/)).toBeInTheDocument();
   });
 
-  it("sorts the whole list by performance or significance on request", async () => {
+  it("sorts the standing list by performance or significance on request", async () => {
     serve(ROWS);
     render(<MemoryRouter><Ideas /></MemoryRouter>);
-    expect(await screen.findByText("Bonds as ballast")).toBeInTheDocument();
+    expect(await screen.findByText("Gold beats SPY")).toBeInTheDocument();
     // The hero caption carries the permutation p.
     expect(screen.getByText(/p < 0\.001/)).toBeInTheDocument();
-    const titles = () => [...document.querySelectorAll("h3")].map((h) => h.textContent);
+    const mainTitles = () => [...document.querySelectorAll("h3")].map((h) => h.textContent)
+      .filter((t) => t === "Gold beats SPY");
     fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "value" } });
-    // Flattened across types, strongest unseen value first.
-    expect(screen.getByText(/All ideas/)).toBeInTheDocument();
-    expect(titles()).toEqual(["Bonds as ballast", "Gold beats SPY"]);
+    expect(screen.getByText(/Standing ideas/)).toBeInTheDocument();
+    expect(mainTitles()).toEqual(["Gold beats SPY"]);
     fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "p" } });
-    expect(titles()).toEqual(["Gold beats SPY", "Bonds as ballast"]);
+    expect(mainTitles()).toEqual(["Gold beats SPY"]);
+  });
+
+  it("shows a demoted PASS as failing now, with the reason on the card", async () => {
+    serve([{ ...ROWS[0], id: 50, title: "NVDA call spread", latest_verdict: "PASS", verdict_now: "FAIL",
+             wf_ok: false, fdr_pass: true, status: "backtest" }]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText("NVDA call spread")).toBeInTheDocument();
+    expect(screen.getByText(/Removed under the current standard/)).toBeInTheDocument();
+    expect(screen.getByText(/Passed as run — demoted under the hub-wide standard/)).toBeInTheDocument();
+  });
+
+  it("groups ideas that bet on the same names as one bet", async () => {
+    const fam = { key: 47, size: 2, tickers: ["MU", "TXN"], members: [47, 51] };
+    serve([
+      { ...ROWS[1], id: 47, title: "TXN and MU wrap", status: "backtest", live_at: null, live: null, live_books: [],
+        latest_verdict: "PASS", verdict_now: "PASS", family: fam },
+      { ...ROWS[1], id: 51, title: "MU TXN TSM sleeve", status: "backtest", live_at: null, live: null, live_books: [],
+        latest_verdict: "PASS", verdict_now: "PASS", family: fam },
+      { ...ROWS[1], id: 9, title: "Energy ballast", status: "backtest", live_at: null, live: null, live_books: [],
+        latest_verdict: "PASS", verdict_now: "PASS", family: { key: 9, size: 1, tickers: ["XLE"], members: [9] } },
+    ]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText(/One bet · MU · TXN/)).toBeInTheDocument();
+    expect(screen.getByText("TXN and MU wrap")).toBeInTheDocument();
+    expect(screen.getByText("MU TXN TSM sleeve")).toBeInTheDocument();
+    expect(screen.getByText(/Standalone/)).toBeInTheDocument();
+    expect(screen.getByText("Energy ballast")).toBeInTheDocument();
+  });
+
+  it("labels gate overrides, hindsight selection and the registry position", async () => {
+    serve([{ ...ROWS[1], gate_overridden: true, hindsight_selected: true,
+             registry: { test_number: 58, tests_total: 63 } }]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText("Gold beats SPY")).toBeInTheDocument();
+    expect(screen.getByText("Gate overridden")).toBeInTheDocument();
+    expect(screen.getByText("Hindsight-selected")).toBeInTheDocument();
+    expect(screen.getByText(/test #58 of 63/)).toBeInTheDocument();
   });
 
   it("labels a paper record too early below 30 days instead of calling its claim failing", async () => {

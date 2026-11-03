@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -869,6 +870,39 @@ class _LabelIn(BaseModel):
     idea_id: int | None = None
 
 
+def _latest_saved_map(supabase) -> dict[int, dict]:
+    """idea id -> its latest SAVED run row, hub-wide (save-by-choice: previews
+    never set an idea's standing). One pass over idea_runs + idea_run_saves."""
+    saved_ids = {s["run_id"] for s in supabase.table("idea_run_saves").select("run_id").execute().data or []}
+    latest: dict[int, dict] = {}
+    for r in supabase.table("idea_runs").select("id,idea_id,verdict,result,spec").execute().data or []:
+        if r["id"] not in saved_ids:
+            continue
+        cur = latest.get(r["idea_id"])
+        if cur is None or r["id"] > cur["id"]:
+            latest[r["idea_id"]] = r
+    return latest
+
+
+def _registry_view(supabase) -> dict:
+    """The hub-wide standing (tradehub.workshop.registry): adjusted verdicts,
+    ticker families and origins for every idea with a saved run, plus the
+    registry size. Recomputed per call -- the tables are small."""
+    from tradehub.workshop import registry
+
+    latest = _latest_saved_map(supabase)
+    holdings = {}
+    for iid, r in latest.items():
+        spec = r.get("spec") or {}
+        holdings[iid] = set(spec.get("hold") or []) | set(spec.get("short") or [])
+    screen_ids = {s["promoted_idea_id"] for s in
+                  supabase.table("screens").select("promoted_idea_id").execute().data or []
+                  if s.get("promoted_idea_id")}
+    return {"adjusted": registry.adjusted(latest), "families": registry.families(holdings),
+            "screen_ids": screen_ids,
+            "tests_total": len(supabase.table("idea_runs").select("id").execute().data or [])}
+
+
 def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | None]:
     """The live-paper gate on the idea's latest SAVED run, recomputed from fresh prices
     every time it is asked. A preview run never reaches the gate (save-by-choice)."""
@@ -876,14 +910,26 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
     saved = workshop_store.saved_only(runs)
     latest = saved[-1] if saved else None
     if latest is None and runs:
-        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+        return {"status": "fails", "new_days": 0, "needed": 0, "claim": None, "size_ok": None,
                 "reasons": ["no saved run yet: previews don't count toward the gate -- save a run first"]}, None
     if latest is not None and (latest.get("spec") or {}).get("kind") == "event":
-        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+        return {"status": "fails", "new_days": 0, "needed": 0, "claim": None, "size_ok": None,
                 "reasons": ["event studies are research only for now: they don't trade on paper"]}, None
     if latest is None or latest["verdict"] != "PASS":
-        return {"status": "fails", "new_days": 0, "needed": 63, "claim": None, "size_ok": None,
+        return {"status": "fails", "new_days": 0, "needed": 0, "claim": None, "size_ok": None,
                 "reasons": ["the latest run did not PASS"]}, None
+    adj = _registry_view(supabase)["adjusted"].get(idea_id)
+    if adj is not None and adj["verdict_now"] != "PASS":
+        why = []
+        if adj["fdr_pass"] is False:
+            why.append("its p-value does not survive the hub-wide FDR adjustment over every idea's test")
+        if adj["wf_ok"] is False:
+            wf = (latest.get("result") or {}).get("walk_forward") or {}
+            why.append(f"its claim held in only {wf.get('held')} of {wf.get('of')} walk-forward folds "
+                       "(the standard is at least half)")
+        return {"status": "fails", "new_days": 0, "needed": 0, "claim": None, "size_ok": None,
+                "reasons": ["the latest run's PASS no longer stands under the hub-wide standard "
+                            "(Kevin, 2026-11-03): " + "; ".join(why)]}, latest
     spec = IdeaSpec.model_validate(latest["spec"])
     try:
         prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
@@ -913,6 +959,7 @@ def workshop_dune_series(supabase=Depends(get_supabase)):
 
 @app.post("/api/workshop/ideas/{idea_id}/publish", tags=["Workshop"])
 def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    _bust_ideas_cache()
     _found(supabase, idea_id)
     try:
         return workshop_store.publish(supabase, idea_id)
@@ -929,6 +976,7 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
                    supabase=Depends(get_supabase)):
     """Start the forward shadow record for a PASS run: observation only, no orders, no gate.
     Tracking is the step between a pass and going live -- the record that later feeds the gate."""
+    _bust_ideas_cache()
     found = _found(supabase, idea_id)
     idea = found["idea"]
     if idea.get("tracked_at"):
@@ -945,6 +993,11 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
         raise HTTPException(status_code=409, detail="no run to track")
     if run["verdict"] != "PASS":
         raise HTTPException(status_code=409, detail="only a PASS run can be tracked")
+    adj = _registry_view(supabase)["adjusted"].get(idea_id)
+    if adj is not None and adj["verdict_now"] != "PASS":
+        raise HTTPException(status_code=409,
+                            detail="this run's PASS no longer stands under the hub-wide standard "
+                                   "(FDR over all tests + walk-forward in at least half the folds)")
     if (run.get("spec") or {}).get("kind") == "event":
         raise HTTPException(status_code=409, detail="event studies are research only: they don't track forward")
     try:
@@ -956,6 +1009,7 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
 @app.post("/api/workshop/ideas/{idea_id}/live", tags=["Workshop"])
 def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.require_admin),
                      supabase=Depends(get_supabase)):
+    _bust_ideas_cache()
     if body.book != "main":
         _book_or_400(body.book)
         act = workshop_store.activation(supabase, body.book, idea_id)
@@ -996,6 +1050,7 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
 @app.post("/api/workshop/ideas/{idea_id}/kill", tags=["Workshop"])
 def workshop_kill(idea_id: int, book: str = "main", _admin: dict = Depends(admin.require_admin),
                   supabase=Depends(get_supabase)):
+    _bust_ideas_cache()
     if book != "main":
         _book_or_400(book)
         act = workshop_store.activation(supabase, book, idea_id)
@@ -1496,8 +1551,14 @@ def _idea_kind(spec: dict | None) -> str:
     return "long_only"
 
 
-def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | None = None) -> dict:
+def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | None = None,
+                 view: dict | None = None) -> dict:
+    from tradehub.workshop import registry as _registry
+
     latest = runs[-1] if runs else None
+    adj = (view or {}).get("adjusted", {}).get(idea["id"])
+    fam = (view or {}).get("families", {}).get(idea["id"])
+    origin = _registry.origin_of(idea, (view or {}).get("screen_ids", set())) if view else None
     status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else \
         "tracking" if idea.get("tracked_at") else "backtest"
     live = None
@@ -1533,6 +1594,18 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
             "result_value": result_value, "result_p": result_p,
             "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
+            # Standing under the hub-wide standard (Kevin, 2026-11-03): the
+            # as-run verdict above never changes; verdict_now is what counts.
+            "verdict_now": adj["verdict_now"] if adj else None,
+            "fdr_pass": adj["fdr_pass"] if adj else None,
+            "wf_ok": adj["wf_ok"] if adj else None,
+            "family": fam, "origin": origin,
+            "hindsight_selected": _registry.hindsight_selected(origin) if origin else False,
+            "gate_overridden": bool((idea.get("gate") or {}).get("status") == "overridden")
+            or idea["id"] in (view or {}).get("overridden_big", set()),
+            "registry": {"test_number": ((latest.get("result") or {}).get("registry") or {}).get("test_number")
+                         if latest else None,
+                         "tests_total": (view or {}).get("tests_total")},
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
             "killed_at": idea.get("killed_at"), "live": live,
             "live_books": (["main"] if idea.get("live_at") and not idea.get("killed_at") else [])
@@ -1545,39 +1618,70 @@ def _big_activation_live(supabase, idea_id: int) -> bool:
     return bool(act and act.get("live_at") and not act.get("killed_at"))
 
 
+_IDEAS_CACHE: dict = {"at": 0.0, "payload": None, "fp": None}
+_IDEAS_CACHE_TTL = 30.0
+
+
+def _bust_ideas_cache() -> None:
+    _IDEAS_CACHE["payload"] = None
+
+
+def _ideas_fingerprint(supabase) -> tuple:
+    """A cheap mutation detector for the ideas cache: lifecycle timestamps,
+    the newest run and the save count. Any write that changes what the list
+    shows -- endpoint or direct -- changes the fingerprint."""
+    ideas = supabase.table("ideas").select("id,published_at,live_at,killed_at,tracked_at").execute().data or []
+    runs = supabase.table("idea_runs").select("id").execute().data or []
+    saves = supabase.table("idea_run_saves").select("run_id").execute().data or []
+    acts = supabase.table("book_activations").select("book,idea_id,live_at,killed_at").execute().data or []
+    return (tuple(sorted((i["id"], i.get("published_at"), i.get("live_at"), i.get("killed_at"),
+                          i.get("tracked_at")) for i in ideas)),
+            max((r["id"] for r in runs), default=0), len(saves),
+            tuple(sorted((a["book"], a["idea_id"], a.get("live_at"), a.get("killed_at")) for a in acts)))
+
+
 @app.get("/api/ideas", tags=["Ideas"])
 def get_ideas(supabase=Depends(get_supabase)):
-    big_live = {a["idea_id"] for a in workshop_store.activations(supabase, "big")
-                if a.get("live_at") and not a.get("killed_at")}
+    # The list took 7.6s uncached (an N+1 over every published idea, most of
+    # it shadow-record math). Serve the built payload while a light
+    # fingerprint says nothing changed, and never for more than the TTL --
+    # the shadow summaries age even when nothing is written.
+    fp = _ideas_fingerprint(supabase)
+    if (_IDEAS_CACHE["payload"] is not None and _IDEAS_CACHE["fp"] == fp
+            and time.time() - _IDEAS_CACHE["at"] < _IDEAS_CACHE_TTL):
+        return _IDEAS_CACHE["payload"]
+    big_acts = workshop_store.activations(supabase, "big")
+    big_live = {a["idea_id"] for a in big_acts if a.get("live_at") and not a.get("killed_at")}
+    view = _registry_view(supabase)
+    view["overridden_big"] = {a["idea_id"] for a in big_acts
+                              if (a.get("gate") or {}).get("status") == "overridden"}
     out = []
     for idea in workshop_store.published_ideas(supabase):
         row = _public_idea(supabase, idea, workshop_store.saved_only(workshop_store.get_idea(supabase, idea["id"])["runs"]),
-                           big_live=big_live)
+                           big_live=big_live, view=view)
         if row["live"]:
             row["live"] = {k: v for k, v in row["live"].items() if k != "curve"}
         out.append(row)
+    _IDEAS_CACHE.update(at=time.time(), payload=out, fp=fp)
     return out
 
 
 @app.get("/api/ideas/summary", tags=["Ideas"])
 def get_ideas_summary(supabase=Depends(get_supabase)):
-    # Saved runs only: the record line counts what was kept, not what was previewed.
-    saved_ids = {s["run_id"] for s in supabase.table("idea_run_saves").select("run_id").execute().data or []}
-    runs = [r for r in (supabase.table("idea_runs").select("id,idea_id,variation,verdict").execute().data or [])
-            if r["id"] in saved_ids]
-    latest: dict[int, tuple[int, str]] = {}
-    for r in runs:
-        iid = r["idea_id"]
-        if iid not in latest or r["variation"] > latest[iid][0]:
-            latest[iid] = (r["variation"], r["verdict"])
+    # Saved runs only, judged under the current hub-wide standard: the
+    # record line counts standing now, not the verdict as first recorded.
+    from tradehub.workshop import registry
+
+    latest = _latest_saved_map(supabase)
+    adj = registry.adjusted(latest)
     tested = passed = failed = not_enough = 0
-    for _, (_, verdict) in latest.items():
+    for entry in adj.values():
         tested += 1
-        if verdict == "PASS":
+        if entry["verdict_now"] == "PASS":
             passed += 1
-        elif verdict == "FAIL":
+        elif entry["verdict_now"] == "FAIL":
             failed += 1
-        elif verdict == "NOT ENOUGH DATA":
+        elif entry["verdict_now"] == "NOT ENOUGH DATA":
             not_enough += 1
     published = len(workshop_store.published_ideas(supabase))
     return {"tested": tested, "passed": passed, "failed": failed, "not_enough_data": not_enough, "published": published}
@@ -1590,7 +1694,10 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
         raise HTTPException(status_code=404, detail="no such idea")  # private and missing look the same
     from tradehub.portfolio import service
 
-    row = _public_idea(supabase, found["idea"], workshop_store.saved_only(found["runs"]))
+    view = _registry_view(supabase)
+    view["overridden_big"] = {a["idea_id"] for a in workshop_store.activations(supabase, "big")
+                              if (a.get("gate") or {}).get("status") == "overridden"}
+    row = _public_idea(supabase, found["idea"], workshop_store.saved_only(found["runs"]), view=view)
     row["plain_words"] = found["idea"]["plain_words"]
     row["shadow"] = row.pop("live")
     row["runs"] = [{"variation": r["variation"], "verdict": r["verdict"], "created_at": r["created_at"],

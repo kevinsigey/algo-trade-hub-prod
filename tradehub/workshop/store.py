@@ -122,6 +122,11 @@ def list_ideas(supa) -> list[dict]:
 
 
 def insert_run(supa, idea_id: int, variation: int, spec: dict, draft_model: str | None, result: dict) -> dict:
+    # The hub-wide registry position (Kevin, 2026-11-03): this run is the
+    # Nth test the hub has ever run, and its standing is judged against all
+    # of them (see tradehub.workshop.registry), not just this idea's reruns.
+    tests_before = len(supa.table(RUNS).select("id").execute().data or [])
+    result = {**result, "registry": {"test_number": tests_before + 1, "tests_before": tests_before}}
     row = {"idea_id": idea_id, "variation": variation, "spec": spec, "draft_model": draft_model,
            "verdict": result["verdict"], "result": result, "data_end": result.get("data_end")}
     # A fresh run is a preview by definition (save-by-choice): the shape carries it.
