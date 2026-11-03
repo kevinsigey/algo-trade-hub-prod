@@ -33,8 +33,10 @@ def _units(supa) -> list[dict]:
                       "since": idea["tracked_at"], "live": False})
     for act in store.activations(supa, "big"):
         if act.get("live_at") and not act.get("killed_at"):
-            units.append({"idea": store.get_idea(supa, act["idea_id"]), "book": "big",
-                          "run_id": act["live_run_id"], "since": act["live_at"], "live": True})
+            found = store.get_idea(supa, act["idea_id"])
+            units.append({"idea": found["idea"] if found else {"id": act["idea_id"]},
+                          "book": "big", "run_id": act["live_run_id"],
+                          "since": act["live_at"], "live": True})
     return units
 
 
