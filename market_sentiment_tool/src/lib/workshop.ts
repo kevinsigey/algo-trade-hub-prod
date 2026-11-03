@@ -612,6 +612,21 @@ export interface PublicIdea {
   /** The books this idea is live on right now (subset of ["main", "big"]). */
   live_books?: string[];
   live: ShadowSummary | null;
+  /** The weekly critic's latest payload per book (loop piece 1): live vs
+   * backtest in the claim's own units, and a PAUSE / HOLD / WATCH call. */
+  critic?: Record<string, IdeaCritique>;
+}
+
+export interface IdeaCritique {
+  recommendation: "PAUSE" | "WATCH" | "HOLD";
+  degradation: number | null;
+  at: string;
+  live: { days: number; value: number | null; label: string };
+  claim: { kind: string | null; backtest_label: string | null };
+  conditions: { dominant: string | null; losing_entries: number; entries: number };
+  flags: string[];
+  reasons: string[];
+  paper: { orders: number; sent: number; filled: number; fill_rate: number | null; net_filled_usd: number } | null;
 }
 
 /** The run's full stored evidence, carried on the record since 2026-11-02 -- the same

@@ -909,8 +909,12 @@ def _registry_view(supabase) -> dict:
     screen_ids = {s["promoted_idea_id"] for s in
                   supabase.table("screens").select("promoted_idea_id").execute().data or []
                   if s.get("promoted_idea_id")}
+    try:
+        critics = {key: row.get("payload") for key, row in workshop_store.latest_critiques(supabase).items()}
+    except Exception:  # noqa: BLE001 -- the critic is an overlay; its table missing never breaks the list
+        critics = {}
     return {"adjusted": registry.adjusted(latest), "families": registry.families(holdings),
-            "screen_ids": screen_ids,
+            "screen_ids": screen_ids, "critics": critics,
             "tests_total": len(supabase.table("idea_runs").select("id").execute().data or [])}
 
 
@@ -1619,6 +1623,10 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
                          "tests_total": (view or {}).get("tests_total")},
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
             "killed_at": idea.get("killed_at"), "live": live,
+            # The weekly critic's latest word per book (loop piece 1): the full
+            # payload, so the card chip and the detail view read the same record.
+            "critic": {book: payload for book in ("main", "big")
+                       if (payload := ((view or {}).get("critics") or {}).get((idea["id"], book)))},
             "live_books": (["main"] if idea.get("live_at") and not idea.get("killed_at") else [])
             + (["big"] if (idea["id"] in big_live if big_live is not None
                            else _big_activation_live(supabase, idea["id"])) else [])}
@@ -1696,6 +1704,29 @@ def get_ideas_summary(supabase=Depends(get_supabase)):
             not_enough += 1
     published = len(workshop_store.published_ideas(supabase))
     return {"tested": tested, "passed": passed, "failed": failed, "not_enough_data": not_enough, "published": published}
+
+
+@app.get("/api/ideas/critic-summary", tags=["Ideas"])
+def get_critic_summary(supabase=Depends(get_supabase)):
+    """Aggregate-first (Kevin, 2026-11-03): the critic's counts by
+    recommendation and the worst degraders. Per-idea detail lives on each
+    idea's own record (the critic block of /api/ideas), not in this summary."""
+    latest = workshop_store.latest_critiques(supabase)
+    titles = {i["id"]: i["title"] for i in workshop_store.list_ideas(supabase)}
+    counts = {"PAUSE": 0, "WATCH": 0, "HOLD": 0}
+    rows = []
+    for (idea_id, book), row in latest.items():
+        payload = row.get("payload") or {}
+        rec = payload.get("recommendation")
+        if rec in counts:
+            counts[rec] += 1
+        rows.append({"idea_id": idea_id, "title": titles.get(idea_id), "book": book,
+                     "recommendation": rec, "degradation": payload.get("degradation"),
+                     "at": payload.get("at")})
+    worst = sorted((r for r in rows if r["degradation"] is not None),
+                   key=lambda r: r["degradation"])[:5]
+    return {"counts": counts, "units": len(rows), "worst": worst,
+            "at": max((r["at"] for r in rows if r["at"]), default=None)}
 
 
 @app.get("/api/ideas/{idea_id}", tags=["Ideas"])

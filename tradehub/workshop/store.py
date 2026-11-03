@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 IDEAS, RUNS, SHADOW, LABELS = "ideas", "idea_runs", "idea_shadow_days", "order_labels"
+CRITIQUES = "idea_critiques"
 SAVES = "idea_run_saves"
 SWITCHES, ORDERS = "order_switches", "paper_orders"
 ACTIVATIONS = "book_activations"
@@ -264,6 +265,23 @@ def order_log(supa, idea_id: int, limit: int = 100) -> list[dict]:
 # The auto-trader's hand-off list: things it must not do alone (an unquotable option,
 # an expiring short, a spread whose single contract risks more than the budget).
 # Deduped on (book, idea, symbol) while open, so a daily runner doesn't stack copies.
+
+def add_critique(supa, idea_id: int, book: str, payload: dict) -> dict:
+    """One weekly critique row (loop piece 1). Append-only like the rest of the
+    record: the history is what lets the next critique call a pattern repeated."""
+    row = {"idea_id": idea_id, "book": book,
+           "at": payload.get("at") or datetime.now(UTC).isoformat(), "payload": payload}
+    return supa.table(CRITIQUES).insert(row).execute().data[0]
+
+
+def latest_critiques(supa) -> dict[tuple[int, str], dict]:
+    """{(idea_id, book): newest critique row}. Weekly rows are few; the scan is fine."""
+    rows = supa.table(CRITIQUES).select("*").order("at", desc=True).execute().data
+    out: dict[tuple[int, str], dict] = {}
+    for row in rows:
+        out.setdefault((row["idea_id"], row["book"]), row)
+    return out
+
 
 def add_manual_action(supa, book: str, idea_id: int | None, kind: str, symbol: str | None,
                       detail: str) -> None:
