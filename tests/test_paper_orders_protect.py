@@ -178,3 +178,20 @@ def test_two_replacements_in_one_day_get_distinct_tags(db, monkeypatch):
     a = protective(1, Exits(stop_loss_pct=5), "GLD", 66, 300.0, "202611031445")
     b = protective(1, Exits(stop_loss_pct=5), "GLD", 40, 300.0, "202611031600")
     assert a["client_order_id"] != b["client_order_id"] and a["client_order_id"].startswith("idea-1-stop-")
+
+
+def test_check_fills_reports_each_book_and_keeps_going(monkeypatch):
+    from tradehub.portfolio import books
+
+    seen = []
+
+    def fake(supa, book, since, now, read):
+        seen.append((book, books.resolve()))
+        if book == "main":
+            raise RuntimeError("broker down")
+        return {"checked": 1, "problems": 0, "missing": 2}
+
+    monkeypatch.setattr(paper_orders_protect, "reconcile", fake)
+    out, failed = paper_orders_protect.check_fills(AFTER_OPEN, None)
+    assert seen == [("main", "main"), ("big", "big")]  # each read runs on its own account
+    assert "broker down" in failed["main"] and "2 sent order(s)" in failed["big"] and out["big"]["checked"] == 1
