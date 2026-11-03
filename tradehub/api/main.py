@@ -2814,6 +2814,43 @@ def get_quarantine(
 
 # ── War Room SPA (mounted last so every /api route above wins) ─────────────
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().parents[2] / "market_sentiment_tool" / "dist")))
+# ── Screening (Kevin, 2026-11-02 package, Part A): the composable function
+# library from the screening lab, productionized. The catalog is data (the UI
+# renders its controls from it; an AI emits specs in its vocabulary); a run
+# executes a validated spec against the cached data layer and returns the
+# table + the provenance footer (per-column source + as-of, the missing-field
+# ledger, the universe cap when it bites). Missing data fails filters, never
+# reads as zero. Runs are admin-gated: they spend shared free-source budget.
+
+class _ScreenRunIn(BaseModel):
+    spec: dict
+
+
+@app.get("/api/screening/catalog", tags=["Screening"])
+def screening_catalog():
+    from tradehub.screening.catalog import catalog_dict
+
+    return catalog_dict()
+
+
+@app.post("/api/screening/run", tags=["Screening"])
+def screening_run(body: _ScreenRunIn, _admin: dict = Depends(admin.require_admin)):
+    from tradehub.screening import run_spec
+    from tradehub.screening.spec import SpecError
+
+    try:
+        result = run_spec(body.spec)
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    table = result.table.copy()
+    for col in table.columns:
+        table[col] = table[col].astype(object).where(table[col].notna(), None)
+    return {"columns": list(table.columns), "rows": table.to_dict("records"),
+            "footer": result.footer}
+
+
 mount_frontend(app, FRONTEND_DIST)
 
 
@@ -2826,3 +2863,4 @@ if __name__ == "__main__":
         port=int(os.getenv("API_PORT", "8000")),
         reload=True,
     )
+
