@@ -16,6 +16,7 @@ import {
   stateLabel,
   tone,
   type BookHeadline,
+  type ManualAction,
   type BooksPayload,
   type ClosedPayload,
   type PortfolioPayload,
@@ -180,6 +181,10 @@ export default function Portfolio() {
       <StrategyHqStrip />
 
       {book ? <BookSwitcher book={book} /> : <BookCards />}
+
+      {data && data.state !== "not_connected" && (
+        <div className="mt-4"><ManualActions book={book ?? "main"} /></div>
+      )}
 
       {loading && (
         <div className="mt-8 flex items-center gap-2 text-slate-400">
@@ -352,6 +357,65 @@ type OpenOrder = {
  * read from the broker, not from the hub's own records. Signed-in only, like the
  * order form: /api/admin/me gates it, and a failed read simply shows nothing.
  */
+/** Needs your hand: the auto-trader's hand-offs for this book (Kevin, 2026-11-02) --
+ * option legs it would not price or size alone. Signed-in only, like the order form:
+ * a visitor's read 401s and the box simply never appears. Done/Dismiss are Kevin's
+ * clicks; the runner never resolves its own hand-offs. */
+function ManualActions({ book }: { book: string }) {
+  const [actions, setActions] = useState<ManualAction[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
+      .then((body) => { if (!cancelled) setActions(Array.isArray(body.actions) ? body.actions : []); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [book]);
+
+  if (actions === null || actions.length === 0) return null;
+
+  async function resolve(id: number, state: "done" | "dismissed") {
+    try {
+      await adminJson(`/api/portfolio/manual-actions/${id}/resolve`, {
+        method: "POST", body: JSON.stringify({ state }),
+      });
+      setActions((prev) => (prev ?? []).filter((a) => a.id !== id));
+    } catch { /* the row stays; Kevin can retry */ }
+  }
+
+  return (
+    <Box title="Needs your hand" className="border-amber-500/40">
+      <p className="text-xs text-slate-400">
+        The auto-trader stopped on these instead of guessing. Each one names the contract and the reason.
+      </p>
+      <ul className="mt-3 space-y-3">
+        {actions.map((a) => (
+          <li key={a.id} className="rounded-lg border border-slate-800 p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-white">
+                {a.idea_title ?? (a.idea_id ? `Idea ${a.idea_id}` : "Auto-trader")}
+                {a.symbol ? <span className="ml-2 text-xs text-slate-400">{a.symbol}</span> : null}
+              </span>
+              <span className="text-[11px] text-slate-500">{a.created_at.slice(0, 10)}</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-300">{a.detail}</p>
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={() => resolve(a.id, "done")}
+                className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/10">
+                Done
+              </button>
+              <button type="button" onClick={() => resolve(a.id, "dismissed")}
+                className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-900">
+                Dismiss
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Box>
+  );
+}
+
 function StagedOrders({ book }: { book: string }) {
   const [orders, setOrders] = useState<OpenOrder[] | null>(null);
 

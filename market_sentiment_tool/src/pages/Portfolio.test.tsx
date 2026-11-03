@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
@@ -239,5 +239,34 @@ describe("Portfolio books (master view and the $1M book)", () => {
     // The hand order form and staged orders are main-book doors; they stay off this page.
     expect(screen.queryByText("Place an order by hand")).toBeNull();
     expect(screen.queryByText("Staged orders")).toBeNull();
+  });
+});
+
+describe("Manual actions box", () => {
+  it("shows the hand-offs for the book in view and resolves them on click", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ email: "k" }), { status: 200 });
+      if (url.includes("/api/portfolio/manual-actions") && url.includes("book=big")) {
+        return new Response(JSON.stringify({ book: "big", actions: [
+          { id: 7, idea_id: 50, idea_title: "NVDA call spread", kind: "option", state: "open",
+            symbol: "NVDA  261204C00220000", created_at: "2026-11-03T12:30:00Z",
+            detail: "one spread risks $2,500, over the budget -- size it by hand" },
+        ] }), { status: 200 });
+      }
+      if (url.includes("/api/portfolio/manual-actions")) return new Response(JSON.stringify({ book: "main", actions: [] }), { status: 200 });
+      if (url.includes("/resolve")) return new Response(JSON.stringify({ resolved: 7, state: "done" }), { status: 200 });
+      if (url.includes("/api/portfolio/books")) return new Response(JSON.stringify({ books: [] }), { status: 200 });
+      if (url.includes("/api/portfolio")) return new Response(JSON.stringify({ state: "live", book: "big", scoreboard: null }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }));
+    render(<MemoryRouter initialEntries={["/portfolio?book=big"]}><Portfolio /></MemoryRouter>);
+    expect(await screen.findByText("Needs your hand")).toBeInTheDocument();
+    expect(screen.getByText(/over the budget/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByText(/over the budget/)).not.toBeInTheDocument());
+    expect(calls.some((c) => c.includes("POST") && c.includes("/manual-actions/7/resolve"))).toBe(true);
   });
 });

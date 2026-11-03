@@ -45,7 +45,7 @@ def test_a_market_order_goes_through_submit_with_a_manual_tag(api):
     assert body["placed_by"] == "kevin@example.com"
     assert body["client_order_id"].startswith("manual-")
     assert sent == [{"symbol": "XLE", "qty": 3, "side": "buy", "client_order_id": body["client_order_id"],
-                     "order_type": "market", "time_in_force": "day", "limit_price": None}]
+                     "order_type": "market", "time_in_force": "day", "limit_price": None, "book": "main"}]
 
 
 def test_an_idea_order_carries_the_idea_tag(api):
