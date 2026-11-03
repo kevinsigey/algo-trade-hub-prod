@@ -82,3 +82,11 @@ def test_translate_falls_back_to_rules_when_the_ai_raises(monkeypatch):
     assert ("last_print_surprise_pct", "gt") in fns
     assert ("last_print_reaction_pct", "gt") in fns
     assert model.startswith("rules")
+
+
+def test_translate_repairs_the_id_alias_for_the_index_universe(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    spec = {"name": "cheap", "universe": {"type": "index", "id": "sp500"},
+            "filters": [{"fn": "pe_ratio", "op": "lt", "value": 15}]}
+    out, _ = translate("cheap stocks", post=_post_returning(json.dumps(spec)))
+    assert out["universe"] == {"type": "index", "index": "sp500"}
