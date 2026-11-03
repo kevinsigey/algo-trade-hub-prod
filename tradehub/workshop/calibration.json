@@ -1,0 +1,97 @@
+{
+ "generated_at": "2026-11-03T19:21:00+00:00",
+ "fit_window": "2024-02..2025-12",
+ "check_window": "2026-01..2026-10",
+ "fit_form": "skew REJECTED by the data: bucket-median relative IVs show no monotone moneyness pattern and every fitted curve (raw least squares, premium-floored, bucket-median; linear and quadratic) worsened check-window errors, so the shipped coefficients are zero (flat vol). Spreads and per-name errors are the calibration. Revisit with intraday quote data, not daily closes",
+ "skew": {
+  "a": 0.0,
+  "b": 0.0,
+  "c": 0.0,
+  "d": 0.0
+ },
+ "fit_underlyings": [
+  "SPY",
+  "QQQ",
+  "IWM",
+  "GLD",
+  "USO",
+  "EEM",
+  "AAPL",
+  "NVDA",
+  "MU"
+ ],
+ "underlyings": {
+  "SPY": {
+   "spread_frac": 0.0145,
+   "n_fit": 271,
+   "n_check": 149,
+   "median_err_flat_check_pct": 27.4,
+   "median_err_check_pct": 27.4,
+   "median_err_fit_pct": 37.8
+  },
+  "QQQ": {
+   "spread_frac": 0.0304,
+   "n_fit": 219,
+   "n_check": 124,
+   "median_err_flat_check_pct": 13.2,
+   "median_err_check_pct": 13.2,
+   "median_err_fit_pct": 18.6
+  },
+  "IWM": {
+   "spread_frac": 0.0471,
+   "n_fit": 443,
+   "n_check": 190,
+   "median_err_flat_check_pct": 14.7,
+   "median_err_check_pct": 14.7,
+   "median_err_fit_pct": 25.6
+  },
+  "GLD": {
+   "spread_frac": 0.0498,
+   "n_fit": 345,
+   "n_check": 123,
+   "median_err_flat_check_pct": 9.6,
+   "median_err_check_pct": 9.6,
+   "median_err_fit_pct": 8.7
+  },
+  "USO": {
+   "spread_frac": 0.0502,
+   "n_fit": 238,
+   "n_check": 107,
+   "median_err_flat_check_pct": 9.9,
+   "median_err_check_pct": 9.9,
+   "median_err_fit_pct": 11.2
+  },
+  "EEM": {
+   "spread_frac": 0.1573,
+   "n_fit": 155,
+   "n_check": 149,
+   "median_err_flat_check_pct": 15.9,
+   "median_err_check_pct": 15.9,
+   "median_err_fit_pct": 46.4
+  },
+  "AAPL": {
+   "spread_frac": 0.085,
+   "n_fit": 341,
+   "n_check": 167,
+   "median_err_flat_check_pct": 8.4,
+   "median_err_check_pct": 8.4,
+   "median_err_fit_pct": 13.1
+  },
+  "NVDA": {
+   "spread_frac": 0.05,
+   "n_fit": 325,
+   "n_check": 101,
+   "median_err_flat_check_pct": 7.7,
+   "median_err_check_pct": 7.7,
+   "median_err_fit_pct": 18.0
+  },
+  "MU": {
+   "spread_frac": 0.0389,
+   "n_fit": 334,
+   "n_check": 125,
+   "median_err_flat_check_pct": 16.3,
+   "median_err_check_pct": 16.3,
+   "median_err_fit_pct": 16.2
+  }
+ }
+}

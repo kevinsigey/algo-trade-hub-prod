@@ -69,6 +69,38 @@ def bs_vega(kind: Literal["call", "put"], spot: float, strike: float, years: flo
     return float(spot * disc_q * sqrt_t * norm.pdf(d1))
 
 
+def implied_vol_from_price(kind: Literal["call", "put"], price: float, spot: float, strike: float,
+                           years: float, rate: float, div_yield: float) -> float | None:
+    """Invert Black-Scholes for the volatility a real price implies (bisection).
+    None when the price carries no invertible time value (at/past expiry, or
+    below intrinsic -- a bad print, not a volatility)."""
+    if years <= 0 or price <= 0 or spot <= 0 or strike <= 0:
+        return None
+    if price < _intrinsic(kind, spot, strike) - 1e-9:
+        return None
+    lo, hi = 0.01, 3.0
+    if bs_price(kind, spot, strike, years, rate, div_yield, hi) < price:
+        return None
+    for _ in range(100):
+        mid = 0.5 * (lo + hi)
+        if bs_price(kind, spot, strike, years, rate, div_yield, mid) < price:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def skew_factor(moneyness: float, days_left: float, coeffs: dict) -> float:
+    """The fitted skew curve as a volatility multiplier: relative adjustment
+    a + b*ln(m) + c*ln(m)^2 + d*(days/30 - 1), clamped to a sane band. Fitted
+    once on real 2024-2025 prices and checked on 2026 (calibration.json);
+    never re-fitted on the years a test judges."""
+    lnm = math.log(moneyness) if moneyness > 0 else 0.0
+    rel = (coeffs.get("a", 0.0) + coeffs.get("b", 0.0) * lnm + coeffs.get("c", 0.0) * lnm * lnm
+           + coeffs.get("d", 0.0) * (days_left / 30.0 - 1.0))
+    return min(2.5, max(0.5, 1.0 + rel))
+
+
 def implied_vol_series(ticker: str, closes: pd.Series, fred: dict[str, pd.Series]) -> tuple[pd.Series, str]:
     if ticker in VOL_INDEX:
         vid = VOL_INDEX[ticker]
@@ -86,10 +118,20 @@ def implied_vol_series(ticker: str, closes: pd.Series, fred: dict[str, pd.Series
 
 def leg_returns(kind: Literal["call", "put"], side: int, closes: pd.Series, vol: pd.Series,
                 rate: pd.Series, div_yield: float, *, days_to_expiry: int,
-                strike_pct: float, roll_days_left: int) -> pd.DataFrame:
+                strike_pct: float, roll_days_left: int,
+                skew_coeffs: dict | None = None, spread_frac: float = 0.0) -> pd.DataFrame:
+    """Daily model P&L for one rolling leg. With a calibration (skew_coeffs /
+    spread_frac, from workshop.calibration), each pricing goes through the
+    fitted skew curve and every trade -- the open, and both sides of a roll --
+    pays half the typical spread as a fraction of premium, in the same
+    per-$1-of-underlying units as the returns (the open day normalizes on its
+    own close; later trades on the previous close, like the marks)."""
     closes = closes.astype(float)
     vol_ff = vol.astype(float).ffill()
     rate_ff = rate.astype(float).ffill()
+
+    def _v(v: float, strike: float, spot: float, days: float) -> float:
+        return v * skew_factor(strike / spot, days, skew_coeffs) if skew_coeffs and spot > 0 else v
     idx = closes.index
     n = len(idx)
     price_out = [float("nan")] * n
@@ -119,15 +161,19 @@ def leg_returns(kind: Literal["call", "put"], side: int, closes: pd.Series, vol:
                 and days_left <= roll_days_left and days_left < days_to_expiry)
 
         if roll and valid:
-            old_price_today = bs_price(kind, close, cur_strike, days_left / 365.0, r, div_yield, v)
-            if prev_price is not None and prev_close is not None and prev_close != 0:
-                ret_out[i] = side * (old_price_today - prev_price) / prev_close
-            else:
-                ret_out[i] = 0.0
+            old_price_today = bs_price(kind, close, cur_strike, days_left / 365.0, r, div_yield,
+                                       _v(v, cur_strike, close, days_left))
             # open new
             new_strike = close * strike_pct / 100.0
             new_expiry = day + pd.Timedelta(days=int(days_to_expiry))
-            new_price = bs_price(kind, close, new_strike, days_to_expiry / 365.0, r, div_yield, v)
+            new_price = bs_price(kind, close, new_strike, days_to_expiry / 365.0, r, div_yield,
+                                 _v(v, new_strike, close, days_to_expiry))
+            if prev_price is not None and prev_close is not None and prev_close != 0:
+                ret_out[i] = side * (old_price_today - prev_price) / prev_close
+                if spread_frac:
+                    ret_out[i] -= 0.5 * spread_frac * (old_price_today + new_price) / prev_close
+            else:
+                ret_out[i] = 0.0
             cur_strike = new_strike
             cur_expiry = new_expiry
             price_out[i] = new_price
@@ -142,13 +188,16 @@ def leg_returns(kind: Literal["call", "put"], side: int, closes: pd.Series, vol:
             if valid:
                 new_strike = close * strike_pct / 100.0
                 new_expiry = day + pd.Timedelta(days=int(days_to_expiry))
-                new_price = bs_price(kind, close, new_strike, days_to_expiry / 365.0, r, div_yield, v)
+                new_price = bs_price(kind, close, new_strike, days_to_expiry / 365.0, r, div_yield,
+                                     _v(v, new_strike, close, days_to_expiry))
                 cur_strike = new_strike
                 cur_expiry = new_expiry
                 price_out[i] = new_price
                 strike_out[i] = new_strike
                 expiry_out[i] = new_expiry
                 rolled_out[i] = False
+                if spread_frac and close:
+                    ret_out[i] = -0.5 * spread_frac * new_price / close
                 prev_price = new_price
                 prev_close = close
             else:
@@ -172,7 +221,8 @@ def leg_returns(kind: Literal["call", "put"], side: int, closes: pd.Series, vol:
         dl = (cur_expiry - day).days
         if dl < 0:
             dl = 0
-        price = bs_price(kind, close, cur_strike, dl / 365.0, r, div_yield, v)
+        price = bs_price(kind, close, cur_strike, dl / 365.0, r, div_yield,
+                         _v(v, cur_strike, close, dl))
         if prev_price is not None and prev_close is not None and prev_close != 0:
             ret_out[i] = side * (price - prev_price) / prev_close
         else:
