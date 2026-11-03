@@ -215,6 +215,19 @@ def test_critic_summary_aggregates_counts_and_worst_first(api):
     assert body["worst"][0]["title"] == "Alpha"
 
 
+def test_the_worst_list_needs_a_real_record_behind_the_number(api):
+    """A 3-day-old idea's -999 degradation is two days annualized, not a
+    verdict: it counts in the totals but never ranks as a worst degrader."""
+    c, db = api
+    young = store.create_idea(db, "Young", "x")
+    crit = _critique(young["id"], "main", "WATCH", -999.0)
+    crit["live"]["days"] = 3
+    store.add_critique(db, young["id"], "main", crit)
+    body = c.get("/api/ideas/critic-summary").json()
+    assert body["counts"]["WATCH"] == 1
+    assert body["worst"] == []
+
+
 def test_the_idea_record_carries_its_critic_block(api):
     c, db = api
     idea = store.create_idea(db, "Alpha", "x")
