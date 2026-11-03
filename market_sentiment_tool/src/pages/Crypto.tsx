@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import CryptoDesk from "@/components/CryptoDesk";
+import CryptoDuneSeries from "@/components/CryptoDuneSeries";
 import OnChainPulse from "@/components/OnChainPulse";
 import { getJson } from "@/lib/getJson";
 import { ctTime, pct, usd, type CryptoBoard, type SniperVerdict } from "@/lib/crypto";
@@ -154,6 +155,7 @@ export default function Crypto() {
       </header>
 
       <CryptoDesk />
+      <CryptoDuneSeries />
 
       <OnChainPulse />
 

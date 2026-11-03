@@ -86,6 +86,13 @@ def news_series_ids(spec: IdeaSpec) -> list[str]:
     return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "news"))
 
 
+def dune_series_ids(spec: IdeaSpec) -> list[str]:
+    """The Dune series keys the rule reads (workshop/dune.py). They land in the
+    same series dict as FRED and take the same t-2 publication lag in _hit: a
+    day's on-chain aggregate is only final after the day ends."""
+    return list(dict.fromkeys(c.series for c in _conditions(spec) if c.source == "dune"))
+
+
 def revision_series_ids(spec: IdeaSpec) -> list[str]:
     """The FRED ids whose conditions use the revision measure: their series dict key
     is "<id>@revision" and the values come from ALFRED vintages (workshop/data.py)."""

@@ -886,6 +886,16 @@ def workshop_gate(idea_id: int, size_pct: float | None = Query(None, gt=0, le=10
     return _gate(supabase, idea_id, size_pct)[0]
 
 
+@app.get("/api/workshop/dune-series", tags=["Workshop"])
+def workshop_dune_series(supabase=Depends(get_supabase)):
+    """The Dune catalogue (crypto step 3): the on-chain series a Workshop rule
+    can read (source "dune"), with their spans and freshness. Metadata only --
+    the points themselves stay inside the engine."""
+    from tradehub.workshop.dune import list_dune_series
+
+    return {"series": list_dune_series(supa=supabase)}
+
+
 @app.post("/api/workshop/ideas/{idea_id}/publish", tags=["Workshop"])
 def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     _found(supabase, idea_id)

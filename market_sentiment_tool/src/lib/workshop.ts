@@ -10,7 +10,7 @@ export type Measure =
   | "net_upgrades" | "target_upside" | "zscore" | "percentile" | "revision";
 
 export interface Condition {
-  source: "fred" | "price" | "analyst" | "spread" | "news";
+  source: "fred" | "price" | "analyst" | "spread" | "news" | "dune";
   series: string;
   measure: Measure;
   lookback_days: number;
@@ -33,13 +33,13 @@ export interface Rules {
 /** Each measure: its menu label, the units hint, and which sources can use it. */
 type Src = Condition["source"];
 const P: Src[] = ["price"];
-const FP: Src[] = ["fred", "price", "spread"];
-const ANY: Src[] = ["fred", "price", "spread"];
-const WITH_NEWS: Src[] = ["fred", "price", "spread", "news"];
+const FP: Src[] = ["fred", "price", "spread", "dune"];
+const ANY: Src[] = ["fred", "price", "spread", "dune"];
+const WITH_NEWS: Src[] = ["fred", "price", "spread", "news", "dune"];
 export const MEASURES: { value: Measure; label: string; hint: string; sources: Src[] }[] = [
   { value: "level", label: "level", hint: "the value itself (for news: the day's mean article tone, -100..+100)", sources: WITH_NEWS },
   { value: "change", label: "change", hint: "change over N days, in the series' own units", sources: WITH_NEWS },
-  { value: "pct_change", label: "% change", hint: "% change over N days", sources: ["fred", "price"] },
+  { value: "pct_change", label: "% change", hint: "% change over N days", sources: ["fred", "price", "dune"] },
   { value: "vs_sma", label: "vs its average", hint: "% above its N-day average", sources: FP },
   { value: "volatility", label: "volatility", hint: "N-day volatility, % a year", sources: FP },
   { value: "sma_cross", label: "average cross", hint: "% the N-day average is above the slow average", sources: P },
