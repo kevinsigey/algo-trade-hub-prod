@@ -885,6 +885,8 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   const { idea, runs, tag, shadow } = detail;
   const [size, setSize] = useState("");
   const [gate, setGate] = useState<GateResult | null>(null);
+  const [override, setOverride] = useState(false);
+  const [overrideNote, setOverrideNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The lifecycle reads the latest SAVED run: a preview changes nothing here
@@ -908,7 +910,13 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   };
   const startTracking = () => act(() => adminJson(`/api/workshop/ideas/${id}/track`, { method: "POST", body: JSON.stringify({}) }));
   const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
-  const goLive = () => act(() => adminJson(`/api/workshop/ideas/${id}/live`, { method: "POST", body: JSON.stringify({ size_pct: Number(size) }) }));
+  const goLive = () => {
+    if (override && !window.confirm("Override the 63-day gate? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse.")) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/live`, {
+      method: "POST",
+      body: JSON.stringify({ size_pct: Number(size), ...(override ? { override: true, override_note: overrideNote || undefined } : {}) }),
+    }));
+  };
   const toggleAuto = () => {
     const on = !idea.auto_orders;
     if (on && !window.confirm(`Turn on automatic paper orders? Each weekday morning the hub trades this idea's rule in the paper account at ${idea.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
@@ -966,7 +974,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
               <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} />
             </label>
             <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
-            <button type="button" disabled={busy || gate?.status !== "ready"} onClick={goLive}
+            <button type="button" disabled={busy || (gate?.status !== "ready" && !override)} onClick={goLive}
               className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
               Go live on paper
             </button>
@@ -977,6 +985,21 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
               {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
               {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the paper record.</li>}
             </ul>
+          )}
+          {gate && gate.status !== "ready" && (
+            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+              <label className="flex items-start gap-2 text-sm text-amber-200">
+                <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5" />
+                <span>
+                  Override the gate — my deliberate call. Bypasses only the 63-day wait; the server still refuses
+                  a claim that failed on new data or a position over 25%. The override is recorded on the idea.
+                </span>
+              </label>
+              {override && (
+                <input type="text" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
+                  placeholder="Why (recorded with the override)" className={`${field} mt-2 w-full`} maxLength={500} />
+              )}
+            </div>
           )}
         </div>
       )}

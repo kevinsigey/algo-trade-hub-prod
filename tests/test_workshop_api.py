@@ -208,6 +208,31 @@ def test_go_live_once_and_only_when_ready(passed):
     assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 0}).status_code == 422
 
 
+def test_go_live_override_covers_the_day_wait_only(passed):
+    # Kevin's deliberate override (2026-11-02): the 63-new-day wait can be
+    # bypassed on his explicit call, and the bypass is recorded on the idea.
+    c, db, i, gate, _ = passed
+    gate.update({"status": "waiting", "new_days": 3, "claim": None})
+    assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20}).status_code == 409
+    r = c.post(f"/api/workshop/ideas/{i}/live",
+               json={"size_pct": 20, "override": True, "override_note": "Kevin's call 2026-11-02"})
+    assert r.status_code == 200 and r.json()["live_at"]
+    stored = db.db["ideas"][0]["gate"]
+    assert stored["status"] == "overridden" and stored["override"]["by"] == "Kevin Sigey"
+    assert stored["override"]["note"] == "Kevin's call 2026-11-02" and stored["override"]["gate_status_was"] == "waiting"
+
+
+def test_override_refuses_a_failed_claim_or_oversize(passed):
+    c, db, i, gate, _ = passed
+    gate.update({"status": "fails", "claim": {"holds": False, "label": "fell on new data"}})
+    assert c.post(f"/api/workshop/ideas/{i}/live",
+                  json={"size_pct": 20, "override": True}).status_code == 409
+    gate.update({"status": "waiting", "claim": None, "size_ok": False})
+    assert c.post(f"/api/workshop/ideas/{i}/live",
+                  json={"size_pct": 20, "override": True}).status_code == 409
+    assert db.db["ideas"][0].get("live_at") is None
+
+
 def test_publish_and_kill_are_once(passed):
     c, _, i, _, _ = passed
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409  # not live yet
