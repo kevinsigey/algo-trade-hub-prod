@@ -68,8 +68,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 44 | `20261102000008_deal_runs.sql` |
 | 45 | `20261103000001_oil_itm_lines.sql` |
 | 46 | `20261103000002_dune_series.sql` |
+| 47 | `20261103000003_agent_specs.sql` |
 
-**Watermark: `20261103000002_dune_series.sql`**
+**Watermark: `20261103000003_agent_specs.sql`**
 
 ## How to record a new one
 
