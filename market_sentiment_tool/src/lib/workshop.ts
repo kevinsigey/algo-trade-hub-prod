@@ -548,6 +548,9 @@ export interface PublicIdea {
   claim: Claim | null;
   /** The newest saved run's claim outcome in words ("+25.8 pts/yr vs SPY"). */
   result_line?: string | null;
+  /** The unseen claim metric as a number, and the permutation p behind the verdict — the list's sort keys. */
+  result_value?: number | null;
+  result_p?: number | null;
   kind: IdeaKind;
   latest_verdict: Verdict | null;
   variations: number;

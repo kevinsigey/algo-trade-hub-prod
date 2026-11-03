@@ -56,6 +56,10 @@ def test_list_shows_published_only_with_fails_and_kills(api):
     # when the run stored one, the headline otherwise.
     assert bonds["result_line"] == "-4.1 pts/yr vs benchmark"  # the unseen split, not built, not headline
     assert gold["result_line"] == "h2"
+    # The numeric sort keys ride along (Kevin, 2026-11-02): the unseen claim
+    # value and the permutation p, so the list can sort by performance.
+    assert bonds["result_value"] == pytest.approx(-4.1) and bonds["result_p"] == pytest.approx(0.01)
+    assert gold["result_value"] is None and gold["result_p"] == pytest.approx(0.01)
     assert gold["live"]["return_pct"] == pytest.approx(1.0) and gold["live"]["state"] == "killed"
     assert "Secret" not in api.get("/api/ideas").text
 

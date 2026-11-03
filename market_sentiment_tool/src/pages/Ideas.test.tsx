@@ -14,8 +14,9 @@ const LIVE = {
 };
 const ROWS = [
   { id: 3, title: "Bonds as ballast", published_at: "2026-11-02", claim: "ballast", kind: "long_only", latest_verdict: "FAIL", variations: 1,
-    result_line: "+25.8 pts/yr vs SPY", status: "backtest", live_at: null, killed_at: null, live: null },
+    result_line: "+25.8 pts/yr vs SPY", result_value: 25.8, result_p: 0.03, status: "backtest", live_at: null, killed_at: null, live: null },
   { id: 1, title: "Gold beats SPY", published_at: "2026-11-01", claim: "beats_benchmark", kind: "event", latest_verdict: "PASS", variations: 2,
+    result_line: "+5.0 pts/yr vs SPY", result_value: 5.0, result_p: 0.0001,
     status: "live", live_at: "2026-11-02", killed_at: null, live: LIVE },
 ];
 
@@ -43,6 +44,21 @@ describe("Ideas record", () => {
     expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
     expect(screen.getByText("+4.2%")).toBeInTheDocument();
     expect(screen.getByText(/as of 2027-02-12/)).toBeInTheDocument();
+  });
+
+  it("sorts the whole list by performance or significance on request", async () => {
+    serve(ROWS);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText("Bonds as ballast")).toBeInTheDocument();
+    // The hero caption carries the permutation p.
+    expect(screen.getByText(/p < 0\.001/)).toBeInTheDocument();
+    const titles = () => [...document.querySelectorAll("h3")].map((h) => h.textContent);
+    fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "value" } });
+    // Flattened across types, strongest unseen value first.
+    expect(screen.getByText(/All ideas/)).toBeInTheDocument();
+    expect(titles()).toEqual(["Bonds as ballast", "Gold beats SPY"]);
+    fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "p" } });
+    expect(titles()).toEqual(["Gold beats SPY", "Bonds as ballast"]);
   });
 
   it("labels a paper record too early below 30 days instead of calling its claim failing", async () => {
