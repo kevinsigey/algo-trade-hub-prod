@@ -69,6 +69,7 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 45 | `20261103000001_oil_itm_lines.sql` |
 | 46 | `20261103000002_dune_series.sql` |
 | 47 | `20261103000003_agent_specs.sql` |
+| 48 | `20261103000004_kill_any_idea.sql` |
 | 48 | `20261103000004_rls_machine_and_book_tables.sql` |
 | 49 | `20261103000005_journal_frozen_counts.sql` |
 | 50 | `20261103000006_paper_order_checks.sql` |

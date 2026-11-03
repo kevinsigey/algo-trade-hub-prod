@@ -237,10 +237,10 @@ def test_override_refuses_a_failed_claim_or_oversize(passed):
 
 def test_publish_and_kill_are_once(passed):
     c, _, i, _, _ = passed
-    assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409  # not live yet
     assert c.post(f"/api/workshop/ideas/{i}/publish").status_code == 200
     assert c.post(f"/api/workshop/ideas/{i}/publish").status_code == 409
-    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    # Retiring no longer requires going live first (Kevin, 2026-11-03 trim):
+    # any idea can be killed, exactly once.
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 200
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409
     assert c.post("/api/workshop/ideas/99/publish").status_code == 404

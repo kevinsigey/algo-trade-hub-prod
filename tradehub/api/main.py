@@ -1059,8 +1059,8 @@ def workshop_kill(idea_id: int, book: str = "main", _admin: dict = Depends(admin
         if act.get("killed_at"):
             raise HTTPException(status_code=409, detail="already killed on that book")
         return workshop_store.kill_book(supabase, book, idea_id)
-    if not _found(supabase, idea_id)["idea"].get("live_at"):
-        raise HTTPException(status_code=409, detail="only a live idea can be killed")
+    if _found(supabase, idea_id)["idea"].get("killed_at"):
+        raise HTTPException(status_code=409, detail="already killed")
     try:
         return workshop_store.kill(supabase, idea_id)
     except workshop_store.AlreadySet as exc:
