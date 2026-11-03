@@ -62,6 +62,37 @@ def _apply_op(col: pd.Series, op: str, value) -> pd.Series:
     raise ValueError(f"unknown op {op}")
 
 
+_KIND_OF_SOURCE_PREFIX = (("yfinance.info", "info"), ("yfinance statements", "statements"),
+                          ("yfinance earnings", "earnings"), ("yfinance options", "options"))
+
+
+def needed_kinds(spec: dict) -> set[str]:
+    """The per-ticker data kinds a spec's fields will pull, from the registry's
+    declared sources. Bulk or local sources (prices, EDGAR, FRED, house panels)
+    are not per-ticker fetches and are excluded."""
+    import ast as _ast
+
+    names: list[str] = []
+    for group in ("filters", "score", "context"):
+        names += [c.get("fn") for c in spec.get(group) or []]
+    for d in spec.get("derived") or []:
+        try:
+            names += [n.id for n in _ast.walk(_ast.parse(d["expr"], mode="eval"))
+                      if isinstance(n, _ast.Name)]
+        except SyntaxError:
+            continue  # the validator rejects the spec before this matters
+    kinds: set[str] = set()
+    for name in names:
+        entry = REGISTRY.get(name or "")
+        if not entry:
+            continue
+        for prefix, kind in _KIND_OF_SOURCE_PREFIX:
+            if entry["source"].startswith(prefix):
+                kinds.add(kind)
+                break
+    return kinds
+
+
 @dataclass
 class RunResult:
     table: pd.DataFrame
@@ -76,6 +107,12 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     universe_full = len(tickers)
     if universe_full > MAX_UNIVERSE:
         tickers = tickers[:MAX_UNIVERSE]
+    # Prefetch the per-ticker kinds this spec needs, concurrently, so the
+    # field functions below read the local cache instead of fetching one
+    # name at a time inside the request (Kevin, 2026-11-03).
+    warm = getattr(store, "warm", None)
+    if callable(warm):
+        warm(tickers, needed_kinds(spec))
     idx = pd.Index(tickers, name="ticker")
     cols: dict[str, pd.Series] = {}
     used: list[str] = []
@@ -184,9 +221,11 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
                               "as_of": store.asof.get(kind) if kind else None}
     used_fns = {name.split("(")[0] for name in used}
     used_fns |= {c["fn"] for c in spec.get("context") or []}
+    ages = [p["as_of"] for p in columns_prov.values() if p.get("as_of")]
     footer = {
         "spec_name": spec["name"],
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "data_as_of": min(ages) if ages else None,
         "universe_size": len(tickers),
         **({"universe_capped": {"cap": MAX_UNIVERSE, "universe_size_full": universe_full}}
            if universe_full > MAX_UNIVERSE else {}),

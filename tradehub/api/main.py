@@ -3422,6 +3422,21 @@ def screening_run(body: _ScreenRunIn, _admin: dict = Depends(admin.require_admin
     return _run_payload(result)
 
 
+@app.get("/api/screening/quote/{ticker}", tags=["Screening"])
+def screening_quote(ticker: str, _admin: dict = Depends(admin.require_admin)):
+    """Last quote + a year of closes for one result row (Kevin, 2026-11-03).
+    Yahoo data, cached an hour, labelled delayed in the UI; 404 when the
+    source has nothing -- never an invented price."""
+    from tradehub.screening.quote import quote_payload
+    from tradehub.screening.sources import DataStore
+
+    payload = quote_payload(DataStore(), ticker.strip().upper())
+    if payload is None:
+        raise HTTPException(status_code=404,
+                            detail=f"no quote data for {ticker.strip().upper()}")
+    return payload
+
+
 mount_frontend(app, FRONTEND_DIST)
 
 
