@@ -48,6 +48,19 @@ def _send(row: dict, submit) -> dict:
         return {**row, "status": "rejected", "reason": str(exc)[:200]}
 
 
+def _needs_shares(row: dict, held: dict[str, float]) -> dict:
+    """A covered call sent before its shares are held is refused as uncovered, and the shares and the
+    call are planned in the same pre-market run. Hold it back; the next run sends it, no alarm needed."""
+    if not (row.get("option") and row["status"] == "send" and row["side"] == "sell" and row["kind"] == "open"
+            and not row.get("mleg")):
+        return row
+    contract = opt_mod.parse_occ(row["symbol"])
+    if contract["kind"] != "call" or held.get(contract["underlying"], 0.0) >= row["qty"] * 100:
+        return row
+    return {**row, "status": "skip", "waiting": True,
+            "reason": f"waiting for the {contract['underlying']} shares to fill; the next run sends this call"}
+
+
 def _exit_text(spec: IdeaSpec, why: str) -> str:
     """'stop-loss 5% hit' etc., for the exit that keeps the idea flat this morning ('' when the rule did it)."""
     if not why:
@@ -165,8 +178,9 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,
                             spec.execution)
                 if spec.options:
-                    rows += plan_options(idea["id"], list(spec.options), weights, float(idea["size_pct"]),
-                                         equity, px, held_contracts, day, _select, _mid)
+                    rows += [_needs_shares(r, held) for r in plan_options(
+                        idea["id"], list(spec.options), weights, float(idea["size_pct"]),
+                        equity, px, held_contracts, day, _select, _mid)]
                 waiting_out = _stopped_out(idea["id"], spec, fills, client_ids, prices_frame, series)
                 if waiting_out:  # a real stop sold it: no buying back until the rule gives a fresh signal
                     rows = [{**r, "status": "skip", "reason": waiting_out} if r["kind"] == "open" else r
@@ -188,7 +202,7 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 if r["status"] == "manual":
                     store.add_manual_action(supa, book_name, idea["id"], "option", r["symbol"],
                                             r["reason"] or "needs a hand")
-                elif r["status"] == "rejected" or (r["status"] == "skipped" and r.get("option")):
+                elif r["status"] == "rejected" or (r["status"] == "skipped" and r.get("option") and not r.get("waiting")):
                     # Kevin, 2026-11-03: a rejected order or an unplaceable option leg is
                     # never silent -- it becomes a manual action (deduped while open).
                     # Idea 50's refused short leg and Idea 16's unwritable covered call

@@ -418,3 +418,32 @@ def test_unwritable_covered_call_creates_a_manual_action(db, monkeypatch):
     paper_orders_run.run(MORNING, db, submit=Submit(), closes=_closes_with(SPY=750.0), fred=_fred_stub)
     rows = [r for r in manual_rows(db) if r["kind"] == "option"]
     assert len(rows) == 1 and rows[0]["symbol"] == "SPY" and "100 shares per contract" in rows[0]["detail"]
+
+
+COVERED = {**SPEC, "title": "SPY covered call", "hold": ["SPY"],
+           "options": [{"underlying": "SPY", "kind": "call", "side": "sell", "strike_pct": 105,
+                        "days_to_expiry": 30, "qty_per_share": 1}]}
+
+
+def test_covered_call_waits_for_the_shares_without_a_false_alarm(db, monkeypatch):
+    live_idea(db, 1, spec=COVERED)
+    _options_env(monkeypatch, {"SPY   261204C00750000": 3.0})
+    monkeypatch.setattr(service, "paper_get", Alpaca(equity=500_000.0))
+    sub = Submit()
+    summary, failed = paper_orders_run.run(MORNING, db, submit=sub, closes=_closes_with(SPY=750.0), fred=_fred_stub)
+    assert [c[0] for c in sub.calls] == ["SPY"] and failed == {}  # the shares go in, the call doesn't yet
+    assert manual_rows(db) == []
+    held_back = [r for r in db.db["paper_orders"] if r["symbol"].startswith("SPY") and r["symbol"] != "SPY"]
+    assert held_back[0]["status"] == "skipped" and "shares" in held_back[0]["reason"]
+
+
+def test_covered_call_goes_in_once_the_shares_are_held(db, monkeypatch):
+    live_idea(db, 1, spec=COVERED)
+    _options_env(monkeypatch, {"SPY   261204C00750000": 3.0})
+    fills = [{"id": "f1", "order_id": "a", "symbol": "SPY", "side": "buy", "qty": "133", "price": "750",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-SPY-open", "submitted_at": "t1"}]
+    monkeypatch.setattr(service, "paper_get", Alpaca(equity=500_000.0, fills=fills, orders=orders))
+    sub = Submit()
+    paper_orders_run.run(MORNING, db, submit=sub, closes=_closes_with(SPY=750.0), fred=_fred_stub)
+    assert any(c[0] != "SPY" and c[0].startswith("SPY") and c[1] == "sell" for c in sub.calls)
