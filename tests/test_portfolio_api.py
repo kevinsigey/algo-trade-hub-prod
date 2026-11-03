@@ -34,8 +34,15 @@ class FakeQuery:
         self.store.setdefault(self.table, []).append(row)
         return self
 
+    def update(self, values):
+        self.updates = values
+        return self
+
     def execute(self):
         rows = [r for r in self.store.get(self.table, []) if all(r.get(c) == v for c, v in self.filters)]
+        if getattr(self, "updates", None):
+            for r in rows:
+                r.update(self.updates)
         rows.sort(key=lambda r: r.get(getattr(self, "col", "taken_at")) or "")
         data = rows[self.lo:self.hi + 1] if hasattr(self, "lo") else rows
         return type("R", (), {"data": data})()
@@ -324,3 +331,34 @@ def test_books_endpoint_lists_both_books(client_with, monkeypatch):
     assert body["books"][1]["label"] == "$1M book" and body["books"][1]["state"] == "not_connected"
     assert c.get("/api/portfolio?book=huge").status_code == 400
     assert c.get("/api/portfolio?book=big").json()["book"] == "big"
+
+
+# ── Manual actions: the auto-trader's hand-off list ─────────────────────────────
+
+def test_manual_actions_list_and_resolve(client_with):
+    db = FakeSupabase()
+    db.store["manual_actions"] = [
+        {"id": 1, "book": "main", "idea_id": 50, "kind": "option", "state": "open",
+         "symbol": "NVDA  261204C00220000", "created_at": "2026-11-03T12:00:00Z",
+         "detail": "one spread risks $2,500, over the budget -- size it by hand"},
+        {"id": 2, "book": "big", "idea_id": 50, "kind": "option", "state": "open",
+         "symbol": "X", "created_at": "2026-11-03T12:00:00Z", "detail": "the other book's action"},
+        {"id": 3, "book": "main", "idea_id": 50, "kind": "option", "state": "done",
+         "symbol": "Y", "created_at": "2026-11-02T12:00:00Z", "detail": "already handled"},
+    ]
+    db.store["ideas"] = [{"id": 50, "title": "NVDA call spread"}]
+    c = client_with(db)
+    from tradehub.api import admin
+    main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
+
+    body = c.get("/api/portfolio/manual-actions").json()
+    assert [a["id"] for a in body["actions"]] == [1]
+    assert body["actions"][0]["idea_title"] == "NVDA call spread"
+    assert [a["id"] for a in c.get("/api/portfolio/manual-actions?book=big").json()["actions"]] == [2]
+
+    resp = c.post("/api/portfolio/manual-actions/1/resolve", json={"state": "done"})
+    assert resp.status_code == 200
+    assert c.get("/api/portfolio/manual-actions").json()["actions"] == []
+    resp = c.post("/api/portfolio/manual-actions/1/resolve", json={"state": "maybe"})
+    assert resp.status_code == 422
+    main.app.dependency_overrides.pop(admin.require_admin, None)

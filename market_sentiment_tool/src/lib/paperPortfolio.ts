@@ -153,3 +153,20 @@ export function tone(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v) || v === 0) return "text-white";
   return v > 0 ? "text-emerald-400" : "text-rose-400";
 }
+
+export interface ManualAction {
+  id: number;
+  book?: string;
+  idea_id: number | null;
+  idea_title?: string | null;
+  kind: string;
+  symbol: string | null;
+  detail: string;
+  state: string;
+  created_at: string;
+}
+
+export interface ManualActionsPayload {
+  book: string;
+  actions: ManualAction[];
+}

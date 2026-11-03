@@ -20,7 +20,8 @@ from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.portfolio import book, books, paper_orders, service
 from tradehub.portfolio.alpaca_paper import AccountNotConnected
-from tradehub.portfolio.autotrade import close_out, plan
+from tradehub.portfolio import options as opt_mod
+from tradehub.portfolio.autotrade import close_options, close_out, plan, plan_options
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
 from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_and_reason, tickers_for
@@ -30,6 +31,8 @@ from tradehub.scripts.paper_orders_protect import _cancel
 
 
 def _send(row: dict, submit) -> dict:
+    if row["status"] == "manual":
+        return row  # a hand-off for Kevin's hand (recorded as a manual action by the caller)
     if row["status"] != "send":
         return {**row, "status": "skipped"}
     if not paper_orders.orders_enabled():
@@ -111,6 +114,18 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 * float(o.get("limit_price") or last_px.get(o["symbol"], 0.0))) for o in pending
                if not paper_orders.STOP_TAG.match(o.get("client_order_id") or "")]  # stops protect, never add
 
+    chain_cache: dict[tuple, list] = {}
+
+    def _select(leg, spot: float):
+        key = (leg.underlying, leg.kind)
+        if key not in chain_cache:
+            target = day + timedelta(days=leg.days_to_expiry)
+            chain_cache[key] = opt_mod.fetch_contracts(leg.underlying, leg.kind, target, book=book_name)
+        return opt_mod.select_contract(chain_cache[key], leg, spot, day)
+
+    def _mid(occ: str):
+        return opt_mod.fetch_mid(occ, book=book_name)
+
     summary: dict = {}
     failed: dict[int, str] = {}
     if book_name == "main":  # the main book's live state lives on the idea rows (the record)
@@ -121,7 +136,9 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
-            held = {s: q[idea["id"]] for s, q in lots.items() if q.get(idea["id"])}
+            held_all = {s: q[idea["id"]] for s, q in lots.items() if q.get(idea["id"])}
+            held = {s: q for s, q in held_all.items() if not opt_mod.is_occ(s)}
+            held_contracts = {s: q for s, q in held_all.items() if opt_mod.is_occ(s)}
             mine = f"idea-{idea['id']}-auto-{day:%Y%m%d}-"  # this idea's own orders from earlier this morning
             view = dict(account)
             for cid, symbol, value in waiting:
@@ -129,6 +146,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                     view[symbol] = view.get(symbol, 0.0) + value
             if closing:
                 rows = close_out(idea["id"], held, last_px, day) if held else []
+                if held_contracts:
+                    rows += close_options(idea["id"], held_contracts, day, _mid)
             else:
                 prices_frame = data.with_rule_bars(spec, closes(tickers_for(spec), spec.start), spec.start,
                                                    bars_fn=bars)
@@ -144,6 +163,9 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 px = {**last_px, **{s: float(prices_frame[s].dropna().iloc[-1]) for s in weights}}
                 rows = plan(idea["id"], weights, float(idea["size_pct"]), equity, px, held, view, day,
                             spec.execution)
+                if spec.options:
+                    rows += plan_options(idea["id"], list(spec.options), weights, float(idea["size_pct"]),
+                                         equity, px, held_contracts, day, _select, _mid)
                 waiting_out = _stopped_out(idea["id"], spec, fills, client_ids, prices_frame, series)
                 if waiting_out:  # a real stop sold it: no buying back until the rule gives a fresh signal
                     rows = [{**r, "status": "skip", "reason": waiting_out} if r["kind"] == "open" else r
@@ -161,6 +183,10 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 rows = [{**r, "status": "skip", "reason": "the protective stop filled first"} if r["kind"] == "close"
                         else r for r in rows]
             done = cancels + [_send(r, submit) for r in rows]
+            for r in done:
+                if r["status"] == "manual":
+                    store.add_manual_action(supa, book_name, idea["id"], "option", r["symbol"],
+                                            r["reason"] or "needs a hand")
             for r in done:
                 if r["status"] == "sent" and "price" in r:  # later ideas see this run's orders in the 25% check
                     signed = r["qty"] * (1 if r["side"] == "buy" else -1) * r["price"]

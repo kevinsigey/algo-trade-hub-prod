@@ -1350,6 +1350,26 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     return {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
 
 
+@app.get("/api/portfolio/manual-actions", tags=["Portfolio"])
+def get_manual_actions(book: str = "main", user: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    """The auto-trader's hand-off list for one book (Kevin, 2026-11-02): option legs it
+    would not price or size alone. Signed-in only -- the detail is strategy-shaped."""
+    rows = workshop_store.manual_actions(supabase, _book_or_400(book))
+    ideas = {i["id"]: i.get("title") for i in supabase.table("ideas").select("id, title").execute().data or []}
+    return {"book": book, "actions": [{**r, "idea_title": ideas.get(r.get("idea_id"))} for r in rows]}
+
+
+@app.post("/api/portfolio/manual-actions/{action_id}/resolve", tags=["Portfolio"])
+def resolve_manual_action(action_id: int, body: dict, user: dict = Depends(admin.require_admin),
+                          supabase=Depends(get_supabase)):
+    state = str(body.get("state") or "")
+    if state not in ("done", "dismissed"):
+        raise HTTPException(status_code=422, detail="state must be done or dismissed")
+    workshop_store.resolve_manual_action(supabase, action_id, state)
+    return {"resolved": action_id, "state": state}
+
+
 @app.get("/api/portfolio/open-orders", tags=["Portfolio"])
 def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.require_admin)):
     """Every order resting on the paper account, for the Portfolio page's staged-orders

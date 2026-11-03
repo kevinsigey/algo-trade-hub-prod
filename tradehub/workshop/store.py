@@ -253,3 +253,35 @@ def closing_activations(supa, book: str) -> list[dict]:
 
 def order_log(supa, idea_id: int, limit: int = 100) -> list[dict]:
     return supa.table(ORDERS).select("*").eq("idea_id", idea_id).order("id", desc=True).execute().data[:limit][::-1]
+
+
+# ── Manual actions (migration 20261102000006) ─────────────────────────────────────
+# The auto-trader's hand-off list: things it must not do alone (an unquotable option,
+# an expiring short, a spread whose single contract risks more than the budget).
+# Deduped on (book, idea, symbol) while open, so a daily runner doesn't stack copies.
+
+def add_manual_action(supa, book: str, idea_id: int | None, kind: str, symbol: str | None,
+                      detail: str) -> None:
+    q = (supa.table("manual_actions").select("id")
+         .eq("book", book).eq("state", "open").eq("kind", kind))
+    q = q.is_("symbol", "null") if symbol is None else q.eq("symbol", symbol)
+    open_rows = q.execute().data or []
+    if open_rows:
+        return
+    supa.table("manual_actions").insert(
+        {"book": book, "idea_id": idea_id, "kind": kind, "symbol": symbol,
+         "detail": detail}).execute()
+
+
+def manual_actions(supa, book: str = "main", state: str = "open") -> list[dict]:
+    rows = (supa.table("manual_actions").select("*").eq("book", book).eq("state", state)
+            .order("created_at").execute().data or [])
+    return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+
+
+def resolve_manual_action(supa, action_id: int, state: str) -> None:
+    from datetime import datetime, timezone
+
+    supa.table("manual_actions").update(
+        {"state": state, "resolved_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", action_id).execute()
