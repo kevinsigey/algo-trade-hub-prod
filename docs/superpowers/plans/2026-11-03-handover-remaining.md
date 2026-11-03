@@ -3,7 +3,7 @@
 Checklist source: `docs/reviews/2026-11-03-deep-dive.md`. Work top to bottom.
 
 ## Done (#333-#337)
-RLS on the three open tables, Health and Macro reads, security headers, `day` instead of `opg` for open orders, go-live refusing sizes that can't trade tested options, fill check (`paper_order_checks`), Portfolio redo, chokepoint explainer. Idea 12 killed, idea 16 paused, idea 50 resized to 2%, `PORTFOLIO_ACCOUNT_NUMBER` set.
+RLS on the three open tables, Health and Macro reads, security headers, `day` instead of `opg` for open orders, go-live refusing sizes that can't trade tested options, fill check (`paper_order_checks`), Portfolio redo, chokepoint explainer. Idea 12 killed, idea 16 paused, idea 50 resized to 2%, `PORTFOLIO_ACCOUNT_NUMBER` set. Then, on Kevin's call the same day: idea 16 moved to the $1M book at 8% and switched off on main (see Options).
 
 ## Rules
 - Paper only, never real money. Don't touch Predictor repos. Never read or print secrets, or `/opt/stack/.env` values. Kevin sets VPS secrets himself with `scripts/set-vps-secret.sh`.
@@ -33,7 +33,7 @@ Kevin: PASS should be heavily critiqued, and not 30+ tracked ideas for no reason
 - Existing PASS verdicts may change: show Kevin the before and after before switching.
 
 ## 4. Options
-Skew curve, bid-ask cost and calibration against real Alpaca prices (options design doc section 2), plus a calibration report. Label option PASSes unproven until then. Don't re-enable idea 16: it needs about 100 SPY shares, so Kevin decides whether it moves to the $1M book.
+Skew curve, bid-ask cost and calibration against real Alpaca prices (options design doc section 2), plus a calibration report. Label option PASSes unproven until then. Idea 16 resolved (Kevin, 2026-11-03): it now lives on the $1M book at 8% (about 106 SPY shares, one covered call) and is off on main. Watch its first runs: if the covered call is refused because the shares had not filled yet, the next morning's run must place it; if it does not, fix that with a failing test first, so the call is only sent once the shares are held.
 
 ## 5. Chokepoints and commodities
 - Ship feed: on Nov 3 all 18 ships were near Dubai, none in the gate, 14 with no type. The model's gate-entry signal can't fire while the median is 0. Find a real flow source.
@@ -50,5 +50,6 @@ Skew curve, bid-ask cost and calibration against real Alpaca prices (options des
 - ESLint: 9 `no-explicit-any` errors in Deals. Split `api/main.py`. Retire `market_sentiment_tool/backend`. Trim public `/api/health`. CI route-auth inventory. Stale scoreboard labor figure (0.1792 vs 0.17391).
 - Prune merged remote branches and `_wt`: merged only, keep dirty. PR #172 needs Kevin's decision.
 
-## Ask Kevin
-Keep or revoke the "mac scripts" machine key. Rotate the four BLOCKERS keys from `PL_Predictor/.env`.
+## Asked and answered (Kevin, 2026-11-03)
+- The "mac scripts" machine key stays active on purpose, so ideas can open and close positions automatically. Don't revoke it.
+- The four BLOCKERS keys are rotated. Nothing left to ask.
