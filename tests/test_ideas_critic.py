@@ -203,6 +203,22 @@ def test_the_idea_record_carries_its_critic_block(api):
     assert row["critic"]["main"]["degradation"] == -12.5
 
 
+def test_a_big_book_activation_is_a_unit_of_its_own(seeded):
+    """Regression (found live, 2026-11-03): store.get_idea returns
+    {idea, runs}, not the idea row -- the big-book unit must unwrap it."""
+    from tradehub.scripts import ideas_critic
+
+    live_id = [i for i in store.live_ideas(seeded)][0]["id"]
+    runs = seeded.table("idea_runs").select("*").eq("idea_id", live_id).execute().data
+    store.go_live_book(seeded, "big", live_id, runs[0]["id"], 8.0, {"status": "ready"})
+
+    summary, failed = ideas_critic.run(datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc),
+                                       seeded, closes=_fake_closes)
+    assert failed == {}
+    assert summary["units"] == 3  # main live + main tracked + big activation
+    assert (live_id, "big") in store.latest_critiques(seeded)
+
+
 def test_one_broken_idea_never_stops_the_others(seeded, monkeypatch):
     from tradehub.scripts import ideas_critic
 
