@@ -21,7 +21,10 @@ from typing import Any, Callable
 
 from tradehub.backtest.pit import Observation
 
-_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+# range=2d, not 1d: Yahoo's 1d window for 1-minute crypto bars returns only the
+# last ~45 minutes (verified live 2026-11-02: 44 bars vs 1,485 for 2d) -- too thin
+# for the model's 120-minute realized-vol window, so every freeze would skip.
+_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=2d"
 
 
 def _default_fetch(symbol: str) -> Any:
