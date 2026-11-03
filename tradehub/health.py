@@ -460,6 +460,15 @@ def _history(supa, now: datetime, cadences: dict[str, str | None]) -> dict[str, 
                          diag_rows=diags, cadences=cadences, days_list=days_list)
 
 
+def public_health_report(report: dict[str, Any]) -> dict[str, Any]:
+    """The public view of the health report (handover item 6): the endpoint
+    used to serve ~60KB of internals to anyone, 56KB of it the 14-day
+    history matrices. Liveness consumers get the verdict -- status, timers,
+    per-family freeze counts, the problems list -- and the matrices move
+    behind the admin-gated /api/health/full."""
+    return {k: v for k, v in report.items() if k != "history"}
+
+
 def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | None = None) -> dict[str, Any]:
     """Read every input and assemble the report. Read-only; never raises."""
     now = now or datetime.now(timezone.utc)

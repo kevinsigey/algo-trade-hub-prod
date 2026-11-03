@@ -180,6 +180,21 @@ def test_two_replacements_in_one_day_get_distinct_tags(db, monkeypatch):
     assert a["client_order_id"] != b["client_order_id"] and a["client_order_id"].startswith("idea-1-stop-")
 
 
+def test_protect_covers_the_big_book(db, monkeypatch):
+    # Handover item 6: the protect job only covered the main book -- an
+    # intraday-exit idea live ONLY on Book 2 got no protective stop, and any
+    # rows it did log landed under the wrong book.
+    store.set_auto(db, 1, False, "kevin")                # the fixture's idea, switched OFF on main
+    store.go_live_book(db, "big", 1, 1, 5.0, {"status": "passed"})
+    store.set_auto_book(db, "big", 1, True, "kevin")
+    calls = Calls()
+    summary, failed = protect(db, Broker(), calls, monkeypatch)
+    assert failed == {}
+    assert len(calls.log) == 1 and calls.log[0][3] == 66  # the GLD stop, placed once
+    assert db.db["paper_orders"][0]["book"] == "big"
+    assert summary["big"][1]["sent"] == 1
+
+
 def test_check_fills_reports_each_book_and_keeps_going(monkeypatch):
     from tradehub.portfolio import books
 

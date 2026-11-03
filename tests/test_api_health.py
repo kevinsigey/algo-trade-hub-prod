@@ -174,3 +174,34 @@ def test_every_response_carries_security_headers():
     assert headers["x-content-type-options"] == "nosniff"
     assert "max-age" in headers["strict-transport-security"]
     assert "frame-ancestors 'none'" in headers["content-security-policy"]
+
+
+# ── the public trim (handover item 6: /api/health served ~60KB of internals) ──
+
+def test_public_health_report_drops_the_history_matrices():
+    from tradehub.health import public_health_report
+
+    full = {"status": "ok", "problems": ["p"], "families": {"f": {"frozen_24h": 3}},
+            "history": {"days": ["2026-11-03"], "families": {"f": [1] * 14}}}
+    public = public_health_report(full)
+    assert "history" not in public
+    assert public["families"] == full["families"] and public["problems"] == ["p"]
+
+
+def test_health_endpoint_is_trimmed_and_full_needs_admin(monkeypatch):
+    from tradehub.api import admin
+
+    monkeypatch.setattr(main, "collect_health",
+                        lambda supa, now=None: {"status": "ok", "problems": [],
+                                                "history": {"days": [], "families": {}}})
+    main.app.dependency_overrides[get_supabase] = lambda: None
+    try:
+        client = TestClient(main.app)
+        public = client.get("/api/health")
+        assert public.status_code == 200 and "history" not in public.json()["report"]
+        assert client.get("/api/health/full").status_code == 401
+        main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k@example.com"}
+        full = client.get("/api/health/full")
+        assert full.status_code == 200 and "history" in full.json()["report"]
+    finally:
+        main.app.dependency_overrides.clear()

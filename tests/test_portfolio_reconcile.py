@@ -71,3 +71,21 @@ def test_no_orders_skips_the_broker():
     def boom():
         raise AssertionError("no broker read needed")
     assert reconcile(DB(), "main", SINCE, NOW, boom)["checked"] == 0
+
+
+def test_manual_actions_dedupe_per_idea_not_per_symbol():
+    # Handover item 6: the dedupe ignored the idea, so a second idea's problem
+    # on the same symbol+kind was swallowed by the first idea's open action.
+    db = DB()
+
+    def add(*args):
+        store.add_manual_action(db, *args)
+        for row in db.db["manual_actions"]:
+            row.setdefault("state", "open")  # the real table defaults it; the fake doesn't
+
+    add("main", 1, "order", "SPY", "idea 1 problem")
+    add("main", 2, "order", "SPY", "idea 2 problem")
+    add("main", 1, "order", "SPY", "idea 1 again")
+    add("main", None, "order", "SPY", "no idea")
+    rows = db.db["manual_actions"]
+    assert len(rows) == 3 and {r["idea_id"] for r in rows} == {1, 2, None}

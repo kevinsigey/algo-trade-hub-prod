@@ -3,7 +3,11 @@ import { useEffect, useState } from "react";
 import { buildApiUrl } from "@/lib/api";
 import type { HealthReport } from "@/lib/health";
 
-export function useHealth() {
+/** The public /api/health carries the trimmed report (status, timers, problems);
+ * the Health page passes { full: true } for the admin-gated complete report
+ * with the history matrices (item-6 trim). */
+export function useHealth(options?: { full?: boolean }) {
+  const full = options?.full ?? false;
   const [report, setReport] = useState<HealthReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,7 +15,13 @@ export function useHealth() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(buildApiUrl("/api/health"))
+    (async () => {
+      // Lazy: the public path (status strips) must not pull the admin/supabase
+      // module chain in just to read a liveness report.
+      const token = full ? await (await import("@/components/RequireAdmin")).sessionToken() : null;
+      return fetch(buildApiUrl(full ? "/api/health/full" : "/api/health"),
+                   { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    })()
       .then(async (response) => {
         // Only parse JSON when it is JSON: an HTML error page (the SPA catch-all, a proxy 502) would
         // otherwise throw an opaque "Unexpected token <" and hide the status that actually explains it.

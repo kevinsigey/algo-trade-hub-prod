@@ -267,9 +267,13 @@ def order_log(supa, idea_id: int, limit: int = 100) -> list[dict]:
 
 def add_manual_action(supa, book: str, idea_id: int | None, kind: str, symbol: str | None,
                       detail: str) -> None:
+    """One open action per (book, idea, kind, symbol): the dedupe used to ignore
+    the idea (handover item 6), so a second idea's problem on the same symbol
+    was swallowed by the first idea's open action and never surfaced."""
     q = (supa.table("manual_actions").select("id")
          .eq("book", book).eq("state", "open").eq("kind", kind))
     q = q.is_("symbol", "null") if symbol is None else q.eq("symbol", symbol)
+    q = q.is_("idea_id", "null") if idea_id is None else q.eq("idea_id", idea_id)
     open_rows = q.execute().data or []
     if open_rows:
         return

@@ -40,7 +40,7 @@ def authenticate(supa, authorization: str | None) -> dict:
     return key
 
 
-def stop_capacity(symbol: str, side: str) -> int:
+def stop_capacity(symbol: str, side: str, book: str | None = None) -> int:
     """Whole shares a new machine protective stop may cover for `symbol`/`side`.
 
     A stop the machine door places must protect a position that exists: the held
@@ -48,12 +48,14 @@ def stop_capacity(symbol: str, side: str) -> int:
     net of shares already reserved by resting orders on that side -- so a stop can
     never become a fresh short or double-sell if its entry failed or the position
     was already closed. Reads go through alpaca_paper.paper_get; any failure
-    propagates, and the caller fails closed.
+    propagates, and the caller fails closed. `book` names the account (handover
+    item 6: this used to read the main book whatever the caller meant); None is
+    the current book, as everywhere in the portfolio package.
     """
     from tradehub.portfolio.alpaca_paper import paper_get
 
     held = 0.0
-    for position in paper_get("/v2/positions") or []:
+    for position in paper_get("/v2/positions", book=book) or []:
         if (position.get("symbol") or "").upper() == symbol:
             held = float(position.get("qty") or 0)
     if side == "sell" and held <= 0:
@@ -61,7 +63,7 @@ def stop_capacity(symbol: str, side: str) -> int:
     if side == "buy" and held >= 0:
         return 0
     reserved = 0.0
-    for order in paper_get("/v2/orders", {"status": "open", "limit": 500}) or []:
+    for order in paper_get("/v2/orders", {"status": "open", "limit": 500}, book=book) or []:
         if (order.get("symbol") or "").upper() == symbol and order.get("side") == side:
             reserved += float(order.get("qty") or 0)
     return max(0, int(abs(held)) - int(reserved))
@@ -161,13 +163,14 @@ def open_broker_orders(book: str | None = None) -> list[dict]:
     return [broker_order_view(o) for o in page]
 
 
-def broker_orders() -> dict[str, dict]:
+def broker_orders(book: str | None = None) -> dict[str, dict]:
     """client_order_id -> the broker's order, over the newest 500 orders on the account.
     An order older than that window reads as unknown status and cannot be cancelled through
-    the API -- a bounded v1 window, stated here rather than discovered in production."""
+    the API -- a bounded v1 window, stated here rather than discovered in production.
+    `book` names the account (item 6); None is the current book."""
     from tradehub.portfolio.alpaca_paper import paper_get
 
-    page = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500})
+    page = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500}, book=book)
     return {o["client_order_id"]: o for o in page if o.get("client_order_id")}
 
 
