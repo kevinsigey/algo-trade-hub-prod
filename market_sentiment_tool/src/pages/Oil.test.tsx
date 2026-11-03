@@ -117,4 +117,21 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText(/Hormuz stress 2/)).toBeInTheDocument();
     expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
   });
+
+  it("shows the ITM line stat and tags its ladder row when a pick qualifies", async () => {
+    serve([score()], {}, {
+      state: "live", event: "KXWTIH-26NOV0212", minutes_to_close: 40, as_of: "2026-11-02T16:20:00Z",
+      live_price: 101.2, our_level: 101.35, market_level: 101.1,
+      itm: { strike: 101, ours: 0.62, market: 0.55, gap_pts: 7.0, clear_bars: 10 },
+      rows: [
+        { strike: 100, ours: 0.97, market: 0.95 },
+        { strike: 101, ours: 0.62, market: 0.55 },
+        { strike: 102, ours: 0.18, market: 0.22 },
+      ],
+    });
+    render(<Oil />);
+    expect(await screen.findByText("In-the-money line")).toBeInTheDocument();
+    expect(screen.getByText(/clear of the tape 10 min/)).toBeInTheDocument();
+    expect(screen.getByText("ITM line")).toBeInTheDocument();
+  });
 });

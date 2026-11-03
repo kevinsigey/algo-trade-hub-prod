@@ -1267,6 +1267,19 @@ def geo_region(slug: str, supabase=Depends(get_supabase)):
     return view
 
 
+@app.get("/api/oil/itm-record", tags=["Oil"])
+def oil_itm_record() -> dict:
+    """How the frozen ITM line picks have done (hit rate + EV at Kalshi's
+    price). Public and fail-soft: an empty record reads as zeroes."""
+    from tradehub.oil_itm import record
+
+    try:
+        return record(get_client())
+    except Exception:  # noqa: BLE001
+        return {"frozen": 0, "settled": 0, "hits": 0, "hit_rate": None,
+                "ev_per_dollar": None, "recent": []}
+
+
 @app.get("/api/oil/hourly-live", tags=["Oil"])
 def oil_hourly_live():
     """The Commodities hero: the v1 hourly WTI model recomputed against the

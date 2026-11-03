@@ -32,10 +32,22 @@ from tradehub.journal.forecasters.oil_hourly import (
     SERIES,
     HourlyInputs,
 )
+from tradehub.data.wti import wti_minute_tape
 from tradehub.journal.kalshi_linked import quote_mid
 
 MIN_MINUTES = 20.0
 CACHE_SECONDS = 20.0
+
+# The ITM line (Kevin, 2026-11-03): on the live ladder, the strike where
+# the bet is a bit more likely than a coin flip AND we like it more than
+# Kalshi does AND the tape has kept clear of it -- the strike was never
+# the 50% level over the last stretch. A selection rule on the v1 Normal
+# model, nothing more; picks get frozen and graded (tradehub/oil_itm.py).
+ITM_BAND = (0.55, 0.75)
+ITM_MIN_GAP = 0.03
+ITM_LOOKBACK_MIN = 10
+ITM_MIN_BARS = 6
+ITM_MIN_CLEARANCE = 0.05
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
@@ -69,6 +81,36 @@ def _crossing(rows: list[dict], key: str) -> float | None:
     return None
 
 
+def pick_itm_line(rows: list[dict], tape: list, now: datetime,
+                  live_price: float) -> dict | None:
+    """The ITM pick from a live ladder, or None. Pure, so the rule tests
+    without a market. `tape` is [(bar time, close)] oldest first."""
+    window = [(ts, c) for ts, c in tape
+              if 0 <= (now - ts).total_seconds() <= ITM_LOOKBACK_MIN * 60]
+    if len(window) < ITM_MIN_BARS:
+        return None
+    candidates = []
+    for row in rows:
+        ours, market = row.get("ours"), row.get("market")
+        if ours is None or market is None:
+            continue
+        if not ITM_BAND[0] <= ours <= ITM_BAND[1] or ours - market < ITM_MIN_GAP:
+            continue
+        strike = row["strike"]
+        sides = {(c > strike) - (c < strike) for _ts, c in window}
+        if len(sides) != 1 or 0 in sides:
+            continue  # the tape crossed (or touched) the strike: it WAS the level
+        if min(abs(c - strike) for _ts, c in window) < ITM_MIN_CLEARANCE:
+            continue  # too close to call clear
+        candidates.append(row)
+    if not candidates:
+        return None
+    best = min(candidates, key=lambda r: abs(r["strike"] - live_price))
+    return {"strike": best["strike"], "ours": best["ours"], "market": best["market"],
+            "gap_pts": round((best["ours"] - best["market"]) * 100, 1),
+            "clear_bars": len(window)}
+
+
 def _geo_chip() -> dict | None:
     try:
         from tradehub.core.supabase_client import get_client
@@ -86,7 +128,7 @@ def _geo_chip() -> dict | None:
 
 
 def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs | None = None,
-                geo: bool = True) -> dict[str, Any]:
+                geo: bool = True, tape_fn=wti_minute_tape) -> dict[str, Any]:
     """The live ladder payload. Degrades to {"state": "unavailable",
     "reason": ...} -- a named gap, never invented numbers."""
     now = now or datetime.now(UTC)
@@ -116,8 +158,14 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
                      "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None)})
     if not rows:
         return {"state": "unavailable", "reason": "the event carries no strikes"}
+    itm = None
+    try:
+        itm = pick_itm_line(rows, tape_fn(), now, price.value)
+    except Exception:  # noqa: BLE001 -- the pick is additive; its absence never sinks the ladder
+        itm = None
     return {
         "state": "live",
+        "itm": itm,
         "event": event,
         "close_time": markets[0].market.close_time.isoformat(),
         "minutes_to_close": round(minutes, 1),

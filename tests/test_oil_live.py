@@ -54,3 +54,59 @@ def test_live_ladder_names_a_stale_print_instead_of_dressing_it_up():
     stale = HourlyInputs(live, price_fn=lambda: Observation("WTI:CL=F:last", 101.2, NOW - timedelta(minutes=30)))
     out = live_ladder(NOW, live=live, inputs=stale, geo=False)
     assert out["state"] == "unavailable" and "stale" in out["reason"]
+
+
+# ---- the ITM line (Kevin, 2026-11-03) --------------------------------------
+
+from datetime import timedelta  # noqa: E402
+
+from tradehub.data.wti import wti_minute_tape  # noqa: E402
+from tradehub.oil_live import pick_itm_line  # noqa: E402
+
+
+def _tape(now, prices):
+    """1-minute closes ending at `now`, oldest first."""
+    n = len(prices)
+    return [(now - timedelta(minutes=n - 1 - i), p) for i, p in enumerate(prices)]
+
+
+def _rows(*specs):
+    return [{"strike": k, "ours": o, "market": m} for k, o, m in specs]
+
+
+def test_wti_minute_tape_sorts_and_skips_nan():
+    import pandas as pd
+
+    idx = pd.to_datetime(["2026-11-03T14:02:00Z", "2026-11-03T14:01:00Z", "2026-11-03T14:03:00Z"])
+    frame = pd.DataFrame({"Close": [98.2, 98.1, float("nan")]}, index=idx)
+    tape = wti_minute_tape(history_fn=lambda: frame)
+    assert [p for _ts, p in tape] == [98.1, 98.2]
+
+
+def test_itm_pick_qualifies_above_the_tape():
+    # Price ran at 98.5-98.7 for 10 minutes; strike 98.00 sits below the
+    # whole window (never the level), we price it 65% vs Kalshi's 58%.
+    pick = pick_itm_line(_rows((98.0, 0.65, 0.58)), _tape(NOW, [98.5] * 10), NOW, 98.6)
+    assert pick is not None and pick["strike"] == 98.0 and pick["gap_pts"] == 7.0
+    assert pick["clear_bars"] == 10
+
+
+def test_itm_pick_rejects_a_strike_the_tape_crossed():
+    # The tape dipped through 98.00 inside the window: it WAS the level.
+    prices = [98.5] * 5 + [97.9] + [98.5] * 4
+    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), _tape(NOW, prices), NOW, 98.6) is None
+
+
+def test_itm_pick_rejects_thin_tape_small_gap_and_off_band():
+    tape = _tape(NOW, [98.5] * 10)
+    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), tape[:4], NOW, 98.6) is None  # thin tape
+    assert pick_itm_line(_rows((98.0, 0.65, 0.63)), tape, NOW, 98.6) is None  # gap < 3 pts
+    assert pick_itm_line(_rows((98.0, 0.52, 0.40)), tape, NOW, 98.6) is None  # below the band
+    assert pick_itm_line(_rows((98.0, 0.80, 0.60)), tape, NOW, 98.6) is None  # above the band
+    assert pick_itm_line(_rows((98.0, 0.65, None)), tape, NOW, 98.6) is None  # no market price
+
+
+def test_itm_pick_prefers_the_strike_closest_to_the_money():
+    rows = _rows((97.5, 0.70, 0.60), (98.0, 0.65, 0.58), (98.25, 0.60, 0.52))
+    pick = pick_itm_line(rows, _tape(NOW, [98.5] * 10), NOW, 98.5)
+    assert pick is not None and pick["strike"] == 98.25
