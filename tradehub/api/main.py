@@ -884,9 +884,10 @@ class _LabelIn(BaseModel):
 def _latest_saved_map(supabase) -> dict[int, dict]:
     """idea id -> its latest SAVED run row, hub-wide (save-by-choice: previews
     never set an idea's standing). One pass over idea_runs + idea_run_saves."""
-    saved_ids = {s["run_id"] for s in supabase.table("idea_run_saves").select("run_id").execute().data or []}
+    saved_ids = {s["run_id"] for s in _fetch_all(supabase, "idea_run_saves", lambda q: q.select("run_id"),
+                                                 order=("run_id",))}
     latest: dict[int, dict] = {}
-    for r in supabase.table("idea_runs").select("id,idea_id,variation,verdict,result,spec").execute().data or []:
+    for r in _fetch_all(supabase, "idea_runs", lambda q: q.select("id,idea_id,variation,verdict,result,spec")):
         if r["id"] not in saved_ids:
             continue
         cur = latest.get(r["idea_id"])

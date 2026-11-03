@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
 import { PlayCheckButton } from "@/components/PlayCheck";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import NewIdeaBox from "@/components/NewIdeaBox";
-import { adminJson } from "@/lib/workshop";
+import { useAdminSession } from "@/components/RequireAdmin";
 import { EARLY_N } from "@/lib/sample";
 import { claimLabel, KIND_LABEL, STATUS_LABEL, verdictTone, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
 import { toneClass } from "@/pages/Workshop";
@@ -134,12 +134,7 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
  * actually is; everything that no longer passes sits under Removed, still
  * on the record (Kevin, 2026-11-03 trim). */
 export default function Ideas() {
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    adminJson("/api/admin/me").then(() => { if (!cancelled) setSignedIn(true); }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
+  const session = useAdminSession();
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
   const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
   const { data: criticSummary } = useApi<{ counts: { PAUSE: number; WATCH: number; HOLD: number }; units: number; worst: { idea_id: number; title: string | null; book: string; degradation: number }[] }>("/api/ideas/critic-summary");
@@ -188,7 +183,7 @@ export default function Ideas() {
           )}
         </p>
       )}
-      {signedIn && <NewIdeaBox />}
+      {session === "admin" && <NewIdeaBox />}
       {data && data.length > 1 && (
         <div className="mt-4 flex items-center gap-2 text-sm">
           <label htmlFor="ideas-sort" className="text-slate-400">Sort</label>

@@ -29,7 +29,7 @@ def test_family_attempts_and_best_prior_come_from_the_record():
     latest = {1: _run(1, 1, ["MU"], value=2.0, variation=3), 2: _run(2, 2, ["TXN", "TSM"], value=5.0),
               3: _run(3, 3, ["GLD"], value=9.0)}
     out = preflight(db, DRAFT, latest)
-    assert out["family"]["size"] == 2 and set(out["family"]["tickers"]) >= {"MU", "TXN", "TSM"}
+    assert out["family"]["size"] == 2 and set(out["family"]["tickers"]) == {"MU", "TXN", "TSM"}
     assert out["prior_attempts"] == 4  # gold is a different bet
     assert out["best_prior"] is None  # nothing held exactly these names
     assert out["expressible"] is True and out["killed"] == []
@@ -45,11 +45,11 @@ def test_best_prior_is_the_best_result_on_the_same_names():
 
 def test_an_exact_duplicate_of_a_killed_idea_is_named_with_its_reason():
     db = _db(("Same chips", "2026-11-03T00:00:00+00:00"))
-    db.table(store.SWITCHES).insert({"idea_id": 1, "on": False, "by": "too crowded"}).execute()
+    db.table(store.SWITCHES).insert({"idea_id": 1, "on": False, "by": "kevin@example.com"}).execute()
     latest = {1: _run(1, 1, ["TXN", "MU"])}
     out = preflight(db, DRAFT, latest)
     assert out["duplicate_of_killed"] == 1
-    assert out["killed"][0]["exact"] is True and "too crowded" in out["killed"][0]["reason"]
+    assert out["killed"][0]["exact"] is True and out["killed"][0]["reason"] == "killed on 2026-11-03"
 
 
 def test_a_killed_idea_demoted_by_the_current_bar_says_so_first():
@@ -77,6 +77,20 @@ def test_an_event_strategy_compares_on_its_universe_and_claims_no_exactness():
 def test_a_new_bet_has_an_empty_ledger():
     out = preflight(DB(), DRAFT, {})
     assert out["prior_attempts"] == 0 and out["best_prior"] is None and out["family"]["size"] == 0
+
+
+def test_a_different_benchmark_is_a_different_idea():
+    db = _db(("Same chips", "2026-11-03T00:00:00+00:00"))
+    draft = {**DRAFT, "scoring": {"benchmark": "QQQ"}}
+    run = _run(1, 1, ["MU", "TXN"])
+    run["spec"]["benchmark"] = "SPY"
+    assert preflight(db, draft, {1: run})["duplicate_of_killed"] is None
+
+
+def test_best_prior_only_compares_the_same_claim():
+    db = _db(("Other claim", None))
+    run = _run(1, 1, ["MU", "TXN"], claim="beats_benchmark_when", value=50.0)
+    assert preflight(db, DRAFT, {1: run})["best_prior"] is None
 
 
 def test_title_is_short():
