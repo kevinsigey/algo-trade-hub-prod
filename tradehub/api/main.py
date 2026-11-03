@@ -1187,6 +1187,13 @@ def get_portfolio_closed(supabase=Depends(get_supabase)):
     return service.closed(supabase)
 
 
+@app.get("/api/portfolio/activity", tags=["Portfolio"])
+def get_portfolio_activity(supabase=Depends(get_supabase)):
+    from tradehub.portfolio import service
+
+    return service.activity(supabase)
+
+
 class _OrderIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=10)
     qty: int = Field(ge=1, le=100_000)
