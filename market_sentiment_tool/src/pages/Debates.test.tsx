@@ -67,16 +67,19 @@ describe("Agent debates page", () => {
     expect(screen.getByText("stale")).toBeInTheDocument();
     expect(screen.getByText(/\+5d hit \(\+3\.2%\)/)).toBeInTheDocument();
     // The summary pass (Kevin, 2026-11-02): the decision is the card's headline,
-    // an extracted summary follows, and every section is a dropdown closed by
-    // default -- its one-line preview is what shows ("Growth." / "Valuation.").
-    // A section the run did not record ("fundamentals" here) is not drawn.
+    // The list card is summary-only (Kevin, 2026-11-03): verdict + one
+    // "Read the full case" control; no case text, no section previews.
+    // The cases open on click, formatted; a section the run did not
+    // record ("fundamentals" here) is not drawn even then.
     expect(screen.getByText("Buy")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Bull case/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Bear case/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Bull case/ })).toBeNull();
+    expect(screen.queryByText("Growth.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
+    expect(screen.getByText("Bull case")).toBeInTheDocument();
+    expect(screen.getByText("Bear case")).toBeInTheDocument();
     expect(screen.getByText("Growth.")).toBeInTheDocument();
-    expect(screen.getByText("Valuation.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Fundamentals/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /Risk panel/ })).toBeInTheDocument();
+    expect(screen.queryByText("Fundamentals", { selector: "div" })).toBeNull();
+    expect(screen.getByText("Risk panel")).toBeInTheDocument();
     expect(screen.getAllByText(/kept separate from every model statistic/).length).toBeGreaterThan(0);
   });
 

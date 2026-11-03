@@ -85,25 +85,41 @@ describe("DebateCard summary-first layout", () => {
     expect(screen.queryByText(/Target/)).toBeNull();
   });
 
-  it("keeps every section closed by default, full text one click away", () => {
-    renderCard(card());
-    expect(screen.queryByText(new RegExp(BULL_TAIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))).toBeNull();
-    const toggles = screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"));
-    expect(toggles.length).toBeGreaterThanOrEqual(7); // bull, bear, 3 recorded analysts, trader, risk
-    for (const t of toggles) expect(t.getAttribute("aria-expanded")).toBe("false");
+  it("the list card carries no case text; the full case opens on click, formatted", () => {
+    const { container } = renderCard(card());
+    // Summary-only list (Kevin, 2026-11-03): no bull/bear text, no previews.
+    expect(screen.queryByText(/trend is your friend/)).toBeNull();
+    expect(screen.queryByText(/reconvene at \$260/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Bear case/ })).toBeNull();
 
-    const bear = screen.getByRole("button", { name: /Bear case/ });
-    fireEvent.click(bear);
-    expect(bear.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText(new RegExp("reconvene at \\$260"))).toBeTruthy();
-    // Opening one section leaves the others closed.
+    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
+    expect(screen.getByText(/trend is your friend/)).toBeTruthy();
+    expect(screen.getByText(/reconvene at \$260/)).toBeTruthy();
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    // Formatted, never a raw dump: markdown headings become titles, no <pre>.
+    expect(container.querySelector("pre")).toBeNull();
+    expect(screen.queryByText(/# Alphabet Inc/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Hide the full case/ }));
     expect(screen.queryByText(/trend is your friend/)).toBeNull();
   });
 
   it("skips sections the run did not record", () => {
     renderCard(card());
-    expect(screen.queryByRole("button", { name: /^News/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /Fundamentals/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
+    expect(screen.queryByText("News", { selector: "div" })).toBeNull();
+    expect(screen.getByText("Fundamentals")).toBeTruthy();
+  });
+
+  it("renders the framework report as a document, tables included", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      "# Final Report\n\n| Case | Price |\n| --- | --- |\n| Bear | $61 |\n\nThe end.",
+      { status: 200 })));
+    const { container } = renderCard(card({ has_report: true }));
+    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
+    expect(await screen.findByText("Framework report")).toBeTruthy();
+    expect(container.querySelector("table")?.textContent).toContain("$61");
+    expect(container.querySelector("pre")).toBeNull();
   });
 
   it("renders no ladder and no action chip when the text states neither", () => {
