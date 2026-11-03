@@ -612,3 +612,21 @@ export const STATUS_LABEL: Record<PublicIdea["status"], string> = {
   live: "Live on paper",
   killed: "Killed",
 };
+
+export interface WorkshopDashboard {
+  ideas: { total: number; live: number; live_big: number; tracking: number; published: number; draft: number; killed: number };
+  runs: { total: number; saved: number; latest_verdicts: Record<string, number>;
+          recent: { idea_id: number; title: string | null; verdict: string; at: string | null }[] };
+  fills: { state: string; total: number; attributed: number; needs_label: number;
+           closed_pnl_by_idea: { idea: string; pnl: number; trades: number }[] };
+  screens: { total: number; promoted: number };
+  manual_actions_open: number;
+}
+
+export interface ScreenRow {
+  id: number;
+  name: string;
+  spec: Record<string, unknown>;
+  last_run: { run_at: string | null; survivors: number | null } | null;
+  promoted_idea_id: number | null;
+}

@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
 import { claimLabel, conditionText, legText, rulesText } from "@/lib/workshop";
-import Workshop from "@/pages/Workshop";
+import Workshop, { TradeLabels } from "@/pages/Workshop";
 import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
 
 const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
@@ -83,6 +83,7 @@ describe("Workshop pages", () => {
   it("lists ideas with their latest verdict and sends the bearer token", async () => {
     const f = serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "FAIL" }] } });
     render(<MemoryRouter><Workshop /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
     expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
     expect(screen.getByLabelText("Type an idea in plain words")).toBeInTheDocument();
     expect(screen.getByText("4 runs")).toBeInTheDocument();
@@ -235,6 +236,7 @@ describe("Workshop trade labels", () => {
       "/api/workshop/labels": { body: {} },
     });
     render(<MemoryRouter><Workshop /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("tab", { name: "Trade labels" }));
     const pick = await screen.findByLabelText("Idea for GLD buy 10 on 2026-11-02");
     fireEvent.change(pick, { target: { value: "1" } });
     await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
@@ -764,5 +766,38 @@ describe("Workshop verdict clarity (critique L4)", () => {
     expect(screen.getByText("SPY (benchmark)")).toBeInTheDocument();
     expect(screen.getByText("Cumulative return since 2006-01-04, % (not log)")).toBeInTheDocument();
     expect(screen.getByText("On the unseen years")).toBeInTheDocument();
+  });
+});
+
+describe("Workshop dashboard and labeling queue", () => {
+  it("leads with totals, not lists", async () => {
+    serve({
+      "/api/workshop/ideas": { body: [] },
+      "/api/screening/screens": { body: [] },
+      "/api/workshop/dashboard": { body: {
+        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
+        runs: { total: 90, saved: 61, latest_verdicts: { PASS: 40, FAIL: 11 }, recent: [] },
+        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [{ idea: "Live one", pnl: 100, trades: 2 }] },
+        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
+    });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    expect(await screen.findByText("Tests kept")).toBeInTheDocument();
+    expect(screen.getByText("61")).toBeInTheDocument();
+    expect(screen.getByText("Needs labeling")).toBeInTheDocument();
+    expect(await screen.findByText("Closed paper P&L by idea")).toBeInTheDocument();
+  });
+
+  it("shows only the fills that need a label", async () => {
+    const fills = [
+      { order_id: "a", symbol: "GLD", side: "buy", qty: 3, price: 10, at: "2026-11-02T00:00:00Z", tag: "idea-1-auto-x", idea_id: 1, idea: "One", history: [] },
+      { order_id: "b", symbol: "SPY", side: "buy", qty: 1, price: 10, at: "2026-11-02T00:00:00Z", tag: "ext-9", idea_id: null, idea: null, history: [] },
+      { order_id: "c", symbol: "QQQ", side: "sell", qty: 2, price: 10, at: "2026-11-02T00:00:00Z", tag: null, idea_id: null, idea: null, history: [] },
+    ];
+    serve({ "/api/workshop/fills": { body: { state: "live", fills } } });
+    render(<TradeLabels ideas={[]} />);
+    expect(await screen.findByText(/QQQ sell 2/)).toBeInTheDocument();
+    expect(screen.queryByText(/GLD buy 3/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SPY buy 1/)).not.toBeInTheDocument();
+    expect(screen.getByText(/2 fills already attributed/)).toBeInTheDocument();
   });
 });

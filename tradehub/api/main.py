@@ -1669,6 +1669,83 @@ def cancel_machine_order_route(client_order_id: str, authorization: str | None =
     return {"client_order_id": namespaced, "status": "cancelled"}
 
 
+@app.get("/api/workshop/dashboard", tags=["Workshop"])
+def workshop_dashboard(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """The Workshop dashboard (Kevin, 2026-11-02: the page ballooned into flat
+    lists -- totals up front, detail behind tabs). Idea and run totals from the
+    record; fill totals from the same attribution the labels page uses (an
+    order's tag, else the latest relabel); a fill NEEDS a label only when
+    neither exists. Closed P&L is grouped by the idea each trade counts toward."""
+    from tradehub.portfolio import book, service
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.screening import store as screen_store
+
+    rows = workshop_store.list_ideas(supabase)
+    ideas = {"total": len(rows), "live": 0, "live_big": 0, "tracking": 0,
+             "published": 0, "draft": 0, "killed": 0}
+    verdicts: dict[str, int] = {}
+    for r in rows:
+        if r.get("killed_at"):
+            ideas["killed"] += 1
+        elif r.get("live_at"):
+            ideas["live"] += 1
+        elif r.get("tracked_at"):
+            ideas["tracking"] += 1
+        elif r.get("published_at"):
+            ideas["published"] += 1
+        else:
+            ideas["draft"] += 1
+        if r.get("latest_verdict"):
+            verdicts[r["latest_verdict"]] = verdicts.get(r["latest_verdict"], 0) + 1
+    ideas["live_big"] = len({a["idea_id"] for a in workshop_store.activations(supabase, "big")
+                             if a.get("live_at") and not a.get("killed_at")})
+    all_runs = supabase.table("idea_runs").select("id,idea_id,verdict,created_at").execute().data or []
+    saved_ids = {x["run_id"] for x in supabase.table("idea_run_saves").select("run_id").execute().data or []}
+    titles = {r["id"]: r["title"] for r in rows}
+    recent = sorted((r for r in all_runs if r["id"] in saved_ids),
+                    key=lambda r: r.get("created_at") or "", reverse=True)[:8]
+    runs = {"total": len(all_runs), "saved": len(saved_ids), "latest_verdicts": verdicts,
+            "recent": [{"idea_id": r["idea_id"], "title": titles.get(r["idea_id"]),
+                        "verdict": r["verdict"], "at": r.get("created_at")} for r in recent]}
+    fills_payload: dict = {"state": "not_connected", "total": 0, "attributed": 0,
+                           "needs_label": 0, "closed_pnl_by_idea": []}
+    try:
+        fills, client_ids = service.tagged_fills(supabase, public=False)
+        history = workshop_store.label_history(supabase)
+
+        def _needs_label(f) -> bool:
+            # Decided already: a relabel row exists, the order's tag names an
+            # idea, or the client id is one of the hub's own self-describing
+            # prefixes (ext- machine orders, manual- hand orders). What is
+            # left -- fills placed outside the hub, e.g. in the broker app --
+            # is the residue that genuinely needs Kevin's label.
+            if f.get("order_id") in history:
+                return False
+            cid = client_ids.get(f.get("order_id")) or ""
+            return book.tag_id(cid) is None and not cid.startswith(("ext-", "manual-"))
+
+        needs = sum(1 for f in fills if _needs_label(f))
+        closed = service.closed(supabase)
+        pnl: dict[str, dict] = {}
+        for t in closed.get("trades", []):
+            key = t.get("idea") or "Manual / mirror"
+            slot = pnl.setdefault(key, {"idea": key, "pnl": 0.0, "trades": 0})
+            slot["pnl"] += float(t.get("pnl") or 0)
+            slot["trades"] += 1
+        fills_payload = {"state": "live", "total": len(fills),
+                         "attributed": sum(1 for f in fills if f.get("idea_id") is not None),
+                         "needs_label": needs,
+                         "closed_pnl_by_idea": sorted(pnl.values(), key=lambda x: x["pnl"], reverse=True)}
+    except AccountNotConnected:
+        pass
+    screens = screen_store.list_screens(supabase)
+    return {"ideas": ideas, "runs": runs, "fills": fills_payload,
+            "screens": {"total": len(screens),
+                        "promoted": sum(1 for x in screens if x.get("promoted_idea_id"))},
+            "manual_actions_open": sum(len(workshop_store.manual_actions(supabase, b))
+                                       for b in ("main", "big"))}
+
+
 @app.get("/api/workshop/fills", tags=["Workshop"])
 def workshop_fills(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     """Kevin's paper fills, newest first, each with its idea and its full relabel history (tag first)."""
