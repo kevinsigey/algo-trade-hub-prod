@@ -729,6 +729,11 @@ def workshop_auto(idea_id: int, body: _AutoIn, user: dict = Depends(admin.requir
 
 class _LiveIn(BaseModel):
     size_pct: float = Field(gt=0, le=100)
+    # Kevin's deliberate gate override (first used 2026-11-02): bypasses ONLY
+    # the 63-new-day wait. A claim that failed on new data, an oversize book,
+    # an event study or a non-PASS run still refuse -- see workshop_go_live.
+    override: bool = False
+    override_note: str | None = Field(default=None, max_length=500)
 
 
 class _LabelIn(BaseModel):
@@ -817,7 +822,19 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
         raise HTTPException(status_code=409, detail="already live")
     gate, run = _gate(supabase, idea_id, body.size_pct)
     if gate["status"] != "ready":
-        raise HTTPException(status_code=409, detail="; ".join(gate["reasons"]) or "the gate is not clear")
+        # The override covers the day-count wait and nothing else: the run
+        # must exist and have PASSed (both enforced inside _gate's callers --
+        # run is None for event studies and unsaved-only ideas), the size
+        # must fit, and the claim must not have FAILED on the new data.
+        overridable = (run is not None and gate.get("size_ok") is not False
+                       and (gate.get("claim") or {}).get("holds") is not False)
+        if not (body.override and overridable):
+            raise HTTPException(status_code=409, detail="; ".join(gate["reasons"]) or "the gate is not clear")
+        gate = {**gate, "status": "overridden",
+                "override": {"by": "Kevin Sigey",
+                             "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                             "note": body.override_note or "63-day gate overridden on Kevin's explicit call",
+                             "gate_status_was": gate["status"]}}
     try:
         return workshop_store.go_live(supabase, idea_id, run["id"], body.size_pct, gate)
     except workshop_store.AlreadySet as exc:
@@ -1066,8 +1083,6 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     # from the list without opening each idea. Headline when the run stored no
     # claim object (event studies).
     result_line = None
-    result_value = None
-    result_p = None
     if latest:
         claim = (latest.get("result") or {}).get("claim") or {}
         # Stored claim shape: {built: {...}, unseen: {...}} for rule runs -- the
@@ -1075,18 +1090,8 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
         # Flat {label} for simpler results; headline only when neither exists.
         result_line = ((claim.get("unseen") or {}).get("label") or claim.get("label")
                        or (latest.get("result") or {}).get("headline"))
-        # The numeric companions of the line (Kevin, 2026-11-02: performance is
-        # the card's headline and the list must sort by it): the unseen claim
-        # metric itself, and the permutation p the verdict was judged on.
-        unseen = claim.get("unseen") or {}
-        if isinstance(unseen.get("value"), (int, float)):
-            result_value = float(unseen["value"])
-        shuffle = (latest.get("result") or {}).get("shuffle") or {}
-        if isinstance(shuffle.get("p"), (int, float)):
-            result_p = float(shuffle["p"])
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
             "claim": latest["spec"].get("claim") if latest else None, "result_line": result_line,
-            "result_value": result_value, "result_p": result_p,
             "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
