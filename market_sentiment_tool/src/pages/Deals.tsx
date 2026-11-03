@@ -3,6 +3,7 @@ import { Loader2, X } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
 import type { DealRun, DealRunRow } from "@/lib/deals";
+import DealSummary from "@/components/DealSummary";
 
 const num = (v: string): number | null => {
   const n = parseFloat(v);
@@ -530,7 +531,11 @@ function RunModal({ run, onClose, onSummarize, summBusy }:
               <p className="text-[13px] font-semibold uppercase tracking-wide text-violet-300">
                 AI summary — DRAFT{run.summary_model ? ` · ${run.summary_model}` : ""}
               </p>
-              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-950/70 p-4 text-[15px] leading-relaxed text-slate-100">{run.summary}</pre>
+              {run.summary_doc ? (
+                <DealSummary doc={run.summary_doc} />
+              ) : (
+                <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-950/70 p-4 text-[15px] leading-relaxed text-slate-100">{run.summary}</pre>
+              )}
             </div>
           ) : (
             <button type="button" onClick={onSummarize} disabled={summBusy}

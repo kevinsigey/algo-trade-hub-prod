@@ -1248,10 +1248,10 @@ def deals_summary(run_id: int, _admin: dict = Depends(admin.require_admin), supa
     if row is None:
         raise HTTPException(status_code=404, detail="no such deal run")
     try:
-        text, model = draft_summary(row["kind"], row["name"], row["inputs"], row["outputs"])
+        doc, model = draft_summary(row["kind"], row["name"], row["inputs"], row["outputs"])
     except SummaryUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return deal_store.set_summary(supabase, run_id, text, model)
+    return deal_store.set_summary(supabase, run_id, doc, model)
 
 
 @app.get("/api/geo/regions/{slug}", tags=["Geo"])

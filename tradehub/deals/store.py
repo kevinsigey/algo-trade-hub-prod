@@ -33,9 +33,20 @@ def list_runs(supa) -> list[dict]:
 
 def get_run(supa, run_id: int) -> dict | None:
     rows = supa.table(RUNS).select("*").eq("id", run_id).execute().data
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    return _with_doc(rows[0])
 
 
-def set_summary(supa, run_id: int, summary: str, model: str) -> dict:
-    rows = supa.table(RUNS).update({"summary": summary, "summary_model": model}).eq("id", run_id).execute().data
-    return rows[0] if rows else None
+def _with_doc(row: dict) -> dict:
+    from tradehub.deals.summary import doc_from_stored
+
+    return {**row, "summary_doc": doc_from_stored(row.get("summary"))}
+
+
+def set_summary(supa, run_id: int, doc: dict, model: str) -> dict:
+    import json
+
+    rows = (supa.table(RUNS).update({"summary": json.dumps(doc), "summary_model": model})
+            .eq("id", run_id).execute().data)
+    return _with_doc(rows[0]) if rows else None
