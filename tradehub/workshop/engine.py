@@ -290,6 +290,7 @@ def _option_leg_series(spec: IdeaSpec, frame: pd.DataFrame, fred: dict[str, pd.S
     (frame rows 1..). A leg opens a FRESH contract at the first close of every in-segment --
     strike set from that close -- and is flat while the rule is out; rolls inside a segment
     are the pricing core's job. Model prices throughout (options.py): the run says so."""
+    from tradehub.workshop.calibration import for_underlying as calib_for
     from tradehub.workshop.options import implied_vol_series, leg_returns
 
     if "DTB3" not in fred:
@@ -306,13 +307,16 @@ def _option_leg_series(spec: IdeaSpec, frame: pd.DataFrame, fred: dict[str, pd.S
         u = leg.underlying
         if u not in vols:
             vols[u] = implied_vol_series(u, frame[u], fred)[0]
+        cal = calib_for(u)
         series = pd.Series(0.0, index=rets_index)
         for a, b in zip(starts, ends, strict=True):
             rows = frame.index[a + 1: b + 2]  # entry close .. last in-day close
             priced = leg_returns(leg.kind, 1 if leg.side == "buy" else -1, frame[u].loc[rows],
                                  vols[u].loc[rows], rate.loc[rows], div_yields.get(u, 0.0),
                                  days_to_expiry=leg.days_to_expiry, strike_pct=leg.strike_pct,
-                                 roll_days_left=leg.roll_days_left)
+                                 roll_days_left=leg.roll_days_left,
+                                 skew_coeffs=cal["skew"] if cal else None,
+                                 spread_frac=cal["spread_frac"] if cal else 0.0)
             series.loc[rows] = priced["ret"].to_numpy()
         out[li] = series
     return out
@@ -665,15 +669,35 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     notes = _late_listing_notes(spec, closes)
     options_info = None
     if spec.options:
+        from tradehub.workshop.calibration import for_underlying as calib_for
         from tradehub.workshop.options import implied_vol_series
         leg_info = []
         for leg in spec.options:
             _, vol_label = implied_vol_series(leg.underlying, closes[leg.underlying], fred)
-            leg_info.append({**leg.model_dump(mode="json"), "vol": vol_label})
+            cal = calib_for(leg.underlying)
+            leg_info.append({**leg.model_dump(mode="json"), "vol": vol_label,
+                             "calibration": ({"median_error_pct": cal["median_err_check_pct"],
+                                              "spread_pct": round(100 * cal["spread_frac"], 1),
+                                              "n_check": cal["n_check"]} if cal else None)})
         options_info = {"model_prices": True, "legs": leg_info}
         vols = ", ".join(f"{li['underlying']}: {li['vol']}" for li in leg_info)
         notes = notes + [f"Option legs are priced with a Black-Scholes model ({vols}), not real option "
                          "history -- read this verdict as a model check, not a market record."]
+        for u in dict.fromkeys(leg.underlying for leg in spec.options):
+            cal = calib_for(u)
+            if cal:
+                skew_txt = ("price through the fitted skew curve and "
+                            if any(abs(v) > 1e-9 for v in cal["skew"].values())
+                            else "price at flat vol (the calibration rejected a skew curve from "
+                                 "daily closes) and ")
+                notes = notes + [
+                    f"Model vs Alpaca real, fit {cal['fit_window']}, checked {cal['check_window']} ({u}): "
+                    f"median error {cal['median_err_check_pct']}% of premium on {cal['n_check']} contracts. "
+                    f"{u} legs {skew_txt}pay half the typical spread "
+                    f"({round(100 * cal['spread_frac'], 1)}% of premium) on every trade."]
+            else:
+                notes = notes + [f"{u} is not in the calibration set, so its model error is unmeasured "
+                                 "-- read this verdict as uncalibrated for that leg."]
     walk_forward = _walk_forward(spec, idx, r, b, s, mask)
 
     reason = None

@@ -3,7 +3,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from tradehub.workshop.engine import MIN_GATE_DAYS, gate_check
+from tradehub.workshop.engine import gate_check
 from tradehub.workshop.spec import IdeaSpec
 
 SPEC = IdeaSpec(title="AAA beats SPY", hold=["AAA"], claim="beats_benchmark")
