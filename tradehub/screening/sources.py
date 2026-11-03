@@ -27,7 +27,7 @@ import os
 _LOCAL_EARNINGS = Path(os.environ.get("TRADEHUB_EARNINGS_PANEL", "/cache/earnings_events.csv"))
 
 TTL = {"prices": 6, "info": 24, "statements": 24 * 7, "edgar": 24 * 7,
-       "fred": 24, "cikmap": 24 * 30, "options": 6, "earnings": 24}
+       "fred": 24, "cikmap": 24 * 30, "options": 6, "earnings": 24, "quote": 1}
 
 
 def _now() -> str:
@@ -68,6 +68,70 @@ class DataStore:
 
     def _note_asof(self, kind: str) -> None:
         self.asof.setdefault(kind, _now())
+
+    # -- prefetch ---------------------------------------------------------------
+    def warm(self, tickers: list[str], kinds: set[str], max_workers: int = 8) -> None:
+        """Prefetch per-ticker data kinds concurrently (Kevin, 2026-11-03: a
+        cold run used to fetch one name at a time inside the request). The
+        getters populate the same cache the field functions read, and record
+        their own missing notes; a failed prefetch is never fatal -- the field
+        function will retry on demand and record the miss itself."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        getters = {"info": self.info, "statements": self.statements,
+                   "earnings": self.earnings_dates, "options": self.implied_move}
+        jobs = [(getters[k], t) for k in sorted(kinds) if k in getters for t in tickers]
+        if not jobs:
+            return
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = [ex.submit(g, t) for g, t in jobs]
+            for f in futures:
+                try:
+                    f.result()
+                except Exception:
+                    pass  # the getter (or the on-demand retry) records the miss
+
+    # -- one ticker's quote + chart series ---------------------------------------
+    def quote_series(self, ticker: str) -> dict | None:
+        """Last quote and a year of daily closes for the row-click panel.
+        Cached an hour. None when the source has nothing -- never a fake zero."""
+        key = f"quote|{ticker}"
+        hit = self.cache.get(key, TTL["quote"])
+        if hit is not None:
+            self._note_asof("prices")
+            return hit
+        import yfinance as yf
+
+        try:
+            hist = yf.Ticker(ticker).history(period="1y", auto_adjust=False)
+        except Exception as e:
+            self.note_missing(ticker, "quote", e)
+            return None
+        if hist is None or len(hist) < 2 or "Close" not in hist:
+            self.note_missing(ticker, "quote", "no price history")
+            return None
+        closes = hist["Close"].dropna()
+        if len(closes) < 2:
+            self.note_missing(ticker, "quote", "no price history")
+            return None
+        last, prev = float(closes.iloc[-1]), float(closes.iloc[-2])
+        volume = None
+        if "Volume" in hist:
+            v = hist["Volume"].iloc[-1]
+            volume = int(v) if pd.notna(v) else None
+        out = {
+            "ticker": ticker,
+            "price": round(last, 4),
+            "prev_close": round(prev, 4),
+            "change_pct": round((last / prev - 1.0) * 100.0, 3) if prev else None,
+            "volume": volume,
+            "as_of": str(closes.index[-1].date()),
+            "closes": [{"date": str(ts.date()), "close": round(float(v), 4)}
+                       for ts, v in closes.items()],
+        }
+        self.cache.set(key, out)
+        self._note_asof("prices")
+        return out
 
     # -- yfinance: prices ------------------------------------------------------
     def prices(self, tickers: list[str], years: int = 3) -> pd.DataFrame:

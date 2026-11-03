@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, Loader2, Plus, Trophy, X } from "lucid
 import { adminJson, type ScreenRow } from "@/lib/workshop";
 import {
   OP_LABELS, PRESETS, UNIVERSES, specFromState, trayFromSpec,
-  type CardFn, type Catalog, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
+  type CardFn, type Catalog, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
 } from "@/lib/screening";
 
 function fmtCell(v: unknown): string {
@@ -37,6 +37,27 @@ function LibraryGroup({ group, count, children }: { group: string; count: number
   );
 }
 
+/** A year of daily closes as a plain line: green when the year is up. */
+function PriceChart({ closes }: { closes: { date: string; close: number }[] }) {
+  if (closes.length < 2) return null;
+  const vals = closes.map((c) => c.close);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const W = 560, H = 120, P = 6;
+  const pts = closes.map((c, i) =>
+    `${(P + (i / (closes.length - 1)) * (W - 2 * P)).toFixed(1)},${(H - P - ((c.close - min) / span) * (H - 2 * P)).toFixed(1)}`
+  ).join(" ");
+  const up = vals[vals.length - 1] >= vals[0];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" role="img"
+         aria-label="Price chart: daily closes over the past year">
+      <polyline fill="none" strokeWidth="1.8" points={pts}
+                className={up ? "stroke-emerald-400" : "stroke-rose-400"} />
+    </svg>
+  );
+}
+
 export default function Screening() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState("");
@@ -53,6 +74,7 @@ export default function Screening() {
   const [result, setResult] = useState<RunPayload | null>(null);
   const [sort, setSort] = useState<{ col: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [quote, setQuote] = useState<{ ticker: string; data?: QuotePayload; error?: string } | null>(null);
   const [screens, setScreens] = useState<ScreenRow[] | null>(null);
   const [dName, setDName] = useState("");
   const [dA, setDA] = useState("");
@@ -69,6 +91,16 @@ export default function Screening() {
   const numericFields = useMemo(
     () => (catalog?.functions ?? []).filter((f) => f.kind === "field" && f.returns !== "str"),
     [catalog]);
+
+  useEffect(() => {
+    if (!openRow) { setQuote(null); return; }
+    let live = true;
+    setQuote({ ticker: openRow });
+    adminJson<QuotePayload>(`/api/screening/quote/${openRow}`)
+      .then((d) => { if (live) setQuote({ ticker: openRow, data: d }); })
+      .catch(() => { if (live) setQuote({ ticker: openRow, error: "No quote data for this ticker." }); });
+    return () => { live = false; };
+  }, [openRow ]);
 
   const loadScreens = () => adminJson<ScreenRow[]>("/api/screening/screens").then(setScreens).catch(() => setScreens([]));
   useEffect(() => {
@@ -225,6 +257,105 @@ export default function Screening() {
       </div>
       {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
       {notice && <p className="mt-3 text-sm text-emerald-300">{notice}</p>}
+
+      {result && (
+        <section aria-label="Results" className="mt-6">
+          <p className="text-sm text-slate-400">
+            <span className="font-medium text-slate-200">{result.footer.spec_name ?? "screen"}</span>
+            {" "}· ran {result.footer.run_at?.replace("T", " ").slice(0, 16)} UTC · universe {result.footer.universe_size ?? "?"}
+            {" "}· <span className="text-slate-200">{result.footer.survivors ?? result.rows.length} survivors</span>
+            {result.footer.universe_capped && (
+              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names</span>
+            )}
+            {result.footer.data_as_of && <> · data as of {result.footer.data_as_of.replace("T", " ").slice(0, 16)} UTC</>}
+            {" "}· click a column to sort, a row for its quote and provenance
+          </p>
+          <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
+                  {result.columns.map((c) => (
+                    <th key={c} className="px-3 py-2">
+                      <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-slate-200">
+                        {c}
+                        {sort?.col === c && (sort.dir === 1
+                          ? <ArrowUp className="h-3 w-3" aria-hidden="true" />
+                          : <ArrowDown className="h-3 w-3" aria-hidden="true" />)}
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const t = String(r.ticker);
+                  const fit = bestFit.has(t);
+                  return (
+                    <Fragment key={t}>
+                      <tr onClick={() => setOpenRow(openRow === t ? null : t)}
+                          className={`cursor-pointer border-b border-slate-800/70 hover:bg-slate-800/40 ${fit ? "bg-emerald-500/5" : ""}`}>
+                        {result.columns.map((c) => (
+                          <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
+                            {c === "ticker" ? (
+                              <span className="flex items-center gap-2 font-mono font-medium text-white">
+                                {t}
+                                {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                  <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
+                              </span>
+                            ) : fmtCell(r[c])}
+                          </td>
+                        ))}
+                      </tr>
+                      {openRow === t && (
+                        <tr key={`${t}-prov`} className="border-b border-slate-800 bg-slate-950/60">
+                          <td colSpan={result.columns.length} className="px-3 py-3">
+                            {quote?.ticker === t && quote.data ? (
+                              <div>
+                                <p className="text-sm text-slate-200">
+                                  Last ${quote.data.price.toFixed(2)}
+                                  {quote.data.change_pct != null && (
+                                    <span className={quote.data.change_pct >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                                      {" "}{quote.data.change_pct >= 0 ? "+" : ""}{quote.data.change_pct.toFixed(2)}% on the day
+                                    </span>
+                                  )}
+                                  {quote.data.volume != null && <span className="text-slate-400"> · volume {quote.data.volume.toLocaleString("en-US")}</span>}
+                                  <span className="text-slate-500"> · as of {quote.data.as_of} · Delayed data (Yahoo Finance)</span>
+                                </p>
+                                <PriceChart closes={quote.data.closes} />
+                              </div>
+                            ) : quote?.ticker === t && quote.error ? (
+                              <p className="text-xs text-slate-500">{quote.error}</p>
+                            ) : (
+                              <p className="text-xs text-slate-500">Loading quote…</p>
+                            )}
+                            <div className="mt-2 text-xs text-slate-400">
+                            {result.columns.filter((c) => c !== "ticker").map((c) => {
+                              const prov = result.footer.columns?.[c];
+                              return (
+                                <span key={c} className="mr-4 inline-block">
+                                  <span className="font-mono text-slate-300">{c}</span>: {prov?.source ?? "derived"}
+                                  {prov?.as_of ? ` · as of ${prov.as_of}` : ""}
+                                </span>
+                              );
+                            })}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {result.footer.missing && result.footer.missing.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">
+              Missing data (fails its filter, never zero): {result.footer.missing.map((m) => m.field).join(", ")}
+            </p>
+          )}
+        </section>
+      )}
+
 
       <section aria-label="Universe" className="mt-6">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Universe</h2>
@@ -468,81 +599,6 @@ export default function Screening() {
         </details>
       </section>
 
-      {result && (
-        <section className="mt-8">
-          <p className="text-sm text-slate-400">
-            <span className="font-medium text-slate-200">{result.footer.spec_name ?? "screen"}</span>
-            {" "}· ran {result.footer.run_at?.replace("T", " ").slice(0, 16)} UTC · universe {result.footer.universe_size ?? "?"}
-            {" "}· <span className="text-slate-200">{result.footer.survivors ?? result.rows.length} survivors</span>
-            {result.footer.universe_capped && (
-              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names</span>
-            )}
-            {" "}· click a column to sort, a row for its provenance
-          </p>
-          <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
-                  {result.columns.map((c) => (
-                    <th key={c} className="px-3 py-2">
-                      <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-slate-200">
-                        {c}
-                        {sort?.col === c && (sort.dir === 1
-                          ? <ArrowUp className="h-3 w-3" aria-hidden="true" />
-                          : <ArrowDown className="h-3 w-3" aria-hidden="true" />)}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const t = String(r.ticker);
-                  const fit = bestFit.has(t);
-                  return (
-                    <Fragment key={t}>
-                      <tr onClick={() => setOpenRow(openRow === t ? null : t)}
-                          className={`cursor-pointer border-b border-slate-800/70 hover:bg-slate-800/40 ${fit ? "bg-emerald-500/5" : ""}`}>
-                        {result.columns.map((c) => (
-                          <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
-                            {c === "ticker" ? (
-                              <span className="flex items-center gap-2 font-mono font-medium text-white">
-                                {t}
-                                {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
-                                  <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
-                              </span>
-                            ) : fmtCell(r[c])}
-                          </td>
-                        ))}
-                      </tr>
-                      {openRow === t && (
-                        <tr key={`${t}-prov`} className="border-b border-slate-800 bg-slate-950/60">
-                          <td colSpan={result.columns.length} className="px-3 py-2 text-xs text-slate-400">
-                            {result.columns.filter((c) => c !== "ticker").map((c) => {
-                              const prov = result.footer.columns?.[c];
-                              return (
-                                <span key={c} className="mr-4 inline-block">
-                                  <span className="font-mono text-slate-300">{c}</span>: {prov?.source ?? "derived"}
-                                  {prov?.as_of ? ` · as of ${prov.as_of}` : ""}
-                                </span>
-                              );
-                            })}
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {result.footer.missing && result.footer.missing.length > 0 && (
-            <p className="mt-2 text-xs text-slate-500">
-              Missing data (fails its filter, never zero): {result.footer.missing.map((m) => m.field).join(", ")}
-            </p>
-          )}
-        </section>
-      )}
     </div>
   );
 }

@@ -45,11 +45,19 @@ const RUN = {
                        score: { fn: "score", source: "blend" } } },
 };
 
+const QUOTE = {
+  ticker: "AAA", price: 121, prev_close: 110, change_pct: 10, volume: 3000,
+  as_of: "2026-11-03",
+  closes: [{ date: "2026-10-30", close: 100 }, { date: "2026-11-02", close: 110 },
+           { date: "2026-11-03", close: 121 }],
+};
+
 function serve(translateBody?: unknown) {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const body = url.includes("/api/screening/catalog") ? CATALOG
       : url.includes("/api/screening/translate") ? translateBody
+      : url.includes("/api/screening/quote/") ? QUOTE
       : url.includes("/api/screening/screens") && init?.method !== "POST" ? []
       : url.includes("/api/screening/run") ? RUN
       : {};
@@ -97,6 +105,33 @@ describe("Screening page (cards)", () => {
     fireEvent.click(within(cardEl).getByRole("button", { name: /Add/ }));
     const value = await screen.findByLabelText("P/E ratio value");
     expect((value as HTMLInputElement).value).toBe("15");
+  });
+
+  it("shows results directly under the search bar, above the library", async () => {
+    serve();
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText("3 survivors")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    const library = screen.getByText(/Filter library/);
+    // The results table must come first in the document.
+    expect(table.compareDocumentPosition(library) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("clicking a row shows its last quote, day change, volume and a chart", async () => {
+    serve();
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText("3 survivors")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("AAA"));
+    expect(await screen.findByText(/Last \$121\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/\+10\.00% on the day/)).toBeInTheDocument();
+    expect(screen.getByText(/volume 3,000/)).toBeInTheDocument();
+    expect(screen.getByText(/Delayed data/)).toBeInTheDocument();
+    expect(document.querySelector("polyline")).not.toBeNull();
   });
 
   it("translate fills the cards, including on the rules fallback", async () => {

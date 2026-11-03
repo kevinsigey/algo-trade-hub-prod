@@ -41,6 +41,7 @@ export interface Catalog {
 export interface RunFooter {
   spec_name?: string;
   run_at?: string;
+  data_as_of?: string | null;
   universe_size?: number;
   universe_capped?: { cap: number; universe_size_full: number };
   survivors?: number;
@@ -48,6 +49,16 @@ export interface RunFooter {
   context?: Record<string, unknown>;
   missing?: { field: string; reason?: string }[];
   spec_echo?: Record<string, unknown>;
+}
+
+export interface QuotePayload {
+  ticker: string;
+  price: number;
+  prev_close: number;
+  change_pct: number | null;
+  volume: number | null;
+  as_of: string;
+  closes: { date: string; close: number }[];
 }
 
 export interface RunPayload {
