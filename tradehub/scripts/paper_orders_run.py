@@ -18,7 +18,7 @@ import requests
 
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
-from tradehub.portfolio import book, paper_orders, service
+from tradehub.portfolio import book, books, paper_orders, service
 from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_out, plan
 from tradehub.workshop import data, store
@@ -76,9 +76,9 @@ class StalePrices(Exception):
     """The rule's prices don't reach the last trading day yet: the target would be the day before's."""
 
 
-def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, fred=data.fred_series,
-        bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel
-        ) -> tuple[dict, dict[int, str]]:
+def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, closes=data.closes,
+         fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel
+         ) -> tuple[dict, dict[int, str]]:
     day = now.astimezone(NY).date()
     try:
         calendar = [date.fromisoformat(c["date"]) for c in
@@ -113,7 +113,11 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
 
     summary: dict = {}
     failed: dict[int, str] = {}
-    jobs = [(i, False) for i in store.auto_ideas(supa)] + [(i, True) for i in store.closing_ideas(supa)]
+    if book_name == "main":  # the main book's live state lives on the idea rows (the record)
+        jobs = [(i, False) for i in store.auto_ideas(supa)] + [(i, True) for i in store.closing_ideas(supa)]
+    else:  # every other book reads its own activations: different ideas, sizes, strategies
+        jobs = ([(i, False) for i in store.auto_activations(supa, book_name)]
+                + [(i, True) for i in store.closing_activations(supa, book_name)])
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
@@ -161,7 +165,7 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
                 if r["status"] == "sent" and "price" in r:  # later ideas see this run's orders in the 25% check
                     signed = r["qty"] * (1 if r["side"] == "buy" else -1) * r["price"]
                     account[r["symbol"]] = account.get(r["symbol"], 0.0) + signed
-            store.log_orders(supa, idea["id"], str(day), done)
+            store.log_orders(supa, idea["id"], str(day), done, book=book_name)
             summary[idea["id"]] = {s: sum(r["status"] == s for r in done) for s in
                                    ("sent", "already sent", "skipped", "rejected")}
             if summary[idea["id"]]["rejected"]:
@@ -171,6 +175,21 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, closes=data.closes, 
     return summary, failed
 
 
+def run(now: datetime, supa, *, book_name: str = "main", submit=None, closes=data.closes,
+        fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=None
+        ) -> tuple[dict, dict[int, str]]:
+    """One book's morning pass. The book rides the context variable so every account read
+    below (account, positions, orders, fills) resolves to that book's own Alpaca account."""
+    submit = submit or (lambda *a, **k: paper_orders.submit(*a, book=book_name, **k))
+    cancel = cancel or (lambda *a, **k: paper_orders.cancel(*a, book=book_name, **k))
+    token = books.use_book(book_name)
+    try:
+        return _run(now, supa, book_name, submit=submit, closes=closes, fred=fred, bars=bars,
+                    analyst=analyst, cancel=cancel)
+    finally:
+        books.reset_book(token)
+
+
 def exit_code(summary: dict, failed: dict) -> int:
     """1 when anything needs a look: an idea failed or had a rejection, or the account couldn't be used."""
     return 1 if failed or "account" in summary else 0
@@ -178,13 +197,22 @@ def exit_code(summary: dict, failed: dict) -> int:
 
 def main() -> int:
     load_local_env()
-    try:
-        summary, failed = run(datetime.now(UTC), get_client())
-    except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"orders": "failed", "error": str(exc)}))
-        return 1
-    code = exit_code(summary, failed)
-    print(json.dumps({"orders": "failed" if code else "ok", "summary": summary, "failed": failed}))
+    supa = get_client()
+    all_summary: dict = {}
+    all_failed: dict = {}
+    code = 0
+    for name in books.names():  # each book trades its own activations against its own account
+        try:
+            summary, failed = run(datetime.now(UTC), supa, book_name=name)
+        except Exception as exc:  # noqa: BLE001 -- one book failing never stops the other
+            print(json.dumps({"orders": "failed", "book": name, "error": str(exc)}))
+            code = 1
+            continue
+        all_summary[name] = summary
+        if failed:
+            all_failed[name] = failed
+        code = code or exit_code(summary, failed)
+    print(json.dumps({"orders": "failed" if code else "ok", "books": all_summary, "failed": all_failed}))
     return code
 
 

@@ -19,6 +19,26 @@ from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_pric
 from tradehub.workshop import store as workshop_store
 
 SNAPSHOTS = "portfolio_snapshots"
+
+
+def _with_book(fn):
+    """Run a payload builder inside its book's context: the Alpaca reads below resolve
+    the book from the context variable (tradehub.portfolio.books), so the two accounts'
+    payloads never cross and existing call shapes stay (path, params)."""
+
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        from tradehub.portfolio.books import reset_book, use_book
+
+        token = use_book(kwargs.get("book_name"))
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            reset_book(token)
+
+    return wrapper
 FILL_PAGE = 100
 ORDER_PAGE = 500
 
@@ -36,8 +56,14 @@ def read_snapshots(supa, account_number: str | None) -> list[dict]:
     return [r for r in rows if r["account_number"] == rows[-1]["account_number"]] if rows else []
 
 
-def _record_account() -> str:
-    return os.getenv("PORTFOLIO_ACCOUNT_NUMBER", "").strip()
+def _record_account(book_name: str | None = None) -> str:
+    """The account number that counts as the record for a book. The main book's is pinned by
+    env (a different account answering reads pre_start, a test account's numbers). The $1M
+    book's pin is optional: unset, whatever account its keys reach IS its record."""
+    from tradehub.portfolio.books import resolve
+
+    env = "PORTFOLIO_ACCOUNT_NUMBER" if resolve(book_name) == "main" else "PORTFOLIO_ACCOUNT_NUMBER_BIG"
+    return os.getenv(env, "").strip()
 
 
 def _empty(state: str, as_of: str | None = None, account_number: str | None = None) -> dict:
@@ -46,7 +72,7 @@ def _empty(state: str, as_of: str | None = None, account_number: str | None = No
             "positions": []}
 
 
-def _fills() -> list[dict]:
+def _fills(book_name: str | None = None) -> list[dict]:
     fills: list[dict] = []
     params: dict = {"page_size": FILL_PAGE, "direction": "asc"}
     for _ in range(50):  # ponytail: 5,000 fills cap; page the closed-trades view if the book ever gets there
@@ -58,7 +84,7 @@ def _fills() -> list[dict]:
     return fills
 
 
-def _orders() -> dict[str, str]:
+def _orders(book_name: str | None = None) -> dict[str, str]:
     """order id -> client_order_id, for every order on the paper account (GET only)."""
     out: dict[str, str] = {}
     params: dict = {"status": "all", "direction": "asc", "limit": ORDER_PAGE, "nested": "true"}
@@ -79,11 +105,12 @@ def _titles(supa, public: bool) -> dict[int, str]:
     return {r["id"]: r["title"] for r in rows if r.get("published_at") or not public}
 
 
-def tagged_fills(supa, public: bool = True) -> tuple[list[dict], dict[str, str]]:
+@_with_book
+def tagged_fills(supa, public: bool = True, book_name: str | None = None) -> tuple[list[dict], dict[str, str]]:
     """Fills with their idea. Public views name published ideas only; anything else reads as manual."""
-    fills = _fills()
+    fills = _fills(book_name)
     try:
-        client_ids = _orders()
+        client_ids = _orders(book_name)
     except AccountNotConnected:
         raise
     except Exception:  # noqa: BLE001 -- no order map: fills stay unattributed rather than the page failing
@@ -95,20 +122,25 @@ def tagged_fills(supa, public: bool = True) -> tuple[list[dict], dict[str, str]]
     return book.tag_fills(fills, client_ids, labels, titles), client_ids
 
 
-def portfolio(supa, now: datetime | None = None) -> dict:
+@_with_book
+def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -> dict:
+    from tradehub.portfolio.books import resolve
+
+    name = resolve(book_name)
     now = now or datetime.now(UTC)
     try:
         account = paper_get("/v2/account")
         positions = paper_get("/v2/positions")
     except AccountNotConnected:
-        return _empty("not_connected")
+        return {**_empty("not_connected"), "book": name}
     except Exception:  # noqa: BLE001 -- Alpaca down or slow: fall back to the last snapshot, labelled stale
-        snaps = read_snapshots(supa, _record_account() or None)
+        snaps = read_snapshots(supa, _record_account(name) or None)
         if not snaps:
             return _empty("not_connected")
         out = _empty("stale", snaps[-1]["taken_at"], snaps[-1]["account_number"])
         out["scoreboard"] = {**book.scoreboard(snaps), "win_rate": None}
         out["curve"] = book.curve(snaps)
+        out["book"] = name
         return out
 
     number = account.get("account_number")
@@ -120,15 +152,17 @@ def portfolio(supa, now: datetime | None = None) -> dict:
     except Exception:  # noqa: BLE001 -- no SPY price: the curve ends at the last snapshot
         pass
     try:
-        fills = tagged_fills(supa)[0]
+        fills = tagged_fills(supa, book_name=name)[0]
         trades, lots = book.closed_trades(fills), book.open_lots(fills)
     except Exception:  # noqa: BLE001
         trades, lots = None, None
     rows = book.positions_view(account, positions, lots)
     score = book.scoreboard(snaps)
     score["equity"] = float(account["equity"])
+    record = _record_account(name)
     return {
-        "state": "live" if number and number == _record_account() else "pre_start",
+        "book": name,
+        "state": "live" if number and (number == record or (not record and name != "main")) else "pre_start",
         "as_of": now.isoformat(),
         "account_number": number,
         "scoreboard": {**score, "win_rate": book.win_rate(trades) if trades is not None else None},
@@ -166,12 +200,16 @@ def _order_row(o: dict, titles: dict[int, str]) -> dict:
             "source": _order_source(o.get("client_order_id") or "", titles)}
 
 
-def activity(supa, now: datetime | None = None) -> dict:
+@_with_book
+def activity(supa, now: datetime | None = None, book_name: str | None = None) -> dict:
     """The Trades and Orders page payload: working orders, the recent order tape, and
     closed trades. The page carried only closed trades until 2026-11-02, so with no
     exits yet it rendered empty despite a book full of resting and filled orders."""
     now = now or datetime.now(UTC)
-    empty = {"state": "not_connected", "as_of": None, "open": [], "recent": [], "trades": []}
+    from tradehub.portfolio.books import resolve
+
+    name = resolve(book_name)
+    empty = {"state": "not_connected", "as_of": None, "book": name, "open": [], "recent": [], "trades": []}
     try:
         orders = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500})
     except AccountNotConnected:
@@ -183,31 +221,40 @@ def activity(supa, now: datetime | None = None) -> dict:
     except Exception:  # noqa: BLE001 -- attribution is decoration; the tape still reads
         titles = {}
     rows = [_order_row(o, titles) for o in orders]
-    return {"state": "live", "as_of": now.isoformat(),
+    return {"state": "live", "as_of": now.isoformat(), "book": name,
             "open": [r for r in rows if r["status"] not in _TERMINAL],
             "recent": rows[:50],
-            "trades": closed(supa, now)["trades"]}
+            "trades": closed(supa, now, book_name=name)["trades"]}
 
 
-def closed(supa, now: datetime | None = None) -> dict:
+@_with_book
+def closed(supa, now: datetime | None = None, book_name: str | None = None) -> dict:
+    from tradehub.portfolio.books import resolve
+
+    name = resolve(book_name)
     now = now or datetime.now(UTC)
     try:
-        trades = book.closed_trades(tagged_fills(supa)[0])
+        trades = book.closed_trades(tagged_fills(supa, book_name=name)[0])
     except AccountNotConnected:
-        return {"state": "not_connected", "as_of": None, "trades": []}
+        return {"state": "not_connected", "as_of": None, "book": name, "trades": []}
     except Exception:  # noqa: BLE001
-        return {"state": "stale", "as_of": None, "trades": []}
+        return {"state": "stale", "as_of": None, "book": name, "trades": []}
     trades.sort(key=lambda t: t["exited_at"], reverse=True)
-    return {"state": "live", "as_of": now.isoformat(), "trades": trades}
+    return {"state": "live", "as_of": now.isoformat(), "book": name, "trades": trades}
 
 
-def take_snapshot(supa, now: datetime | None = None) -> dict | None:
+@_with_book
+def take_snapshot(supa, now: datetime | None = None, book_name: str | None = None) -> dict | None:
     """Insert one snapshot of the paper account. None when there is no account to snapshot."""
+    from tradehub.portfolio.books import resolve
+
+    name = resolve(book_name)
     try:
         account = paper_get("/v2/account")
     except AccountNotConnected:
         return None
     row = {"taken_at": (now or datetime.now(UTC)).isoformat(), "account_number": account["account_number"],
-           "equity": float(account["equity"]), "cash": float(account["cash"]), "spy_price": latest_spy_price()}
+           "equity": float(account["equity"]), "cash": float(account["cash"]),
+           "spy_price": latest_spy_price()}
     supa.table(SNAPSHOTS).insert(row).execute()
     return row

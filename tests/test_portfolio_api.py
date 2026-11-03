@@ -142,7 +142,7 @@ def test_closed_endpoint_newest_first_and_not_connected(client_with, monkeypatch
     body = c.get("/api/portfolio/closed").json()
     assert body["state"] == "live" and [t["symbol"] for t in body["trades"]] == ["B", "A"]
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
-    assert c.get("/api/portfolio/closed").json() == {"state": "not_connected", "as_of": None, "trades": []}
+    assert c.get("/api/portfolio/closed").json() == {"state": "not_connected", "as_of": None, "book": "main", "trades": []}
 
 
 def test_fill_paging_follows_page_token(monkeypatch):
@@ -161,7 +161,16 @@ MONDAY_10_CT = datetime(2026, 11, 2, 16, 0, tzinfo=UTC)
 
 
 def test_snapshot_job_inserts_one_row(monkeypatch):
-    monkeypatch.setattr(service, "paper_get", alpaca())
+    from tradehub.portfolio import books
+
+    main_fake = alpaca()
+
+    def per_book(path, params=None):
+        if books.resolve() == "big":  # the $1M book has no keys in this test world
+            raise AccountNotConnected("no keys for the big book")
+        return main_fake(path, params)
+
+    monkeypatch.setattr(service, "paper_get", per_book)
     monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
     supa = FakeSupabase()
     assert portfolio_snapshot.main(MONDAY_10_CT, supa) == 0
@@ -293,4 +302,25 @@ def test_activity_endpoint_splits_open_recent_and_trades(client_with, monkeypatc
     assert body["trades"] == []
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
     assert c.get("/api/portfolio/activity").json() == {
-        "state": "not_connected", "as_of": None, "open": [], "recent": [], "trades": []}
+        "state": "not_connected", "as_of": None, "book": "main", "open": [], "recent": [], "trades": []}
+
+
+def test_books_endpoint_lists_both_books(client_with, monkeypatch):
+    from tradehub.portfolio import books
+
+    main_fake = alpaca()
+
+    def per_book(path, params=None):
+        if books.resolve() == "big":
+            raise AccountNotConnected("no keys for the big book")
+        return main_fake(path, params)
+
+    monkeypatch.setattr(service, "paper_get", per_book)
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 500.0)
+    c = client_with(FakeSupabase())
+    body = c.get("/api/portfolio/books").json()
+    assert [b["book"] for b in body["books"]] == ["main", "big"]
+    assert body["books"][0]["label"] == "Main book" and body["books"][0]["state"] == "pre_start"
+    assert body["books"][1]["label"] == "$1M book" and body["books"][1]["state"] == "not_connected"
+    assert c.get("/api/portfolio?book=huge").status_code == 400
+    assert c.get("/api/portfolio?book=big").json()["book"] == "big"

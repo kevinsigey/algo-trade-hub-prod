@@ -294,7 +294,7 @@ def api4(api, monkeypatch):
     client, db, sent = api
     cancels = []
     monkeypatch.setattr(alpaca_paper, "paper_get",
-                        lambda path, params=None: [BROKER_ORDER] if path == "/v2/orders" else {})
+                        lambda path, params=None, **kw: [BROKER_ORDER] if path == "/v2/orders" else {})
     monkeypatch.setattr(paper_orders, "cancel_machine_order",
                         lambda order_id, cid: cancels.append((order_id, cid)))
     return client, db, sent, cancels
@@ -346,7 +346,7 @@ def test_the_open_filter_keeps_only_resting_orders(api4, monkeypatch):
                          params={"status": "open"}).json()["orders"]
     assert [o["client_order_id"] for o in resting] == ["ext-1-run-1"]  # broker says "new"
     from tradehub.portfolio import alpaca_paper
-    monkeypatch.setattr(alpaca_paper, "paper_get", lambda path, params=None: [])
+    monkeypatch.setattr(alpaca_paper, "paper_get", lambda path, params=None, **kw: [])
     # Outside the broker window the status reads unknown: never presented as resting.
     assert client.get("/api/v1/orders", headers=headers,
                       params={"status": "open"}).json()["orders"] == []
@@ -363,7 +363,7 @@ def test_open_orders_lists_the_whole_broker_book(api4, monkeypatch):
               "status": "new", "submitted_at": "2026-11-02T14:31:00+00:00",
               "filled_avg_price": None}
 
-    def fake_get(path, params=None):
+    def fake_get(path, params=None, **kw):
         if path == "/v2/orders" and (params or {}).get("status") == "open":
             return [BROKER_ORDER, manual]
         return [BROKER_ORDER] if path == "/v2/orders" else {}
@@ -385,7 +385,7 @@ def test_the_admin_open_orders_endpoint_reads_the_broker_book(api4, monkeypatch)
     from tradehub.portfolio import alpaca_paper
 
     monkeypatch.setattr(alpaca_paper, "paper_get",
-                        lambda path, params=None: [BROKER_ORDER] if path == "/v2/orders" else {})
+                        lambda path, params=None, **kw: [BROKER_ORDER] if path == "/v2/orders" else {})
     main.app.dependency_overrides[admin.require_admin] = lambda: {"email": "k"}
     client, db, _, _ = api4
     resp = client.get("/api/portfolio/open-orders")

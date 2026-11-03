@@ -239,6 +239,20 @@ export interface PaperOrder {
   alpaca_order_id: string | null;
 }
 
+/** One book's live state for an idea (second book, 2026-11-02): the books are
+ * independent -- an idea can be live on either, both, or neither, at different
+ * sizes. Main reads off the idea row; other books read their own activation. */
+export interface BookLiveState {
+  live_at: string | null;
+  size_pct: number | null;
+  auto_orders: boolean;
+  killed_at: string | null;
+  /** The gate record stored when the idea went live on this book (an override
+   * leaves its deliberate-call record here); null when it never went live. */
+  gate: Record<string, unknown> | null;
+  orders_enabled: boolean;
+}
+
 export interface IdeaDetail {
   idea: Idea;
   runs: Run[];
@@ -246,6 +260,8 @@ export interface IdeaDetail {
   shadow?: ShadowSummary | null;
   orders_enabled?: boolean;
   orders?: PaperOrder[];
+  /** Per-book live state, keyed by book name ("main", "big"). */
+  books?: { main: BookLiveState; big: BookLiveState };
 }
 
 export interface GateResult {
@@ -558,6 +574,8 @@ export interface PublicIdea {
   live_at: string | null;
   tracked_at: string | null;
   killed_at: string | null;
+  /** The books this idea is live on right now (subset of ["main", "big"]). */
+  live_books?: string[];
   live: ShadowSummary | null;
 }
 

@@ -26,6 +26,7 @@ import {
   rulesText,
   specRules,
   verdictTone,
+  type BookLiveState,
   type Claim,
   type Condition,
   type Execution,
@@ -1064,7 +1065,127 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
         </div>
       )}
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+
+      {detail.books?.big && (passed || detail.books.big.live_at) && (
+        <BigBookPanel id={id} state={detail.books.big} passed={passed} onChange={onChange} />
+      )}
     </section>
+  );
+}
+
+/** The $1M book's live block (second book, 2026-11-02): the same gate, size,
+ * auto-orders switch and kill button as the main book above, driven by the
+ * idea's own activation on that book -- the books are independent, so this
+ * block has its own size, its own gate check and its own record. */
+function BigBookPanel({ id, state, passed, onChange }: {
+  id: string; state: BookLiveState; passed: boolean; onChange: () => void;
+}) {
+  const [size, setSize] = useState("");
+  const [gate, setGate] = useState<GateResult | null>(null);
+  const [override, setOverride] = useState(false);
+  const [overrideNote, setOverrideNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
+  const goLive = () => {
+    if (override && !window.confirm("Override the 63-day gate for the $1M book? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse.")) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/live`, {
+      method: "POST",
+      body: JSON.stringify({ size_pct: Number(size), book: "big", ...(override ? { override: true, override_note: overrideNote || undefined } : {}) }),
+    }));
+  };
+  const toggleAuto = () => {
+    const on = !state.auto_orders;
+    if (on && !window.confirm(`Turn on automatic paper orders on the $1M book? Each weekday morning the hub trades this idea's rule in that account at ${state.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/auto`, { method: "POST", body: JSON.stringify({ on, book: "big" }) }));
+  };
+  const kill = () => {
+    if (!window.confirm("Kill this idea on the $1M book? Its record on that book stops today and stays on the record. If it traded automatically there, its positions in that account are closed at the next open. The main book is untouched.")) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/kill?book=big`, { method: "POST" }));
+  };
+
+  return (
+    <div className="border-t border-slate-800 pt-4">
+      <h2 className="text-sm font-semibold text-white">$1M book</h2>
+      {passed && !state.live_at && (
+        <div>
+          <p className="mt-1 text-xs text-slate-400">The same live-paper gate as the main book: the claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of that account or less. The size is this book's own.</p>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <label className="text-xs text-slate-300">
+              Size (% of the $1M account)
+              <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} aria-label="Size on the $1M book" />
+            </label>
+            <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
+            <button type="button" disabled={busy || (gate?.status !== "ready" && !override)} onClick={goLive}
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
+              Go live on the $1M book
+            </button>
+          </div>
+          {gate && (
+            <ul className="mt-2 space-y-1 text-sm">
+              {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
+              {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
+              {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the $1M book's record.</li>}
+            </ul>
+          )}
+          {gate && gate.status !== "ready" && (
+            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+              <label className="flex items-start gap-2 text-sm text-amber-200">
+                <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5" />
+                <span>
+                  Override the gate — my deliberate call. Bypasses only the 63-day wait; the server still refuses
+                  a claim that failed on new data or a position over 25%. The override is recorded on the idea.
+                </span>
+              </label>
+              {override && (
+                <input type="text" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
+                  placeholder="Why (recorded with the override)" className={`${field} mt-2 w-full`} maxLength={500} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {state.live_at && (
+        <div className="mt-2 space-y-2">
+          <p className="text-sm text-slate-300">
+            {state.killed_at ? `Killed on the $1M book ${state.killed_at.slice(0, 10)}` : "Live on the $1M book"} · since {state.live_at.slice(0, 10)} · size {state.size_pct}%
+          </p>
+          {!state.killed_at && (
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-slate-300">Automatic paper orders on this book: <strong className={state.auto_orders ? "text-emerald-300" : "text-slate-400"}>{state.auto_orders ? "on" : "off"}</strong></span>
+                <button type="button" className={button} disabled={busy} onClick={toggleAuto}>
+                  {state.auto_orders ? "Turn off automatic paper orders" : "Turn on automatic paper orders"}
+                </button>
+              </div>
+              {!state.orders_enabled && (
+                <p className="text-xs text-amber-300">The server's paper-order switch for this book is off, so nothing is sent until it's turned on.</p>
+              )}
+            </div>
+          )}
+          {!state.killed_at && (
+            <button type="button" className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" disabled={busy} onClick={kill}>
+              Kill this idea on the $1M book
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+    </div>
   );
 }
 

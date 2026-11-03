@@ -17,7 +17,7 @@ const ROWS = [
     result_line: "+25.8 pts/yr vs SPY", result_value: 25.8, result_p: 0.03, status: "backtest", live_at: null, killed_at: null, live: null },
   { id: 1, title: "Gold beats SPY", published_at: "2026-11-01", claim: "beats_benchmark", kind: "event", latest_verdict: "PASS", variations: 2,
     result_line: "+5.0 pts/yr vs SPY", result_value: 5.0, result_p: 0.0001,
-    status: "live", live_at: "2026-11-02", killed_at: null, live: LIVE },
+    status: "live", live_at: "2026-11-02", killed_at: null, live_books: ["main", "big"], live: LIVE },
 ];
 
 function serve(body: unknown, status = 200) {
@@ -41,6 +41,9 @@ describe("Ideas record", () => {
     expect(screen.getByText(/Long-only rules/)).toBeInTheDocument();
     expect(screen.getByText("FAIL")).toBeInTheDocument();
     expect(screen.getByText("Backtest only")).toBeInTheDocument();
+    // The live idea names each book it trades on; the backtest-only one names none.
+    expect(screen.getByText("Live · Main")).toBeInTheDocument();
+    expect(screen.getByText("Live · $1M")).toBeInTheDocument();
     expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
     expect(screen.getByText("+4.2%")).toBeInTheDocument();
     expect(screen.getByText(/as of 2027-02-12/)).toBeInTheDocument();

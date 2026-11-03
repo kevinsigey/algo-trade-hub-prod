@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { adminJson } from "@/lib/workshop";
@@ -15,6 +15,8 @@ import {
   fmtUsd,
   stateLabel,
   tone,
+  type BookHeadline,
+  type BooksPayload,
   type ClosedPayload,
   type PortfolioPayload,
   type PositionRow,
@@ -82,30 +84,102 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
   );
 }
 
+/** The books' short names for the switcher and links (the labels themselves
+ * come from the books payload; these are only for the two known books). */
+const BOOK_SHORT: Record<string, string> = { main: "Main book", big: "$1M book" };
+
+/** Master view cards (Kevin, 2026-11-02): one headline card per book -- state,
+ * equity, return, positions, live ideas -- and a click opens that book's own
+ * page. A book that isn't connected says so plainly instead of showing zeros. */
+function BookCards() {
+  const { data } = useApi<BooksPayload>("/api/portfolio/books");
+  const books = Array.isArray(data?.books) ? data.books : [];
+  if (books.length === 0) return null;
+  return (
+    <div className="mt-4 grid gap-3 md:grid-cols-2">
+      {books.map((b: BookHeadline) => (
+        <Link key={b.book} to={`/portfolio?book=${b.book}`}
+          className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 transition-colors hover:border-slate-600">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-base font-semibold text-white">{b.label}</span>
+            <span className="text-xs text-slate-500">{b.detail}{b.account_number ? ` · ${b.account_number}` : ""}</span>
+          </div>
+          {b.state === "not_connected" ? (
+            <p className="mt-3 text-sm text-slate-400">Paper account not connected — no numbers yet.</p>
+          ) : (
+            <>
+              <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+                <span className="text-3xl font-semibold tabular-nums tracking-tight text-white">{fmtUsd(b.equity, { whole: true })}</span>
+                <span className={`text-lg font-semibold tabular-nums ${tone(b.return_pct)}`}>{fmtPct(b.return_pct)}</span>
+                <span className="text-sm text-slate-400">{b.positions} positions · {b.live_ideas} live {b.live_ideas === 1 ? "idea" : "ideas"}</span>
+              </div>
+              <p className={`mt-2 text-xs ${b.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>{stateLabel(b.state, b.as_of)}</p>
+            </>
+          )}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** The way back and across on a single book's page: Master (both books) or the other book. */
+function BookSwitcher({ book }: { book: string }) {
+  const item = (to: string, label: string, active: boolean) => (
+    <Link key={to} to={to} aria-current={active ? "page" : undefined}
+      className={`rounded-lg border px-3 py-1.5 text-sm ${active ? "border-emerald-500/40 bg-emerald-500/10 font-semibold text-emerald-300" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}>
+      {label}
+    </Link>
+  );
+  return (
+    <nav aria-label="Paper books" className="mt-4 flex flex-wrap items-center gap-2">
+      {item("/portfolio", "Master — both books", false)}
+      {item("/portfolio?book=main", BOOK_SHORT.main, book === "main")}
+      {item("/portfolio?book=big", BOOK_SHORT.big, book === "big")}
+    </nav>
+  );
+}
+
 export default function Portfolio() {
-  const { data, error, loading } = useApi<PortfolioPayload>("/api/portfolio");
-  const [liveIdeas, setLiveIdeas] = useState<{ id: number; title: string; size_pct: number | null }[]>([]);
+  const [searchParams] = useSearchParams();
+  const param = searchParams.get("book");
+  const book = param === "main" || param === "big" ? param : null;
+  const { data, error, loading } = useApi<PortfolioPayload>(book ? `/api/portfolio?book=${book}` : "/api/portfolio");
+  type IdeaRow = { id: number; title: string; size_pct: number | null; live_at: string | null; killed_at: string | null; auto_orders: boolean; books?: { big?: { live_at: string | null; size_pct: number | null; auto_orders: boolean; killed_at: string | null } } };
+  const [ideaRows, setIdeaRows] = useState<IdeaRow[]>([]);
   useEffect(() => {
     let cancelled = false;
     // Admin only: a signed-out visitor gets a 401 and simply sees no list.
-    adminJson<{ id: number; title: string; size_pct: number | null; live_at: string | null; killed_at: string | null; auto_orders: boolean }[]>("/api/workshop/ideas")
-      .then((rows) => {
-        if (!cancelled) setLiveIdeas(rows.filter((r) => r.live_at && !r.killed_at && r.auto_orders));
-      })
+    adminJson<IdeaRow[]>("/api/workshop/ideas")
+      .then((rows) => { if (!cancelled) setIdeaRows(Array.isArray(rows) ? rows : []); })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, []);
+  // The ideas trading on the book in view: main reads the idea rows, the $1M book
+  // reads its own activations -- different ideas at different sizes per book.
+  const liveIdeas = ideaRows.flatMap((r) => {
+    if (book === "big") {
+      const a = r.books?.big;
+      return a && a.live_at && !a.killed_at && a.auto_orders
+        ? [{ id: r.id, title: r.title, size_pct: a.size_pct }] : [];
+    }
+    return r.live_at && !r.killed_at && r.auto_orders
+      ? [{ id: r.id, title: r.title, size_pct: r.size_pct }] : [];
+  });
 
   return (
     <div className="mx-auto max-w-[92rem] px-4 py-6 md:px-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
-        <p className="text-sm text-slate-400">A paper account, in full, on one screen. Are we beating SPY?</p>
+        <p className="text-sm text-slate-400">
+          {book ? `${BOOK_SHORT[book]} in full, on one screen. Are we beating SPY?` : "Two paper accounts, in full, on one screen. Are we beating SPY?"}
+        </p>
       </div>
 
       <StrategyHqStrip />
+
+      {book ? <BookSwitcher book={book} /> : <BookCards />}
 
       {loading && (
         <div className="mt-8 flex items-center gap-2 text-slate-400">
@@ -123,12 +197,19 @@ export default function Portfolio() {
         </div>
       )}
 
-      {data && data.state !== "not_connected" && data.scoreboard && <Body data={data} liveIdeas={liveIdeas} />}
+      {data && data.state !== "not_connected" && data.scoreboard && (
+        <Body data={data} liveIdeas={liveIdeas} book={book} />
+      )}
     </div>
   );
 }
 
-function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: number; title: string; size_pct: number | null }[] }) {
+function Body({ data, liveIdeas, book }: {
+  data: PortfolioPayload;
+  liveIdeas: { id: number; title: string; size_pct: number | null }[];
+  /** The book this page is scoped to; null on the master view (which shows the main book below the cards). */
+  book: string | null;
+}) {
   const s = data.scoreboard;
   const cashRow = data.positions.find((p) => p.symbol === "Cash");
   const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
@@ -194,7 +275,7 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
 
       <Box title={`Every position · ${count}`} className="xl:col-span-8"
            right={(
-             <Link to="/portfolio/closed" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+             <Link to={book ? `/portfolio/closed?book=${book}` : "/portfolio/closed"} className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
                Trades and Orders <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
              </Link>
            )}>
@@ -215,19 +296,21 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
             </ul>
           </Box>
         )}
-        <RecentTrades />
-        <StagedOrders />
+        <RecentTrades book={book} />
+        {/* Staged orders and the hand order form read and place on the main
+            book only (their endpoints carry no book), so the $1M page omits them. */}
+        <StagedOrders book={book ?? "main"} />
       </div>
 
-      <OrderForm />
+      <OrderForm book={book ?? "main"} />
     </div>
   );
 }
 
 /** The last few closed trades, as a box (the full record stays one click
  * away on Trades and Orders). */
-function RecentTrades() {
-  const { data } = useApi<ClosedPayload>("/api/portfolio/closed");
+function RecentTrades({ book }: { book: string | null }) {
+  const { data } = useApi<ClosedPayload>(book ? `/api/portfolio/closed?book=${book}` : "/api/portfolio/closed");
   if (!data || data.state === "not_connected" || !Array.isArray(data.trades)) return null;
   const total = data.trades.reduce((sum, t) => sum + t.pnl, 0);
   const recent = [...data.trades].slice(-6).reverse();
@@ -269,17 +352,17 @@ type OpenOrder = {
  * read from the broker, not from the hub's own records. Signed-in only, like the
  * order form: /api/admin/me gates it, and a failed read simply shows nothing.
  */
-function StagedOrders() {
+function StagedOrders({ book }: { book: string }) {
   const [orders, setOrders] = useState<OpenOrder[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     adminJson<{ email: string }>("/api/admin/me")
-      .then(() => adminJson<{ orders: OpenOrder[] }>("/api/portfolio/open-orders"))
+      .then(() => adminJson<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
       .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, []);
+  }, [book]);
 
   if (orders === null) return null;
   const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
@@ -321,7 +404,7 @@ function StagedOrders() {
 const inputCls = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-white";
 const labelCls = "flex flex-col gap-1 text-xs text-slate-400";
 
-function OrderForm() {
+function OrderForm({ book }: { book: string }) {
   const [signedIn, setSignedIn] = useState(false);
   const [ideas, setIdeas] = useState<{ id: number; title: string }[]>([]);
   const [symbol, setSymbol] = useState("");
@@ -364,6 +447,7 @@ function OrderForm() {
       };
       if (orderType === "limit") body.limit_price = Number(limitPrice);
       if (ideaId) body.idea_id = Number(ideaId);
+      body.book = book;
       const placed = await adminJson<{ client_order_id: string }>("/api/portfolio/orders", {
         method: "POST", body: JSON.stringify(body),
       });

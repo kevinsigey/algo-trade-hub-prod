@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
 import { useApi } from "@/hooks/usePaperPortfolio";
@@ -58,15 +58,27 @@ function OrderTable({ rows, showStatus }: { rows: ActivityOrder[]; showStatus: b
 }
 
 export default function ClosedTrades() {
-  const { data, error, loading } = useApi<ActivityPayload>("/api/portfolio/activity");
+  const [searchParams] = useSearchParams();
+  const param = searchParams.get("book");
+  const book = param === "big" ? "big" : "main";
+  const { data, error, loading } = useApi<ActivityPayload>(`/api/portfolio/activity?book=${book}`);
   const total = data?.trades.reduce((sum, t) => sum + t.pnl, 0) ?? null;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
-      <Link to="/" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
+      <Link to={param ? `/portfolio?book=${book}` : "/"} className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Portfolio
       </Link>
       <h1 className="mt-3 text-2xl font-bold tracking-tight text-white">Trades and Orders</h1>
+
+      <nav aria-label="Paper books" className="mt-3 flex flex-wrap items-center gap-2">
+        {([["main", "Main book"], ["big", "$1M book"]] as const).map(([name, label]) => (
+          <Link key={name} to={`/portfolio/closed?book=${name}`} aria-current={book === name ? "page" : undefined}
+            className={`rounded-lg border px-3 py-1.5 text-sm ${book === name ? "border-emerald-500/40 bg-emerald-500/10 font-semibold text-emerald-300" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}>
+            {label}
+          </Link>
+        ))}
+      </nav>
 
       {loading && (
         <div className="mt-8 flex items-center gap-2 text-slate-400">
