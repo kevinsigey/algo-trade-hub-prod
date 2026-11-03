@@ -94,6 +94,32 @@ def wti_last_price(
     return None
 
 
+def wti_minute_tape(
+    *,
+    history_fn: Callable[[], Any] = _default_intraday_history,
+) -> list[tuple[datetime, float]]:
+    """The day's CL=F 1-minute closes, oldest first, as (bar time, close).
+
+    The oil ITM line's stability check reads this: a strike only counts as
+    clear if the tape stayed on one side of it for the trailing minutes.
+    Fail-soft: a missing or malformed frame is an empty tape, and callers
+    treat that as "no pick", never as a clear strike."""
+    try:
+        frame = history_fn()
+        if frame is None or "Close" not in frame:
+            return []
+        out: list[tuple[datetime, float]] = []
+        for stamp, close in frame["Close"].items():
+            if close is None or close != close:  # NaN check without pandas.
+                continue
+            stamp = stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
+            out.append((stamp.astimezone(timezone.utc), float(close)))
+        out.sort(key=lambda t: t[0])
+        return out
+    except Exception:  # noqa: BLE001 -- a tape hiccup is "no pick", not an error
+        return []
+
+
 def wti_closes(
     start: date | None = None,
     end: date | None = None,

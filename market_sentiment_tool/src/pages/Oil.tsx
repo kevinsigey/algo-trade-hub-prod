@@ -55,6 +55,11 @@ function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null): num
 
 
 interface LiveRow { strike: number; ours: number; market: number | null }
+interface ItmPick { strike: number; ours: number; market: number; gap_pts: number; clear_bars: number }
+interface ItmRecord {
+  frozen: number; settled: number; hits: number;
+  hit_rate: number | null; ev_per_dollar: number | null;
+}
 interface LiveLadder {
   state: string;
   reason?: string;
@@ -66,6 +71,7 @@ interface LiveLadder {
   our_level?: number | null;
   market_level?: number | null;
   geo?: { stress_score: number; k: number; partial: boolean } | null;
+  itm?: ItmPick | null;
   rows?: LiveRow[];
 }
 
@@ -133,7 +139,7 @@ function LiveHero() {
         )}
       </div>
 
-      <div className="mt-4 grid gap-4 text-center sm:grid-cols-3">
+      <div className={`mt-4 grid gap-4 text-center ${live.itm ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Our 50% level</div>
           <div className="mt-1 text-4xl font-bold tabular-nums text-white">{levelText(live.our_level)}</div>
@@ -151,6 +157,15 @@ function LiveHero() {
           <div className="mt-1 text-4xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
           <div className="mt-1 text-xs text-slate-500">the print our probabilities are priced off, right now</div>
         </div>
+        {live.itm && (
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-400">In-the-money line</div>
+            <div className="mt-1 text-4xl font-bold tabular-nums text-emerald-300">${live.itm.strike.toFixed(2)}</div>
+            <div className="mt-1 text-xs text-slate-500">
+              we say {(live.itm.ours * 100).toFixed(0)}% · Kalshi {(live.itm.market * 100).toFixed(0)}% (+{live.itm.gap_pts.toFixed(0)}) · clear of the tape {live.itm.clear_bars} min
+            </div>
+          </div>
+        )}
       </div>
 
       <table className="mt-4 w-full text-sm tabular-nums">
@@ -165,11 +180,13 @@ function LiveHero() {
         <tbody>
           {shown.map((r) => {
             const isLevel = live.our_level != null && Math.abs(r.strike - live.our_level) === Math.min(...shown.map((x) => Math.abs(x.strike - (live.our_level ?? 0))));
+            const isItm = live.itm != null && r.strike === live.itm.strike;
             return (
-              <tr key={r.strike} className={`border-t border-slate-800/60 ${isLevel ? "bg-slate-800/40" : ""}`}>
+              <tr key={r.strike} className={`border-t border-slate-800/60 ${isItm ? "bg-emerald-500/10" : isLevel ? "bg-slate-800/40" : ""}`}>
                 <td className="py-1.5 font-mono text-white">
                   ${r.strike.toFixed(2)}
                   {isLevel && <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-amber-300">our 50% level</span>}
+                  {isItm && <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-300">ITM line</span>}
                 </td>
                 <td className="py-1.5 pr-2">
                   <span className="flex items-center gap-2">
@@ -199,6 +216,29 @@ function LiveHero() {
         Recomputed every 30 seconds. Inside the last 20 minutes, this is already the next hour.
       </p>
     </section>
+  );
+}
+
+function ItmRecordStrip() {
+  const [rec, setRec] = useState<ItmRecord | null>(null);
+  useEffect(() => {
+    let stop = false;
+    getJson<ItmRecord>("/api/oil/itm-record").then((r) => { if (!stop) setRec(r); }).catch(() => {});
+    return () => { stop = true; };
+  }, []);
+  if (!rec || typeof rec.frozen !== "number" || rec.frozen === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-[13px] text-slate-400">
+      <span className="font-semibold text-emerald-300">ITM line record</span>
+      <span>{rec.frozen} frozen · {rec.settled} settled</span>
+      {rec.hit_rate !== null && <span>{rec.hits} hit ({(rec.hit_rate * 100).toFixed(0)}%)</span>}
+      {rec.ev_per_dollar !== null && (
+        <span>at Kalshi's price: <span className={rec.ev_per_dollar >= 0 ? "text-emerald-300" : "text-rose-300"}>
+          {rec.ev_per_dollar >= 0 ? "+" : "−"}${Math.abs(rec.ev_per_dollar).toFixed(2)} per $1
+        </span></span>
+      )}
+      <span className="text-slate-600">a calibration record — it never trades</span>
+    </div>
   );
 }
 
@@ -387,6 +427,7 @@ export default function Oil() {
       </header>
 
       <LiveHero />
+      <ItmRecordStrip />
 
       <div>
         <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">The frozen record — locked in ~65 minutes before each hour, and graded</div>
