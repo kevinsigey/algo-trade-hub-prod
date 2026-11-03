@@ -147,7 +147,7 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
 
             {(result.options_legs ?? []).length > 0 && (
               <p className="mt-3 text-sm text-slate-300">
-                Option legs (model-priced, placed manually): {(result.options_legs ?? []).map(legText).join(" · ")}
+                Option legs (model-priced): {(result.options_legs ?? []).map(legText).join(" · ")}
               </p>
             )}
             {(result.notes ?? []).map((n) => <p key={n} className="mt-1 text-xs text-slate-500">{n}</p>)}

@@ -536,3 +536,12 @@ def test_big_book_auto_needs_a_big_book_activation(passed):
     c, db, i, gate, _ = passed
     assert c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"}).status_code == 409
     assert c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "huge"}).status_code == 400
+
+
+def test_go_live_refuses_a_size_that_cannot_trade_the_tested_options(passed, monkeypatch):
+    c, db, i, _, _ = passed
+    db.db["idea_runs"][0]["spec"] = {**db.db["idea_runs"][0]["spec"], "options": [{"underlying": "GLD", "kind": "call", "side": "buy", "strike_pct": 105, "days_to_expiry": 30}]}
+    monkeypatch.setattr(main, "_play_check", lambda *a, **k: {"structure_problems": ["SPY call: live would trade 0."]})
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 10})
+    assert r.status_code == 409 and "trade 0" in r.json()["detail"]
+    assert not db.db["ideas"][0].get("live_at")

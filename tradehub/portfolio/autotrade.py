@@ -22,7 +22,10 @@ from tradehub.workshop.spec import Execution
 
 MAX_POSITION_PCT = 25
 MIN_ORDER_USD = 100
-TIF = {"open": "opg", "close": "cls", "day": "day"}
+# A market-at-open order ("opg") is cancelled if it misses the auction: on Alpaca paper 2026-11-03,
+# 0/13 SPY and 0/49 NVDA expired. A day order sent before the bell fills at the open and keeps
+# working if it doesn't fill at once. Close keeps "cls"; the reconcile job flags any that expire.
+TIF = {"open": "day", "close": "cls", "day": "day"}
 
 
 def _row(idea_id: int, symbol: str, qty: float, kind: str, price: float, day: date, ex: Execution,
@@ -174,6 +177,43 @@ def _manual(idea_id: int, occ: str, qty: float, kind: str, day: date, reason: st
     return row
 
 
+def vertical(group: list) -> tuple | None:
+    """(buy_leg, sell_leg) when the group is exactly one defined-risk vertical."""
+    buys = [l for l in group if l.side == "buy"]
+    sells = [l for l in group if l.side == "sell"]
+    if len(buys) != 1 or len(sells) != 1:
+        return None
+    b, s = buys[0], sells[0]
+    protective = b.strike_pct < s.strike_pct if b.kind == "call" else b.strike_pct > s.strike_pct
+    return (b, s) if protective else None
+
+
+def option_structure_problems(legs: list, weights: dict[str, float], size_pct: float, equity: float,
+                              spot: dict[str, float]) -> list[str]:
+    """Why this size can't trade what the backtest tested. The backtest holds fractional contracts;
+    live trades whole ones, with the one-contract minimum for a vertical (see plan_options). A
+    covered call on 13 shares never writes; a spread on 49 shares is twice the tested size."""
+    budget = max(equity, 0) * size_pct / 100
+    groups: dict[tuple, list] = {}
+    for leg in legs:
+        groups.setdefault((leg.underlying, leg.kind), []).append(leg)
+    problems = []
+    for (underlying, kind), group in sorted(groups.items()):
+        price, weight = spot.get(underlying, 0.0), weights.get(underlying, 0.0)
+        if price <= 0 or weight <= 0:
+            continue
+        shares = math.floor(weight * budget / price)
+        exact = group[0].qty_per_share * shares / 100
+        live = max(1, math.floor(exact)) if vertical(group) else math.floor(exact)
+        if exact > 0 and 0.75 <= live / exact <= 1.25:
+            continue
+        needed = 100 / group[0].qty_per_share * price / weight
+        problems.append(f"{underlying} {kind}: this size holds {shares} shares, or {exact:.2f} contracts as tested, "
+                        f"but live would trade {live}. One contract matches at about ${needed:,.0f} "
+                        f"({needed / equity * 100:.1f}% of the book).")
+    return problems
+
+
 def plan_options(idea_id: int, legs: list, weights: dict[str, float], size_pct: float, equity: float,
                  spot: dict[str, float], held_contracts: dict[str, float], day: date,
                  select, mid) -> list[dict]:
@@ -198,16 +238,6 @@ def plan_options(idea_id: int, legs: list, weights: dict[str, float], size_pct: 
     groups: dict[tuple, list] = {}
     for leg in legs:
         groups.setdefault((leg.underlying, leg.kind), []).append(leg)
-
-    def vertical(group: list) -> tuple | None:
-        """(buy_leg, sell_leg) when the group is exactly one defined-risk vertical."""
-        buys = [l for l in group if l.side == "buy"]
-        sells = [l for l in group if l.side == "sell"]
-        if len(buys) != 1 or len(sells) != 1:
-            return None
-        b, s = buys[0], sells[0]
-        protective = b.strike_pct < s.strike_pct if b.kind == "call" else b.strike_pct > s.strike_pct
-        return (b, s) if protective else None
 
     closes: list[dict] = []
     opens: list[dict] = []
