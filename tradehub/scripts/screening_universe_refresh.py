@@ -29,13 +29,17 @@ def _write(name: str, tickers: list[str], source: str) -> None:
 
 
 def _wiki_tickers(url: str, column: str) -> list[str]:
+    # Wikipedia renames the header between pages and over time (the Nasdaq-100
+    # page's constituents table reads "Symbol" now, not "Ticker"): accept
+    # either header, on any table on the page.
     html = requests.get(url, headers=UA, timeout=30).text
     tables = pd.read_html(io.StringIO(html))
-    for t in tables:
-        cols = [str(c).lower() for c in t.columns]
-        if column.lower() in cols:
-            col = t.columns[cols.index(column.lower())]
-            return [str(x).strip().replace(".", "-") for x in t[col] if str(x).strip()]
+    for want in (column, "Symbol", "Ticker"):
+        for t in tables:
+            cols = [str(c).lower() for c in t.columns]
+            if want.lower() in cols:
+                col = t.columns[cols.index(want.lower())]
+                return [str(x).strip().replace(".", "-") for x in t[col] if str(x).strip()]
     raise ValueError(f"no '{column}' table at {url}")
 
 
@@ -57,8 +61,18 @@ def main() -> int:
         except Exception as exc:
             failed.append({name: str(exc)[:200]})
     try:
-        raw = requests.get("https://www.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0",
-                           headers={**UA, "Accept": "application/json"}, timeout=60).json()
+        # The full listed file is slow through the proxy; a long read timeout
+        # and one retry (the 2026-11-02 first run timed out at 60s).
+        raw = None
+        for attempt in range(2):
+            try:
+                raw = requests.get("https://www.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0",
+                                   headers={**UA, "Accept": "application/json"}, timeout=240).json()
+                break
+            except Exception:
+                if attempt == 1:
+                    raise
+        assert raw is not None
         tickers = [r["symbol"].strip() for r in raw["data"]["table"]["rows"] if r.get("symbol")]
         if len(tickers) < 1000:
             raise ValueError(f"suspiciously short list ({len(tickers)})")
