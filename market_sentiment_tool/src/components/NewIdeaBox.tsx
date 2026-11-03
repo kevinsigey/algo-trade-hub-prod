@@ -54,6 +54,7 @@ export default function NewIdeaBox() {
           value={text}
           onChange={(e) => { setText(e.target.value); setCheck(null); setCheckFailed(null); }}
           rows={2}
+          disabled={busy === "check"}
           placeholder="Gold does better than stocks when rates are going up."
           className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
         />

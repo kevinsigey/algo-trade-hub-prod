@@ -25,6 +25,10 @@ class Q:
         self.sort = (col, desc)
         return self
 
+    def range(self, lo, hi):
+        self.bounds = (lo, hi)
+        return self
+
     def insert(self, row):
         self.row = row
         return self
@@ -49,6 +53,8 @@ class Q:
                 r.update(self.patch)
         if self.sort:
             out.sort(key=lambda r: r[self.sort[0]], reverse=self.sort[1])
+        if getattr(self, "bounds", None):
+            out = out[self.bounds[0]:self.bounds[1] + 1]
         return type("R", (), {"data": out})()
 
 
