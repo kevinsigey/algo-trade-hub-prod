@@ -1722,8 +1722,12 @@ def get_critic_summary(supabase=Depends(get_supabase)):
             counts[rec] += 1
         rows.append({"idea_id": idea_id, "title": titles.get(idea_id), "book": book,
                      "recommendation": rec, "degradation": payload.get("degradation"),
+                     "days": (payload.get("live") or {}).get("days"),
                      "at": payload.get("at")})
-    worst = sorted((r for r in rows if r["degradation"] is not None),
+    from tradehub.workshop.critic import MIN_DAYS
+
+    worst = sorted((r for r in rows if r["degradation"] is not None
+                    and (r["days"] or 0) >= MIN_DAYS),
                    key=lambda r: r["degradation"])[:5]
     return {"counts": counts, "units": len(rows), "worst": worst,
             "at": max((r["at"] for r in rows if r["at"]), default=None)}

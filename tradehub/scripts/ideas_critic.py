@@ -98,13 +98,17 @@ def run(now: datetime, supa, *, closes=data.closes) -> tuple[dict, dict]:
             store.add_critique(supa, idea["id"], unit["book"], payload)
             written.append({"idea_id": idea["id"], "title": idea.get("title"),
                             "book": unit["book"], "recommendation": payload["recommendation"],
-                            "degradation": payload["degradation"]})
+                            "degradation": payload["degradation"],
+                            "days": payload["live"]["days"]})
         except Exception as exc:  # noqa: BLE001 -- reported, retried next week
             failed[key] = f"{type(exc).__name__}: {exc}"
 
     counts = {rec: sum(1 for w in written if w["recommendation"] == rec)
               for rec in ("PAUSE", "WATCH", "HOLD")}
-    worst = sorted((w for w in written if w["degradation"] is not None),
+    # A degrader ranking needs a record long enough to annualize: below
+    # MIN_DAYS the degradation is a couple of days wearing a year's clothes.
+    worst = sorted((w for w in written
+                    if w["degradation"] is not None and w["days"] >= critic.MIN_DAYS),
                    key=lambda w: w["degradation"])[:5]
     return {"at": now.isoformat(), "units": len(written), "counts": counts, "worst": worst}, failed
 
