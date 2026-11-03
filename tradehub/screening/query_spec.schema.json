@@ -1,0 +1,227 @@
+{
+ "$defs": {
+  "fnCall": {
+   "additionalProperties": false,
+   "properties": {
+    "fn": {
+     "type": "string"
+    },
+    "params": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "fn"
+   ],
+   "type": "object"
+  }
+ },
+ "$id": "tradehub/screening query_spec",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "A declarative screen an AI (or a human) can emit from a sentence. fn names and params are validated against catalog.json by screening_lab.spec.",
+ "properties": {
+  "context": {
+   "description": "Macro/regime context functions (kind=context) recorded in the run footer, not filters.",
+   "items": {
+    "$ref": "#/$defs/fnCall"
+   },
+   "type": "array"
+  },
+  "description": {
+   "type": "string"
+  },
+  "filters": {
+   "items": {
+    "additionalProperties": false,
+    "properties": {
+     "fn": {
+      "type": "string"
+     },
+     "op": {
+      "enum": [
+       "lt",
+       "le",
+       "gt",
+       "ge",
+       "eq",
+       "ne",
+       "between",
+       "in",
+       "pct_gte",
+       "pct_lte"
+      ]
+     },
+     "params": {
+      "type": "object"
+     },
+     "value": {}
+    },
+    "required": [
+     "fn",
+     "op",
+     "value"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "limit": {
+   "minimum": 1,
+   "type": "integer"
+  },
+  "name": {
+   "minLength": 1,
+   "type": "string"
+  },
+  "score": {
+   "description": "Composite score = weighted blend of cross-sectional percentile ranks (direction 'low' inverts a component).",
+   "items": {
+    "additionalProperties": false,
+    "properties": {
+     "direction": {
+      "default": "high",
+      "enum": [
+       "high",
+       "low"
+      ]
+     },
+     "fn": {
+      "type": "string"
+     },
+     "params": {
+      "type": "object"
+     },
+     "weight": {
+      "exclusiveMinimum": 0,
+      "type": "number"
+     }
+    },
+    "required": [
+     "fn",
+     "weight"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "sort": {
+   "additionalProperties": false,
+   "properties": {
+    "ascending": {
+     "default": false,
+     "type": "boolean"
+    },
+    "by": {
+     "description": "'score' or the name of any computed column.",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "universe": {
+   "oneOf": [
+    {
+     "additionalProperties": false,
+     "properties": {
+      "tickers": {
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1,
+       "type": "array"
+      },
+      "type": {
+       "const": "list"
+      }
+     },
+     "required": [
+      "type",
+      "tickers"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "index": {
+       "type": "string"
+      },
+      "type": {
+       "const": "index_proxy"
+      }
+     },
+     "required": [
+      "type",
+      "index"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "base": {
+       "type": "object"
+      },
+      "sector": {
+       "type": "string"
+      },
+      "type": {
+       "const": "sector"
+      }
+     },
+     "required": [
+      "type",
+      "sector",
+      "base"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "type": "object",
+     "properties": {
+      "index": {
+       "type": "string"
+      },
+      "type": {
+       "const": "index"
+      }
+     },
+     "required": [
+      "type",
+      "index"
+     ]
+    }
+   ]
+  },
+  "derived": {
+   "type": "array",
+   "description": "Named ratios composed from catalog fields at run time (Kevin, 2026-11-02): expr uses field names, + - * / and parentheses; the formula is stored in the spec.",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+     },
+     "expr": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "name",
+     "expr"
+    ]
+   }
+  }
+ },
+ "required": [
+  "name",
+  "universe"
+ ],
+ "title": "Screening Query Spec",
+ "type": "object"
+}
