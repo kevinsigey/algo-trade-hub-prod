@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { Chip, type Tone } from "@/components/Chip";
 import { JournalDetail } from "@/components/JournalDetail";
 import { getJson } from "@/lib/getJson";
+import ChokepointsMap from "@/components/ChokepointsMap";
 import { NextRelease } from "@/components/NextRelease";
 import { Stat } from "@/components/Stat";
 import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal";
@@ -240,6 +241,8 @@ export default function Oil() {
 
       <NextHourHero ours={ours} market={market} />
       <div className="-mt-3 text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
+
+      <ChokepointsMap />
 
       <NextRelease family="oil" title="Next settlement" />
 
