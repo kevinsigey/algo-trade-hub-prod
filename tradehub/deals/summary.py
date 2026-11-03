@@ -32,7 +32,7 @@ def draft_summary(kind: str, name: str, inputs: dict, outputs: dict, *, post=req
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key:
         raise SummaryUnavailable("the summary writer is not configured on the server (OPENROUTER_API_KEY)")
-    body = {"models": _models(),
+    body = {"models": _models()[:3],  # OpenRouter rejects routes with >3 models (live-verified 400)
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content":
                           f"Kind: {kind}\nName: {name}\nInputs (as entered):\n{json.dumps(inputs, indent=1)}\n"

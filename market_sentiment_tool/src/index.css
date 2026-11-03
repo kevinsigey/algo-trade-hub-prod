@@ -5,6 +5,12 @@
 @tailwind utilities;
 
 @layer base {
+  /* Site-wide readability (Kevin, Nov 2 2026): the hub is read on a laptop;
+     base type scales up ~9% everywhere (all rem-based sizes follow). */
+  html {
+    font-size: 17.5px;
+  }
+
   /* The Predictor family's tokens (predictor-ui/tokens.css), as the HSL triplets shadcn reads.
      Stage #0b0d10, panel #151920, rule #2b333f, text #f3f5f8, faint text #909aa8 (6.8:1 on the panel).
      The Hub's accent is white, as on the Predictor hub page. No glows, no gradients, 6px corners. */

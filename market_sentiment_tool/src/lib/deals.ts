@@ -1,4 +1,4 @@
-/** Deals and IPOs (Part B): run records as saved by the API. */
+/** Deals and IPOs: run records as saved by the API. */
 
 export interface DealRun {
   id: number;
@@ -17,4 +17,6 @@ export interface DealRunRow {
   name: string;
   created_at: string;
   has_summary: boolean;
+  headline: { pw_ps?: number | null; bear_ps?: number | null;
+              offer_ps?: number | null; premium_pct?: number | null; fair_ps?: number | null };
 }

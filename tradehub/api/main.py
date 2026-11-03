@@ -1206,11 +1206,14 @@ def deals_summary(run_id: int, _admin: dict = Depends(admin.require_admin), supa
 
 
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])
-def deals_public(ticker: str, _admin: dict = Depends(admin.require_admin)):
-    """Prefill a public company's side of the M&A form (Yahoo, as-of stamped)."""
-    from tradehub.deals.public import public_company
+def deals_public(ticker: str, source: str = "yahoo", _admin: dict = Depends(admin.require_admin)):
+    """Prefill a public company's side of the M&A form: market data (Yahoo)
+    or the company's own filed 10-K numbers (EDGAR), both as-of stamped."""
+    from tradehub.deals.public import edgar_company, public_company
 
     try:
+        if source == "edgar":
+            return edgar_company(ticker.upper())
         return public_company(ticker.upper())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=422, detail=str(exc)) from exc

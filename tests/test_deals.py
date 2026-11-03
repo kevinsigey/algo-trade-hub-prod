@@ -83,3 +83,56 @@ def test_deals_api_saves_a_run(monkeypatch):
     finally:
         main.app.dependency_overrides.pop(main.admin.require_admin, None)
         main.app.dependency_overrides.pop(get_supabase, None)
+
+
+def test_fair_value_blend_and_ratio_position():
+    out = run_ma({"acquirer": {**SIDE, "name": "Acq"}, "target": {**SIDE, "name": "Tgt", "price": 40.0},
+                  "offer": {"exchange_ratio": 0.8, "cash_ps": 5.0, "undisturbed_ps": 40.0},
+                  "synergies": {"bear": 0.5, "base": 1.0, "bull": 2.0}, "tax_rate": 0.25,
+                  "synergy_multiple": 10})
+    fv = out["fair_value"]
+    mids = list(fv["methods"].values())
+    assert min(mids) <= fv["ps"] <= max(mids)          # a blend sits inside its methods
+    assert sum(fv["weights"].values()) == pytest.approx(1.0, abs=0.02)
+    assert fv["ps_low"] <= fv["ps"] <= fv["ps_high"] and fv["verdict"]
+    assert 0 <= out["ratio_range"]["position"] <= 1
+    assert out["pro_forma"]["ev_at_offer_b"] > 0 and out["pro_forma"]["ev_to_revenue"] is not None
+
+
+def test_ipo_prob_below_talk_mid():
+    out = run_ipo(ANTHROPIC)
+    # talk mid 97.5: bear (26.33, w .20) + comp (66.72, w .30) + base (90.04, w .35) sit below it
+    assert out["prob_below_talk_mid"] == pytest.approx(0.85)
+    assert out["implied_ps_at_pw"] == pytest.approx(1656.15 / 65.0, abs=0.2)
+
+
+def test_edgar_prefill_parses_filed_facts():
+    pub = pytest.importorskip("tradehub.deals.public")
+
+    class Resp:
+        def __init__(self, payload):
+            self._p = payload
+
+        def json(self):
+            return self._p
+
+    def fake_get(url, headers=None, timeout=None):
+        if "company_tickers" in url:
+            return Resp({"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple"}})
+        concept = url.rsplit("/", 1)[-1].replace(".json", "")
+        vals = {"RevenueFromContractWithCustomerExcludingAssessedTax": 400_000_000_000,
+                "OperatingIncomeLoss": 120_000_000_000,
+                "CashAndCashEquivalentsAtCarryingValue": 30_000_000_000,
+                "DebtLongtermAndShorttermCombinedAmount": 100_000_000_000,
+                "EntityCommonStockSharesOutstanding": 15_000_000_000,
+                "EarningsPerShareDiluted": 7.5}
+        if concept not in vals:
+            raise RuntimeError("404")
+        return Resp({"units": {"USD": [{"form": "10-K", "end": "2025-09-30",
+                                        "filed": "2025-10-31", "val": vals[concept]}]}})
+
+    pub._cik_cache.clear()
+    out = pub.edgar_company("AAPL", get=fake_get)
+    assert out["revenue_b"] == 400.0 and out["ebitda_b"] == 120.0
+    assert out["net_cash_b"] == -70.0 and out["shares_b"] == 15.0
+    assert out["filing_as_of"] == "2025-10-31" and "EDGAR" in out["source"]

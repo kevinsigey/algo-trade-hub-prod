@@ -92,7 +92,13 @@ def run_ipo(inp: dict) -> dict:
         joint = 1.0
         for c in conditions:
             joint *= float(c.get("odds") or 0)
+    talk_mid = ((float(talk_low) + float(talk_high)) / 2
+                if talk_low is not None and talk_high is not None else None)
     return {"ladder": ladder, "pw_ev_b": round(pw_equity - net_cash, 1),
+            "prob_below_talk_mid": (round(sum(r["weight"] for r in ladder if r["ps"] < talk_mid), 3)
+                                    if talk_mid is not None else None),
+            "implied_ps_at_pw": (round((pw_equity - net_cash) / float(inp["revenue_b"]), 1)
+                                 if inp.get("revenue_b") else None),
             "pw_equity_b": round(pw_equity, 1), "pw_ps": round(pw_ps, 2),
             "bear_ps": round(bear_ps, 2),
             "entry": entry, "sensitivity": shocks,
