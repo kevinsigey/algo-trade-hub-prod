@@ -310,6 +310,7 @@ export interface PlayCheckRow {
   held_value: number;
   delta_value: number;
   delta_shares: number | null;
+  coverage_pct: number | null;
   overlap_ideas: string[];
   cap_breach: boolean;
 }
@@ -317,6 +318,11 @@ export interface PlayCheckRow {
 export interface PlayCheckResult {
   available: boolean;
   note?: string;
+  book?: string;
+  book_label?: string;
+  sleeve_usd?: number;
+  already_in_place_usd?: number;
+  in_place_pct?: number;
   state?: "in" | "out";
   exit_reason?: string | null;
   otherwise?: string;

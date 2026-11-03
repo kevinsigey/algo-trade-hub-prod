@@ -3,6 +3,13 @@ book I have?" -- a read-only diff of an idea's target book at a chosen size
 against the live paper portfolio, with a cash verdict. It never stages, places,
 or modifies an order; it only reads.
 
+Scope (Kevin, 2026-11-03, correcting the first version): the check covers the
+play's OWN tickers only -- each one's target weighted amount against what the
+book already holds of that ticker, and whether the buys fit the cash at hand.
+The rest of the book is not part of the play: unrelated holdings are never
+counted as sells and never treated as the play's funding. The only sells in
+the math are trims of the play's own over-target legs.
+
 The math is pure: the endpoint gathers the inputs (the engine's target weights
 for today, latest closes, the portfolio read) and this module computes. Prices
 are latest closes, labelled as such -- no live NBBO, no borrow check on shorts.
@@ -43,10 +50,15 @@ def play_check(*, weights: dict[str, float], why: str, prices: dict[str, float],
         if row.get("idea"):
             slot["ideas"].add(row["idea"])
 
-    tickers = sorted(set(weights) | set(held), key=lambda t: -abs(weights.get(t, 0.0) * size_dollars
-                                                               - held.get(t, {"value": 0.0})["value"]))
+    # The play's universe only: today's weighted tickers plus the rule's own
+    # legs (a leg at zero weight today still belongs to the play; an unrelated
+    # holding never does).
+    universe = set(weights) | set(legs)
+    tickers = sorted(universe, key=lambda t: -abs(weights.get(t, 0.0) * size_dollars
+                                                  - held.get(t, {"value": 0.0})["value"]))
     rows, cap_breaches = [], []
     buys = sells = 0.0
+    in_place = 0.0
     for t in tickers:
         target_value = weights.get(t, 0.0) * size_dollars
         price = prices.get(t)
@@ -58,6 +70,16 @@ def play_check(*, weights: dict[str, float], why: str, prices: dict[str, float],
             buys += delta_value
         else:
             sells -= delta_value
+        # Coverage: how much of this ticker's target weighted amount the book
+        # already holds. Same-direction holdings count up to the target;
+        # opposite-direction holdings count for nothing.
+        if target_value and h["value"] * target_value > 0:
+            coverage = round(h["value"] / target_value * 100, 1)
+            in_place += min(abs(h["value"]), abs(target_value))
+        elif target_value:
+            coverage = 0.0
+        else:
+            coverage = None
         pct = abs(target_value) / equity * 100 if equity else 0.0
         if pct > MAX_POSITION_PCT:
             cap_breaches.append({"ticker": t, "pct": round(pct, 1), "cap": MAX_POSITION_PCT})
@@ -69,6 +91,7 @@ def play_check(*, weights: dict[str, float], why: str, prices: dict[str, float],
             "held_shares": h["qty"], "held_value": _money(h["value"]),
             "delta_value": _money(delta_value),
             "delta_shares": round(delta_shares, 4) if delta_shares is not None else None,
+            "coverage_pct": coverage,
             "overlap_ideas": overlap,
             "cap_breach": pct > MAX_POSITION_PCT,
         })
@@ -84,10 +107,13 @@ def play_check(*, weights: dict[str, float], why: str, prices: dict[str, float],
     # is held either way, so it never decides the state.
     state = "in" if any(abs(weights.get(t, 0.0)) > 0 for t in legs) else "out"
     line = _verdict_line(size_pct=size_pct, verdict=verdict, buys=buys, sells=sells,
-                         shortfall=shortfall, cap_breaches=cap_breaches)
+                         cash=cash, shortfall=shortfall, cap_breaches=cap_breaches)
     return {
         "state": state, "exit_reason": why or None, "otherwise": otherwise,
         "size_pct": size_pct, "equity": _money(equity), "cash": _money(cash),
+        "sleeve_usd": _money(size_dollars),
+        "already_in_place_usd": _money(in_place),
+        "in_place_pct": round(in_place / size_dollars * 100, 1) if size_dollars else 0.0,
         "rows": rows, "buys": _money(buys), "sells": _money(sells),
         "verdict": verdict, "shortfall": _money(shortfall),
         "cap_breaches": cap_breaches, "verdict_line": line,
@@ -95,14 +121,17 @@ def play_check(*, weights: dict[str, float], why: str, prices: dict[str, float],
 
 
 def _verdict_line(*, size_pct: float, verdict: str, buys: float, sells: float,
-                  shortfall: float, cap_breaches: list[dict]) -> str:
+                  cash: float, shortfall: float, cap_breaches: list[dict]) -> str:
     if verdict == "not_affordable":
         line = f"Not runnable at {size_pct:g}% size — ${shortfall:,.0f} short on cash"
+        if sells > 0:
+            line += ", even after trimming the play's own over-target legs"
+    elif verdict == "affordable_after_sells":
+        line = (f"Runnable at {size_pct:g}% size after trimming ${sells:,.0f} of the play's own "
+                f"over-target legs — ${buys:,.0f} of buys against ${cash:,.0f} cash on hand")
     else:
-        funded = f", ${sells:,.0f} of it funded by sells" if sells > 0 else ""
-        line = f"Runnable at {size_pct:g}% size — ${buys:,.0f} of buys{funded}"
-        if verdict == "affordable" and sells > 0:
-            line += " (cash on hand covers it before any sells)"
+        line = (f"Runnable at {size_pct:g}% size — ${buys:,.0f} of buys, covered by the "
+                f"${cash:,.0f} cash on hand")
     if cap_breaches:
         first = cap_breaches[0]
         line += f"; {first['ticker']} would be {first['pct']:.0f}% of the account (cap {first['cap']:.0f}%)"

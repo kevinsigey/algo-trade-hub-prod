@@ -1026,9 +1026,9 @@ def workshop_save_run(idea_id: int, run_id: int, _admin: dict = Depends(admin.re
     return workshop_store.save_run(supabase, run_id)
 
 
-def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float) -> dict:
+def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: str = "main") -> dict:
     """The one-click play check (Kevin, 2026-11-02): read-only. The idea's target
-    book at `size_pct` against the live paper portfolio, with a cash verdict.
+    book at `size_pct` against the chosen paper book, with a cash verdict.
     Never stages or places anything."""
     if spec_dict.get("kind") == "event":
         raise HTTPException(status_code=409, detail="event studies are research only: there is no book to run")
@@ -1047,10 +1047,16 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float) -> dict:
               if t in prices_frame and len(prices_frame[t].dropna())}
 
     from tradehub.portfolio import service
+    from tradehub.portfolio.books import BOOKS, resolve
 
-    book = service.portfolio(supabase)
+    try:
+        book_name = resolve(book)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    book = service.portfolio(supabase, book_name=book_name)
     if book.get("state") == "not_connected" or not book.get("positions"):
-        return {"available": False, "size_pct": size_pct,
+        return {"available": False, "size_pct": size_pct, "book": book_name,
+                "book_label": BOOKS[book_name]["label"],
                 "note": "No paper account is connected, so there is no book to check the play against."}
     equity = float(book["scoreboard"]["equity"])
     cash_row = next((r for r in book["positions"] if r["symbol"] == "Cash"), None)
@@ -1059,7 +1065,8 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float) -> dict:
                            equity=equity, cash=cash, positions=book["positions"], size_pct=size_pct,
                            own_title=idea["title"], otherwise=spec.otherwise,
                            legs=list(spec.hold) + list(spec.short))
-    out.update({"available": True, "as_of": book.get("as_of"), "idea_id": idea["id"], "title": idea["title"],
+    out.update({"available": True, "book": book_name, "book_label": BOOKS[book_name]["label"],
+                "as_of": book.get("as_of"), "idea_id": idea["id"], "title": idea["title"],
                 "options_legs": [leg.model_dump(mode="json") for leg in spec.options],
                 "notes": ["Prices are latest closes, not live quotes."]})
     if any(r["target_value"] < 0 for r in out["rows"]):
@@ -1071,18 +1078,19 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float) -> dict:
 
 @app.get("/api/workshop/ideas/{idea_id}/play-check", tags=["Workshop"])
 def workshop_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
+                        book: str = Query("main"),
                         _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     """Play check on the Workshop's working spec: the newest run, saved or preview
     -- it is the spec on screen, and the check changes nothing either way."""
     found = _found(supabase, idea_id)
     if not found["runs"]:
         raise HTTPException(status_code=409, detail="no run yet: there is no spec to check")
-    return _play_check(supabase, found["idea"], found["runs"][-1]["spec"], size_pct)
+    return _play_check(supabase, found["idea"], found["runs"][-1]["spec"], size_pct, book)
 
 
 @app.get("/api/ideas/{idea_id}/play-check", tags=["Ideas"])
 def public_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
-                      supabase=Depends(get_supabase)):
+                      book: str = Query("main"), supabase=Depends(get_supabase)):
     """Play check on the published record: the newest SAVED run's spec, and only
     for published ideas (private and missing look the same, as everywhere here)."""
     found = workshop_store.get_idea(supabase, idea_id)
@@ -1091,7 +1099,7 @@ def public_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
     saved = workshop_store.saved_only(found["runs"])
     if not saved:
         raise HTTPException(status_code=409, detail="no saved run to check")
-    return _play_check(supabase, found["idea"], saved[-1]["spec"], size_pct)
+    return _play_check(supabase, found["idea"], saved[-1]["spec"], size_pct, book)
 
 
 @app.post("/api/workshop/ideas/{idea_id}/event-runs", tags=["Workshop"])
