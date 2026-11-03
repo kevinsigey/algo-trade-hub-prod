@@ -1205,6 +1205,21 @@ def deals_summary(run_id: int, _admin: dict = Depends(admin.require_admin), supa
     return deal_store.set_summary(supabase, run_id, text, model)
 
 
+@app.post("/api/agent/interpret", tags=["Agent"])
+def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin)):
+    """In-site agent, phase 1 (the Interpreter): strategy text -> a validated
+    StrategySpec plus the questions the text left open. Nothing is stored or
+    staged here -- the spec goes back to Kevin for confirm/edit first."""
+    from tradehub.agent.interpret import InterpretUnavailable, interpret
+
+    try:
+        spec, questions, model = interpret(str(body.get("text") or ""),
+                                           body.get("context") or None)
+    except InterpretUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"spec": spec, "questions": questions, "model": model}
+
+
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])
 def deals_public(ticker: str, source: str = "yahoo", _admin: dict = Depends(admin.require_admin)):
     """Prefill a public company's side of the M&A form: market data (Yahoo)
