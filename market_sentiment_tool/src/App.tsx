@@ -22,6 +22,7 @@ import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
 import Workshop from "@/pages/Workshop";
 import Screening from "@/pages/Screening";
+import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -35,6 +36,7 @@ import {
   Briefcase,
   CloudSun,
   FlaskConical,
+  Handshake,
   HeartPulse,
   History,
   KeyRound,
@@ -136,6 +138,9 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
               an opinion panel with its own graded record, not a step in the idea pipeline. */}
           <NavLink to="/screening" className={linkClass}>
             <ListFilter className="w-5 h-5 text-muted-foreground" /> Screening
+          </NavLink>
+          <NavLink to="/deals" className={linkClass}>
+            <Handshake className="w-5 h-5 text-muted-foreground" /> Deals and IPOs
           </NavLink>
           <NavLink to="/debates" className={linkClass}>
             <MessagesSquare className="w-5 h-5 text-muted-foreground" /> Agent debates
@@ -314,6 +319,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
+          <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
