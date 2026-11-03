@@ -182,6 +182,7 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         "curve": book.curve(snaps),
         "composition": book.composition(rows),
         "positions": rows,
+        "account": book.account_view(account, trades),
     }
 
 
@@ -234,6 +235,9 @@ def activity(supa, now: datetime | None = None, book_name: str | None = None) ->
     except Exception:  # noqa: BLE001 -- attribution is decoration; the tape still reads
         titles = {}
     rows = [_order_row(o, titles) for o in orders]
+    # This payload is public: an unexecuted order's price says where a position's stop sits (or sat),
+    # so only the signed-in open-orders endpoint shows it.
+    rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None} for r in rows]
     return {"state": "live", "as_of": now.isoformat(), "book": name,
             "open": [r for r in rows if r["status"] not in _TERMINAL],
             "recent": rows[:50],

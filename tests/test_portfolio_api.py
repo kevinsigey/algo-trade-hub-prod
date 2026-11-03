@@ -306,6 +306,7 @@ def test_activity_endpoint_splits_open_recent_and_trades(client_with, monkeypatc
     assert body["open"][0]["source"] == "Workshop idea"  # unpublished in the fake store
     assert body["open"][1]["source"] == "Machine order"
     assert body["recent"][1]["source"] == "Manual" and body["recent"][1]["filled_avg_price"] == 68.10
+    assert body["open"][1]["stop_price"] is None  # public: a resting stop is not advertised
     assert body["trades"] == []
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
     assert c.get("/api/portfolio/activity").json() == {
@@ -362,3 +363,24 @@ def test_manual_actions_list_and_resolve(client_with):
     resp = c.post("/api/portfolio/manual-actions/1/resolve", json={"state": "maybe"})
     assert resp.status_code == 422
     main.app.dependency_overrides.pop(admin.require_admin, None)
+
+
+def test_position_rows_and_rail_carry_what_a_broker_page_shows():
+    from tradehub.portfolio import book
+
+    account = {"equity": "101000", "last_equity": "100000", "cash": "1000", "buying_power": "2000"}
+    position = {"symbol": "GLD", "qty": "10", "market_value": "4000", "unrealized_pl": "100", "side": "long",
+                "current_price": "400", "change_today": "0.01", "avg_entry_price": "390", "cost_basis": "3900",
+                "unrealized_intraday_pl": "40"}
+    row = book.positions_view(account, [position], {"GLD": {"Gold": 5, "Other": 5}})[0]
+    assert row["last_price"] == 400 and row["change_pct"] == 1 and row["avg_price"] == 390
+    assert row["cost_basis"] == 1950 and row["day_pl"] == 20  # half the shares, half the dollars
+    rail = book.account_view(account, [{"pnl": 25}, {"pnl": -5}])
+    assert rail["day_pl"] == 1000 and rail["day_pl_pct"] == 1 and rail["realized_pl"] == 20
+    assert book.account_view({"equity": "1"}, None)["day_pl"] is None
+
+
+def test_public_portfolio_hides_the_account_number(client_with, monkeypatch):
+    client = client_with({"portfolio_snapshots": []})
+    monkeypatch.setattr("tradehub.portfolio.service.portfolio", lambda *a, **k: {"state": "live", "account_number": "PA2"})
+    assert "account_number" not in client.get("/api/portfolio").json()

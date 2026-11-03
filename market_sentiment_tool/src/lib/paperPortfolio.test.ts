@@ -24,7 +24,7 @@ describe("paper portfolio formatting", () => {
   it("labels every state with its time", () => {
     expect(stateLabel("not_connected", null)).toBe("Paper account not connected");
     expect(stateLabel("live", "2026-11-10T20:41:00Z")).toBe("Paper account · live · as of 2:41 PM CT, Tue Nov 10");
-    expect(stateLabel("pre_start", "2026-11-10T20:41:00Z")).toMatch(/^Paper account · not traded yet · as of /);
+    expect(stateLabel("pre_start", "2026-11-10T20:41:00Z")).toMatch(/^Paper account · not the account on record · as of /);
     expect(stateLabel("stale", "2026-11-10T20:41:00Z")).toMatch(/^Paper account · stale, last read /);
   });
 });

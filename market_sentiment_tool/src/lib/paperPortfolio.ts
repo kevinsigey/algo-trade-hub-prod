@@ -23,6 +23,26 @@ export interface PositionRow {
   pct_of_book: number | null;
   unrealized_pl: number | null;
   idea: string | null;
+  /** Broker-page columns; absent on old payloads and on the stale fallback. */
+  last_price?: number | null;
+  change_pct?: number | null;
+  avg_price?: number | null;
+  cost_basis?: number | null;
+  day_pl?: number | null;
+}
+
+/** The account rail's balances, as the broker reports them. */
+export interface AccountView {
+  last_equity: number | null;
+  day_pl: number | null;
+  day_pl_pct: number | null;
+  cash: number | null;
+  buying_power: number | null;
+  long_value: number | null;
+  short_value: number | null;
+  initial_margin: number | null;
+  maintenance_margin: number | null;
+  realized_pl: number | null;
 }
 
 export interface PortfolioPayload {
@@ -30,8 +50,8 @@ export interface PortfolioPayload {
   as_of: string | null;
   /** Which paper book this payload reads ("main" | "big"); absent on old payloads. */
   book?: string;
-  account_number: string | null;
   scoreboard: Scoreboard;
+  account?: AccountView;
   curve: { t: string; portfolio_pct: number; spy_pct: number }[];
   composition: { idea: string; pct_of_book: number; unrealized_pl: number }[];
   positions: PositionRow[];
@@ -93,7 +113,6 @@ export interface BookHeadline {
   detail: string;
   state: PortfolioState;
   as_of: string | null;
-  account_number: string | null;
   equity: number | null;
   return_pct: number | null;
   positions: number;
@@ -145,13 +164,76 @@ export function ct(iso: string): string {
 export function stateLabel(state: PortfolioState, asOf: string | null): string {
   if (state === "not_connected") return "Paper account not connected";
   if (state === "stale") return `Paper account · stale, last read ${asOf ? ct(asOf) : "—"}`;
-  if (state === "pre_start") return `Paper account · not traded yet · as of ${asOf ? ct(asOf) : "—"}`;
+  if (state === "pre_start") return `Paper account · not the account on record · as of ${asOf ? ct(asOf) : "—"}`;
   return `Paper account · live · as of ${asOf ? ct(asOf) : "—"}`;
 }
 
 export function tone(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v) || v === 0) return "text-white";
   return v > 0 ? "text-emerald-400" : "text-rose-400";
+}
+
+export const CURVE_RANGES = ["1W", "1M", "YTD", "All"] as const;
+export type CurveRange = (typeof CURVE_RANGES)[number];
+type CurvePoint = PortfolioPayload["curve"][number];
+
+/** The curve from the range's start, rebased so both lines read from 0% there. */
+export function curveRange(curve: CurvePoint[], range: CurveRange, now: Date = new Date()): CurvePoint[] {
+  if (range === "All" || curve.length === 0) return curve;
+  const since = new Date(now);
+  if (range === "1W") since.setDate(since.getDate() - 7);
+  else if (range === "1M") since.setMonth(since.getMonth() - 1);
+  else since.setMonth(0, 1);
+  const kept = curve.filter((p) => new Date(p.t) >= since);
+  if (kept.length === 0) return [];
+  const rebase = (v: number, base: number) => ((1 + v / 100) / (1 + base / 100) - 1) * 100;
+  return kept.map((p) => ({
+    t: p.t, portfolio_pct: rebase(p.portfolio_pct, kept[0].portfolio_pct), spy_pct: rebase(p.spy_pct, kept[0].spy_pct),
+  }));
+}
+
+const OCC = /^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "NVDA Dec 4 2026 $200 call" for an option symbol; null for anything else. */
+export function contractLabel(symbol: string): string | null {
+  const m = OCC.exec(symbol);
+  if (!m) return null;
+  const [, root, yy, mm, dd, kind, strike] = m;
+  return `${root} ${MONTHS[Number(mm) - 1]} ${Number(dd)} 20${yy} $${Number(strike) / 1000} ${kind === "C" ? "call" : "put"}`;
+}
+
+/** Keeps the given order, but moves each option leg directly under its underlying's row. */
+export function withOptionsUnderStock(rows: PositionRow[]): PositionRow[] {
+  const legs = rows.filter((r) => OCC.test(r.symbol));
+  const out: PositionRow[] = [];
+  const placed = new Set<PositionRow>();
+  for (const r of rows) {
+    if (OCC.test(r.symbol)) continue;
+    out.push(r);
+    if (out.filter((x) => x.symbol === r.symbol).length > 1) continue; // same stock under a second idea
+    for (const leg of legs) {
+      if (OCC.exec(leg.symbol)![1] === r.symbol) { out.push(leg); placed.add(leg); }
+    }
+  }
+  return [...out, ...legs.filter((l) => !placed.has(l))];
+}
+
+const HEAVY_SECTOR_PCT = 40;
+const NOT_A_SECTOR_BET = new Set(["Broad Market", "Bonds", "Cash"]);
+
+/** Sectors over 40% of what's invested. The per-symbol cap can't see five chip ideas holding different chips. */
+export function concentration(rows: PositionRow[]): { sector: string; pct: number }[] {
+  const invested = rows.reduce((sum, r) => sum + Math.abs(r.market_value), 0);
+  if (invested <= 0) return [];
+  const sectors = new Map<string, number>();
+  for (const r of rows) {
+    const sector = r.sector ?? "Other";
+    if (NOT_A_SECTOR_BET.has(sector) || sector === "Other") continue;
+    sectors.set(sector, (sectors.get(sector) ?? 0) + Math.abs(r.market_value));
+  }
+  return [...sectors].filter(([, v]) => v / invested * 100 > HEAVY_SECTOR_PCT)
+    .map(([sector, v]) => ({ sector, pct: v / invested * 100 }));
 }
 
 export interface ManualAction {

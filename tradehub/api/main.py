@@ -459,8 +459,8 @@ def _book_or_400(book: str) -> str:
 
 @app.get("/api/portfolio/books", tags=["Portfolio"])
 def get_portfolio_books(supabase=Depends(get_supabase)):
-    """The master view (Kevin, 2026-11-02): one headline card per book -- state, equity,
-    return, position count, live ideas -- clicking a card opens that book's own page."""
+    """One headline per book -- state, equity, return, position count, live ideas -- for the
+    Portfolio page's book tabs."""
     from tradehub.portfolio import books as _books
     from tradehub.portfolio import service
     from tradehub.workshop import store as _store
@@ -477,7 +477,6 @@ def get_portfolio_books(supabase=Depends(get_supabase)):
         out.append({"book": name, "label": _books.BOOKS[name]["label"],
                     "detail": _books.BOOKS[name]["detail"],
                     "state": payload.get("state"), "as_of": payload.get("as_of"),
-                    "account_number": payload.get("account_number"),
                     "equity": score.get("equity"), "return_pct": score.get("return_pct"),
                     "positions": len(payload.get("positions") or []),
                     "live_ideas": len(live)})
@@ -490,7 +489,9 @@ def get_portfolio(book: str = "main", supabase=Depends(get_supabase)):
 
     name = _book_or_400(book)  # before the try: a bad book is a 400, not a table fault
     try:
-        return service.portfolio(supabase, book_name=name)
+        out = service.portfolio(supabase, book_name=name)
+        out.pop("account_number", None)  # public page: the number identifies the broker account
+        return out
     except Exception as exc:  # noqa: BLE001
         raise _table_fault(service.SNAPSHOTS, exc) from exc
 
