@@ -27,6 +27,7 @@ from tradehub.journal.forecasters.news_tone import (
     xle_source,
 )
 from tradehub.journal.forecasters.crypto_hourly import build_crypto_hourly
+from tradehub.journal.forecasters.natgas_daily import build_natgas_daily
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
@@ -113,6 +114,12 @@ FORECASTERS: list[Forecaster] = [
     # with realized-vol sigma (preregistered variant 2 passed its replay gate on both
     # series; the settled-sigma variant 1 tied persistence and never shipped)
     *build_crypto_hourly(_LIVE),
+    # Natural gas daily (2026-11-03, handover item 5): KXNATGASD settles on the Pyth
+    # NATGAS index at 17:00 ET; the hourly-WTI construction at a daily grain (NG=F
+    # anchor, settled-daily sigma) beside the Kalshi mid and a persistence baseline.
+    # EIA storage and the degree-day tilt are NOT in v1 -- each would be its own
+    # shadow row (storage also waits on Kevin's free EIA key).
+    *build_natgas_daily(_LIVE),
     # weekly jobless claims (2026-11-01 audit: build): the first-print level model beside
     # the Kalshi mid and a persistence baseline
     *build_claims(_LIVE),
@@ -175,3 +182,7 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # raw v2 record -- the audit's completed measurement -- stays exactly as it was.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if f.name == "gas" and getattr(f, "version", None) == "v2"]
+
+# Natural gas daily (2026-11-03): the day-one cautious row, pinned to natgas-v1.
+FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
+                if f.name == "natgas_daily" and getattr(f, "version", None) == "natgas-v1"]
