@@ -84,9 +84,44 @@ def test_vertical_min_one_contract_when_share_math_rounds_to_zero():
     # 10% of $100k in NVDA at $200 = 50 shares -> 0 contracts by the per-100 rule.
     rows = plan_options(50, [BUY_LEG, SELL_LEG], {"NVDA": 1.0}, 10, 100_000, {"NVDA": 200.0}, {},
                         DAY, SELECT, fake_mid({B_OCC: 5.0, S_OCC: 3.0}))
-    sends = {(r["symbol"], r["side"]) for r in rows if r["status"] == "send"}
-    assert sends == {(B_OCC, "buy"), (S_OCC, "sell")}
-    assert all(r["qty"] == 1 for r in rows if r["status"] == "send")
+    sends = [r for r in rows if r["status"] == "send"]
+    # Kevin, 2026-11-03: the spread is placed as ONE multi-leg order -- as separate
+    # single-leg orders the short leg reads as uncovered and Alpaca refuses it.
+    assert len(sends) == 1 and sends[0]["qty"] == 1
+    assert sends[0]["limit_price"] == 2.0  # the net debit: 5.0 paid - 3.0 taken
+    assert [(l["symbol"], l["side"], l["position_intent"]) for l in sends[0]["mleg"]] == [
+        (B_OCC, "buy", "buy_to_open"), (S_OCC, "sell", "sell_to_open")]
+
+
+def test_vertical_open_pairs_into_one_mleg_row():
+    # 10% of $1M at $200 = 500 shares -> 5 contracts, still one order.
+    rows = plan_options(50, [BUY_LEG, SELL_LEG], {"NVDA": 1.0}, 10, 1_000_000, {"NVDA": 200.0}, {},
+                        DAY, SELECT, fake_mid({B_OCC: 5.0, S_OCC: 3.0}))
+    sends = [r for r in rows if r["status"] == "send"]
+    assert len(sends) == 1 and sends[0]["qty"] == 5 and sends[0]["limit_price"] == 2.0
+    assert sends[0]["kind"] == "open" and len(sends[0]["mleg"]) == 2
+
+
+def test_vertical_close_pairs_into_one_mleg_row():
+    # The idea goes flat holding both legs: one mleg close at the net credit,
+    # which Alpaca takes as a NEGATIVE limit price.
+    rows = plan_options(50, [BUY_LEG, SELL_LEG], {}, 10, 100_000, {"NVDA": 200.0},
+                        {B_OCC: 1, S_OCC: -1}, DAY, SELECT, fake_mid({B_OCC: 5.0, S_OCC: 3.0}))
+    sends = [r for r in rows if r["status"] == "send"]
+    assert len(sends) == 1 and sends[0]["kind"] == "close" and sends[0]["qty"] == 1
+    assert sends[0]["limit_price"] == -2.0
+    assert [(l["symbol"], l["position_intent"]) for l in sends[0]["mleg"]] == [
+        (B_OCC, "sell_to_close"), (S_OCC, "buy_to_close")]
+
+
+def test_credit_shaped_quotes_do_not_pair():
+    # Crossed quotes (the far leg priced over the near leg) would make the "debit"
+    # negative: no pairing -- the legs stay single and a refusal becomes a manual
+    # action under the runner's never-silent rule instead of a wrong mleg order.
+    rows = plan_options(50, [BUY_LEG, SELL_LEG], {"NVDA": 1.0}, 10, 1_000_000, {"NVDA": 200.0}, {},
+                        DAY, SELECT, fake_mid({B_OCC: 3.0, S_OCC: 5.0}))
+    sends = [r for r in rows if r["status"] == "send"]
+    assert len(sends) == 2 and all("mleg" not in r for r in sends)
 
 
 def test_vertical_min_one_over_budget_goes_to_a_human():

@@ -175,3 +175,42 @@ def test_oco_take_profit_and_stop_only_as_a_protective_order(keys, monkeypatch):
     with pytest.raises(ValueError):
         paper_orders.submit("GLD", 5, "sell", "idea-3-auto-20261103-GLD-open", order_type="limit",
                             time_in_force="day", order_class="oco", take_profit_price=330, stop_price=285, session=s)
+
+
+# ── Multi-leg orders (Kevin, 2026-11-03: verticals placed as one order) ───────────
+
+MLEG_LEGS = [
+    {"symbol": "NVDA  261204C00200000", "side": "buy", "ratio_qty": 1, "position_intent": "buy_to_open"},
+    {"symbol": "NVDA  261204C00220000", "side": "sell", "ratio_qty": 1, "position_intent": "sell_to_open"},
+]
+
+
+def test_submit_mleg_posts_one_order_with_both_legs(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "mleg-1", "order_class": "mleg"}))
+    out = paper_orders.submit_mleg(MLEG_LEGS, 1, 2.0, "idea-50-auto-20261103-mleg", session=s)
+    assert out["id"] == "mleg-1" and len(s.calls) == 1
+    body = s.calls[0]["json"]
+    assert body["order_class"] == "mleg" and body["type"] == "limit" and body["time_in_force"] == "day"
+    assert body["qty"] == "1" and body["limit_price"] == "2.00"
+    assert [(l["symbol"], l["side"], l["position_intent"]) for l in body["legs"]] == [
+        ("NVDA  261204C00200000", "buy", "buy_to_open"),
+        ("NVDA  261204C00220000", "sell", "sell_to_open")]
+
+
+def test_submit_mleg_validates_legs_and_switch(keys, monkeypatch):
+    s = Session(Resp(200))
+    with pytest.raises(ValueError):  # a stock is not a leg
+        paper_orders.submit_mleg([{**MLEG_LEGS[0], "symbol": "NVDA"}, MLEG_LEGS[1]], 1, 2.0, "x", session=s)
+    with pytest.raises(ValueError):  # one leg is not a spread
+        paper_orders.submit_mleg(MLEG_LEGS[:1], 1, 2.0, "x", session=s)
+    with pytest.raises(paper_orders.OrdersDisabled):  # the switch defaults off
+        paper_orders.submit_mleg(MLEG_LEGS, 1, 2.0, "x", session=s)
+    assert s.calls == []
+
+
+def test_submit_mleg_rejection_carries_alpacas_reason(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(403, {"message": "account not eligible to trade uncovered option contracts"}))
+    with pytest.raises(paper_orders.OrderRejected, match="uncovered"):
+        paper_orders.submit_mleg(MLEG_LEGS, 1, 2.0, "x", session=s)
