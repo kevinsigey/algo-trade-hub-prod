@@ -2833,6 +2833,133 @@ def screening_catalog():
     return catalog_dict()
 
 
+class _ScreenIn(BaseModel):
+    spec: dict
+    name: str | None = None
+    last_run: dict | None = None
+
+
+def _run_payload(result) -> dict:
+    table = result.table.copy()
+    for col in table.columns:
+        table[col] = table[col].astype(object).where(table[col].notna(), None)
+    return {"columns": list(table.columns), "rows": table.to_dict("records"),
+            "footer": result.footer}
+
+
+@app.post("/api/screening/screens", tags=["Screening"], status_code=201)
+def screening_create_screen(body: _ScreenIn, _admin: dict = Depends(admin.require_admin),
+                            supabase=Depends(get_supabase)):
+    from tradehub.screening import store as screen_store
+    from tradehub.screening.spec import SpecError, validate_spec
+
+    try:
+        validate_spec(body.spec)
+    except SpecError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return screen_store.create_screen(supabase, body.name or body.spec.get("name") or "Untitled screen",
+                                      body.spec, body.last_run)
+
+
+@app.get("/api/screening/screens", tags=["Screening"])
+def screening_list_screens(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    from tradehub.screening import store as screen_store
+
+    return screen_store.list_screens(supabase)
+
+
+@app.get("/api/screening/screens/{screen_id}", tags=["Screening"])
+def screening_get_screen(screen_id: int, _admin: dict = Depends(admin.require_admin),
+                         supabase=Depends(get_supabase)):
+    from tradehub.screening import store as screen_store
+
+    row = screen_store.get_screen(supabase, screen_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such screen")
+    return row
+
+
+@app.delete("/api/screening/screens/{screen_id}", tags=["Screening"])
+def screening_delete_screen(screen_id: int, _admin: dict = Depends(admin.require_admin),
+                            supabase=Depends(get_supabase)):
+    from tradehub.screening import store as screen_store
+
+    if screen_store.get_screen(supabase, screen_id) is None:
+        raise HTTPException(status_code=404, detail="no such screen")
+    screen_store.delete_screen(supabase, screen_id)
+    return {"deleted": screen_id}
+
+
+@app.post("/api/screening/screens/{screen_id}/run", tags=["Screening"])
+def screening_run_screen(screen_id: int, _admin: dict = Depends(admin.require_admin),
+                         supabase=Depends(get_supabase)):
+    """Re-run a saved screen against current data; the new run replaces the
+    stored one (the run is the record the promote step consumes)."""
+    from tradehub.screening import run_spec, store as screen_store
+    from tradehub.screening.spec import SpecError
+
+    row = screen_store.get_screen(supabase, screen_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such screen")
+    try:
+        result = run_spec(row["spec"])
+    except (SpecError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    payload = _run_payload(result)
+    last_run = {"footer": payload["footer"], "columns": payload["columns"],
+                "survivors": [r["ticker"] for r in payload["rows"]]}
+    screen_store.record_run(supabase, screen_id, last_run)
+    return payload
+
+
+@app.post("/api/screening/screens/{screen_id}/promote", tags=["Screening"])
+def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.require_admin),
+                             supabase=Depends(get_supabase)):
+    """The screen -> idea handoff (lab contract; the Ideas 14/15 proxy pattern):
+    the stored run's survivors become a fixed equal-weight basket, claim
+    beats_benchmark vs SPY, run once, saved, published, and set to TRACKING.
+    The screen's exact spec rides in the idea's provenance; a re-screen is a
+    new idea, never an edit of this one. Set-once: a screen promotes once."""
+    import json as _json
+
+    from tradehub.screening import store as screen_store
+
+    row = screen_store.get_screen(supabase, screen_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such screen")
+    if row.get("promoted_idea_id"):
+        raise HTTPException(status_code=409, detail="this screen already promoted to an idea")
+    last_run = row.get("last_run") or {}
+    survivors = last_run.get("survivors") or []
+    if not survivors:
+        raise HTTPException(status_code=409, detail="run the screen first -- promotion converts a run's survivors")
+    footer = last_run.get("footer") or {}
+    title = f"Screen basket: {row['name']}"
+    plain = (f"Promoted from the screen '{row['name']}' (run {footer.get('run_at') or 'unknown'}): "
+             f"its {len(survivors)} survivors as a fixed equal-weight basket -- {', '.join(survivors)}. "
+             f"The screen's exact spec is preserved on the screen record; any re-screen is a new idea. "
+             f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))}")
+    idea = workshop_store.create_idea(supabase, title, plain)
+    idea_id = idea["id"]
+    spec = IdeaSpec.model_validate({"title": title, "hold": survivors,
+                                    "claim": "beats_benchmark", "benchmark": "SPY"})
+    try:
+        prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
+                                bars_fn=workshop_bars)
+        fred = rule_series(spec, _fred_start(spec.start), fred=workshop_fred, analyst_fn=workshop_analyst)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = run_test(spec, prices, fred, variations=1, seed=idea_id * 1000 + 1,
+                      div_yields=workshop_div_yields(spec, prices))
+    run = workshop_store.insert_run(supabase, idea_id, 1, spec.model_dump(mode="json"), None, result)
+    workshop_store.save_run(supabase, run["id"])
+    workshop_store.publish(supabase, idea_id)
+    workshop_store.track(supabase, idea_id, run["id"])
+    screen_store.set_promoted(supabase, screen_id, idea_id)
+    return {"idea_id": idea_id, "run_id": run["id"], "verdict": result["verdict"],
+            "survivors": survivors}
+
+
 @app.post("/api/screening/run", tags=["Screening"])
 def screening_run(body: _ScreenRunIn, _admin: dict = Depends(admin.require_admin)):
     from tradehub.screening import run_spec
@@ -2844,11 +2971,7 @@ def screening_run(body: _ScreenRunIn, _admin: dict = Depends(admin.require_admin
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    table = result.table.copy()
-    for col in table.columns:
-        table[col] = table[col].astype(object).where(table[col].notna(), None)
-    return {"columns": list(table.columns), "rows": table.to_dict("records"),
-            "footer": result.footer}
+    return _run_payload(result)
 
 
 mount_frontend(app, FRONTEND_DIST)
