@@ -21,13 +21,12 @@ never folded into the headline probabilities: v1 stays v1.
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tradehub.data.kalshi_live import KalshiLive
 from tradehub.engines.oil_hourly import hourly_changes, hourly_prob, hourly_sigma, sigma_for
 from tradehub.journal.forecasters.oil_hourly import (
-    MAX_PRICE_AGE,
     MIN_CHANGES,
     SERIES,
     HourlyInputs,
@@ -37,6 +36,21 @@ from tradehub.journal.kalshi_linked import quote_mid
 
 MIN_MINUTES = 20.0
 CACHE_SECONDS = 20.0
+
+# The live hero's own price-age allowance (Kevin, 2026-11-03). Yahoo's CL=F
+# tape runs ~10-15 minutes behind the exchange (CME redistribution delay),
+# so the journal forecaster's 15-minute freshness gate -- right for a
+# FROZEN, graded record -- made the live hero flicker to "unavailable" in
+# ordinary trading and hide the ladder entirely. The hero is never scored:
+# it stays live on a print up to 25 minutes old and stamps the print's age
+# on the payload so the page can show it honestly. Older than that is a
+# stuck feed, and the payload names it (with the event attached, so the
+# page can still title itself). The real fix is a real-time source --
+# Kalshi settles these markets on Pyth, but Pyth's Hermes price updates
+# now sit behind an API key (401 without one, verified 2026-11-03); that
+# key is Kevin's call.
+LIVE_MAX_PRICE_AGE = timedelta(minutes=25)
+TAPE_MAX_AGE = timedelta(minutes=60)
 
 # The ITM line (Kevin, 2026-11-03): on the live ladder, the strike where
 # the bet is a bit more likely than a coin flip AND we like it more than
@@ -85,8 +99,18 @@ def pick_itm_line(rows: list[dict], tape: list, now: datetime,
                   live_price: float) -> dict | None:
     """The ITM pick from a live ladder, or None. Pure, so the rule tests
     without a market. `tape` is [(bar time, close)] oldest first."""
+    if not tape:
+        return None
+    # The window is the tape's OWN trailing minutes, not the wall clock's:
+    # the CL=F tape runs ~10-15 minutes behind the exchange, so a window
+    # keyed to `now` was always empty and the pick could never fire. A tape
+    # whose last bar is older than TAPE_MAX_AGE is a dead feed, not a
+    # stable one -- no pick.
+    end = max(ts for ts, _c in tape)
+    if now - end > TAPE_MAX_AGE:
+        return None
     window = [(ts, c) for ts, c in tape
-              if 0 <= (now - ts).total_seconds() <= ITM_LOOKBACK_MIN * 60]
+              if 0 <= (end - ts).total_seconds() <= ITM_LOOKBACK_MIN * 60]
     if len(window) < ITM_MIN_BARS:
         return None
     candidates = []
@@ -146,8 +170,16 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
     if len(changes) < MIN_CHANGES:
         return {"state": "unavailable", "reason": "not enough settled hours yet"}
     price = inputs.price(now)
-    if price is None or now - price.published_at > MAX_PRICE_AGE:
-        return {"state": "unavailable", "reason": "the live WTI print is stale"}
+    if price is None or now - price.published_at > LIVE_MAX_PRICE_AGE:
+        stale: dict[str, Any] = {"state": "unavailable",
+                                 "reason": "the live WTI print is stale",
+                                 "event": event,
+                                 "close_time": markets[0].market.close_time.isoformat(),
+                                 "minutes_to_close": round(minutes, 1)}
+        if price is not None:
+            stale["price_at"] = price.published_at.isoformat()
+            stale["price_age_minutes"] = round((now - price.published_at).total_seconds() / 60, 1)
+        return stale
     sigma_h = hourly_sigma(changes)
     rows = []
     for lm in sorted(markets, key=lambda m: m.market.floor_strike or 0.0):
@@ -172,6 +204,7 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
         "as_of": now.isoformat(),
         "live_price": price.value,
         "price_at": price.published_at.isoformat(),
+        "price_age_minutes": round((now - price.published_at).total_seconds() / 60, 1),
         "sigma_h": round(sigma_h, 4),
         "sigma_eff": round(sigma_for(sigma_h, minutes), 4),
         "our_level": _crossing(rows, "ours"),
