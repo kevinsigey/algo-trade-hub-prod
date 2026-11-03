@@ -65,6 +65,17 @@ def test_short_position_pct_uses_abs_value():
     assert rows[-1]["symbol"] == "Cash" and rows[-1]["pct_of_book"] == pytest.approx(120.0)
 
 
+def test_positions_carry_their_sector():
+    rows = positions_view({"equity": "100000", "cash": "40000"}, [
+        {"symbol": "XLE", "qty": "100", "side": "long", "market_value": "20000", "unrealized_pl": "0"},
+        {"symbol": "GLD", "qty": "60", "side": "long", "market_value": "30000", "unrealized_pl": "600"},
+        {"symbol": "ZZZZ", "qty": "10", "side": "long", "market_value": "10000", "unrealized_pl": "0"},
+    ])
+    by_symbol = {r["symbol"]: r["sector"] for r in rows}
+    # Sector ETFs read as their sector, gold as itself, unmapped as Other, cash as Cash.
+    assert by_symbol == {"XLE": "Energy", "GLD": "Commodities (Gold)", "ZZZZ": "Other", "Cash": "Cash"}
+
+
 def test_composition_groups_by_idea():
     rows = positions_view({"equity": "100000", "cash": "50000"}, [
         {"symbol": "GLD", "qty": "60", "side": "long", "market_value": "30000", "unrealized_pl": "600"},

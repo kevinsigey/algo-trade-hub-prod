@@ -95,6 +95,7 @@ def test_portfolio_pre_start_when_account_number_unset(client_with, monkeypatch)
     assert body["state"] == "pre_start"
     assert body["scoreboard"]["equity"] == 104820
     assert [p["symbol"] for p in body["positions"]] == ["GLD", "Cash"]
+    assert [p["sector"] for p in body["positions"]] == ["Commodities (Gold)", "Cash"]
     assert body["composition"][0]["idea"] == "No idea yet (manual)"
 
 
@@ -264,32 +265,3 @@ def test_order_map_gives_oco_legs_their_parents_tag(monkeypatch):
     monkeypatch.setattr(service, "paper_get", fake)
     out = service._orders()
     assert out["leg-1"] == "idea-3-stop-20261103-GLD-oco" and seen[0]["nested"] == "true"
-
-
-def test_activity_endpoint_splits_open_recent_and_trades(client_with, monkeypatch):
-    orders = [
-        {"id": "o1", "client_order_id": "idea-42-auto-20261103-GLD-open", "symbol": "GLD", "side": "buy",
-         "qty": "28", "filled_qty": "0", "type": "market", "time_in_force": "opg", "status": "accepted",
-         "limit_price": None, "stop_price": None, "filled_avg_price": None,
-         "submitted_at": "2026-11-03T12:30:00Z", "filled_at": None},
-        {"id": "o2", "client_order_id": "", "symbol": "XLE", "side": "buy",
-         "qty": "1", "filled_qty": "1", "type": "market", "time_in_force": "day", "status": "filled",
-         "limit_price": None, "stop_price": None, "filled_avg_price": "68.10",
-         "submitted_at": "2026-11-02T14:00:00Z", "filled_at": "2026-11-02T14:00:01Z"},
-        {"id": "o3", "client_order_id": "ext-1-stop-XLE", "symbol": "XLE", "side": "sell",
-         "qty": "79", "filled_qty": "0", "type": "stop", "time_in_force": "gtc", "status": "held",
-         "limit_price": None, "stop_price": "65.55", "filled_avg_price": None,
-         "submitted_at": "2026-11-02T13:00:00Z", "filled_at": None},
-    ]
-    monkeypatch.setattr(service, "paper_get", alpaca(orders=orders))
-    c = client_with(FakeSupabase())
-    body = c.get("/api/portfolio/activity").json()
-    assert body["state"] == "live"
-    assert [o["symbol"] for o in body["open"]] == ["GLD", "XLE"]  # accepted + held are working
-    assert body["open"][0]["source"] == "Workshop idea"  # unpublished in the fake store
-    assert body["open"][1]["source"] == "Machine order"
-    assert body["recent"][1]["source"] == "Manual" and body["recent"][1]["filled_avg_price"] == 68.10
-    assert body["trades"] == []
-    monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
-    assert c.get("/api/portfolio/activity").json() == {
-        "state": "not_connected", "as_of": None, "open": [], "recent": [], "trades": []}

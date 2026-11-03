@@ -3,8 +3,9 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { adminJson } from "@/lib/workshop";
 import { ArrowRight, Loader2 } from "lucide-react";
-import { Line, LineChart, ResponsiveContainer, Tooltip, Treemap, XAxis, YAxis } from "recharts";
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import CompositionBox from "@/components/CompositionMap";
 import StrategyHqStrip from "@/components/StrategyHqStrip";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
@@ -42,23 +43,6 @@ function RailRow({ label, value, className = "text-slate-100" }: { label: string
       <span className="text-slate-400">{label}</span>
       <span className={`tabular-nums font-medium ${className}`}>{value}</span>
     </div>
-  );
-}
-
-const BLOCK_COLORS = ["#10b981", "#38bdf8", "#f59e0b", "#a78bfa", "#f43f5e", "#14b8a6", "#eab308"];
-
-function Block(props: { x?: number; y?: number; width?: number; height?: number; index?: number; name?: string; pct?: number }) {
-  const { x = 0, y = 0, width = 0, height = 0, index = 0, name, pct } = props;
-  const color = name === "Cash" ? "#475569" : BLOCK_COLORS[index % BLOCK_COLORS.length];
-  return (
-    <g>
-      <rect x={x} y={y} width={width} height={height} fill={color} fillOpacity={0.35} stroke="#020617" strokeWidth={2} />
-      {width > 56 && height > 28 && (
-        <text x={x + 8} y={y + 20} fill="#f8fafc" fontSize={13} fontWeight={600}>
-          {name} {pct != null ? `${pct.toFixed(0)}%` : ""}
-        </text>
-      )}
-    </g>
   );
 }
 
@@ -150,7 +134,6 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
   const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
   const unrealized = data.positions.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0);
   const anyPl = data.positions.some((p) => p.unrealized_pl != null);
-  const holdings = data.positions.map((p) => ({ name: p.symbol, size: Math.abs(p.market_value), pct: p.pct_of_book }));
   const count = data.positions.filter((p) => p.symbol !== "Cash").length;
   const stats: { label: string; value: string; className?: string }[] = [
     { label: "Since start", value: fmtPct(s.return_pct), className: tone(s.return_pct) },
@@ -207,24 +190,7 @@ function Body({ data, liveIdeas }: { data: PortfolioPayload; liveIdeas: { id: nu
         </div>
       </Box>
 
-      <Box title="Composition" className="xl:col-span-3">
-        <div className="h-36" aria-label="Holdings by size">
-          <ResponsiveContainer width="100%" height="100%">
-            <Treemap data={holdings} dataKey="size" isAnimationActive={false} content={<Block />} />
-          </ResponsiveContainer>
-        </div>
-        <ul className="mt-2 max-h-44 space-y-1 overflow-auto">
-          {data.composition.map((c) => (
-            <li key={c.idea} className="flex items-baseline justify-between gap-3 rounded-md border border-slate-800 px-2.5 py-1.5 text-xs">
-              <span className="text-slate-200">{c.idea}</span>
-              <span className="tabular-nums text-slate-400">
-                {c.pct_of_book.toFixed(0)}% · <span className={tone(c.unrealized_pl)}>{fmtUsd(c.unrealized_pl, { signed: true })}</span>
-              </span>
-            </li>
-          ))}
-          {data.composition.length === 0 && <li className="text-xs text-slate-400">All cash.</li>}
-        </ul>
-      </Box>
+      <CompositionBox positions={data.positions} composition={data.composition} className="xl:col-span-3" />
 
       <Box title={`Every position · ${count}`} className="xl:col-span-8"
            right={(
