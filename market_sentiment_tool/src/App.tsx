@@ -36,6 +36,7 @@ import {
   Briefcase,
   CloudSun,
   FlaskConical,
+  Fuel,
   Handshake,
   HeartPulse,
   History,
@@ -107,6 +108,14 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
               research desk feeding the idea pipeline, not a prediction surface. */}
           <NavLink to="/crypto" className={linkClass}>
             <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto research
+          </NavLink>
+        </Group>
+        {/* Commodities gets its own tab above Macro (Kevin's redesign, 2026-11-03):
+            the Oil dashboard outgrew a card on the Macro page -- live hourly
+            prediction, the Hormuz tracker and the graded records live there. */}
+        <Group label="Commodities">
+          <NavLink to="/oil" className={linkClass}>
+            <Fuel className="w-5 h-5 text-muted-foreground" /> Oil
           </NavLink>
         </Group>
         <Group label="Predictions">

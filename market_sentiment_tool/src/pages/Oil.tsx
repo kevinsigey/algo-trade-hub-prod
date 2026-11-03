@@ -11,17 +11,15 @@ import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal
 import { STATUS_WORDS, skillText, totals, viewRows, type Status, type ViewRow } from "@/lib/journalView";
 
 /**
- * /oil: the WTI dashboard (Kevin's redesign, 2026-11-02).
+ * /oil: the Commodities dashboard (Kevin's redesign, 2026-11-03).
  *
- * The hero is the NEXT HOUR's call: the frozen strike ladder for the upcoming
- * KXWTIH event -- our probability above each strike beside Kalshi's, the level
- * where our probability crosses 50%, and the strikes where we disagree with
- * the market most. That is the guide for watching the hourly market. Below it,
- * the scoring and settlements record (daily and hourly journal rows, the same
- * shared detail view as before) sits behind dropdowns. The page re-reads
- * everything every 10 minutes; the ladder itself refreezes about 65 minutes
- * before each hour. Nothing is computed here that the journal did not freeze:
- * the ladder is the frozen forecasts, read back.
+ * The hero is LIVE: the next hour's ladder recomputed every 30 seconds off
+ * the current WTI print (the endpoint already rolls to the following hour
+ * inside the last 20 minutes before a close), our 50% level against
+ * Kalshi's, big and center. Below it the Hormuz chokepoints tracker, then
+ * the frozen ladder the journal locked in (~65 minutes before each hour)
+ * and the scoring/settlements record behind dropdowns -- the graded truth,
+ * kept visibly separate from the live display.
  */
 const STATUS_TONE: Record<Status, Tone> = { waiting: "quiet", early: "quiet", ahead: "good", behind: "bad", promoted: "good" };
 const OIL = new Set(["oil_wti", "oil_wti_cautious", "kalshi_implied_oil", "baseline_persistence_oil"]);
@@ -53,6 +51,155 @@ function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null): num
     }
   }
   return null;
+}
+
+
+interface LiveRow { strike: number; ours: number; market: number | null }
+interface LiveLadder {
+  state: string;
+  reason?: string;
+  event?: string;
+  minutes_to_close?: number;
+  as_of?: string;
+  live_price?: number;
+  price_at?: string;
+  our_level?: number | null;
+  market_level?: number | null;
+  geo?: { stress_score: number; k: number; partial: boolean } | null;
+  rows?: LiveRow[];
+}
+
+const LIVE_REFRESH_MS = 30 * 1000;
+
+/**
+ * The LIVE hero (Kevin's redesign, 2026-11-03): the v1 hourly model
+ * recomputed against the market as it stands now, polled every 30
+ * seconds. Inside the last 20 minutes before a close the endpoint
+ * already targets the NEXT hour's event, so there is always a live
+ * prediction on screen and it tightens as the market moves. The frozen
+ * ladder further down stays the graded record -- this one is labelled
+ * LIVE and is never scored.
+ */
+function LiveHero() {
+  const [live, setLive] = useState<LiveLadder | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), LIVE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    getJson<LiveLadder>("/api/oil/hourly-live").then(setLive).catch(() => setLive(null));
+  }, [tick]);
+
+  if (!live) {
+    return (
+      <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
+        <h2 className="text-lg font-semibold text-white">Next hour — live</h2>
+        <p className="mt-1 text-sm text-slate-400">Reading the live market…</p>
+      </section>
+    );
+  }
+  if (live.state !== "live" || !live.rows || !live.event) {
+    return (
+      <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
+        <h2 className="text-lg font-semibold text-white">Next hour — live</h2>
+        <p className="mt-1 text-sm text-slate-400">{live.reason ?? "The live ladder is unavailable right now."}</p>
+      </section>
+    );
+  }
+  const rows = live.rows;
+  const band = rows.filter((r) => r.ours >= 0.02 && r.ours <= 0.98);
+  const shown = band.length >= 3 ? band : rows;
+  const levelText = (v: number | null | undefined) => (v === null || v === undefined ? "outside the ladder" : `$${v.toFixed(2)}`);
+  const gap = live.our_level != null && live.market_level != null ? live.our_level - live.market_level : null;
+  const asOf = live.as_of ? new Date(live.as_of) : null;
+  return (
+    <section aria-label="Live next hour" className="rounded-xl border border-amber-500/40 bg-slate-900/70 p-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-rose-300">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" /> Live
+        </span>
+        <h2 className="text-xl font-semibold text-white">Next hour — {eventLabel(live.event)}</h2>
+        <span className="text-xs text-slate-500">
+          closes in ~{Math.max(0, Math.round(live.minutes_to_close ?? 0))} min
+          {asOf && <> · recomputed {asOf.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" })} ET</>}
+        </span>
+        {live.geo && (
+          <span className="ml-auto rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300">
+            Hormuz stress {live.geo.stress_score} · shadow σ ×{live.geo.k.toFixed(2)}{live.geo.partial ? " · partial feeds" : ""}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4 grid gap-4 text-center sm:grid-cols-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Our 50% level</div>
+          <div className="mt-1 text-4xl font-bold tabular-nums text-white">{levelText(live.our_level)}</div>
+          <div className="mt-1 text-xs text-slate-500">the settle price we call a coin flip</div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Kalshi's 50% level</div>
+          <div className="mt-1 text-4xl font-bold tabular-nums text-slate-200">{levelText(live.market_level)}</div>
+          <div className="mt-1 text-xs text-slate-500">
+            {gap === null ? "no clean crossing in the market ladder" : <>we sit <span className={gap >= 0 ? "text-amber-300" : "text-sky-300"}>{gap >= 0 ? "+" : "−"}${Math.abs(gap).toFixed(2)}</span> vs the market</>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">WTI live</div>
+          <div className="mt-1 text-4xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
+          <div className="mt-1 text-xs text-slate-500">the print our probabilities are priced off, right now</div>
+        </div>
+      </div>
+
+      <table className="mt-4 w-full text-sm tabular-nums">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <th className="py-1 font-medium">Strike</th>
+            <th className="py-1 font-medium">Us</th>
+            <th className="py-1 font-medium">Kalshi</th>
+            <th className="py-1 text-right font-medium">Gap</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((r) => {
+            const isLevel = live.our_level != null && Math.abs(r.strike - live.our_level) === Math.min(...shown.map((x) => Math.abs(x.strike - (live.our_level ?? 0))));
+            return (
+              <tr key={r.strike} className={`border-t border-slate-800/60 ${isLevel ? "bg-slate-800/40" : ""}`}>
+                <td className="py-1.5 font-mono text-white">
+                  ${r.strike.toFixed(2)}
+                  {isLevel && <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-amber-300">our 50% level</span>}
+                </td>
+                <td className="py-1.5 pr-2">
+                  <span className="flex items-center gap-2">
+                    <span className="h-2 rounded bg-amber-400/80" style={{ width: `${Math.max(2, r.ours * 60)}px` }} />
+                    <span className="text-slate-200">{(r.ours * 100).toFixed(0)}%</span>
+                  </span>
+                </td>
+                <td className="py-1.5 pr-2">
+                  {r.market === null ? (
+                    <span className="text-slate-500">—</span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 rounded bg-slate-400/80" style={{ width: `${Math.max(2, r.market * 60)}px` }} />
+                      <span className="text-slate-300">{(r.market * 100).toFixed(0)}%</span>
+                    </span>
+                  )}
+                </td>
+                <td className="py-1.5 text-right text-slate-300">
+                  {r.market === null ? "—" : `${r.ours - r.market >= 0 ? "+" : "−"}${Math.abs((r.ours - r.market) * 100).toFixed(0)} pts`}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="mt-3 text-[11px] text-slate-600">
+        Recomputed every 30 seconds. Inside the last 20 minutes, this is already the next hour.
+      </p>
+    </section>
+  );
 }
 
 function NextHourHero({ ours, market }: { ours: JournalFeed | null; market: JournalFeed | null }) {
@@ -235,12 +382,17 @@ export default function Oil() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
       <header>
-        <h1 className="text-3xl font-bold text-white">WTI crude oil</h1>
-        <p className="mt-2 text-slate-400">WTI, hourly and daily, scored against Kalshi.</p>
+        <h1 className="text-3xl font-bold text-white">Commodities — WTI crude oil</h1>
+        <p className="mt-2 text-slate-400">Live hourly oil, Hormuz, and the graded record.</p>
       </header>
 
-      <NextHourHero ours={ours} market={market} />
-      <div className="-mt-3 text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
+      <LiveHero />
+
+      <div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">The frozen record — locked in ~65 minutes before each hour, and graded</div>
+        <NextHourHero ours={ours} market={market} />
+        <div className="mt-1 text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
+      </div>
 
       <ChokepointsMap />
 

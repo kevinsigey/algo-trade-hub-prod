@@ -1218,6 +1218,18 @@ def geo_region(slug: str, supabase=Depends(get_supabase)):
     return view
 
 
+@app.get("/api/oil/hourly-live", tags=["Oil"])
+def oil_hourly_live():
+    """The Commodities hero: the v1 hourly WTI model recomputed against the
+    live market (tradehub/oil_live.py) -- the soonest event closing >= 20
+    minutes out, our probabilities from the live CL=F print beside Kalshi's
+    current mids, 20-second server cache. Display only: the graded record
+    is the journal's frozen ladder, which this never touches."""
+    from tradehub.oil_live import live_ladder_cached
+
+    return live_ladder_cached()
+
+
 @app.post("/api/agent/interpret", tags=["Agent"])
 def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin)):
     """In-site agent, phase 1 (the Interpreter): strategy text -> a validated

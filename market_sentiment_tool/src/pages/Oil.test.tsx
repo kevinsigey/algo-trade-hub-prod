@@ -13,14 +13,17 @@ function score(over: Partial<JournalScore> = {}): JournalScore {
   };
 }
 
-function serve(forecasters: JournalScore[], feed: Partial<JournalFeed> = {}) {
+function serve(forecasters: JournalScore[], feed: Partial<JournalFeed> = {}, live?: unknown) {
   const journal: JournalResponse = {
     as_of: "x", forecasters, headline: { forecasters: forecasters.length, calibrated: 0, frozen_calibrated: 0, settled_calibrated: 0, promoted: 0, market_skill: null },
   };
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    const body = String(url).includes("/api/journal/feed")
-      ? { forecaster: "oil_wti", forecaster_version: "wti-v1", generated_at: "x", forecasts: [], calibration: [], gate_status: "SHADOW", provisional: true, ...feed }
-      : journal;
+    const u = String(url);
+    const body = u.includes("/api/oil/hourly-live")
+      ? (live ?? { state: "unavailable", reason: "no live ladder in this test" })
+      : u.includes("/api/journal/feed")
+        ? { forecaster: "oil_wti", forecaster_version: "wti-v1", generated_at: "x", forecasts: [], calibration: [], gate_status: "SHADOW", provisional: true, ...feed }
+        : journal;
     return { ok: true, json: async () => body } as Response;
   }));
 }
@@ -34,13 +37,15 @@ describe("/oil", () => {
       score({ forecaster: "spy_quant", forecaster_version: "spy-wf-v1", cadence: "daily" }),
     ]);
     const { container } = render(<Oil />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "WTI crude oil", level: 1 })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Commodities — WTI crude oil", level: 1 })).toBeTruthy());
     // The record sits behind the Daily dropdown now (2026-11-02 dashboard pass).
     fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
     expect(screen.queryByText(/S&P/)).toBeNull();
     expect(screen.getByText(/Nothing locked in yet/)).toBeTruthy();
-    expect(copyWords(container)).toBeLessThanOrEqual(45);
+    // The budget grows with the page: the 2026-11-03 Commodities redesign adds the
+    // live hero and its labels -- still headings and labels, never essays.
+    expect(copyWords(container)).toBeLessThanOrEqual(60);
   });
 
   it("shows a scored forecast as a number with a verdict, and a missing score as a dash, never zero", async () => {
@@ -90,5 +95,26 @@ describe("/oil", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ detail: "down" }) }) as Response));
     render(<Oil />);
     await waitFor(() => expect(screen.getByText(/Oil forecasts unavailable: down/)).toBeTruthy());
+  });
+});
+
+describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
+  it("leads with the live ladder: our 50% level big, Kalshi's beside it, LIVE chip on", async () => {
+    serve([score()], {}, {
+      state: "live", event: "KXWTIH-26NOV0212", minutes_to_close: 40, as_of: "2026-11-02T16:20:00Z",
+      live_price: 101.2, our_level: 101.35, market_level: 101.1,
+      geo: { stress_score: 2, k: 1.5, partial: false },
+      rows: [
+        { strike: 100, ours: 0.97, market: 0.95 },
+        { strike: 101, ours: 0.62, market: 0.55 },
+        { strike: 102, ours: 0.18, market: 0.22 },
+      ],
+    });
+    render(<Oil />);
+    expect(await screen.findByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("$101.35")).toBeInTheDocument();
+    expect(screen.getByText("$101.10")).toBeInTheDocument();
+    expect(screen.getByText(/Hormuz stress 2/)).toBeInTheDocument();
+    expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
   });
 });

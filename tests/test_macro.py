@@ -61,20 +61,21 @@ def test_jobs_card_carries_the_live_call_the_trail_and_the_record():
     assert jobs["record"]["diagnostics_flags"] == ["pay_rev_3m: mostly_zero"]
 
 
-def test_cpi_is_a_quick_strip_item_not_a_card():
-    # Kevin's call (2026-11-01): display-only content leaves the card grid for a
-    # one-line strip across the top. The pairing and the record still hold there.
+def test_cpi_is_a_card_with_its_scoreboard_record():
+    # Kevin's redesign (2026-11-03): Macro is one glanceable grid -- Jobs, CPI
+    # and PPI as co-equal cards, no quick strip. CPI stays display_only (a
+    # wrapped Cleveland Fed nowcast) and keeps its scoreboard record.
     built = build_macro(jobs_rows=JOBS, scoreboard_rows=RUNS, journal_scores=SCORES,
                         journal_forecasts=FORECASTS, journal_settlements=SETTLEMENTS, today=TODAY)
-    assert "cpi" not in {c["key"] for c in built["cards"]}
-    [cpi] = [q for q in built["quick"] if q["key"] == "cpi"]
+    assert built["quick"] == []
+    cpi = {c["key"]: c for c in built["cards"]}["cpi"]
     assert cpi["display_only"] is True
     assert cpi["call"]["ours"] == 0.62 and cpi["call"]["market"] == 0.58
     assert cpi["record"]["n_settled"] == 24
 
 
-def test_ppi_has_a_quick_strip_home_with_its_journal_record():
-    # Kevin's redesign (2026-11-02): PPI was journal-only with no presence on /macro.
+def test_ppi_is_a_card_with_its_journal_record():
+    # Kevin's redesign (2026-11-03): PPI is a full card on the Macro grid.
     scores = SCORES + [{"forecaster": "ppi_nowcast", "forecaster_version": "ppi-yoy-v1", "n_settled": 3,
                         "brier": 0.11, "brier_baseline": 0.10, "gap": 0.01, "gap_se": 0.02}]
     forecasts = FORECASTS + [
@@ -85,7 +86,7 @@ def test_ppi_has_a_quick_strip_home_with_its_journal_record():
     ]
     built = build_macro(jobs_rows=JOBS, scoreboard_rows=RUNS, journal_scores=scores,
                         journal_forecasts=forecasts, journal_settlements=SETTLEMENTS, today=TODAY)
-    [ppi] = [q for q in built["quick"] if q["key"] == "ppi"]
+    ppi = {c["key"]: c for c in built["cards"]}["ppi"]
     assert ppi["call"]["ours"] == 0.55 and ppi["call"]["market"] == 0.51
     assert ppi["record"]["source"] == "journal" and ppi["record"]["n_settled"] == 3
     assert ppi["detail_href"] == "/journal"
@@ -98,7 +99,9 @@ def test_no_gas_card_even_when_gas_rows_exist():
     assert "gas" not in _build()
 
 
-def test_oil_card_pairs_with_the_kalshi_oil_row_and_reads_the_journal_record():
+def test_no_oil_card_oil_lives_on_the_commodities_tab():
+    # Kevin's redesign (2026-11-03): oil left Macro for its own Commodities
+    # tab. Its journal rows may still be in the inputs -- they earn no card.
     scores = SCORES + [{"forecaster": "oil_wti", "forecaster_version": "wti-v1", "n_settled": 12,
                         "brier": 0.19, "brier_baseline": 0.17, "gap": 0.02, "gap_se": 0.02}]
     forecasts = FORECASTS + [
@@ -107,11 +110,9 @@ def test_oil_card_pairs_with_the_kalshi_oil_row_and_reads_the_journal_record():
         {"forecaster": "kalshi_implied_oil", "forecaster_version": "mkt", "target": "kalshi:KXWTI-26NOV0214-T90.49",
          "probability": 0.58, "frozen_at": "2026-11-02T18:00:00Z"},
     ]
-    oil = _build(journal_scores=scores, journal_forecasts=forecasts)["oil"]
-    assert oil["title"] == "Oil" and oil["display_only"] is False
-    assert oil["record"]["source"] == "journal" and oil["record"]["n_settled"] == 12
-    assert oil["call"]["ours"] == 0.61 and oil["call"]["market"] == 0.58
-    assert oil["detail_href"] == "/oil"
+    cards = _build(journal_scores=scores, journal_forecasts=forecasts)
+    assert "oil" not in cards
+    assert set(cards) == {"jobs", "cpi", "ppi"}
 
 
 def test_empty_sources_degrade_to_null_sections_never_zeros():
