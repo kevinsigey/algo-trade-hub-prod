@@ -220,7 +220,7 @@ def _draft_openrouter(text: str, *, post=requests.post) -> tuple[DraftEnvelope, 
         raise DraftUnavailable("no_key", "no drafting model is configured on the server "
                                          "(GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY)")
     body = {
-        "models": _models(),
+        "models": _models()[:3],  # OpenRouter rejects routes with >3 models
         "messages": [{"role": "system", "content": SYSTEM + ENVELOPE_NOTE},
                      {"role": "user", "content": text}],
         # strict is off: IdeaSpec has optional fields with defaults, which strict schemas reject on many providers.
