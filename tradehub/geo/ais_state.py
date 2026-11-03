@@ -96,6 +96,10 @@ class AisState:
             "connected_s_this_hour": round(self.connected_s),
             "msgs_total": self.msgs,
             "last_msg_at": self.last_msg_at,
+            # The freshest vessel position in the table: when the feed is
+            # silent this is the "as of" of the last-known picture.
+            "vessels_as_of": max((v["last_seen"] for v in self.vessels.values()
+                                  if v.get("last_seen")), default=None),
         }
 
     # -- persistence ------------------------------------------------------------
@@ -130,17 +134,21 @@ def read_state_file(path: str, region, now: datetime) -> tuple[dict | None, str]
     if age > STALE_AFTER_S:
         return state.metrics(now), "stale"
     metrics = state.metrics(now)
-    # Connected-but-silent is UNKNOWN, never "live with zero ships" (the
-    # chokepoints plan's core rule; verified live Nov 2 2026: AISStream's
-    # Gulf boxes stream nothing on the free tier while Singapore flows, so
-    # a fresh state file with no recent message cannot tell a quiet strait
-    # from absent coverage).
-    if state.last_msg_at is None:
-        return metrics, "unknown"
-    try:
-        silent_s = (now - datetime.fromisoformat(state.last_msg_at)).total_seconds()
-    except ValueError:
-        return metrics, "unknown"
-    if silent_s > STALE_AFTER_S:
-        return metrics, "unknown"
+    # Connected-but-silent is never "live with zero ships" (the chokepoints
+    # plan's core rule; verified live Nov 2 2026: AISStream's Gulf boxes
+    # stream nothing on the free tier while Singapore flows). What it reads
+    # as instead is Kevin's call (2026-11-03): when the state holds vessels
+    # with known positions, serve that last-known picture flagged STALE --
+    # old but real, never presented as live. Only a state with no
+    # positioned vessel at all (we have simply never had coverage) stays
+    # UNKNOWN.
+    silent = state.last_msg_at is None
+    if not silent:
+        try:
+            silent = (now - datetime.fromisoformat(state.last_msg_at)).total_seconds() > STALE_AFTER_S
+        except ValueError:
+            silent = True
+    if silent:
+        positioned = any(v.get("lat") is not None for v in state.vessels.values())
+        return metrics, "stale" if positioned else "unknown"
     return metrics, "live"
