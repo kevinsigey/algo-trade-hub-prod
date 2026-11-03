@@ -13,20 +13,11 @@ vi.mock("recharts", async () => {
     ...orig,
     ResponsiveContainer: ({ children }: { children: ReactElement }) => <div>{children}</div>,
     Treemap: (props: { data: unknown[]; content: ReactElement }) => {
-      const nodes: ReactElement[] = [];
-      (props.data as { name: string; pct: number; sector: string | null; children: Record<string, unknown>[] }[])
-        .forEach((g, gi) => {
-          nodes.push(cloneElement(props.content, {
-            key: `g${gi}`, x: 0, y: gi * 100, width: 400, height: 96, depth: 1,
-            name: g.name, pct: g.pct, sector: g.sector,
-          }));
-          g.children.forEach((leaf, li) => {
-            nodes.push(cloneElement(props.content, {
-              ...leaf, key: `l${gi}-${li}`,
-              x: li * 140, y: gi * 100 + 30, width: 130, height: 60, depth: 2,
-            }));
-          });
-        });
+      // One treemap per group now: data is the group's flat leaf list.
+      const nodes = (props.data as Record<string, unknown>[]).map((leaf, li) =>
+        cloneElement(props.content, {
+          ...leaf, key: `l${li}`, x: li * 140, y: 0, width: 130, height: 60, depth: 1,
+        }));
       return <svg data-testid="treemap">{nodes}</svg>;
     },
   };
@@ -100,5 +91,22 @@ describe("CompositionBox", () => {
     expect(within(dialog).getByText("Lab2 ASML gate · 10%")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("CompositionBox tooltip clamping", () => {
+  it("keeps the hover card inside the container when the cursor is at the far edge", () => {
+    const { container } = render(<CompositionBox positions={POSITIONS} composition={[]} />);
+    fireEvent.mouseOver(screen.getByTestId("tile-XOM"));
+    const view = container.querySelector("[aria-label='Holdings by size, colored by sector']")!.parentElement!;
+    fireEvent.mouseMove(view, { clientX: 100000, clientY: 100000 });
+    const tip = screen.getByTestId("tile-tooltip");
+    // The card (208 wide) must end at or before the container's right edge:
+    // left + 208 <= container width, and never negative.
+    const left = parseFloat(tip.style.left);
+    const top = parseFloat(tip.style.top);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left + 208).toBeLessThanOrEqual(view.parentElement!.getBoundingClientRect().width || 640);
+    expect(top).toBeGreaterThanOrEqual(0);
   });
 });
