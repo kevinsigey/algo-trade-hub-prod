@@ -31,6 +31,8 @@ function card(over: Partial<AgentDebateCard> = {}): AgentDebateCard {
     llm_model: "gemini-test",
     status: "complete",
     error: null,
+    market_anchor: null,
+    live: null,
     stale: false,
     cost_usd: 0,
     inputs_note: "test inputs",
@@ -114,5 +116,25 @@ describe("DebateCard summary-first layout", () => {
     expect(screen.queryByText("Stated levels")).toBeNull();
     expect(screen.queryByText(/Trader:/)).toBeNull();
     expect(screen.getAllByText(/The panel was cautious throughout/).length).toBeGreaterThan(0); // summary fallback still shows
+  });
+});
+
+describe("the market anchor (Kevin, 2026-11-03)", () => {
+  it("shows the traded price and flags levels that sit far from it", () => {
+    renderCard(card({
+      market_anchor: { price: 200, prev_close: 198, year_high: 220, year_low: 150, at: "2026-11-02T17:00:00Z" },
+      live: { price: 205, at: "2026-11-03T14:00:00Z" },
+    }));
+    // The GOOGL fixture states Entry 295 / Stop 315 -- far from a $200 tape.
+    expect(screen.getByText(/Traded at/)).toBeInTheDocument();
+    expect(screen.getByText(/far from the traded price/)).toBeInTheDocument();
+  });
+
+  it("no flag when the stated levels sit near the traded price", () => {
+    renderCard(card({
+      market_anchor: { price: 300, prev_close: 298, year_high: 320, year_low: 240, at: "2026-11-02T17:00:00Z" },
+    }));
+    expect(screen.getByText(/Traded at/)).toBeInTheDocument();
+    expect(screen.queryByText(/far from the traded price/)).not.toBeInTheDocument();
   });
 });

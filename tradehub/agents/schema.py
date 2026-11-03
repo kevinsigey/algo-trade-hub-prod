@@ -36,6 +36,13 @@ class RunRecord(BaseModel):
     cost_usd: float | None = None
     status: Literal["complete", "partial", "failed_cost", "failed_error"] = "complete"
     error: str | None = None  # the failure class/detail when status is a failure
+    # The market's own numbers at debate time (hub-side yfinance, never the
+    # framework's): {price, prev_close, year_high, year_low, at}. The card
+    # holds the debate's stated levels up against this anchor.
+    market_anchor: dict | None = None
+    # Failed runs are shown once, then deleted (Kevin, 2026-11-03): the feed
+    # flips this when it serves the failure, and deletes on the next read.
+    failure_seen: bool = False
 
 
 class GradeEntry(BaseModel):

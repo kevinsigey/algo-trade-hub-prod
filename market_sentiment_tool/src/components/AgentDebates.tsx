@@ -53,13 +53,18 @@ function actionChipClass(action: TraderAction): string {
  * value on one track. Drawn only when the text stated at least two of them --
  * an unstated level is never invented to complete the picture.
  */
-function PriceLadder({ levels }: { levels: PriceLevels }) {
+function PriceLadder({ levels, anchorPrice }: { levels: PriceLevels; anchorPrice?: number | null }) {
   const points: { label: string; value: number; dot: string; text: string }[] = [];
   if (levels.stop !== null) points.push({ label: "Stop", value: levels.stop, dot: "bg-rose-400", text: "text-rose-300" });
   if (levels.entry !== null) points.push({ label: "Entry", value: levels.entry, dot: "bg-sky-400", text: "text-sky-300" });
   levels.targets.forEach((t, i) =>
     points.push({ label: levels.targets.length > 1 ? `Target ${i + 1}` : "Target", value: t, dot: "bg-emerald-400", text: "text-emerald-300" }));
   if (points.length < 2) return null;
+  // The price the stock actually traded at when debated, drawn on the same
+  // track: a ladder floating far from it exposes itself at a glance.
+  if (anchorPrice !== null && anchorPrice !== undefined) {
+    points.push({ label: "Traded", value: anchorPrice, dot: "bg-white", text: "text-slate-100" });
+  }
   const values = points.map((p) => p.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -190,7 +195,24 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
         {summary && <p className="mt-3 text-sm leading-relaxed text-slate-200">{summary}</p>}
 
         {/* The stated levels, when the debate stated enough of them to draw. */}
-        <PriceLadder levels={levels} />
+        <PriceLadder levels={levels} anchorPrice={card.market_anchor?.price ?? null} />
+
+        {/* The grounding line (Kevin, 2026-11-03): what the stock actually
+            traded at when debated, and now -- with a warning when the stated
+            levels sit far from that traded price. */}
+        {card.market_anchor && (
+          <p className="mt-2 text-xs text-slate-400">
+            Traded at <span className="font-semibold text-slate-200">{formatPrice(card.market_anchor.price)}</span> when debated
+            {card.live && <> · now <span className="font-semibold text-slate-200">{formatPrice(card.live.price)}</span></>}
+            {[levels.entry, levels.stop, ...levels.targets].some(
+              (v) => v !== null && Math.abs(v / card.market_anchor!.price - 1) > 0.15,
+            ) && (
+              <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-semibold text-amber-300">
+                Stated levels sit far from the traded price — treat them as unreliable
+              </span>
+            )}
+          </p>
+        )}
 
         {/* Every section behind a dropdown, closed by default. */}
         <div className="mt-3 space-y-2">

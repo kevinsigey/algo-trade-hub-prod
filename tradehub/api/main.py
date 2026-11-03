@@ -655,16 +655,40 @@ def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_adm
 def agent_debates(_admin: dict = Depends(admin.require_admin)):
     """The TradingAgents debate feed (phase-2 §3.2): labelled cards + the debate record.
     Read-only and fenced -- this module has no path to orders, and debates are never
-    model signals: the chip text rides on every card and on the payload itself."""
+    model signals: the chip text rides on every card and on the payload itself.
+
+    Failed runs are shown once, then deleted (Kevin, 2026-11-03): a failure
+    already marked seen is removed before the feed is built; a fresh failure
+    is marked seen as it is served. Cards also carry the market anchor stored
+    at run time and a cached live price, so stated levels can be held against
+    the tape."""
+    from tradehub.agents import anchor as agents_anchor
     from tradehub.agents import payload as agents_payload, store as agents_store
     from tradehub.workshop.data import last_complete_day
     latest = last_complete_day(datetime.now(timezone.utc)).isoformat()
-    return agents_payload.feed(agents_store.list_runs(), agents_store.load_grades(),
-                               latest_session=latest)
+    runs = []
+    for run in agents_store.list_runs():
+        if run.status.startswith("failed"):
+            if run.failure_seen:
+                agents_store.delete_run(run.run_id)
+                continue
+            run = agents_store.mark_failure_seen(run)
+        runs.append(run)
+    live = agents_anchor.current_prices({r.ticker for r in runs if r.status == "complete"})
+    return agents_payload.feed(runs, agents_store.load_grades(),
+                               latest_session=latest, live=live)
 
 
 class _DebateRunIn(BaseModel):
     ticker: str = Field(min_length=1, max_length=12)
+    force: bool = False  # rerun even inside the reuse window
+
+
+# A debate is a daily-cadence read on a session: inside this window a rerun
+# of the same ticker returns the existing debate instead of spending another
+# panel (Kevin, 2026-11-03: replaced, not duplicated, unless real time has
+# passed). force=True is the explicit override.
+_DEBATE_REUSE_WINDOW = timedelta(hours=12)
 
 
 _DEBATE_IN_FLIGHT: set[str] = set()
@@ -683,6 +707,23 @@ def agent_debate_run(body: _DebateRunIn, _admin: dict = Depends(admin.require_ad
     ticker = body.ticker.strip().upper()
     if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
         raise HTTPException(status_code=422, detail="that does not look like a ticker")
+    if not body.force:
+        from tradehub.agents import store as agents_store
+
+        now = datetime.now(timezone.utc)
+        for run in agents_store.list_runs():  # newest first
+            if run.ticker != ticker or run.status not in ("complete", "partial"):
+                continue
+            try:
+                ran_at = datetime.fromisoformat(run.run_at_utc)
+            except ValueError:
+                break
+            age = now - ran_at
+            if age < _DEBATE_REUSE_WINDOW:
+                return JSONResponse(status_code=200, content={
+                    "reused": run.run_id, "ticker": ticker,
+                    "age_hours": round(age.total_seconds() / 3600, 1)})
+            break  # the newest is already outside the window; older ones are older
     with _DEBATE_LOCK:
         if ticker in _DEBATE_IN_FLIGHT:
             raise HTTPException(status_code=409, detail=f"a debate on {ticker} is already running")

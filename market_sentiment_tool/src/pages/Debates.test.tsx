@@ -92,6 +92,6 @@ describe("Agent debates page", () => {
     const posts = f.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST");
     await waitFor(() => expect(posts.length).toBe(1));
     expect(String(posts[0][0])).toContain("/api/agent-debates/run");
-    expect((posts[0][1] as RequestInit).body).toBe(JSON.stringify({ ticker: "NVDA" }));
+    expect((posts[0][1] as RequestInit).body).toBe(JSON.stringify({ ticker: "NVDA", force: false }));
   });
 });

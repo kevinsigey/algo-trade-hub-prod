@@ -28,7 +28,8 @@ def is_stale(run: RunRecord, latest_session: str | None) -> bool:
     return days > STALE_AFTER_TRADING_DAYS
 
 
-def card(run: RunRecord, grades: list[GradeEntry], *, latest_session: str | None) -> dict:
+def card(run: RunRecord, grades: list[GradeEntry], *, latest_session: str | None,
+         live: dict | None = None) -> dict:
     mine = {g.horizon: g for g in grades if g.run_id == run.run_id}
     grade_view = {}
     for horizon in HORIZONS:
@@ -51,6 +52,8 @@ def card(run: RunRecord, grades: list[GradeEntry], *, latest_session: str | None
         "llm_model": _or_nr(run.llm_model),
         "status": run.status,
         "error": run.error,
+        "market_anchor": run.market_anchor,
+        "live": live,
         "stale": is_stale(run, latest_session),
         "cost_usd": run.cost_usd if run.cost_usd is not None else NOT_RECORDED,
         "inputs_note": _or_nr(run.inputs_note),
@@ -66,11 +69,13 @@ def card(run: RunRecord, grades: list[GradeEntry], *, latest_session: str | None
     }
 
 
-def feed(runs: list[RunRecord], grades: list[GradeEntry], *, latest_session: str | None) -> dict:
+def feed(runs: list[RunRecord], grades: list[GradeEntry], *, latest_session: str | None,
+         live: dict | None = None) -> dict:
     summary = record_summary(grades)
+    live = live or {}
     return {
         "chip": CHIP,
-        "cards": [card(r, grades, latest_session=latest_session) for r in runs],
+        "cards": [card(r, grades, latest_session=latest_session, live=live.get(r.ticker)) for r in runs],
         "record": summary,
         "banner": "No edge detected in graded runs" if summary["banner"] else None,
     }

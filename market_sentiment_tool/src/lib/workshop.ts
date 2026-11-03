@@ -396,6 +396,21 @@ export function legText(leg: OptionLeg): string {
     `${leg.qty_per_share !== 1 ? `, ${leg.qty_per_share} per share` : ""}`;
 }
 
+/** The market's own numbers stored on a debate at run time (hub-side yfinance). */
+export interface MarketAnchor {
+  price: number;
+  prev_close: number | null;
+  year_high: number | null;
+  year_low: number | null;
+  at: string;
+}
+
+/** A cached live price for the feed's "now" column. */
+export interface LivePrice {
+  price: number;
+  at: string;
+}
+
 /** One agent-debate card (feed spec §6): every label the payload resolved server-side. */
 export interface AgentDebateCard {
   source: "agent_debate";
@@ -413,6 +428,8 @@ export interface AgentDebateCard {
   llm_model: string;
   status: string;
   error: string | null;
+  market_anchor: MarketAnchor | null;
+  live: LivePrice | null;
   stale: boolean;
   cost_usd: number | string;
   inputs_note: string;

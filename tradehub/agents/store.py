@@ -47,6 +47,27 @@ def list_runs() -> list[RunRecord]:
     return out
 
 
+def delete_run(run_id: str) -> None:
+    """Remove a run's artifacts and its grades (the replace / shown-once
+    cleanups). A run id that is not a plain folder name is ignored."""
+    if not run_id.replace("-", "").replace("_", "").isalnum():
+        return
+    import shutil
+    shutil.rmtree(runs_dir() / run_id, ignore_errors=True)
+    grades = load_grades()
+    kept = [g for g in grades if g.run_id != run_id]
+    if len(kept) != len(grades):
+        save_grades(kept)
+
+
+def mark_failure_seen(record: RunRecord) -> RunRecord:
+    """Persist failure_seen on a failed run: the feed shows it this once, and
+    the next read deletes it (Kevin, 2026-11-03)."""
+    seen = record.model_copy(update={"failure_seen": True})
+    save_run(seen, None)
+    return seen
+
+
 def read_report(run_id: str) -> str | None:
     if not run_id.replace("-", "").replace("_", "").isalnum():
         return None
