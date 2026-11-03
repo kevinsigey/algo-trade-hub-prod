@@ -55,6 +55,27 @@ def test_an_untestable_live_claim_is_a_watch_with_the_reason():
     assert rec == "WATCH" and "not been testable" in reasons[0]
 
 
+def test_a_young_record_caps_a_pause_at_a_watch():
+    """Annualizing a few weeks explodes the number: direction earns a watch,
+    but a PAUSE needs JUDGE_DAYS of live record behind it."""
+    rec, reasons = critic.recommend(days=30, live_value=-2.0, backtest_value=10.0)
+    assert rec == "WATCH" and "too early" in reasons[0]
+    assert critic.recommend(days=90, live_value=-2.0, backtest_value=10.0)[0] == "PAUSE"
+
+
+def test_a_payload_with_a_nan_live_value_is_json_safe():
+    import json
+
+    rows = _rows(20, ret=0.001, spy=0.001)  # ballast: no down days, live value NaN
+    payload = critic.critique_payload(
+        idea_id=1, book="main", at="2026-11-09T23:00:00+00:00", kind="ballast",
+        backtest={"value": 1.5, "label": "x", "holds": True, "verdict": "PASS",
+                  "p": 0.01, "walk_forward": None},
+        rows=rows, regimes={}, paper=None, prior_dominant=None)
+    json.dumps(payload)  # must not raise: NaN is not JSON
+    assert payload["live"]["value"] is None
+
+
 # ── losing entries cluster by the regime at entry ───────────────────────────────
 
 def test_losing_entries_cluster_by_regime_at_entry():
@@ -145,13 +166,14 @@ def test_the_weekly_run_critiques_live_and_tracked_and_aggregates(seeded):
     summary, failed = ideas_critic.run(datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc),
                                        seeded, closes=_fake_closes)
     assert failed == {}
-    assert summary["counts"] == {"PAUSE": 1, "WATCH": 0, "HOLD": 1}
-    assert summary["worst"][0]["recommendation"] == "PAUSE"
+    # 15 live days: the failing idea is PAUSE-band but too young to pause on.
+    assert summary["counts"] == {"PAUSE": 0, "WATCH": 1, "HOLD": 1}
+    assert summary["worst"][0]["recommendation"] == "WATCH"
     latest = store.latest_critiques(seeded)
     assert len(latest) == 2
-    pause = [p for p in (r["payload"] for r in latest.values())
-             if p["recommendation"] == "PAUSE"][0]
-    assert pause["degradation"] < 0 and pause["live"]["days"] == 15
+    watch = [p for p in (r["payload"] for r in latest.values())
+             if p["recommendation"] == "WATCH"][0]
+    assert watch["degradation"] < 0 and watch["live"]["days"] == 15
 
 
 # ── the API surface: aggregate summary + the critic block on the idea ──────────
@@ -232,4 +254,4 @@ def test_one_broken_idea_never_stops_the_others(seeded, monkeypatch):
     monkeypatch.setattr(ideas_critic.store, "get_run", flaky)
     summary, failed = ideas_critic.run(datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc),
                                        seeded, closes=_fake_closes)
-    assert len(failed) == 1 and summary["counts"]["PAUSE"] == 1
+    assert len(failed) == 1 and summary["counts"]["WATCH"] == 1

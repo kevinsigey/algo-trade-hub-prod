@@ -26,9 +26,16 @@ import pandas as pd
 from tradehub.workshop import engine
 
 MIN_DAYS = 10  # below this the only honest verdict is "too little record"
+JUDGE_DAYS = 60  # below this an annualized live number is too noisy to pause on
 PAUSE_RATIO = 0.5
 WATCH_RATIO = 0.75
 CLUSTER_SHARE = 0.6
+
+
+def _num(value: float | None) -> float | None:
+    """JSON cannot carry NaN or inf, and a stored critique must never smuggle
+    one in: non-finite numbers become None (absent), never a fake zero."""
+    return value if value is not None and math.isfinite(value) else None
 
 
 def regime_tags(spy: pd.Series) -> dict[str, dict]:
@@ -70,13 +77,19 @@ def recommend(*, days: int, live_value: float | None, backtest_value: float | No
     if live_value is None or not math.isfinite(live_value):
         return "WATCH", ["the claim has not been testable live yet (its live statistic is undefined)"]
     if backtest_value is not None and math.isfinite(backtest_value) and backtest_value > 0:
-        if live_value <= 0:
-            return "PAUSE", [f"the claim is not holding live: {live_value:+.1f} against "
-                             f"{backtest_value:+.1f} backtested, in the claim's own units"]
+        if live_value <= 0 or live_value / backtest_value < PAUSE_RATIO:
+            reason = (f"the claim is not holding live: {live_value:+.1f} against "
+                      f"{backtest_value:+.1f} backtested, in the claim's own units"
+                      if live_value <= 0 else
+                      f"live is running at {live_value / backtest_value:.0%} of the backtested "
+                      f"claim ({live_value:+.1f} vs {backtest_value:+.1f})")
+            if days < JUDGE_DAYS:
+                # Annualizing a few weeks of live days explodes the number;
+                # the direction is worth a watch, not a pause.
+                return "WATCH", [reason + f" -- but only {days} live days, too early "
+                                          "to pause on an annualized number"]
+            return "PAUSE", [reason]
         ratio = live_value / backtest_value
-        if ratio < PAUSE_RATIO:
-            return "PAUSE", [f"live is running at {ratio:.0%} of the backtested claim "
-                             f"({live_value:+.1f} vs {backtest_value:+.1f})"]
         if ratio < WATCH_RATIO:
             return "WATCH", [f"live is running at {ratio:.0%} of the backtested claim "
                              f"({live_value:+.1f} vs {backtest_value:+.1f})"]
@@ -145,13 +158,13 @@ def critique_payload(*, idea_id: int, book: str, at: str, kind: str, backtest: d
     rec, reasons = recommend(days=days, live_value=live_value, backtest_value=backtest_value)
     return {
         "idea_id": idea_id, "book": book, "at": at,
-        "claim": {"kind": kind, "backtest_value": backtest_value,
+        "claim": {"kind": kind, "backtest_value": _num(backtest_value),
                   "backtest_label": backtest.get("label"), "backtest_holds": backtest.get("holds"),
-                  "verdict": backtest.get("verdict"), "p": backtest.get("p"),
+                  "verdict": backtest.get("verdict"), "p": _num(backtest.get("p")),
                   "walk_forward": backtest.get("walk_forward")},
         "live": {"days": days,
                  "span": [rows[0]["day"], rows[-1]["day"]] if days else None,
-                 "value": live_value, "label": live_label, "holds": holds},
+                 "value": _num(live_value), "label": live_label, "holds": holds},
         "degradation": degradation,
         "conditions": {"entries": len(spans), "losing_entries": len(losing),
                        "dominant": dominant, "dominant_share": round(share, 2) if dominant else None},
