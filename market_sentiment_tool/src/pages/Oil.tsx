@@ -75,6 +75,88 @@ interface LiveLadder {
   rows?: LiveRow[];
 }
 
+/** P(settles above x) read off a ladder by interpolation; null when unusable. */
+function probAbove(rows: LiveRow[], x: number, pick: (r: LiveRow) => number | null): number | null {
+  const pts = rows.filter((r) => pick(r) !== null).sort((a, b) => a.strike - b.strike);
+  if (pts.length < 2) return null;
+  if (x <= pts[0].strike) return pick(pts[0]);
+  if (x >= pts[pts.length - 1].strike) return pick(pts[pts.length - 1]);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    if (x >= a.strike && x <= b.strike) {
+      const pa = pick(a)!;
+      const pb = pick(b)!;
+      return pa + ((x - a.strike) / (b.strike - a.strike)) * (pb - pa);
+    }
+  }
+  return null;
+}
+
+/**
+ * Direction at a glance (Kevin, 2026-11-03 -- the full strike list was not an
+ * intuitive way to read direction): the two probability curves against price,
+ * with the live print, our 50% level and Kalshi's marked, and the band between
+ * the two levels shaded -- that band IS the disagreement, and which side of it
+ * our curve sits on is the lean. The full ladder stays one dropdown away.
+ */
+function DirectionChart({ rows, livePrice, ourLevel, marketLevel }: {
+  rows: LiveRow[];
+  livePrice?: number;
+  ourLevel?: number | null;
+  marketLevel?: number | null;
+}) {
+  const W = 720;
+  const H = 190;
+  const PL = 36;
+  const PR = 12;
+  const PT = 24;
+  const PB = 22;
+  const marks = [livePrice, ourLevel, marketLevel].filter((v): v is number => v !== null && v !== undefined);
+  const lo = Math.min(...rows.map((r) => r.strike), ...marks);
+  const hi = Math.max(...rows.map((r) => r.strike), ...marks);
+  const padX = (hi - lo) * 0.08 || 1;
+  const x0 = lo - padX;
+  const x1 = hi + padX;
+  const X = (v: number) => PL + ((v - x0) / (x1 - x0)) * (W - PL - PR);
+  const Y = (p: number) => PT + (1 - p) * (H - PT - PB);
+  const line = (pick: (r: LiveRow) => number | null) => {
+    const pts = rows.filter((r) => pick(r) !== null).sort((a, b) => a.strike - b.strike);
+    if (pts.length < 2) return "";
+    let d = `M ${X(x0).toFixed(1)} ${Y(pick(pts[0])!).toFixed(1)}`;
+    for (const r of pts) d += ` L ${X(r.strike).toFixed(1)} ${Y(pick(r)!).toFixed(1)}`;
+    return d + ` L ${X(x1).toFixed(1)} ${Y(pick(pts[pts.length - 1])!).toFixed(1)}`;
+  };
+  const marker = (v: number | null | undefined, cls: string, label: string, dash: boolean) =>
+    v === null || v === undefined ? null : (
+      <g key={label}>
+        <line x1={X(v)} x2={X(v)} y1={PT - 6} y2={H - PB} stroke={cls} strokeWidth="1.2" strokeDasharray={dash ? "4 3" : undefined} />
+        <text x={Math.min(Math.max(X(v), PL + 26), W - PR - 26)} y={PT - 10} textAnchor="middle" fontSize="11" fontWeight="600" fill={cls}>{label}</text>
+      </g>
+    );
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" role="img" aria-label="Chance of settling above each price: us versus Kalshi">
+      {ourLevel != null && marketLevel != null && (
+        <rect x={X(Math.min(ourLevel, marketLevel))} width={Math.abs(X(ourLevel) - X(marketLevel))}
+              y={PT - 6} height={H - PT - PB + 6} fill="rgb(251 191 36 / 0.08)" />
+      )}
+      <line x1={PL} x2={W - PR} y1={Y(0.5)} y2={Y(0.5)} stroke="#475569" strokeWidth="1" strokeDasharray="2 4" />
+      <text x={PL - 6} y={Y(0.5) + 4} textAnchor="end" fontSize="10" fill="#64748b">50%</text>
+      <text x={PL - 6} y={Y(0.98) + 4} textAnchor="end" fontSize="10" fill="#64748b">100%</text>
+      <text x={PL - 6} y={Y(0.02) + 4} textAnchor="end" fontSize="10" fill="#64748b">0%</text>
+      {marketLevel !== null && marketLevel !== undefined && (
+        <path d={line((r) => r.market)} fill="none" stroke="#94a3b8" strokeWidth="1.6" strokeDasharray="5 4" />
+      )}
+      <path d={line((r) => r.ours)} fill="none" stroke="#fbbf24" strokeWidth="2.2" />
+      {marker(marketLevel, "#94a3b8", `Kalshi $${marketLevel?.toFixed(2)}`, true)}
+      {marker(ourLevel, "#fbbf24", `Us $${ourLevel?.toFixed(2)}`, true)}
+      {marker(livePrice, "#f8fafc", `WTI $${livePrice?.toFixed(2)}`, false)}
+      <text x={PL} y={H - 6} fontSize="10" fill="#64748b">${x0.toFixed(2)}</text>
+      <text x={W - PR} y={H - 6} textAnchor="end" fontSize="10" fill="#64748b">${x1.toFixed(2)}</text>
+    </svg>
+  );
+}
+
 const LIVE_REFRESH_MS = 30 * 1000;
 
 /**
@@ -89,6 +171,7 @@ const LIVE_REFRESH_MS = 30 * 1000;
 function LiveHero() {
   const [live, setLive] = useState<LiveLadder | null>(null);
   const [tick, setTick] = useState(0);
+  const [strikesOpen, setStrikesOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), LIVE_REFRESH_MS);
@@ -168,7 +251,31 @@ function LiveHero() {
         )}
       </div>
 
-      <table className="mt-4 w-full text-sm tabular-nums">
+      {(() => {
+        const pAbove = live.market_level != null ? probAbove(rows, live.market_level, (r) => r.ours) : null;
+        if (pAbove === null || live.market_level == null) return null;
+        const lean = pAbove > 0.53 ? "higher" : pAbove < 0.47 ? "lower" : "inline";
+        return (
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5">
+            <span className={`text-2xl font-bold tabular-nums ${lean === "higher" ? "text-emerald-300" : lean === "lower" ? "text-rose-300" : "text-slate-200"}`}>
+              {lean === "higher" ? "▲" : lean === "lower" ? "▼" : "◆"} {(pAbove * 100).toFixed(0)}%
+            </span>
+            <span className="text-sm text-slate-300">
+              {lean === "higher" ? "we lean higher than Kalshi" : lean === "lower" ? "we lean lower than Kalshi" : "we sit in line with Kalshi"}
+              {" "}— the chance the hour settles above Kalshi's 50% level (${live.market_level.toFixed(2)})
+            </span>
+          </div>
+        );
+      })()}
+      <DirectionChart rows={rows} livePrice={live.live_price} ourLevel={live.our_level} marketLevel={live.market_level} />
+
+      <button type="button" aria-expanded={strikesOpen} onClick={() => setStrikesOpen((v) => !v)}
+              className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
+        All strikes
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${strikesOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {strikesOpen && (
+      <table className="mt-2 w-full text-sm tabular-nums">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
             <th className="py-1 font-medium">Strike</th>
@@ -212,6 +319,7 @@ function LiveHero() {
           })}
         </tbody>
       </table>
+      )}
       <p className="mt-3 text-[11px] text-slate-600">
         Recomputed every 30 seconds. Inside the last 20 minutes, this is already the next hour.
       </p>
@@ -345,6 +453,31 @@ function NextHourHero({ ours, market }: { ours: JournalFeed | null; market: Jour
   );
 }
 
+function FrozenRecord({ ours, market }: { ours: JournalFeed | null; market: JournalFeed | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section aria-label="Frozen record" className="border border-slate-800">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-900/60"
+      >
+        <span className="text-base font-semibold text-white">Frozen record</span>
+        <span className="text-xs text-slate-500">locked in ~65 minutes before each hour, and graded</span>
+        <ChevronDown className={`ml-auto h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="space-y-3 px-4 pb-4">
+          <ItmRecordStrip />
+          <NextHourHero ours={ours} market={market} />
+          <div className="text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RecordSection({ title, rows }: { title: string; rows: ViewRow[] }) {
   const [open, setOpen] = useState(false);
   if (rows.length === 0) return null;
@@ -427,13 +560,11 @@ export default function Oil() {
       </header>
 
       <LiveHero />
-      <ItmRecordStrip />
 
-      <div>
-        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">The frozen record — locked in ~65 minutes before each hour, and graded</div>
-        <NextHourHero ours={ours} market={market} />
-        <div className="mt-1 text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
-      </div>
+      {/* The frozen record hides behind a dropdown (Kevin, 2026-11-03): the
+          live next-hour prediction is what the page leads with; the locked-in
+          ladder and its grades open only on request. */}
+      <FrozenRecord ours={ours} market={market} />
 
       <ChokepointsMap />
 

@@ -90,6 +90,8 @@ describe("Screening page (cards)", () => {
     serve();
     render(<MemoryRouter><Screening /></MemoryRouter>);
     expect(screen.queryByLabelText("The spec (editable JSON)")).not.toBeInTheDocument();
+    // The library hides behind group dropdowns (Kevin, 2026-11-03).
+    fireEvent.click(await screen.findByRole("button", { name: /Valuation/ }));
     const blurb = (await screen.findAllByText("Price over trailing earnings."))[0];
     const cardEl = blurb.closest("div") as HTMLElement;
     fireEvent.click(within(cardEl).getByRole("button", { name: /Add/ }));
@@ -103,7 +105,7 @@ describe("Screening page (cards)", () => {
                               { fn: "last_print_surprise_pct", op: "gt", value: 0 }] },
             model: "rules (AI unavailable: HTTPError)" });
     render(<MemoryRouter><Screening /></MemoryRouter>);
-    await screen.findAllByText("Price over trailing earnings."); // catalog loaded
+    await screen.findByRole("button", { name: /Valuation/ }); // catalog loaded (library collapsed)
     fireEvent.change(screen.getByLabelText("Describe the screen in plain English"),
       { target: { value: "stocks with strong momentum and beat earnings with positive guidance" } });
     fireEvent.click(screen.getByRole("button", { name: "Translate" }));

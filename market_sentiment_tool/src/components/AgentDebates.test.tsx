@@ -85,30 +85,32 @@ describe("DebateCard summary-first layout", () => {
     expect(screen.queryByText(/Target/)).toBeNull();
   });
 
-  it("the list card carries no case text; the full case opens on click, formatted", () => {
+  it("the list card carries no case text; each point opens under its own dropdown", () => {
     const { container } = renderCard(card());
-    // Summary-only list (Kevin, 2026-11-03): no bull/bear text, no previews.
+    // Summary-only list (Kevin, 2026-11-03): no bull/bear text, no previews --
+    // but every recorded point has its own closed dropdown.
     expect(screen.queryByText(/trend is your friend/)).toBeNull();
     expect(screen.queryByText(/reconvene at \$260/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Bear case/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Bull case/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Bear case/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Bull case/ }));
     expect(screen.getByText(/trend is your friend/)).toBeTruthy();
-    expect(screen.getByText(/reconvene at \$260/)).toBeTruthy();
-    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(screen.queryByText(/reconvene at \$260/)).toBeNull(); // the bear stays closed
     // Formatted, never a raw dump: markdown headings become titles, no <pre>.
     expect(container.querySelector("pre")).toBeNull();
     expect(screen.queryByText(/# Alphabet Inc/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /Hide the full case/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Bear case/ }));
+    expect(screen.getByText(/reconvene at \$260/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Bull case/ }));
     expect(screen.queryByText(/trend is your friend/)).toBeNull();
   });
 
   it("skips sections the run did not record", () => {
     renderCard(card());
-    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
-    expect(screen.queryByText("News", { selector: "div" })).toBeNull();
-    expect(screen.getByText("Fundamentals")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /News/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Fundamentals/ })).toBeTruthy();
   });
 
   it("renders the framework report as a document, tables included", async () => {
@@ -116,8 +118,8 @@ describe("DebateCard summary-first layout", () => {
       "# Final Report\n\n| Case | Price |\n| --- | --- |\n| Bear | $61 |\n\nThe end.",
       { status: 200 })));
     const { container } = renderCard(card({ has_report: true }));
-    fireEvent.click(screen.getByRole("button", { name: /Read the full case/ }));
-    expect(await screen.findByText("Framework report")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Framework report/ }));
+    expect(await screen.findByText("The end.")).toBeTruthy();
     expect(container.querySelector("table")?.textContent).toContain("$61");
     expect(container.querySelector("pre")).toBeNull();
   });
