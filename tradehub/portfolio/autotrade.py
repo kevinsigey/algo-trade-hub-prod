@@ -165,7 +165,7 @@ def _opt_row(idea_id: int, occ: str, qty_signed: float, kind: str, mid: float | 
     return {"symbol": occ, "side": side, "qty": int(abs(qty_signed)), "kind": kind, "price": mid,
             "client_order_id": f"idea-{idea_id}-auto-{day:%Y%m%d}-{occ.replace(' ', '')}-{kind}",
             "order_type": "limit", "time_in_force": "day", "limit_price": mid,
-            "status": status, "reason": reason}
+            "status": status, "reason": reason, "option": True}
 
 
 def _manual(idea_id: int, occ: str, qty: float, kind: str, day: date, reason: str) -> dict:
@@ -313,7 +313,83 @@ def plan_options(idea_id: int, legs: list, weights: dict[str, float], size_pct: 
                         closes.append(_opt_row(idea_id, occ, -math.copysign(take, qty), "close", m, day,
                                                reason="above the target contract count"))
                     excess -= take
-    return closes + opens
+    return _pair_verticals(idea_id, closes + opens, day)
+
+
+def _pair_verticals(idea_id: int, rows: list[dict], day: date) -> list[dict]:
+    """Defined-risk verticals are placed as ONE multi-leg order (Kevin, 2026-11-03):
+    sent as separate single-leg orders, the short leg reads as an uncovered option
+    contract and Alpaca refuses it -- Idea 50's spread lost its short leg exactly
+    that way on 2026-11-03, silently. Pair this plan's two "send" rows for the same
+    vertical (same underlying, kind and expiry; equal contracts; the protective
+    strike order) into a single mleg row. Every other row passes through."""
+    from tradehub.portfolio.options import parse_occ
+
+    def parsed(row: dict) -> dict | None:
+        if row.get("status") != "send" or not row.get("price"):
+            return None
+        try:
+            return parse_occ(row["symbol"])
+        except (ValueError, KeyError):
+            return None
+
+    used: set[int] = set()
+    merged: dict[int, dict] = {}
+    for kind in ("open", "close"):
+        idxs = [i for i, r in enumerate(rows) if r.get("kind") == kind and parsed(r)]
+        for i in idxs:
+            if i in used:
+                continue
+            a, pa = rows[i], parse_occ(rows[i]["symbol"])
+            for j in idxs:
+                if j <= i or j in used:
+                    continue
+                b, pb = rows[j], parse_occ(rows[j]["symbol"])
+                if (pa["underlying"], pa["kind"], pa["expiry"]) != (pb["underlying"], pb["kind"], pb["expiry"]):
+                    continue
+                if a["qty"] != b["qty"] or a["side"] == b["side"]:
+                    continue
+                buy_row, sell_row = (a, b) if a["side"] == "buy" else (b, a)
+                pbuy, psell = parse_occ(buy_row["symbol"]), parse_occ(sell_row["symbol"])
+                if kind == "open":
+                    # Buy the protective (nearer-the-money) leg, sell the far leg:
+                    # a debit spread, so the net limit is the debit.
+                    protective = (pbuy["strike"] < psell["strike"]) if pa["kind"] == "call" \
+                        else (pbuy["strike"] > psell["strike"])
+                    net = buy_row["price"] - sell_row["price"]
+                    if not protective or net <= 0:
+                        continue
+                    legs = [{"symbol": buy_row["symbol"], "side": "buy", "ratio_qty": 1,
+                             "position_intent": "buy_to_open"},
+                            {"symbol": sell_row["symbol"], "side": "sell", "ratio_qty": 1,
+                             "position_intent": "sell_to_open"}]
+                    limit, first = round(net, 2), buy_row
+                else:
+                    # Closing: the sell row closes the held long leg, the buy row
+                    # buys back the held short. The net is a credit, which Alpaca
+                    # takes as a negative limit price.
+                    protective = (psell["strike"] < pbuy["strike"]) if pa["kind"] == "call" \
+                        else (psell["strike"] > pbuy["strike"])
+                    credit = sell_row["price"] - buy_row["price"]
+                    if not protective or credit <= 0:
+                        continue
+                    legs = [{"symbol": sell_row["symbol"], "side": "sell", "ratio_qty": 1,
+                             "position_intent": "sell_to_close"},
+                            {"symbol": buy_row["symbol"], "side": "buy", "ratio_qty": 1,
+                             "position_intent": "buy_to_close"}]
+                    limit, first = round(-credit, 2), sell_row
+                merged[i] = {"symbol": first["symbol"], "side": first["side"], "qty": first["qty"],
+                             "kind": kind, "price": limit, "limit_price": limit,
+                             "order_type": "limit", "time_in_force": "day",
+                             "client_order_id": f"idea-{idea_id}-auto-{day:%Y%m%d}-"
+                                                f"{first['symbol'].replace(' ', '')}-mleg-{kind}",
+                             "status": "send", "option": True, "mleg": legs,
+                             "reason": f"spread placed as one multi-leg order: "
+                                       f"{legs[0]['symbol']} / {legs[1]['symbol']}"}
+                used.add(i)
+                used.add(j)
+                break
+    return [merged.get(i, r) for i, r in enumerate(rows) if i not in used or i in merged]
 
 
 def close_options(idea_id: int, held_contracts: dict[str, float], day: date, mid) -> list[dict]:

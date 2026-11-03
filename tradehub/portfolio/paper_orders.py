@@ -92,6 +92,12 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         body["stop_price"] = _price(stop_price)
     if order_type == "trailing_stop":
         body["trail_percent"] = f"{trail_percent:g}"
+    return _post_order(body, client_order_id, book, session)
+
+
+def _post_order(body: dict, client_order_id: str, book: str | None, session) -> dict[str, Any]:
+    """The file's one POST call site: every order (single, OCO, multi-leg) funnels
+    through here, so the host pin and the error ladder exist exactly once."""
     response = session.post(PAPER_BASE + "/v2/orders", headers=_headers(book), json=body, timeout=10)
     if response.status_code == 401:  # 403 on an order is a refusal (buying power, wash trade), not the keys
         raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
@@ -103,6 +109,37 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
     if response.status_code >= 400:
         raise OrderRejected(f"HTTP {response.status_code}: {(response.json() or {}).get('message', '')}"[:200])
     return response.json()
+
+
+def submit_mleg(legs: list[dict], qty: int, limit_price: float, client_order_id: str, *,
+                book: str | None = None, session=requests) -> dict[str, Any]:
+    """One multi-leg option order (Kevin, 2026-11-03): a defined-risk vertical placed
+    as a unit, so the short leg is evaluated as part of a spread -- sent on its own it
+    reads as an uncovered contract and Alpaca refuses it (Idea 50, 2026-11-03). The
+    limit price is the NET price: positive is a debit paid, negative a credit taken
+    (Alpaca's convention for mleg orders). Legs carry position_intent so opens and
+    closes never blur."""
+    from tradehub.portfolio.options import is_occ
+
+    if not 2 <= len(legs) <= 4:
+        raise ValueError(f"a multi-leg order takes 2-4 legs, got {len(legs)}")
+    for leg in legs:
+        if not is_occ(str(leg.get("symbol", ""))):
+            raise ValueError(f"not an option contract: {leg.get('symbol')!r}")
+        if leg.get("side") not in ("buy", "sell"):
+            raise ValueError(f"unsupported leg side: {leg.get('side')!r}")
+        if leg.get("position_intent") not in ("buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"):
+            raise ValueError(f"unsupported position intent: {leg.get('position_intent')!r}")
+    if int(qty) != qty or qty < 1:
+        raise ValueError(f"qty must be a whole number of contracts, got {qty}")
+    if not orders_enabled(book):
+        raise OrdersDisabled("the book's order switch is off")
+    body = {"order_class": "mleg", "type": "limit", "time_in_force": "day", "qty": str(int(qty)),
+            "limit_price": _price(limit_price), "client_order_id": client_order_id,
+            "legs": [{"symbol": leg["symbol"], "side": leg["side"],
+                      "ratio_qty": str(leg.get("ratio_qty", 1)),
+                      "position_intent": leg["position_intent"]} for leg in legs]}
+    return _post_order(body, client_order_id, book, session)
 
 
 EXT_TAG = re.compile(r"^ext-\d+-[A-Za-z0-9_-]+$")

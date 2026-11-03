@@ -39,7 +39,8 @@ def _send(row: dict, submit) -> dict:
         return {**row, "status": "skipped", "reason": "TRADEHUB_PAPER_ORDERS is off"}
     try:
         sent = submit(row["symbol"], row["qty"], row["side"], row["client_order_id"], order_type=row["order_type"],
-                      time_in_force=row["time_in_force"], limit_price=row["limit_price"])
+                      time_in_force=row["time_in_force"], limit_price=row["limit_price"],
+                      **({"legs": row["mleg"]} if row.get("mleg") else {}))
         return {**row, "status": "sent", "alpaca_order_id": sent.get("id")}
     except paper_orders.DuplicateOrder:
         return {**row, "status": "already sent", "reason": "sent earlier this morning"}
@@ -187,6 +188,14 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 if r["status"] == "manual":
                     store.add_manual_action(supa, book_name, idea["id"], "option", r["symbol"],
                                             r["reason"] or "needs a hand")
+                elif r["status"] == "rejected" or (r["status"] == "skipped" and r.get("option")):
+                    # Kevin, 2026-11-03: a rejected order or an unplaceable option leg is
+                    # never silent -- it becomes a manual action (deduped while open).
+                    # Idea 50's refused short leg and Idea 16's unwritable covered call
+                    # both passed without a trace before this rule.
+                    store.add_manual_action(supa, book_name, idea["id"],
+                                            "option" if (r.get("option") or opt_mod.is_occ(r["symbol"])) else "order",
+                                            r["symbol"], r["reason"] or "needs a hand")
             for r in done:
                 if r["status"] == "sent" and "price" in r:  # later ideas see this run's orders in the 25% check
                     signed = r["qty"] * (1 if r["side"] == "buy" else -1) * r["price"]
@@ -206,7 +215,12 @@ def run(now: datetime, supa, *, book_name: str = "main", submit=None, closes=dat
         ) -> tuple[dict, dict[int, str]]:
     """One book's morning pass. The book rides the context variable so every account read
     below (account, positions, orders, fills) resolves to that book's own Alpaca account."""
-    submit = submit or (lambda *a, **k: paper_orders.submit(*a, book=book_name, **k))
+    if submit is None:
+        def submit(symbol, qty, side, client_order_id, **kw):  # noqa: F811 -- the book's dispatcher
+            if kw.get("legs"):
+                return paper_orders.submit_mleg(kw["legs"], qty, kw.get("limit_price"),
+                                                client_order_id, book=book_name)
+            return paper_orders.submit(symbol, qty, side, client_order_id, book=book_name, **kw)
     cancel = cancel or (lambda *a, **k: paper_orders.cancel(*a, book=book_name, **k))
     token = books.use_book(book_name)
     try:

@@ -337,3 +337,84 @@ def test_a_rule_with_no_rows_is_flat_not_a_failure(db, monkeypatch):
     monkeypatch.setattr(service, "paper_get", Alpaca())
     summary, failed = paper_orders_run.run(MORNING, db, submit=Submit(), closes=closes, fred=None)
     assert failed == {}
+
+
+# ── Never-silent options (Kevin, 2026-11-03) + multi-leg placement ────────────────
+
+def manual_rows(db):
+    return db.db.get("manual_actions", [])
+
+
+def test_rejection_creates_a_manual_action(db, monkeypatch):
+    live_idea(db, 1)
+    run(db, Alpaca(), Submit(fail={"GLD": paper_orders.OrderRejected("insufficient buying power")}), monkeypatch)
+    rows = manual_rows(db)
+    assert len(rows) == 1 and rows[0]["idea_id"] == 1 and rows[0]["symbol"] == "GLD"
+    assert rows[0]["kind"] == "order" and "buying power" in rows[0]["detail"]
+
+
+def _options_env(monkeypatch, mids):
+    from tradehub.portfolio import options as opt_mod
+    monkeypatch.setattr(opt_mod, "fetch_contracts", lambda *a, **k: [])
+    monkeypatch.setattr(opt_mod, "select_contract",
+                        lambda chain, leg, spot, day: {
+                            ("buy", 100): "NVDA  261204C00200000",
+                            ("sell", 110): "NVDA  261204C00220000",
+                            ("sell", 105): "SPY   261204C00750000",
+                        }[(leg.side, leg.strike_pct)])
+    monkeypatch.setattr(opt_mod, "fetch_mid", lambda occ, book=None: mids.get(occ))
+
+
+def _closes_with(**pinned):
+    def closes2(tickers, start):
+        frame = closes(tickers, start)
+        for t, v in pinned.items():
+            if t in frame:
+                frame[t] = frame[t] / frame[t].iloc[-1] * v
+        return frame
+    return closes2
+
+
+def _fred_stub(sid, start):  # an options idea's morning run reads its vol indexes + DTB3
+    return pd.Series(20.0, index=IDX)
+
+
+NVDA_SPEC = {**SPEC, "title": "NVDA vertical", "hold": ["NVDA"],
+             "options": [{"underlying": "NVDA", "kind": "call", "side": "buy", "strike_pct": 100,
+                          "days_to_expiry": 30, "qty_per_share": 1},
+                         {"underlying": "NVDA", "kind": "call", "side": "sell", "strike_pct": 110,
+                          "days_to_expiry": 30, "qty_per_share": 1}]}
+
+
+def test_vertical_idea_sends_one_mleg_order(db, monkeypatch):
+    live_idea(db, 1, spec=NVDA_SPEC)
+    _options_env(monkeypatch, {"NVDA  261204C00200000": 5.0, "NVDA  261204C00220000": 3.0})
+    sub = Submit()
+    monkeypatch.setattr(service, "paper_get", Alpaca())
+
+    def nvda_closes(tickers, start):  # the shared fake frame has no NVDA column
+        rng = np.random.default_rng(0)
+        frame = pd.DataFrame({t: 100 * np.cumprod(1 + rng.normal(0.0002, 0.01, len(IDX)))
+                              for t in ("NVDA", "SPY")}, index=IDX)
+        frame["NVDA"] = frame["NVDA"] / frame["NVDA"].iloc[-1] * 200.0
+        return frame[[t for t in tickers if t in frame]]
+
+    paper_orders_run.run(MORNING, db, submit=sub, closes=nvda_closes, fred=_fred_stub)
+    mleg = [c for c in sub.calls if c[4].get("legs")]
+    singles = [c for c in sub.calls if c[0].startswith("NVDA  ") and not c[4].get("legs")]
+    assert len(mleg) == 1 and singles == []
+    assert [(l["symbol"], l["position_intent"]) for l in mleg[0][4]["legs"]] == [
+        ("NVDA  261204C00200000", "buy_to_open"), ("NVDA  261204C00220000", "sell_to_open")]
+    assert mleg[0][4]["limit_price"] == 2.0
+
+
+def test_unwritable_covered_call_creates_a_manual_action(db, monkeypatch):
+    spec = {**SPEC, "title": "SPY covered call", "hold": ["SPY"],
+            "options": [{"underlying": "SPY", "kind": "call", "side": "sell", "strike_pct": 105,
+                         "days_to_expiry": 30, "qty_per_share": 1}]}
+    live_idea(db, 1, spec=spec)
+    _options_env(monkeypatch, {"SPY   261204C00750000": 3.0})
+    monkeypatch.setattr(service, "paper_get", Alpaca())
+    paper_orders_run.run(MORNING, db, submit=Submit(), closes=_closes_with(SPY=750.0), fred=_fred_stub)
+    rows = [r for r in manual_rows(db) if r["kind"] == "option"]
+    assert len(rows) == 1 and rows[0]["symbol"] == "SPY" and "100 shares per contract" in rows[0]["detail"]
