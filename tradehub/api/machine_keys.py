@@ -22,7 +22,7 @@ ALLOWED_SCOPES = ("orders:place", "orders:read", "portfolio:read")
 _KEY_RE = re.compile(r"^thk_[0-9a-f]{32}$")
 _LAST_USED_WRITE_EVERY = timedelta(seconds=60)
 
-_PUBLIC_COLUMNS = "id,label,scopes,max_qty,max_notional,daily_cap,created_at,last_used_at,revoked_at"
+_PUBLIC_COLUMNS = "id,label,scopes,max_qty,max_notional,daily_cap,book,created_at,last_used_at,revoked_at"
 
 
 def generate_key() -> str:
@@ -41,6 +41,7 @@ def _public(row: dict) -> dict:
     out = {k: v for k, v in row.items() if k != "key_hash"}
     out.setdefault("last_used_at", None)
     out.setdefault("revoked_at", None)
+    out.setdefault("book", "main")  # rows from before the book column read as main
     return out
 
 
@@ -55,20 +56,27 @@ def _validate_scopes(scopes) -> list[str]:
 
 
 def create_key(supa, label: str, scopes, *, max_qty: int = 100, max_notional: float = 25000,
-               daily_cap: int = 50) -> tuple[dict, str]:
+               daily_cap: int = 50, book: str = "main") -> tuple[dict, str]:
     """Insert a key row; return (public row, plaintext). The plaintext exists only in this
     return value -- the row holds its hash. Caps are Kevin's, set here at creation; no code
-    path lets a key raise its own."""
+    path lets a key raise its own. `book` binds the key to one paper book (Kevin,
+    2026-11-03): the machine routes act only on the key's own book, so a second book
+    needs its own key rather than a wider one."""
+    from tradehub.portfolio import books
+
     label = (label or "").strip()
     if not 1 <= len(label) <= 60:
         raise ValueError("label must be 1-60 characters")
     scopes = _validate_scopes(scopes)
     if int(max_qty) <= 0 or float(max_notional) <= 0 or int(daily_cap) <= 0:
         raise ValueError("caps must be positive")
+    if book not in books.names():
+        raise ValueError(f"unknown book: {book} (books: {', '.join(books.names())})")
     plaintext = generate_key()
     row = supa.table(KEYS).insert({
         "label": label, "key_hash": hash_key(plaintext), "scopes": scopes,
         "max_qty": int(max_qty), "max_notional": float(max_notional), "daily_cap": int(daily_cap),
+        "book": book,
     }).execute().data[0]
     record_event(supa, row["id"], "admin/keys", "created", detail=label)
     return _public(row), plaintext

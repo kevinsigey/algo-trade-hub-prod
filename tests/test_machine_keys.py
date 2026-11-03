@@ -151,3 +151,21 @@ def test_revoke_and_events_routes(api):
     assert {e["outcome"] for e in events} == {"created", "revoked"}
     assert client.post("/api/admin/keys/999/revoke").status_code == 404
     assert client.get("/api/admin/keys/999/events").status_code == 404
+
+
+# ── per-book keys (Kevin, 2026-11-03): a key is bound to one book ───────────────
+
+def test_a_key_is_bound_to_its_book(db):
+    row, plaintext = _create(db, label="muse big book", book="big")
+    assert row["book"] == "big"
+    assert machine_keys.get_key(db, row["id"])["book"] == "big"
+    assert machine_keys.list_keys(db)[0]["book"] == "big"
+    assert machine_keys.verify_key(db, plaintext)["book"] == "big"
+
+
+def test_a_keys_book_defaults_to_main_and_must_be_a_real_book(db):
+    row, _ = _create(db)
+    assert row["book"] == "main"
+    with pytest.raises(ValueError):
+        machine_keys.create_key(db, "nope", ["orders:place"], book="nope")
+    assert len(db.db[machine_keys.KEYS]) == 1  # the bad book minted nothing

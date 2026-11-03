@@ -69,6 +69,34 @@ def stop_capacity(symbol: str, side: str, book: str | None = None) -> int:
     return max(0, int(abs(held)) - int(reserved))
 
 
+def key_book(key: dict) -> str:
+    """The book a key is bound to (Kevin, 2026-11-03). Rows minted before the book
+    column -- and any row a caller hands us without one -- read as the main book,
+    which is the only book that existed when they were created."""
+    return key.get("book") or "main"
+
+
+def resolve_book(supa, key: dict, requested: str | None, route: str) -> str:
+    """The book a machine READ may serve. No parameter means the key's own book; a
+    parameter naming another book is a 403, audited like a scope refusal -- a key
+    only ever sees its own book, and the refusal is stated rather than silently
+    serving the key's book under the requested name. An unknown book name is a
+    422, as the reads answered before keys carried books."""
+    from tradehub.portfolio import books
+
+    own = key_book(key)
+    if requested is None:
+        return own
+    if requested not in books.names():
+        raise HTTPException(status_code=422, detail=f"unknown book: {requested}")
+    if requested != own:
+        machine_keys.record_event(supa, key["id"], route, "refused:book",
+                                  detail=f"key is bound to {own}")
+        raise HTTPException(status_code=403,
+                            detail=f"this key is bound to the {own} book")
+    return own
+
+
 def require_scope(supa, key: dict, scope: str, route: str) -> None:
     if scope not in key.get("scopes", []):
         machine_keys.record_event(supa, key["id"], route, "refused:scope",

@@ -98,7 +98,8 @@ def test_a_market_order_places_namespaced_labelled_and_audited(api):
     assert body["client_order_id"] == "ext-1-run-1"
     assert body["placed_by"] == "api:mac scripts"
     assert sent == [{"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "ext-1-run-1",
-                     "order_type": "market", "time_in_force": "day", "limit_price": None}]
+                     "order_type": "market", "time_in_force": "day", "limit_price": None,
+                     "book": "main"}]
     labels = db.db["order_labels"]
     assert labels[0]["by"] == "api:mac scripts" and labels[0]["order_id"] == "alpaca-1"
     placed = [e for e in _events(db) if e["outcome"] == "placed"]
@@ -140,7 +141,7 @@ def test_a_stop_places_against_held_shares_under_the_stop_tag(api, monkeypatch):
     holds uncovered shares, namespaced into the ext-<key>-stop- family."""
     client, db, sent = api
     headers = _key(db)
-    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 115)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 115)
     r = _post(client, headers, side="sell", qty=100, order_type="stop",
               time_in_force="gtc", stop_price=65.55)
     assert r.status_code == 200
@@ -152,7 +153,7 @@ def test_a_stop_places_against_held_shares_under_the_stop_tag(api, monkeypatch):
 def test_a_stop_refuses_beyond_the_uncovered_position(api, monkeypatch):
     client, db, sent = api
     headers = _key(db)
-    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 40)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 40)
     r = _post(client, headers, side="sell", qty=100, order_type="stop",
               time_in_force="gtc", stop_price=65.55)
     assert r.status_code == 422 and "uncovered shares" in r.json()["detail"] and sent == []
@@ -162,7 +163,7 @@ def test_a_stop_refuses_beyond_the_uncovered_position(api, monkeypatch):
 def test_stop_shapes_that_are_not_protective_stops_refuse(api, monkeypatch):
     client, db, sent = api
     headers = _key(db)
-    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side: 500)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 500)
     for over in ({"order_type": "stop", "time_in_force": "day", "stop_price": 65.55},
                  {"order_type": "stop", "time_in_force": "gtc"},
                  {"order_type": "market", "time_in_force": "gtc"},
@@ -177,7 +178,7 @@ def test_a_stop_fails_closed_when_positions_cannot_be_read(api, monkeypatch):
     client, db, sent = api
     headers = _key(db)
 
-    def boom(symbol, side):
+    def boom(symbol, side, book=None):
         raise RuntimeError("alpaca down")
 
     monkeypatch.setattr(machine_api, "stop_capacity", boom)
@@ -296,7 +297,7 @@ def api4(api, monkeypatch):
     monkeypatch.setattr(alpaca_paper, "paper_get",
                         lambda path, params=None, **kw: [BROKER_ORDER] if path == "/v2/orders" else {})
     monkeypatch.setattr(paper_orders, "cancel_machine_order",
-                        lambda order_id, cid: cancels.append((order_id, cid)))
+                        lambda order_id, cid, **kw: cancels.append((order_id, cid)))
     return client, db, sent, cancels
 
 
@@ -426,7 +427,7 @@ def test_cancel_someone_elses_order_is_a_404_and_never_reaches_the_broker(api4):
 def test_cancel_a_filled_order_is_a_409(api4, monkeypatch):
     client, db, _, _ = api4
 
-    def gone(order_id, cid):
+    def gone(order_id, cid, **kw):
         raise paper_orders.OrderGone(order_id)
 
     monkeypatch.setattr(paper_orders, "cancel_machine_order", gone)
@@ -512,6 +513,10 @@ def test_broker_orders_reads_the_named_book(monkeypatch):
 
 
 def test_portfolio_read_threads_the_book(api, monkeypatch):
+    """Item 6 threaded ?book= through the reads; per-book keys (2026-11-03) bind the
+    book to the KEY instead: no parameter reads the key's own book, a matching
+    parameter is accepted, a mismatched one is a 403 (a key only ever sees its own
+    book), and an unknown book name stays a 422."""
     client, db, sent = api
     headers = _key(db)
     seen = {}
@@ -521,10 +526,10 @@ def test_portfolio_read_threads_the_book(api, monkeypatch):
         return {"state": "live", "positions": []}
 
     monkeypatch.setattr(service, "portfolio", fake_portfolio)
-    assert client.get("/api/v1/portfolio?book=big", headers=headers).status_code == 200
-    assert seen["book_name"] == "big"
     assert client.get("/api/v1/portfolio", headers=headers).status_code == 200
     assert seen["book_name"] == "main"
+    assert client.get("/api/v1/portfolio?book=main", headers=headers).status_code == 200
+    assert client.get("/api/v1/portfolio?book=big", headers=headers).status_code == 403
     assert client.get("/api/v1/portfolio?book=nope", headers=headers).status_code == 422
 
 
@@ -544,8 +549,76 @@ def test_order_reads_thread_the_book(api, monkeypatch):
 
     monkeypatch.setattr(machine_api, "broker_orders", fake_broker)
     monkeypatch.setattr(machine_api, "open_broker_orders", fake_open)
-    assert client.get("/api/v1/orders?book=big", headers=headers).status_code == 200
-    assert seen["broker"] == "big"
-    assert client.get("/api/v1/orders/open?book=big", headers=headers).status_code == 200
-    assert seen["open"] == "big"
+    assert client.get("/api/v1/orders", headers=headers).status_code == 200
+    assert seen["broker"] == "main"
+    assert client.get("/api/v1/orders/open", headers=headers).status_code == 200
+    assert seen["open"] == "main"
+    assert client.get("/api/v1/orders?book=big", headers=headers).status_code == 403
     assert client.get("/api/v1/orders?book=nope", headers=headers).status_code == 422
+
+
+# ── per-book keys (Kevin, 2026-11-03): the key's book is the only book it can touch ──
+
+def test_key_book_defaults_to_main_for_legacy_rows():
+    assert machine_api.key_book({}) == "main"
+    assert machine_api.key_book({"book": None}) == "main"
+    assert machine_api.key_book({"book": "big"}) == "big"
+
+
+def test_a_big_book_key_places_on_the_big_book(api):
+    client, db, sent = api
+    headers = _key(db, book="big")
+    r = _post(client, headers)
+    assert r.status_code == 200 and sent[0]["book"] == "big"
+
+
+def test_a_big_book_keys_stop_capacity_reads_the_big_book(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db, book="big")
+    seen = {}
+
+    def fake_capacity(symbol, side, book=None):
+        seen["book"] = book
+        return 115
+
+    monkeypatch.setattr(machine_api, "stop_capacity", fake_capacity)
+    r = _post(client, headers, side="sell", qty=100, order_type="stop",
+              time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 200
+    assert seen["book"] == "big" and sent[0]["book"] == "big"
+
+
+def test_a_big_book_key_reads_the_big_book_by_default(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db, book="big")
+    seen = {}
+
+    def fake_portfolio(supa, now=None, book_name=None):
+        seen["book_name"] = book_name
+        return {"state": "live", "positions": []}
+
+    monkeypatch.setattr(service, "portfolio", fake_portfolio)
+    assert client.get("/api/v1/portfolio", headers=headers).status_code == 200
+    assert seen["book_name"] == "big"
+    assert client.get("/api/v1/portfolio?book=main", headers=headers).status_code == 403
+
+
+def test_a_big_book_key_cancels_on_the_big_book(api4, monkeypatch):
+    client, db, sent, _ = api4
+    headers = _key(db, book="big")
+    assert _post(client, headers).status_code == 200
+    assert sent[0]["book"] == "big"
+    books_seen = []
+    cancels = []
+
+    def fake_get(path, params=None, **kw):
+        books_seen.append(kw.get("book"))
+        return [BROKER_ORDER] if path == "/v2/orders" else {}
+
+    monkeypatch.setattr(alpaca_paper, "paper_get", fake_get)
+    monkeypatch.setattr(paper_orders, "cancel_machine_order",
+                        lambda order_id, cid, **kw: cancels.append((order_id, cid, kw.get("book"))))
+    r = client.delete("/api/v1/orders/run-1", headers=headers)
+    assert r.status_code == 200
+    assert books_seen and all(b == "big" for b in books_seen)
+    assert cancels == [("alpaca-1", "ext-1-run-1", "big")]
