@@ -103,3 +103,44 @@ def test_the_drafter_schema_offers_the_news_source():
     from tradehub.workshop.draft import DraftEnvelope
     schema = json.dumps(DraftEnvelope.model_json_schema())
     assert '"news"' in schema and '"level"' in schema
+
+
+# ── GDELT pacing (handover item 6: the tone families never froze -- GDELT
+# throttles unpaced multi-basket runs and the stale cache starved the signal) ──
+
+def test_fetch_timeline_retries_once_after_a_throttle(monkeypatch):
+    from tradehub.workshop import news
+
+    sleeps = []
+    monkeypatch.setattr(news, "_sleep", sleeps.append)
+    monkeypatch.setattr(news, "_monotonic", lambda: 1000.0)
+    answers = iter(["Please limit requests to one every 5 seconds",
+                    json.dumps({"timeline": [{"data": []}]})])
+    payload = news.fetch_timeline("q", date(2026, 10, 1), date(2026, 11, 1),
+                                  get_text=lambda url: next(answers))
+    assert payload == {"timeline": [{"data": []}]}
+    assert sleeps and all(s >= news.GDELT_MIN_INTERVAL for s in sleeps)
+
+
+def test_fetch_timeline_paces_back_to_back_calls(monkeypatch):
+    from tradehub.workshop import news
+
+    sleeps = []
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(news, "_sleep", sleeps.append)
+    monkeypatch.setattr(news, "_monotonic", lambda: clock["t"])
+    ok = json.dumps({"timeline": []})
+    news.fetch_timeline("q", date(2026, 10, 1), date(2026, 11, 1), get_text=lambda url: ok)
+    clock["t"] += 1.0  # one second later: the next call must wait out the interval
+    news.fetch_timeline("q", date(2026, 10, 1), date(2026, 11, 1), get_text=lambda url: ok)
+    assert any(s >= news.GDELT_MIN_INTERVAL - 1.0 for s in sleeps)
+
+
+def test_fetch_timeline_still_raises_when_throttled_twice(monkeypatch):
+    from tradehub.workshop import news
+
+    monkeypatch.setattr(news, "_sleep", lambda s: None)
+    monkeypatch.setattr(news, "_monotonic", lambda: 1000.0)
+    with pytest.raises(RuntimeError, match="throttled"):
+        news.fetch_timeline("q", date(2026, 10, 1), date(2026, 11, 1),
+                            get_text=lambda url: "Please limit requests to one every 5 seconds")

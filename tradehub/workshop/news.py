@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
@@ -68,6 +69,24 @@ DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 WINDOW_DAYS = 92  # the DOC rolling window, ~3 months; older asks return nothing
 CACHE_ENV = "TRADEHUB_GDELT_CACHE"
 DEFAULT_CACHE = "/cache/gdelt"
+# GDELT's own ask is one request per 5 seconds; the hub runs 11 baskets back to
+# back (the journal's tone families, Workshop news rules), and unpaced bursts
+# were refused wholesale -- the cache then served an ever-staler series until
+# the tone signal aged past the forecasters' staleness bound and every sector
+# family silently stopped freezing (found 2026-11-03, handover item 6: zero
+# forecasts ever). Pace process-wide and retry a refusal once.
+GDELT_MIN_INTERVAL = 6.0
+_sleep = time.sleep
+_monotonic = time.monotonic
+_last_gdelt_call = 0.0
+
+
+def _pace_gdelt() -> None:
+    global _last_gdelt_call
+    wait = GDELT_MIN_INTERVAL - (_monotonic() - _last_gdelt_call)
+    if wait > 0:
+        _sleep(wait)
+    _last_gdelt_call = _monotonic()
 
 
 def _default_get_text(url: str) -> str:
@@ -77,12 +96,18 @@ def _default_get_text(url: str) -> str:
 
 
 def fetch_timeline(query: str, start: date, end: date, *, get_text: Callable[[str], str] = _default_get_text) -> dict:
-    """One timelinetone request. GDELT answers throttling in plain text with an HTTP
-    200, so the text itself is checked before it is parsed."""
+    """One timelinetone request, paced (see GDELT_MIN_INTERVAL) with one retry
+    after a throttle refusal. GDELT answers throttling in plain text with an
+    HTTP 200, so the text itself is checked before it is parsed."""
     url = (f"{DOC_URL}?query={requests_quote(query)}&mode=timelinetone&format=json"
            f"&startdatetime={start:%Y%m%d}000000&enddatetime={end:%Y%m%d}235959")
-    text = get_text(url)
-    if text.lstrip().startswith("Please limit requests"):
+    text = ""
+    for _attempt in range(2):
+        _pace_gdelt()
+        text = get_text(url)
+        if not text.lstrip().startswith("Please limit requests"):
+            break
+    else:
         raise RuntimeError(f"GDELT refused the request (throttled): {text.strip()[:120]}")
     try:
         payload = json.loads(text)

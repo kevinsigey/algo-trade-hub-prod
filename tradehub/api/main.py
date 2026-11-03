@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from tradehub.core.env import load_local_env
-from tradehub.health import collect_health
+from tradehub.health import collect_health, public_health_report
 from tradehub.api.schemas import (
     HealthResponse, Position, PnLSummary,
     ShadowPerformanceResponse,
@@ -341,6 +341,16 @@ def health(supabase=Depends(get_supabase)):
     `missing` rather than the whole report to a 500, because "no data" is itself the thing an operator
     needs to see, and a reader shown an error page cannot tell it from a broken query.
     """
+    now = datetime.now(timezone.utc)
+    return HealthResponse(status="ok", timestamp=now,
+                          report=public_health_report(collect_health(supabase, now=now)))
+
+
+@app.get("/api/health/full", response_model=HealthResponse, tags=["System"])
+def health_full(supabase=Depends(get_supabase), _admin: dict = Depends(admin.require_admin)):
+    """The complete health report, history matrices included -- the Health
+    page's payload, admin-gated since the item-6 trim took the internals off
+    the public endpoint."""
     now = datetime.now(timezone.utc)
     return HealthResponse(status="ok", timestamp=now, report=collect_health(supabase, now=now))
 
@@ -1960,18 +1970,22 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
 
 
 @app.get("/api/v1/portfolio", tags=["Machine API"])
-def get_machine_portfolio(authorization: str | None = Header(None), supabase=Depends(get_supabase)):
+def get_machine_portfolio(book: str = "main", authorization: str | None = Header(None),
+                          supabase=Depends(get_supabase)):
     """The Portfolio page's payload minus the account number. A read: it works with the kill
-    switch off, so a script can always reconcile (spec §1.4)."""
+    switch off, so a script can always reconcile (spec §1.4). `book` names the account
+    (item 6: the machine reads used to be main-book only)."""
     from tradehub.api import machine_api, machine_keys
-    from tradehub.portfolio import service
+    from tradehub.portfolio import books, service
 
     if supabase is None:
         raise HTTPException(status_code=503, detail="database unavailable")
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
     machine_api.require_scope(supabase, key, "portfolio:read", "GET /api/v1/portfolio")
-    payload = service.portfolio(supabase)
+    if book not in books.names():
+        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
+    payload = service.portfolio(supabase, book_name=book)
     payload.pop("account_number", None)
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/portfolio", "read")
     return payload
@@ -1992,6 +2006,7 @@ def _machine_order_view(event: dict, order: dict | None) -> dict:
 
 @app.get("/api/v1/orders", tags=["Machine API"])
 def list_machine_orders(limit: int = 50, before: int | None = None, status: str | None = None,
+                        book: str = "main",
                         authorization: str | None = Header(None), supabase=Depends(get_supabase)):
     from tradehub.api import machine_api, machine_keys
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
@@ -2003,11 +2018,15 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
     machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders")
     if status not in (None, "open", "all"):
         raise HTTPException(status_code=422, detail="status must be open or all")
+    from tradehub.portfolio import books
+
+    if book not in books.names():
+        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
     events = machine_api.placed_events(supabase, key["id"])
     if before is not None:
         events = [e for e in events if e["id"] < before]
     try:
-        broker = machine_api.broker_orders()
+        broker = machine_api.broker_orders(book=book)
         reachable = True
     except AccountNotConnected:
         broker, reachable = {}, False
@@ -2019,12 +2038,14 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
 
 
 @app.get("/api/v1/orders/open", tags=["Machine API"])
-def list_open_orders(authorization: str | None = Header(None), supabase=Depends(get_supabase)):
+def list_open_orders(book: str = "main", authorization: str | None = Header(None),
+                     supabase=Depends(get_supabase)):
     """The staged book as the broker sees it (2026-11-02): every order resting on the
     paper account, whatever placed it -- machine API, the hub's protective machinery, or
     the Alpaca app. Declared before /orders/{client_order_id} so "open" is never read
     as a caller id."""
     from tradehub.api import machine_api, machine_keys
+    from tradehub.portfolio import books
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
 
     if supabase is None:
@@ -2032,8 +2053,10 @@ def list_open_orders(authorization: str | None = Header(None), supabase=Depends(
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
     machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/open")
+    if book not in books.names():
+        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
     try:
-        orders = machine_api.open_broker_orders()
+        orders = machine_api.open_broker_orders(book=book)
         reachable = True
     except AccountNotConnected:
         orders, reachable = [], False

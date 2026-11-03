@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
-import type { DealRun, DealRunRow } from "@/lib/deals";
+import type { DealRun, DealRunRow, IpoOutputs, MaOutputs, PublicCompany } from "@/lib/deals";
 import DealSummary from "@/components/DealSummary";
 
 const num = (v: string): number | null => {
@@ -67,9 +67,9 @@ function Bar({ label, low, high, scale, marker, tone = "bg-slate-500" }:
 
 /* ------------------------------- IPO detail ------------------------------ */
 
-export function IpoDetail({ o, talkLow, talkHigh }: { o: any; talkLow?: number | null; talkHigh?: number | null }) {
-  const scale = Math.max(o.pw_ps, ...o.ladder.map((r: any) => r.ps), talkHigh ?? 0) * 1.05;
-  const maxShock = Math.max(...o.sensitivity.map((s: any) => Math.abs(s.d_pw_ps)), 0.01);
+export function IpoDetail({ o, talkLow, talkHigh }: { o: IpoOutputs; talkLow?: number | null; talkHigh?: number | null }) {
+  const scale = Math.max(o.pw_ps, ...o.ladder.map((r) => r.ps), talkHigh ?? 0) * 1.05;
+  const maxShock = Math.max(...o.sensitivity.map((s) => Math.abs(s.d_pw_ps)), 0.01);
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
@@ -89,7 +89,7 @@ export function IpoDetail({ o, talkLow, talkHigh }: { o: any; talkLow?: number |
           The ladder — bar length is value, the segment is the scenario's weight; amber line is our fair value
         </h3>
         <div className="mt-3 space-y-2.5">
-          {o.ladder.map((r: any) => (
+          {o.ladder.map((r) => (
             <div key={r.name}>
               <Bar label={`${r.name} · ${Math.round(r.weight * 100)}%`} low={r.ps} high={r.ps} scale={scale} marker={o.pw_ps} tone="bg-sky-500" />
               <div className="ml-44 mr-32 mt-1 h-1.5 rounded bg-slate-800">
@@ -129,7 +129,7 @@ export function IpoDetail({ o, talkLow, talkHigh }: { o: any; talkLow?: number |
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
         <h3 className="text-[13px] font-semibold uppercase tracking-wide text-slate-400">What moves the answer most (Δ $/share)</h3>
         <ul className="mt-3 space-y-2">
-          {o.sensitivity.slice(0, 6).map((s: any) => (
+          {o.sensitivity.slice(0, 6).map((s) => (
             <li key={s.lever} className="flex items-center gap-3 text-sm">
               <span className="w-64 shrink-0 truncate text-slate-200">{s.lever}</span>
               <div className="h-3.5 flex-1 rounded bg-slate-800/70">
@@ -149,7 +149,7 @@ export function IpoDetail({ o, talkLow, talkHigh }: { o: any; talkLow?: number |
 
 /* ------------------------------- M&A detail ------------------------------ */
 
-export function MaDetail({ o }: { o: any }) {
+export function MaDetail({ o }: { o: MaOutputs }) {
   const scale = Math.max(o.acquirer.ps_high, o.target.ps_high, o.offer.value_ps, o.fair_value?.ps_high ?? 0) * 1.05;
   const maxPv = Math.max(...(["bear", "base", "bull"] as const).map((k) => Math.abs(o.cases[k].synergy_pv_b ?? 0)), 0.01);
   return (
@@ -354,7 +354,7 @@ function IpoBuilder({ onSaved }: { onSaved: () => void }) {
       </section>
       <section>
         {!run && <p className="text-[15px] text-slate-500">Run it to see our fair value, the ladder, and the entry test.</p>}
-        {run && <IpoDetail o={run.outputs} talkLow={num(talkLow)} talkHigh={num(talkHigh)} />}
+        {run && <IpoDetail o={run.outputs as IpoOutputs} talkLow={num(talkLow)} talkHigh={num(talkHigh)} />}
       </section>
     </div>
   );
@@ -385,7 +385,7 @@ function SideForm({ side, setSide, label }: { side: SideState; setSide: (s: Side
   const prefill = async () => {
     setBusy(true); setErr(null);
     try {
-      const d = await adminJson<any>(`/api/deals/public/${side.ticker}?source=${side.source}`);
+      const d = await adminJson<PublicCompany>(`/api/deals/public/${side.ticker}?source=${side.source}`);
       setSide({ ...side, name: d.name, price: String(d.price ?? ""), shares: String(d.shares_b ?? ""),
         revenue: String(d.revenue_b ?? ""), ebitda: String(d.ebitda_b ?? ""), eps: String(d.eps ?? ""),
         netCash: String(d.net_cash_b ?? ""), revLo: String(d.rev_multiples?.low ?? ""), revHi: String(d.rev_multiples?.high ?? ""),
@@ -497,7 +497,7 @@ function MaBuilder({ onSaved }: { onSaved: () => void }) {
           {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} Run the M&A builder
         </button>
       </fieldset>
-      {run && <MaDetail o={run.outputs} />}
+      {run && <MaDetail o={run.outputs as MaOutputs} />}
     </div>
   );
 }
@@ -522,8 +522,10 @@ function RunModal({ run, onClose, onSummarize, summBusy }:
         </div>
         <div className="mt-5">
           {run.kind === "ipo"
-            ? <IpoDetail o={run.outputs} talkLow={run.inputs.talk_low_ps} talkHigh={run.inputs.talk_high_ps} />
-            : <MaDetail o={run.outputs} />}
+            ? <IpoDetail o={run.outputs as IpoOutputs}
+                talkLow={typeof run.inputs.talk_low_ps === "number" ? run.inputs.talk_low_ps : null}
+                talkHigh={typeof run.inputs.talk_high_ps === "number" ? run.inputs.talk_high_ps : null} />
+            : <MaDetail o={run.outputs as MaOutputs} />}
         </div>
         <div className="mt-6 border-t border-slate-800 pt-4">
           {run.summary ? (

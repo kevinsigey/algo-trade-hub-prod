@@ -121,7 +121,7 @@ def test_the_kill_switch_refuses_placements_but_not_reads(api, monkeypatch):
     r = _post(client, headers)
     assert r.status_code == 409 and sent == []
     assert [e["outcome"] for e in _events(db)][-1] == "refused:switch_off"
-    monkeypatch.setattr(service, "portfolio", lambda supa: {"state": "live", "positions": []})
+    monkeypatch.setattr(service, "portfolio", lambda supa, **kw: {"state": "live", "positions": []})
     assert client.get("/api/v1/portfolio", headers=headers).status_code == 200
 
 
@@ -268,7 +268,7 @@ def test_the_rate_limiter_refuses_the_61st_request_in_a_minute():
 def test_the_portfolio_read_drops_the_account_number_and_audits(api, monkeypatch):
     client, db, _ = api
     monkeypatch.setattr(service, "portfolio",
-                        lambda supa: {"state": "live", "account_number": "PA123", "positions": [1]})
+                        lambda supa, **kw: {"state": "live", "account_number": "PA123", "positions": [1]})
     headers = _key(db)
     r = client.get("/api/v1/portfolio", headers=headers)
     assert r.status_code == 200
@@ -478,3 +478,74 @@ def test_cancel_machine_order_refuses_protective_ids(monkeypatch):
 
     po.cancel_machine_order("abc-123", "ext-1-run-1", session=Session())
     assert calls and calls[0].endswith("/v2/orders/abc-123")
+
+
+# ── book awareness (handover item 6: the helpers and reads ignored the book) ──
+
+def test_stop_capacity_reads_the_named_book(monkeypatch):
+    seen = []
+
+    def fake_get(path, params=None, **kw):
+        seen.append(kw.get("book"))
+        if path == "/v2/positions":
+            return [{"symbol": "SPY", "qty": "120"}]
+        return [{"symbol": "SPY", "side": "sell", "qty": "14"}]
+
+    monkeypatch.setattr(alpaca_paper, "paper_get", fake_get)
+    assert machine_api.stop_capacity("SPY", "sell", book="big") == 106
+    assert seen == ["big", "big"]
+    seen.clear()
+    assert machine_api.stop_capacity("SPY", "sell") == 106  # default: the current book (main)
+    assert seen == [None, None]
+
+
+def test_broker_orders_reads_the_named_book(monkeypatch):
+    seen = []
+
+    def fake_get(path, params=None, **kw):
+        seen.append(kw.get("book"))
+        return [{"client_order_id": "ext-1-a", "status": "new"}]
+
+    monkeypatch.setattr(alpaca_paper, "paper_get", fake_get)
+    out = machine_api.broker_orders(book="big")
+    assert list(out) == ["ext-1-a"] and seen == ["big"]
+
+
+def test_portfolio_read_threads_the_book(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    seen = {}
+
+    def fake_portfolio(supa, now=None, book_name=None):
+        seen["book_name"] = book_name
+        return {"state": "live", "positions": []}
+
+    monkeypatch.setattr(service, "portfolio", fake_portfolio)
+    assert client.get("/api/v1/portfolio?book=big", headers=headers).status_code == 200
+    assert seen["book_name"] == "big"
+    assert client.get("/api/v1/portfolio", headers=headers).status_code == 200
+    assert seen["book_name"] == "main"
+    assert client.get("/api/v1/portfolio?book=nope", headers=headers).status_code == 422
+
+
+def test_order_reads_thread_the_book(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    seen = {}
+    monkeypatch.setattr(machine_api, "placed_events", lambda supa, key_id: [])
+
+    def fake_broker(book=None):
+        seen["broker"] = book
+        return {}
+
+    def fake_open(book=None):
+        seen["open"] = book
+        return []
+
+    monkeypatch.setattr(machine_api, "broker_orders", fake_broker)
+    monkeypatch.setattr(machine_api, "open_broker_orders", fake_open)
+    assert client.get("/api/v1/orders?book=big", headers=headers).status_code == 200
+    assert seen["broker"] == "big"
+    assert client.get("/api/v1/orders/open?book=big", headers=headers).status_code == 200
+    assert seen["open"] == "big"
+    assert client.get("/api/v1/orders?book=nope", headers=headers).status_code == 422

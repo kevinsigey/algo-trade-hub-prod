@@ -72,25 +72,21 @@ def _place(order: dict, submit) -> dict:
         return {**row, "status": "rejected", "reason": str(exc)[:200]}
 
 
-def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.cancel) -> tuple[dict, dict]:
-    day = now.astimezone(NY).date()
-    try:
-        today = service.paper_get("/v2/calendar", {"start": str(day), "end": str(day)})
-        if not today:
-            return {"market": "closed"}, {}
-        hh, mm = (int(x) for x in str(today[0].get("open") or "09:30").split(":")[:2])
-        if now.astimezone(NY) < datetime.combine(day, time(hh, mm), NY) + timedelta(minutes=15):
-            return {"market": "not open yet"}, {}  # the opening orders must have filled before a stop goes on
-        pending = service.paper_get("/v2/orders", {"status": "open", "limit": 500, "nested": "true"})
-        fills = book.tag_fills(service._fills(), service._orders(), store.labels(supa),
-                               service._titles(supa, public=False))
-    except AccountNotConnected:
-        return {"account": "not connected"}, {}
-    costs = book.open_cost([{**f, "idea": f["idea_id"] if f["idea_id"] is not None else book.MANUAL} for f in fills])
+def _jobs(supa, name: str) -> list:
+    """One book's protect jobs, the morning runner's split: the main book's live
+    state lives on the idea rows; every other book reads its own activations."""
+    if name == "main":
+        return ([(i, False) for i in store.auto_ideas(supa)]
+                + [(i, True) for i in store.closing_ideas(supa)])
+    return ([(i, False) for i in store.auto_activations(supa, name)]
+            + [(i, True) for i in store.closing_activations(supa, name)])
 
+
+def _protect_book(now: datetime, supa, name: str, jobs: list, pending: list, costs: dict,
+                  *, submit, cancel) -> tuple[dict, dict]:
+    day = now.astimezone(NY).date()
     summary: dict = {}
-    failed: dict[int, str] = {}
-    jobs = [(i, False) for i in store.auto_ideas(supa)] + [(i, True) for i in store.closing_ideas(supa)]
+    failed: dict = {}
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
@@ -111,13 +107,57 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.
             rows += [_cancel(o, cancel, "the idea is off" if closing else "position changed") for o in mine]
             if want is not None and all(r["status"] == "sent" for r in rows):  # only once the old one is gone
                 rows.append(_place(want, submit))
-            store.log_orders(supa, idea["id"], str(day), rows)
+            store.log_orders(supa, idea["id"], str(day), rows, book=name)
             summary[idea["id"]] = {s: sum(r["status"] == s for r in rows) for s in
                                    ("sent", "already sent", "skipped", "rejected")}
             if summary[idea["id"]]["rejected"]:
                 failed[idea["id"]] = f"{summary[idea['id']]['rejected']} protective action(s) rejected"
         except Exception as exc:  # noqa: BLE001 -- logged; the other ideas still get protected
             failed[idea["id"]] = f"{type(exc).__name__}: {exc}"[:300]
+    return summary, failed
+
+
+def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.cancel) -> tuple[dict, dict]:
+    """Protect every book (handover item 6: this job used to read only the main
+    book, so a Book 2 intraday-exit idea would have run without its stop). Each
+    book's reads and orders run under its own book context; the main book's
+    entries keep the flat shape the report has always used, the other books
+    nest under their name. One book's dead account never stops the other's
+    protection."""
+    day = now.astimezone(NY).date()
+    try:
+        today = service.paper_get("/v2/calendar", {"start": str(day), "end": str(day)})
+        if not today:
+            return {"market": "closed"}, {}
+        hh, mm = (int(x) for x in str(today[0].get("open") or "09:30").split(":")[:2])
+        if now.astimezone(NY) < datetime.combine(day, time(hh, mm), NY) + timedelta(minutes=15):
+            return {"market": "not open yet"}, {}  # the opening orders must have filled before a stop goes on
+    except AccountNotConnected:
+        return {"account": "not connected"}, {}
+    summary: dict = {}
+    failed: dict = {}
+    for name in books.names():
+        token = books.use_book(name)
+        try:
+            pending = service.paper_get("/v2/orders", {"status": "open", "limit": 500, "nested": "true"})
+            fills = book.tag_fills(service._fills(), service._orders(), store.labels(supa),
+                                   service._titles(supa, public=False))
+            costs = book.open_cost([{**f, "idea": f["idea_id"] if f["idea_id"] is not None else book.MANUAL}
+                                    for f in fills])
+            one_summary, one_failed = _protect_book(now, supa, name, _jobs(supa, name), pending, costs,
+                                                    submit=submit, cancel=cancel)
+        except AccountNotConnected:
+            one_summary, one_failed = {}, {"account": "not connected"}
+        finally:
+            books.reset_book(token)
+        if name == "main":
+            summary.update(one_summary)
+            failed.update(one_failed)
+        else:
+            if one_summary:
+                summary[name] = one_summary
+            if one_failed:
+                failed[name] = one_failed
     return summary, failed
 
 

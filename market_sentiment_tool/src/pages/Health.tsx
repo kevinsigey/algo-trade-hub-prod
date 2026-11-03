@@ -42,7 +42,7 @@ function Stat({ label, value, sub, meaning }: { label: string; value: string | n
 }
 
 export default function Health() {
-  const { report, loading, error } = useHealth();
+  const { report, loading, error } = useHealth({ full: true });
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-8">
