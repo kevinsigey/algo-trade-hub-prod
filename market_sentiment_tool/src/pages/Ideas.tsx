@@ -78,6 +78,12 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
             Live · {b === "big" ? "$1M" : "Main"}
           </span>
         ))}
+        {Object.entries(idea.critic ?? {}).map(([book, c]) => (
+          <span key={book} title={c.reasons.join(" ")}
+            className={`rounded border px-2 py-0.5 text-xs font-semibold ${c.recommendation === "PAUSE" ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : c.recommendation === "WATCH" ? "border-amber-500/40 bg-amber-500/10 text-amber-300" : "border-slate-600 bg-slate-800 text-slate-300"}`}>
+            Critic · {c.recommendation}{c.degradation != null ? ` · ${c.degradation >= 0 ? "+" : ""}${c.degradation.toFixed(1)} vs claim` : ""}{book === "big" ? " · $1M" : ""}
+          </span>
+        ))}
         {idea.status === "tracking" && (
           <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-300">
             Tracking{idea.tracked_at ? ` since ${idea.tracked_at.slice(0, 10)}` : ""}
@@ -128,6 +134,7 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
 export default function Ideas() {
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
   const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
+  const { data: criticSummary } = useApi<{ counts: { PAUSE: number; WATCH: number; HOLD: number }; units: number; worst: { idea_id: number; title: string | null; book: string; degradation: number }[] }>("/api/ideas/critic-summary");
   const [sort, setSort] = useState<SortKey>("grouped");
   const flat = sort !== "grouped";
   const { standingIdeas, removed } = useMemo(() => {
@@ -163,6 +170,14 @@ export default function Ideas() {
       {summary && (
         <p className="mt-1 text-xs text-slate-500">
           Workshop record: {summary.tested} ideas tested · {summary.passed} passed · {summary.failed} failed · {summary.not_enough_data} not enough data · {summary.published} published here
+        </p>
+      )}
+      {criticSummary && typeof criticSummary.units === "number" && criticSummary.units > 0 && (
+        <p className="mt-1 text-xs text-slate-500">
+          Weekly critic: {criticSummary.counts.PAUSE} pause · {criticSummary.counts.WATCH} watch · {criticSummary.counts.HOLD} hold
+          {criticSummary.worst.length > 0 && (
+            <> · worst: {criticSummary.worst.slice(0, 3).map((w) => `${w.title ?? `#${w.idea_id}`} (${w.degradation >= 0 ? "+" : ""}${w.degradation.toFixed(1)})`).join(", ")}</>
+          )}
         </p>
       )}
       {data && data.length > 1 && (
