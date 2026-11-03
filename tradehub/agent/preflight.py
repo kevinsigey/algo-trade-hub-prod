@@ -23,22 +23,20 @@ def _names(spec: dict) -> frozenset:
 
 def _canon(spec: dict) -> tuple:
     return (frozenset(spec.get("hold") or []), frozenset(spec.get("short") or []), spec.get("claim"),
+            spec.get("benchmark") or "SPY",
             json.dumps(spec.get("when"), sort_keys=True), json.dumps(spec.get("exits") or None, sort_keys=True))
 
 
-def _kill_reason(idea: dict, now: dict | None, stored: str | None, switches: list[dict]) -> str:
+def _kill_reason(idea: dict, now: dict | None, stored: str | None) -> str:
     if now and now["verdict_now"] != stored:
         why = [w for w, failed in (("the hub-wide FDR bar", now.get("fdr_pass") is False),
                                    ("walk-forward", now.get("wf_ok") is False)) if failed]
         return f"fails the current standard: {' and '.join(why) or 'the hub-wide bar'}"
-    mine = [s for s in switches if s.get("idea_id") == idea["id"] and s.get("by")]
-    if mine:
-        return str(mine[-1]["by"])
     return f"killed on {str(idea.get('killed_at'))[:10]}"
 
 
 def preflight(supa, draft: dict, latest: dict[int, dict]) -> dict:
-    """`latest`: idea id -> its latest saved run. Reads ideas and switches; writes nothing."""
+    """`latest`: idea id -> its latest saved run. Reads ideas; writes nothing."""
     idea_spec, note = to_idea_spec(draft, title_of(draft))
     universe = set(draft.get("universe") or [])
     holdings = {iid: set(_names(r.get("spec") or {})) for iid, r in latest.items()}
@@ -46,11 +44,12 @@ def preflight(supa, draft: dict, latest: dict[int, dict]) -> dict:
     members = [m for m in family["members"] if m != -1]
     adjusted = registry.adjusted(latest)
     ideas = {i["id"]: i for i in store._all_ideas(supa)} if latest else {}
-    switches = supa.table(store.SWITCHES).select("*").order("id").execute().data if latest else []
 
     same_names = [m for m in members if holdings[m] == universe]
     exact = {m for m in same_names if idea_spec and _canon(latest[m].get("spec") or {}) == _canon(idea_spec)}
-    values = [((((latest[m].get("result") or {}).get("claim") or {}).get("unseen") or {}).get("value"), m) for m in same_names]
+    claim = (idea_spec or {}).get("claim")
+    values = [((((latest[m].get("result") or {}).get("claim") or {}).get("unseen") or {}).get("value"), m) for m in same_names
+              if (latest[m].get("spec") or {}).get("claim") == claim]
     values = [(v, m) for v, m in values if v is not None]
     best = None
     if values:
@@ -58,7 +57,7 @@ def preflight(supa, draft: dict, latest: dict[int, dict]) -> dict:
         best = {"idea_id": m, "title": ideas.get(m, {}).get("title"), "value": value,
                 "verdict": latest[m].get("verdict"), "verdict_now": adjusted[m]["verdict_now"]}
     killed = [{"idea_id": m, "title": ideas[m].get("title"), "exact": m in exact,
-               "reason": _kill_reason(ideas[m], adjusted.get(m), latest[m].get("verdict"), switches)}
+               "reason": _kill_reason(ideas[m], adjusted.get(m), latest[m].get("verdict"))}
               for m in same_names if ideas.get(m, {}).get("killed_at")]
     return {"expressible": idea_spec is not None, "note": note,
             "family": {"size": len(members), "tickers": family["tickers"]},
