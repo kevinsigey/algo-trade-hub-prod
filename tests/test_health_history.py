@@ -31,7 +31,7 @@ def test_timer_silent_only_for_a_gap_inside_an_active_stretch():
 
 
 def test_family_cells_carry_counts_and_daily_silence_only():
-    frozen = [("weather", "2026-10-24")] * 12 + [("weather", "2026-10-26")] * 9
+    frozen = [("weather", "2026-10-24", 12), ("weather", "2026-10-26", 9)]
     hist = _build(frozen_rows=frozen)
     weather = {c["date"]: c for c in hist["families"]["weather"]}
     assert weather["2026-10-24"] == {"date": "2026-10-24", "status": "ok", "count": 12}

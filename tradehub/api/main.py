@@ -308,6 +308,19 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Set on every response, the built site included. The CSP only covers framing and base/object
+    tags, so it can't break the page's scripts or its calls to Supabase."""
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+    return response
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 1: /api/health
 # ════════════════════════════════════════════════════════════════════════════
@@ -2295,6 +2308,10 @@ def _target_day(target: str):
         return None
 
 
+MACRO_FORECASTERS = ("cpi_nowcast", "kalshi_implied_cpi", "ppi_nowcast", "kalshi_implied_ppi",
+                     "unrate_nowcast", "kalshi_implied_unrate")
+
+
 @app.get("/api/macro", tags=["Macro"])
 def get_macro(supabase=Depends(get_supabase)):
     """The Macro predictions dashboard (phase-3 §1): one card per macro engine,
@@ -2332,8 +2349,8 @@ def get_macro(supabase=Depends(get_supabase)):
                                  .eq("series", "payrolls").order("reference_month").execute().data or []), [])
     scores = guarded(lambda: _fetch_all(supabase, "journal_scores", lambda q: q.select("*"),
                                         order=("forecaster", "forecaster_version")), [])
-    forecasts = guarded(lambda: (supabase.table("journal_forecasts").select("*")
-                                 .order("frozen_at", desc=True).limit(1000).execute().data or []), [])
+    forecasts = guarded(lambda: _fetch_all(supabase, "journal_forecasts",
+                                           lambda q: q.select("*").in_("forecaster", list(MACRO_FORECASTERS))), [])
     settlements = guarded(lambda: _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
                                              order=("target",)), [])
     return build_macro(jobs_rows=jobs_rows, scoreboard_rows=rows, journal_scores=scores,
@@ -2356,9 +2373,9 @@ def get_weather_map(supabase=Depends(get_supabase)):
              "baseline_climatology_weather_high", "baseline_climatology_weather_low",
              "baseline_climatology_weather_rain")
     try:
-        forecasts = (supabase.table("journal_forecasts").select("*")
-                     .in_("forecaster", list(names))
-                     .order("frozen_at", desc=True).limit(6000).execute().data or [])
+        forecasts = _fetch_all(supabase, "journal_forecasts",
+                               lambda q: q.select("*").in_("forecaster", list(names)).order("frozen_at", desc=True),
+                               cap=6000)
         settlements = _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
                                  order=("target",))
     except Exception as e:
