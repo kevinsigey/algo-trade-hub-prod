@@ -193,7 +193,9 @@ def option_structure_problems(legs: list, weights: dict[str, float], size_pct: f
     """Why this size can't trade what the backtest tested. The backtest holds fractional contracts;
     live trades whole ones, with the one-contract minimum for a vertical (see plan_options). A
     covered call on 13 shares never writes; a spread on 49 shares is twice the tested size."""
-    budget = max(equity, 0) * size_pct / 100
+    if equity <= 0:
+        return ["the book has no equity to size against."]
+    budget = equity * size_pct / 100
     groups: dict[tuple, list] = {}
     for leg in legs:
         groups.setdefault((leg.underlying, leg.kind), []).append(leg)
