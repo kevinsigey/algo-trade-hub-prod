@@ -12,6 +12,10 @@ class Q:
         self.filters.append((col, val))
         return self
 
+    def gte(self, col, val):
+        self.gtes = [*getattr(self, "gtes", []), (col, val)]
+        return self
+
     def is_(self, col, val):
         assert val == "null"
         self.filters.append((col, None))
@@ -38,7 +42,8 @@ class Q:
                 rows.append(row)
                 new.append(row)
             return type("R", (), {"data": new})()
-        out = [r for r in rows if all(r.get(c) == v for c, v in self.filters)]
+        out = [r for r in rows if all(r.get(c) == v for c, v in self.filters)
+               and all(r.get(c, "") >= v for c, v in getattr(self, "gtes", []))]
         if self.patch is not None:
             for r in out:
                 r.update(self.patch)
