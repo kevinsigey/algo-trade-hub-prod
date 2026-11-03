@@ -50,6 +50,11 @@ def _split(qty: float, lots: dict[str, float]) -> list[tuple[str, float]]:
     return parts + ([(MANUAL, rest)] if abs(rest) > 1e-9 else [])
 
 
+def _num(row: dict, key: str) -> float | None:
+    value = row.get(key)
+    return float(value) if value not in (None, "") else None
+
+
 def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str, dict[str, float]] | None = None
                    ) -> list[dict]:
     equity = float(account["equity"])
@@ -67,11 +72,28 @@ def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str,
                 "pct_of_book": abs(value * share) / equity * 100 if equity else None,
                 "unrealized_pl": pl * share,
                 "idea": idea,
+                "last_price": _num(p, "current_price"),
+                "change_pct": None if _num(p, "change_today") is None else _num(p, "change_today") * 100,
+                "avg_price": _num(p, "avg_entry_price"),
+                "cost_basis": None if _num(p, "cost_basis") is None else _num(p, "cost_basis") * share,
+                "day_pl": None if _num(p, "unrealized_intraday_pl") is None else _num(p, "unrealized_intraday_pl") * share,
             })
     cash = float(account["cash"])
     rows.append({"symbol": "Cash", "sector": sector_for("Cash"), "qty": None, "side": None, "market_value": cash,
                  "pct_of_book": cash / equity * 100 if equity else None, "unrealized_pl": None, "idea": None})
     return rows
+
+
+def account_view(account: dict, trades: list[dict] | None) -> dict:
+    """The account rail: Alpaca's own balances, day P&L against yesterday's close, realized P&L from closed trades."""
+    equity, last = _num(account, "equity"), _num(account, "last_equity")
+    day = equity - last if equity is not None and last else None
+    return {"last_equity": last, "day_pl": day, "day_pl_pct": day / last * 100 if day is not None else None,
+            "cash": _num(account, "cash"), "buying_power": _num(account, "buying_power"),
+            "long_value": _num(account, "long_market_value"), "short_value": _num(account, "short_market_value"),
+            "initial_margin": _num(account, "initial_margin"),
+            "maintenance_margin": _num(account, "maintenance_margin"),
+            "realized_pl": sum(t["pnl"] for t in trades) if trades is not None else None}
 
 
 def composition(rows: list[dict]) -> list[dict]:

@@ -4,7 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
-import type { ActivityPayload, BooksPayload, PortfolioPayload } from "@/lib/paperPortfolio";
+import { concentration, curveRange } from "@/lib/paperPortfolio";
+import type { ActivityPayload, BooksPayload, PortfolioPayload, PositionRow } from "@/lib/paperPortfolio";
 
 // Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
 vi.mock("@/lib/supabase", () => ({
@@ -27,7 +28,7 @@ const EMPTY_SCORE = {
 
 function payload(over: Partial<PortfolioPayload>): PortfolioPayload {
   return {
-    state: "live", as_of: "2026-11-10T20:41:00Z", account_number: "PA2", scoreboard: EMPTY_SCORE,
+    state: "live", as_of: "2026-11-10T20:41:00Z", scoreboard: EMPTY_SCORE,
     curve: [], composition: [], positions: [], ...over,
   };
 }
@@ -54,11 +55,9 @@ describe("Portfolio", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/^Paper account · not traded yet/)).toBeInTheDocument();
-    // The boxes layout (2026-11-02): the equity figure, the Account box's Cash
-    // rail row, the positions table's Cash row, and the Composition treemap's
-    // Cash tile (tiles carry their value since the sector rebuild) read $100,000.
-    expect(screen.getAllByText("$100,000").length).toBe(4);
+    expect(await screen.findByText(/^Paper account · not the account on record/)).toBeInTheDocument();
+    // The net liquidation figure, the rail's Cash row and the Composition treemap's Cash tile.
+    expect(screen.getAllByText("$100,000").length).toBe(3);
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText("+0.0%")).toBeNull();
   });
@@ -75,11 +74,13 @@ describe("Portfolio", () => {
     page(<Portfolio />);
     expect(await screen.findByText("+4.8%")).toBeInTheDocument();
     expect(screen.getByText("+2.7 pts")).toBeInTheDocument();
+    expect(screen.queryByText("Strategy HQ")).toBeNull();
+    expect(screen.getByText("Net liquidation value")).toBeInTheDocument();
     expect(screen.getByText("58%")).toBeInTheDocument();
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     expect(screen.getAllByText("No idea yet (manual)").length).toBe(2);
-    expect(screen.getByText("Every position · 1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Trades and Orders/ })).toHaveAttribute("href", "/portfolio/closed");
+    expect(screen.getByText("Positions · 1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=main");
   });
 });
 
@@ -111,7 +112,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("shows no order form to a signed-out visitor", async () => {
     serveRoutes(false, []);
     page(<Portfolio />);
-    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
     expect(screen.queryByText("Place an order by hand")).toBeNull();
   });
 
@@ -127,7 +128,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("hides the staged orders panel from a signed-out visitor", async () => {
     serveRoutes(false, []);
     page(<Portfolio />);
-    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
     expect(screen.queryByText("Staged orders")).toBeNull();
   });
 
@@ -182,9 +183,9 @@ describe("Portfolio books (master view and the $1M book)", () => {
   const BOOKS: BooksPayload = {
     books: [
       { book: "main", label: "Main book", detail: "$100k paper account", state: "live", as_of: "2026-11-10T20:41:00Z",
-        account_number: "PA2", equity: 104820, return_pct: 4.82, positions: 3, live_ideas: 2 },
+        equity: 104820, return_pct: 4.82, positions: 3, live_ideas: 2 },
       { book: "big", label: "$1M book", detail: "$1M paper account", state: "not_connected", as_of: null,
-        account_number: null, equity: null, return_pct: null, positions: 0, live_ideas: 0 },
+        equity: null, return_pct: null, positions: 0, live_ideas: 0 },
     ],
   };
 
@@ -198,7 +199,7 @@ describe("Portfolio books (master view and the $1M book)", () => {
       if (url.includes("/api/portfolio/closed")) return new Response(JSON.stringify({ state: "live", as_of: null, trades: [] }), { status: 200 });
       if (url.includes("book=big")) {
         return new Response(JSON.stringify(payload({
-          book: "big", account_number: "PA3",
+          book: "big",
           scoreboard: { ...EMPTY_SCORE, equity: 1000000 },
           positions: [{ symbol: "Cash", qty: null, side: null, market_value: 1000000, pct_of_book: 100, unrealized_pl: null, idea: null }],
         })), { status: 200 });
@@ -210,20 +211,19 @@ describe("Portfolio books (master view and the $1M book)", () => {
     }));
   }
 
-  it("opens as a master view: one card per book, the main book's full page below", async () => {
+  it("opens on the main book, with each book's headline as a tab", async () => {
     const urls: string[] = [];
     serveBooks(urls);
     page(<Portfolio />);
-    // The $1M card says plainly that it is not connected -- no invented numbers.
+    // The $1M tab says plainly that it is not connected -- no invented numbers.
     const bigCard = await screen.findByRole("link", { name: /\$1M book/ });
     expect(bigCard).toHaveAttribute("href", "/portfolio?book=big");
-    expect(bigCard.textContent).toContain("Paper account not connected");
+    expect(bigCard.textContent).toContain("not connected");
     const mainCard = screen.getByRole("link", { name: /Main book/ });
     expect(mainCard).toHaveAttribute("href", "/portfolio?book=main");
     expect(mainCard.textContent).toContain("$104,820");
-    expect(mainCard.textContent).toContain("2 live ideas");
-    // Below the cards the main book's own page still renders (the record).
-    expect(await screen.findByText("Every position · 0")).toBeInTheDocument();
+    expect(mainCard).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
   });
 
   it("scopes every read to the $1M book when ?book=big, with the switcher on top", async () => {
@@ -233,12 +233,60 @@ describe("Portfolio books (master view and the $1M book)", () => {
     expect((await screen.findAllByText("$1,000,000")).length).toBeGreaterThanOrEqual(1);
     expect(urls.some((u) => u.includes("/api/portfolio?book=big"))).toBe(true);
     expect(urls.some((u) => u.includes("/api/portfolio/closed?book=big"))).toBe(true);
-    expect(screen.getByRole("link", { name: "Master — both books" })).toHaveAttribute("href", "/portfolio");
-    expect(screen.getByRole("link", { name: "$1M book" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: /Trades and Orders/ })).toHaveAttribute("href", "/portfolio/closed?book=big");
+    expect(screen.getByRole("link", { name: /\$1M book/ })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=big");
     // The hand order form and staged orders are main-book doors; they stay off this page.
     expect(screen.queryByText("Place an order by hand")).toBeNull();
     expect(screen.queryByText("Staged orders")).toBeNull();
+  });
+});
+
+describe("Portfolio positions", () => {
+  const row = (symbol: string, value: number, over: Partial<PositionRow> = {}): PositionRow => ({
+    symbol, qty: 10, side: "long", market_value: value, pct_of_book: 5, unrealized_pl: 10, idea: "Chips", ...over,
+  });
+
+  it("shows broker columns, nests an option under its stock and sorts on click", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        row("NVDA261204C00200000", 900), row("MU", 3000, { last_price: 300, change_pct: 1.5, day_pl: 45 }), row("NVDA", 2000, { day_pl: -60 }),
+      ],
+    }));
+    page(<Portfolio />);
+    const names = () => screen.getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
+    await screen.findByText("Positions · 3");
+    expect(names()).toEqual(["MU", "NVDA", "NVDA Dec 4 2026 $200 call"]);
+    expect(screen.getByText("$300.00")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Market value" }));
+    expect(names()).toEqual(["NVDA", "NVDA Dec 4 2026 $200 call", "MU"]);
+  });
+});
+
+describe("Portfolio helpers", () => {
+  it("rebases the chosen range to start at zero", () => {
+    const curve = [
+      { t: "2026-01-01T00:00:00Z", portfolio_pct: 0, spy_pct: 0 },
+      { t: "2026-10-30T00:00:00Z", portfolio_pct: 10, spy_pct: 5 },
+      { t: "2026-11-02T00:00:00Z", portfolio_pct: 21, spy_pct: 5 },
+    ];
+    const week = curveRange(curve, "1W", new Date("2026-11-03T00:00:00Z"));
+    expect(week.length).toBe(2);
+    expect(week[0].portfolio_pct).toBeCloseTo(0);
+    expect(week[1].portfolio_pct).toBeCloseTo(10);
+    expect(curveRange(curve, "All")).toBe(curve);
+  });
+
+  it("flags a sector over 40% of what's invested, but not the broad market", () => {
+    const rows = [
+      { symbol: "MU", sector: "Technology", market_value: 500, idea: "A" },
+      { symbol: "TSM", sector: "Technology", market_value: 300, idea: "B" },
+      { symbol: "SPY", sector: "Broad Market", market_value: 1500, idea: "C" },
+    ] as PositionRow[];
+    expect(concentration(rows)).toEqual([]);
+    const heavy = concentration(rows.slice(0, 2));
+    expect(heavy[0].sector).toBe("Technology");
+    expect(heavy[0].pct).toBe(100);
   });
 });
 
