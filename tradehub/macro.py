@@ -1,6 +1,6 @@
 """Macro predictions dashboard composition (phase-3 §1).
 
-Pure: composes the three macro cards (jobs, CPI, oil) from reads the hub
+Pure: composes the three macro cards (jobs, CPI, PPI) from reads the hub
 already makes -- the jobs scorecard rows, the scoreboard's current runs, and
 the journal's scores/forecasts/settlements. No forecasting, no storage; a
 source that arrives empty yields that card's section as None, which the page
@@ -154,8 +154,6 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
     outcomes = {s.get("target"): s.get("outcome")
                 for s in journal_settlements if s.get("outcome") is not None}
     scores = {(s.get("forecaster"), s.get("forecaster_version")): s for s in journal_scores}
-    oil_scores = [s for (name, _v), s in scores.items() if name == "oil_wti"]
-    oil_record = _journal_record(max(oil_scores, key=lambda s: s.get("n_settled") or 0) if oil_scores else None)
 
     # KXU3 folds into the Jobs card (the audit's call: the unemployment level is
     # the same release's second number, not a fourth card). Call and record come
@@ -167,37 +165,25 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
                                      forecasts=journal_forecasts, outcomes=outcomes)
     u3 = {"call": u3_call, "record": u3_record} if (u3_call or u3_record) else None
 
-    # CPI leaves the card grid (Kevin's call, 2026-11-01): it is a wrapped
-    # Cleveland Fed nowcast -- display-only by the audit's own verdict -- so it
-    # becomes a one-line quick strip across the top, not a co-equal card. Its
-    # record still reads from the scoreboard run, on the strip.
-    cpi_call, _cpi_trail = _prob_parts(forecaster="cpi_nowcast",
-                                       market_forecaster="kalshi_implied_cpi",
-                                       forecasts=journal_forecasts, outcomes=outcomes)
-    # PPI joins the quick strip (Kevin's redesign, 2026-11-02): it was journal-only, with
-    # no home on the page that carries the macro engines. It has no scoreboard run and no
-    # detail page, so its record reads from the journal scores and the strip links there.
-    ppi_call, _ppi_trail = _prob_parts(forecaster="ppi_nowcast",
-                                       market_forecaster="kalshi_implied_ppi",
-                                       forecasts=journal_forecasts, outcomes=outcomes)
+    # The Macro dashboard is Jobs + CPI + PPI (Kevin's redesign, 2026-11-03):
+    # oil left for its own Commodities tab, and CPI/PPI are full cards again
+    # so the page is one glanceable grid. CPI stays display_only -- it is a
+    # wrapped Cleveland Fed nowcast by the audit's verdict, and its record
+    # still reads from the scoreboard run. PPI is our own journal model; it
+    # has no detail page, so its card links to the Model Tracker.
     ppi_scores = [s for (name, _v), s in scores.items() if name == "ppi_nowcast"]
     ppi_record = _journal_record(max(ppi_scores, key=lambda s: s.get("n_settled") or 0) if ppi_scores else None)
-    quick = [{"key": "cpi", "title": "CPI", "detail_href": "/cpi", "display_only": True,
-              "note": "Cleveland Fed nowcast, wrapped -- display only",
-              "call": cpi_call, "record": _scoreboard_record(runs.get("cpi_nowcast"))},
-             {"key": "ppi", "title": "PPI", "detail_href": "/journal", "display_only": True,
-              "note": "producer prices -- journal-graded; the full record lives in the Model Tracker",
-              "call": ppi_call, "record": ppi_record}]
 
     cards = [
         _jobs_card(jobs_rows, _scoreboard_record(runs.get("labor_nowcast")), today, u3=u3),
-        # No Gas card: both 2026-11-01 audits graded the gas model a completed,
-        # decisive loss (paired ~11x the market; persistence ties it), so the page
-        # stops presenting it as a prediction. The journal forecaster keeps its
-        # record; only the card is gone. Oil takes the second slot.
-        _prob_card(key="oil", title="Oil", predicts="WTI crude settlement (daily)",
-                   detail_href="/oil", display_only=False,
-                   forecaster="oil_wti", market_forecaster="kalshi_implied_oil",
-                   forecasts=journal_forecasts, outcomes=outcomes, record=oil_record),
+        _prob_card(key="cpi", title="CPI", predicts="Next CPI print",
+                   detail_href="/cpi", display_only=True,
+                   forecaster="cpi_nowcast", market_forecaster="kalshi_implied_cpi",
+                   forecasts=journal_forecasts, outcomes=outcomes,
+                   record=_scoreboard_record(runs.get("cpi_nowcast"))),
+        _prob_card(key="ppi", title="PPI", predicts="Next PPI print",
+                   detail_href="/journal", display_only=False,
+                   forecaster="ppi_nowcast", market_forecaster="kalshi_implied_ppi",
+                   forecasts=journal_forecasts, outcomes=outcomes, record=ppi_record),
     ]
-    return {"as_of": today.isoformat(), "quick": quick, "cards": cards}
+    return {"as_of": today.isoformat(), "quick": [], "cards": cards}

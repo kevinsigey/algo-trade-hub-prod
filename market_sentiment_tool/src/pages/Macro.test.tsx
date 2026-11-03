@@ -89,17 +89,17 @@ describe("Macro jobs card U3 fold", () => {
   });
 });
 
-describe("Macro quick strip", () => {
-  it("renders display-only CPI as a one-line strip item, not a card", async () => {
-    const quick = [{
-      key: "cpi", title: "CPI", detail_href: "/cpi", display_only: true,
-      note: "Cleveland Fed nowcast, wrapped -- display only",
-      call: { label: "KXCPI-26NOV", ours: 0.62, market: 0.58, last_actual: null, as_of: "2026-10-30T13:00:00Z" },
-      record: null,
-    }];
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick, cards: [] });
+describe("Macro card grid (2026-11-03 redesign)", () => {
+  it("renders Jobs, CPI and PPI as co-equal cards and no quick strip", async () => {
+    const jobs = { ...CARD, key: "jobs", title: "Jobs nowcast", detail_href: "/jobs", display_only: false,
+      trail_kind: "value", trail: [] } as const;
+    const ppi = { ...CARD, key: "ppi", title: "PPI", detail_href: "/journal", display_only: false,
+      record: { ...CARD.record, source: "journal" } } as const;
+    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs, CARD, ppi] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    expect(await screen.findByText("Quick")).toBeInTheDocument();
-    expect(screen.getByText(/Cleveland Fed nowcast/)).toBeInTheDocument();
+    expect(await screen.findByText("Jobs nowcast")).toBeInTheDocument();
+    expect(screen.getByText("CPI")).toBeInTheDocument();
+    expect(screen.getByText("PPI")).toBeInTheDocument();
+    expect(screen.queryByText("Quick")).not.toBeInTheDocument();
   });
 });

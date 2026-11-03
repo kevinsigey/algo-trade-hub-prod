@@ -227,28 +227,12 @@ export default function Macro() {
         <Landmark className="h-6 w-6 text-muted-foreground" />
         <h1 className="text-3xl font-bold tracking-tight">Macro predictions</h1>
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">Each engine's call and record on one screen. Click a card for the full page.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Jobs, CPI and PPI — each engine's call and record on one screen. Click a card for the full page.</p>
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">Macro dashboard unavailable: {error}</p>}
       {!data && !error && <p className="mt-4 text-sm text-muted-foreground">Loading the macro board…</p>}
       {data && (
         <>
-          {data.quick.length > 0 && (
-            <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Quick</span>
-              {data.quick.map((q) => (
-                <Link key={q.key} to={q.detail_href} className="text-sm tabular-nums hover:underline">
-                  <span className="font-medium">{q.title}</span>
-                  {q.call ? (
-                    <> — Ours <strong>{fmtVal(q.call.ours, "probability")}</strong>{" · "}Kalshi <strong>{fmtVal(q.call.market, "probability")}</strong></>
-                  ) : (
-                    <> — no live call</>
-                  )}
-                  <span className="text-xs text-muted-foreground"> ({q.note})</span>
-                </Link>
-              ))}
-            </div>
-          )}
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {data.cards.map((c) => <CardView key={c.key} card={c} />)}
           </div>
           <p className="mt-4 text-xs text-muted-foreground">As of {data.as_of}. Records pair each engine against the market on the same prints.</p>
