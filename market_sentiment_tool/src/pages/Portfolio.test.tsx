@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
-import type { ClosedPayload, PortfolioPayload } from "@/lib/paperPortfolio";
+import type { ActivityPayload, PortfolioPayload } from "@/lib/paperPortfolio";
 
 // Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
 vi.mock("@/lib/supabase", () => ({
@@ -145,17 +145,18 @@ describe("Portfolio hand orders (signed-in only)", () => {
 
 describe("ClosedTrades", () => {
   it("has an empty state", async () => {
-    serve({ state: "live", as_of: "2026-11-10T20:41:00Z", trades: [] } satisfies ClosedPayload);
+    serve({ state: "live", as_of: "2026-11-10T20:41:00Z", open: [], recent: [], trades: [] } satisfies ActivityPayload);
     page(<ClosedTrades />);
     expect(await screen.findByText("No closed trades yet.")).toBeInTheDocument();
+    expect(screen.getByText("No working orders right now.")).toBeInTheDocument();
   });
 
   it("shows each trade's result", async () => {
     serve({
-      state: "live", as_of: "2026-11-10T20:41:00Z",
+      state: "live", as_of: "2026-11-10T20:41:00Z", open: [], recent: [],
       trades: [{ symbol: "GLD", qty: 10, entry_price: 200, exit_price: 225, entered_at: "2026-11-02T15:00:00Z",
                  exited_at: "2026-11-05T15:00:00Z", pnl: 250, return_pct: 12.5, held_days: 3, idea: "No idea yet (manual)" }],
-    } satisfies ClosedPayload);
+    } satisfies ActivityPayload);
     page(<ClosedTrades />);
     expect((await screen.findAllByText("+$250.00")).length).toBe(2); // the row and the total
     expect(screen.getByText("+12.5%")).toBeInTheDocument();

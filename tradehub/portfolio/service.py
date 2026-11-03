@@ -11,6 +11,7 @@ States, in the order a reader needs them:
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 
 from tradehub.portfolio import book
@@ -135,6 +136,57 @@ def portfolio(supa, now: datetime | None = None) -> dict:
         "composition": book.composition(rows),
         "positions": rows,
     }
+
+
+_TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
+_IDEA_TAG = re.compile(r"^idea-(\d+)-")
+_OPTION_SYMBOL = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
+
+def _order_source(client_order_id: str, titles: dict[int, str]) -> str:
+    m = _IDEA_TAG.match(client_order_id or "")
+    if m:
+        return titles.get(int(m.group(1)), "Workshop idea")
+    if (client_order_id or "").startswith("ext-"):
+        return "Machine order"
+    return "Manual"
+
+
+def _order_row(o: dict, titles: dict[int, str]) -> dict:
+    def num(key):
+        v = o.get(key)
+        return float(v) if v not in (None, "") else None
+    return {"symbol": o.get("symbol"), "side": o.get("side"), "qty": num("qty"),
+            "filled_qty": num("filled_qty"), "type": o.get("type") or o.get("order_type"),
+            "time_in_force": o.get("time_in_force"), "status": o.get("status"),
+            "limit_price": num("limit_price"), "stop_price": num("stop_price"),
+            "filled_avg_price": num("filled_avg_price"),
+            "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
+            "asset": "option" if _OPTION_SYMBOL.match(o.get("symbol") or "") else "stock",
+            "source": _order_source(o.get("client_order_id") or "", titles)}
+
+
+def activity(supa, now: datetime | None = None) -> dict:
+    """The Trades and Orders page payload: working orders, the recent order tape, and
+    closed trades. The page carried only closed trades until 2026-11-02, so with no
+    exits yet it rendered empty despite a book full of resting and filled orders."""
+    now = now or datetime.now(UTC)
+    empty = {"state": "not_connected", "as_of": None, "open": [], "recent": [], "trades": []}
+    try:
+        orders = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500})
+    except AccountNotConnected:
+        return empty
+    except Exception:  # noqa: BLE001 -- same contract as closed(): never a 500 for a down feed
+        return {**empty, "state": "stale"}
+    try:
+        titles = _titles(supa, public=True)
+    except Exception:  # noqa: BLE001 -- attribution is decoration; the tape still reads
+        titles = {}
+    rows = [_order_row(o, titles) for o in orders]
+    return {"state": "live", "as_of": now.isoformat(),
+            "open": [r for r in rows if r["status"] not in _TERMINAL],
+            "recent": rows[:50],
+            "trades": closed(supa, now)["trades"]}
 
 
 def closed(supa, now: datetime | None = None) -> dict:
