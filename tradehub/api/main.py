@@ -2522,6 +2522,17 @@ def get_onchain():
     return collect()
 
 
+@app.get("/api/crypto/desk", tags=["Crypto"])
+def get_crypto_desk():
+    """The crypto desk (step 2 of Kevin's crypto program): protocols and
+    networks as companies -- price, mcap, FDV, 24h fees/revenue, P/F and
+    P/S, fee trend, TVL -- from DefiLlama + CoinGecko, server-cached
+    5 minutes (tradehub/crypto_desk.py)."""
+    from tradehub.crypto_desk import desk
+
+    return desk()
+
+
 @app.get("/api/crypto/board", tags=["Crypto"])
 def get_crypto_board():
     """Tracked Kalshi crypto markets (phase-3 §5): the hourly ladder's
