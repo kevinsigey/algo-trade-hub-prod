@@ -129,4 +129,18 @@ def read_state_file(path: str, region, now: datetime) -> tuple[dict | None, str]
         return None, "unknown"
     if age > STALE_AFTER_S:
         return state.metrics(now), "stale"
-    return state.metrics(now), "live"
+    metrics = state.metrics(now)
+    # Connected-but-silent is UNKNOWN, never "live with zero ships" (the
+    # chokepoints plan's core rule; verified live Nov 2 2026: AISStream's
+    # Gulf boxes stream nothing on the free tier while Singapore flows, so
+    # a fresh state file with no recent message cannot tell a quiet strait
+    # from absent coverage).
+    if state.last_msg_at is None:
+        return metrics, "unknown"
+    try:
+        silent_s = (now - datetime.fromisoformat(state.last_msg_at)).total_seconds()
+    except ValueError:
+        return metrics, "unknown"
+    if silent_s > STALE_AFTER_S:
+        return metrics, "unknown"
+    return metrics, "live"
