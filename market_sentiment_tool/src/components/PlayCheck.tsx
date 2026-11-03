@@ -30,6 +30,7 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
   ideaId: number; source: "workshop" | "public"; title: string; onClose: () => void;
 }) {
   const [size, setSize] = useState("10");
+  const [book, setBook] = useState<"main" | "big">("main");
   const [result, setResult] = useState<PlayCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -40,8 +41,8 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
     setBusy(true); setError(null);
     try {
       const path = source === "workshop"
-        ? `/api/workshop/ideas/${ideaId}/play-check?size_pct=${pct}`
-        : `/api/ideas/${ideaId}/play-check?size_pct=${pct}`;
+        ? `/api/workshop/ideas/${ideaId}/play-check?size_pct=${pct}&book=${book}`
+        : `/api/ideas/${ideaId}/play-check?size_pct=${pct}&book=${book}`;
       if (source === "workshop") {
         setResult(await adminJson<PlayCheckResult>(path));
       } else {
@@ -75,6 +76,17 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
             <input value={size} onChange={(e) => setSize(e.target.value)} inputMode="decimal"
                    className="mt-1 block w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white" />
           </label>
+          <div className="text-sm text-slate-300">
+            Book
+            <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-700">
+              {(["main", "big"] as const).map((b) => (
+                <button key={b} type="button" onClick={() => { setBook(b); setResult(null); }}
+                        className={`px-3 py-2 ${book === b ? "bg-slate-700 text-white" : "text-slate-400"}`}>
+                  {b === "main" ? "Main book" : "$1M book"}
+                </button>
+              ))}
+            </div>
+          </div>
           <button type="button" onClick={run} disabled={busy}
                   className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-60">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} Check
@@ -97,15 +109,20 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
               {result.exit_reason ? ` Exit on record: ${result.exit_reason}` : ""}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              Book as of {result.as_of ? new Date(result.as_of).toLocaleString() : "—"} · equity {money(result.equity ?? 0)} · cash {money(result.cash ?? 0)} · buys {money(result.buys ?? 0)} · sells {money(result.sells ?? 0)}
+              {result.book_label ?? "Main book"} as of {result.as_of ? new Date(result.as_of).toLocaleString() : "—"} · equity {money(result.equity ?? 0)} · cash {money(result.cash ?? 0)} · buys {money(result.buys ?? 0)} · trims {money(result.sells ?? 0)}
             </p>
+            {result.sleeve_usd != null && (
+              <p className="mt-1 text-sm text-slate-300">
+                {money(result.already_in_place_usd ?? 0)} of the {money(result.sleeve_usd)} sleeve is already in place ({result.in_place_pct ?? 0}%).
+              </p>
+            )}
 
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                     <th className="py-1 pr-2">Ticker</th><th className="py-1 pr-2">Held</th>
-                    <th className="py-1 pr-2">Target</th><th className="py-1">Change</th>
+                    <th className="py-1 pr-2">Target</th><th className="py-1 pr-2">In place</th><th className="py-1">Change</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -120,6 +137,7 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
                       </td>
                       <td className="py-1.5 pr-2 text-slate-300">{shares(r.held_shares)} · {money(r.held_value)}</td>
                       <td className="py-1.5 pr-2 text-slate-300">{r.target_shares === null ? "—" : `${shares(r.target_shares)} · ${money(r.target_value)}`}</td>
+                      <td className="py-1.5 pr-2 text-slate-300">{r.coverage_pct === null || r.coverage_pct === undefined ? "—" : r.coverage_pct > 100 ? `${r.coverage_pct}% · over` : `${r.coverage_pct}%`}</td>
                       <td className={`py-1.5 ${r.delta_value > 0 ? "text-emerald-300" : r.delta_value < 0 ? "text-rose-300" : "text-slate-400"}`}>{money(r.delta_value)}</td>
                     </tr>
                   ))}
