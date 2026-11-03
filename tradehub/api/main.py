@@ -1278,13 +1278,15 @@ def geo_region(slug: str, supabase=Depends(get_supabase)):
 
 
 @app.get("/api/oil/itm-record", tags=["Oil"])
-def oil_itm_record() -> dict:
+def oil_itm_record(supabase=Depends(get_supabase)) -> dict:
     """How the frozen ITM line picks have done (hit rate + EV at Kalshi's
-    price). Public and fail-soft: an empty record reads as zeroes."""
+    price). Public and fail-soft: an empty record reads as zeroes.
+    (Fixed 2026-11-03: this called an undefined get_client(), so the
+    fail-soft branch served zeroes forever -- the record never showed.)"""
     from tradehub.oil_itm import record
 
     try:
-        return record(get_client())
+        return record(supabase)
     except Exception:  # noqa: BLE001
         return {"frozen": 0, "settled": 0, "hits": 0, "hit_rate": None,
                 "ev_per_dollar": None, "recent": []}
@@ -1315,6 +1317,125 @@ def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin)):
     except InterpretUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"spec": spec, "questions": questions, "model": model}
+
+
+# ── In-site agent, phases 1-2 (Kevin, 2026-11-03): the interpreter's specs,
+# confirmed and stored, and the accuracy gate. Phase 1's interpret endpoint
+# above returns a spec for confirm/edit; these endpoints keep it. The gate
+# (phase 2) runs an expressible spec through the Workshop's verdict machinery;
+# promotions are Kevin's, one state at a time. Nothing here places an order.
+class _AgentSpecIn(BaseModel):
+    title: str | None = None
+    spec: dict
+    questions: list = []
+
+
+class _AgentSpecPatch(BaseModel):
+    title: str | None = None
+    spec: dict | None = None
+    questions: list | None = None
+
+
+class _AgentStateIn(BaseModel):
+    state: str
+
+
+def _spec_title(spec: dict, given: str | None) -> str:
+    if given and given.strip():
+        return given.strip()[:120]
+    thesis = str(spec.get("thesis") or "").strip()
+    return (thesis[:77] + "...") if len(thesis) > 80 else (thesis or "Untitled strategy")
+
+
+@app.post("/api/agent/specs", tags=["Agent"], status_code=201)
+def agent_create_spec(body: _AgentSpecIn, _admin: dict = Depends(admin.require_admin),
+                      supabase=Depends(get_supabase)):
+    from tradehub.agent import store as agent_store
+    from tradehub.agent.spec import validate_spec
+
+    problems = validate_spec(body.spec)
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+    return agent_store.create_spec(supabase, _spec_title(body.spec, body.title), body.spec, body.questions)
+
+
+@app.get("/api/agent/specs", tags=["Agent"])
+def agent_list_specs(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    from tradehub.agent import store as agent_store
+
+    return {"specs": agent_store.list_specs(supabase)}
+
+
+@app.get("/api/agent/specs/{spec_id}", tags=["Agent"])
+def agent_get_spec(spec_id: int, _admin: dict = Depends(admin.require_admin),
+                   supabase=Depends(get_supabase)):
+    from tradehub.agent import store as agent_store
+
+    row = agent_store.get_spec(supabase, spec_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such spec")
+    return row
+
+
+@app.patch("/api/agent/specs/{spec_id}", tags=["Agent"])
+def agent_patch_spec(spec_id: int, body: _AgentSpecPatch, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    from tradehub.agent import store as agent_store
+    from tradehub.agent.spec import validate_spec
+
+    if agent_store.get_spec(supabase, spec_id) is None:
+        raise HTTPException(status_code=404, detail="no such spec")
+    if body.spec is not None:
+        problems = validate_spec(body.spec)
+        if problems:
+            raise HTTPException(status_code=422, detail="; ".join(problems))
+    return agent_store.update_spec(supabase, spec_id, title=body.title, spec=body.spec,
+                                   questions=body.questions)
+
+
+@app.post("/api/agent/specs/{spec_id}/gate", tags=["Agent"])
+def agent_run_gate(spec_id: int, _admin: dict = Depends(admin.require_admin),
+                   supabase=Depends(get_supabase)):
+    from tradehub.agent import store as agent_store
+    from tradehub.agent.gate import run_gate
+    from tradehub.workshop.data import UnknownSymbol
+
+    row = agent_store.get_spec(supabase, spec_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such spec")
+    try:
+        return run_gate(supabase, row)
+    except UnknownSymbol as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/agent/specs/{spec_id}/state", tags=["Agent"])
+def agent_set_state(spec_id: int, body: _AgentStateIn, _admin: dict = Depends(admin.require_admin),
+                    supabase=Depends(get_supabase)):
+    """The lifecycle, one step at a time: draft -> shadow -> paper-eligible,
+    each promotion Kevin's and each gated on a PASS; blocked from anywhere
+    (Kevin's no, or the gate's); blocked -> draft is Kevin's override."""
+    from tradehub.agent import store as agent_store
+
+    row = agent_store.get_spec(supabase, spec_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such spec")
+    want = body.state
+    if want not in agent_store.STATES:
+        raise HTTPException(status_code=422, detail=f"state must be one of {', '.join(agent_store.STATES)}")
+    cur = row["state"]
+    gate_pass = (row.get("gate") or {}).get("verdict") == "PASS"
+    allowed = (
+        want == "blocked"
+        or (want == "draft" and cur == "blocked")
+        or (want == "shadow" and cur == "draft" and gate_pass)
+        or (want == "paper-eligible" and cur == "shadow" and gate_pass)
+    )
+    if not allowed:
+        why = ("promotions need a PASS from the accuracy gate first" if want in ("shadow", "paper-eligible") and not gate_pass
+               else f"a spec moves one step at a time (it is {cur})")
+        raise HTTPException(status_code=409, detail=why)
+    return agent_store.set_state(supabase, spec_id, want)
 
 
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])
