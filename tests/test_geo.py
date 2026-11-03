@@ -220,3 +220,42 @@ def test_region_view_latest_batch_with_baseline():
     assert view["feeds"] == {"ais": "unknown"}
     (metric,) = view["metrics"]
     assert metric["value"] == 14 and metric["baseline"] == 10 and metric["delta_pct"] == 40.0
+
+def test_region_view_surfaces_vessels_and_aircraft(tmp_path, monkeypatch):
+    # The map plots real positions (Kevin, 2026-11-03): vessels from the AIS
+    # state file (tankers flagged), aircraft from the snapshot detail the
+    # ingest already stores.
+    import os
+    from datetime import datetime, timezone
+
+    from tradehub.geo.ais_state import AisState
+    from tradehub.geo.regions import HORMUZ
+
+    now = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)
+    state = AisState(HORMUZ)
+    state.apply({"MetaData": {"MMSI": "111"}, "MessageType": "PositionReport",
+                 "Message": {"PositionReport": {"Latitude": 26.5, "Longitude": 56.3, "Sog": 9}}}, now)
+    state.apply({"MetaData": {"MMSI": "111"}, "MessageType": "ShipStaticData",
+                 "Message": {"ShipStaticData": {"Type": 80, "Name": "TANKER ONE"}}}, now)
+    path = tmp_path / "ais.json"
+    path.write_text(state.to_json())
+    monkeypatch.setenv("GEO_AIS_STATE", str(path))
+    import importlib
+
+    import tradehub.geo.read as read_mod
+    importlib.reload(read_mod)  # the path is read at import; pick up the env
+
+    rows = [{"region": "hormuz", "feed": "adsb", "metric": "mil_total", "value": 1,
+             "health": "live",
+             "detail": {"aircraft": [{"callsign": "RCH123", "type": "K35R", "kind": "tanker",
+                                      "lat": 26.9, "lon": 55.8}]},
+             "taken_at": "2026-11-02T23:30:00+00:00"}]
+    view = read_mod.region_view(_Fake(rows), "hormuz")
+    assert view["aircraft"][0]["callsign"] == "RCH123"
+    assert len(view["vessels"]) == 1
+    v = view["vessels"][0]
+    assert v["tanker"] is True and v["name"] == "TANKER ONE" and v["lat"] == 26.5
+    assert view["vessels_as_of"] is not None
+    os.environ.pop("GEO_AIS_STATE", None)
+    importlib.reload(read_mod)
+
