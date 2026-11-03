@@ -541,7 +541,17 @@ def test_big_book_auto_needs_a_big_book_activation(passed):
 def test_go_live_refuses_a_size_that_cannot_trade_the_tested_options(passed, monkeypatch):
     c, db, i, _, _ = passed
     db.db["idea_runs"][0]["spec"] = {**db.db["idea_runs"][0]["spec"], "options": [{"underlying": "GLD", "kind": "call", "side": "buy", "strike_pct": 105, "days_to_expiry": 30}]}
-    monkeypatch.setattr(main, "_play_check", lambda *a, **k: {"structure_problems": ["SPY call: live would trade 0."]})
+    monkeypatch.setattr(main, "_play_check", lambda *a, **k: {"available": True, "structure_problems": ["SPY call: live would trade 0."]})
     r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 10})
     assert r.status_code == 409 and "trade 0" in r.json()["detail"]
+    assert not db.db["ideas"][0].get("live_at")
+
+
+def test_go_live_with_options_refuses_when_the_book_cannot_be_read(passed, monkeypatch):
+    c, db, i, _, _ = passed
+    db.db["idea_runs"][0]["spec"] = {**db.db["idea_runs"][0]["spec"], "options": [
+        {"underlying": "GLD", "kind": "call", "side": "buy", "strike_pct": 105, "days_to_expiry": 30}]}
+    monkeypatch.setattr(main, "_play_check", lambda *a, **k: {"available": False, "note": "No paper account"})
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 10})
+    assert r.status_code == 409 and "No paper account" in r.json()["detail"]
     assert not db.db["ideas"][0].get("live_at")

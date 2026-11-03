@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from tradehub.portfolio import book
 from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_price, paper_get
@@ -98,6 +98,19 @@ def _orders(book_name: str | None = None) -> dict[str, str]:
             break
         params = {**params, "after": page[-1]["submitted_at"]}
     return out
+
+
+def orders_since(day: date) -> list[dict]:
+    """Every order on the current book submitted from `day` on. Raises rather than return part of it."""
+    out: list[dict] = []
+    params: dict = {"status": "all", "direction": "asc", "limit": ORDER_PAGE, "after": f"{day}T00:00:00Z"}
+    for _ in range(20):
+        page = paper_get("/v2/orders", params)
+        out += page
+        if len(page) < ORDER_PAGE:
+            return out
+        params = {**params, "after": page[-1]["submitted_at"]}
+    raise RuntimeError(f"more than {20 * ORDER_PAGE} orders since {day}")
 
 
 def _titles(supa, public: bool) -> dict[int, str]:

@@ -979,10 +979,11 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
                              "note": body.override_note or "63-day gate overridden on Kevin's explicit call",
                              "gate_status_was": gate["status"]}}
     if (run.get("spec") or {}).get("options"):
-        problems = _play_check(supabase, _found(supabase, idea_id)["idea"], run["spec"], body.size_pct,
-                               body.book).get("structure_problems")
-        if problems:
-            raise HTTPException(status_code=409, detail=" ".join(problems))
+        check = _play_check(supabase, _found(supabase, idea_id)["idea"], run["spec"], body.size_pct, body.book)
+        if not check.get("available"):  # can't size it against the book, so can't say it's safe
+            raise HTTPException(status_code=409, detail=check.get("note") or "the book could not be read")
+        if check.get("structure_problems"):
+            raise HTTPException(status_code=409, detail=" ".join(check["structure_problems"]))
     if body.book != "main":
         return workshop_store.go_live_book(supabase, body.book, idea_id, run["id"],
                                            body.size_pct, gate)

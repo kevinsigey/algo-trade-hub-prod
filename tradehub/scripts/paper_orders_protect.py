@@ -19,9 +19,10 @@ import requests
 
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
-from tradehub.portfolio import book, paper_orders, service
+from tradehub.portfolio import book, books, paper_orders, service
 from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import protective, signature
+from tradehub.portfolio.reconcile import reconcile
 from tradehub.workshop import store
 from tradehub.workshop.data import NY
 from tradehub.workshop.spec import IdeaSpec
@@ -29,6 +30,7 @@ from tradehub.workshop.spec import IdeaSpec
 FAILS = (paper_orders.OrderRejected, AccountNotConnected, requests.RequestException)
 _sleep = clock.sleep
 DONE = ("canceled", "expired", "rejected")
+RECHECK_DAYS = 5
 
 
 def _cancel(order: dict, cancel, why: str) -> dict:
@@ -119,15 +121,38 @@ def run(now: datetime, supa, *, submit=paper_orders.submit, cancel=paper_orders.
     return summary, failed
 
 
+def check_fills(now: datetime, supa) -> tuple[dict, dict]:
+    """Each book's recent orders against the broker's answer. A day limit order ends after this
+    job's morning slot, so the days before today are re-checked too."""
+    today = now.astimezone(NY).date()
+    since = today - timedelta(days=RECHECK_DAYS)
+    out, failed = {}, {}
+    for name in books.names():
+        token = books.use_book(name)
+        try:
+            out[name] = reconcile(supa, name, since, now, lambda: service.orders_since(since))
+            if out[name]["missing"]:
+                failed[name] = f"{out[name]['missing']} sent order(s) the broker doesn't show"
+        except Exception as exc:  # noqa: BLE001 -- one book failing never stops the other
+            failed[name] = f"{type(exc).__name__}: {exc}"[:300]
+        finally:
+            books.reset_book(token)
+    return out, failed
+
+
 def main() -> int:
     load_local_env()
+    supa = get_client()
+    now = datetime.now(UTC)
+    fills, fills_failed = check_fills(now, supa)
     try:
-        summary, failed = run(datetime.now(UTC), get_client())
+        summary, failed = run(now, supa)
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"protect": "failed", "error": str(exc)}))
+        print(json.dumps({"protect": "failed", "error": str(exc), "fills": fills, "fills_failed": fills_failed}))
         return 1
-    code = 1 if failed or "account" in summary else 0
-    print(json.dumps({"protect": "failed" if code else "ok", "summary": summary, "failed": failed}))
+    code = 1 if failed or fills_failed or "account" in summary else 0
+    print(json.dumps({"protect": "failed" if code else "ok", "summary": summary, "failed": failed,
+                      "fills": fills, "fills_failed": fills_failed}))
     return code
 
 
