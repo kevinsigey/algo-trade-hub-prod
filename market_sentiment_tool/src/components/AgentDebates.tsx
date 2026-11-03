@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { adminJson, adminText, type AgentDebateCard, type AgentDebateFeed } from "@/lib/workshop";
+import MdDoc from "@/components/MdDoc";
 import {
   extractSummary,
   formatPrice,
   hasText,
   parsePriceLevels,
   parseTraderAction,
-  previewLine,
   type PriceLevels,
   type TraderAction,
 } from "@/lib/debateSummary";
@@ -98,32 +98,6 @@ const SECTION_ACCENTS: Record<string, { box: string; title: string }> = {
   plain: { box: "border-slate-800", title: "text-slate-300" },
 };
 
-/** One debate section as a dropdown: name + one-line preview on the header,
- * the full text in a capped scroll region when opened. Closed by default. */
-function DebateSection({ title, text, accent }: { title: string; text: string; accent: keyof typeof SECTION_ACCENTS }) {
-  const [open, setOpen] = useState(false);
-  const a = SECTION_ACCENTS[accent];
-  return (
-    <div className={`rounded-lg border ${a.box} bg-slate-950/30`}>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-baseline gap-3 px-3 py-2.5 text-left"
-      >
-        <span className={`shrink-0 text-xs font-bold uppercase tracking-wider ${a.title}`}>{title}</span>
-        {!open && <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{previewLine(text)}</span>}
-        <ChevronDown className={`h-4 w-4 shrink-0 self-center text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-slate-800/60 px-3 py-2.5 text-sm leading-relaxed text-slate-200">
-          {text}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const ANALYST_SECTIONS: [string, string][] = [
   ["fundamentals", "Fundamentals"],
   ["news", "News"],
@@ -134,12 +108,17 @@ const ANALYST_SECTIONS: [string, string][] = [
 export function DebateCard({ card }: { card: AgentDebateCard }) {
   const [report, setReport] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const loadReport = () => {
-    setBusy(true);
-    adminText(`/api/agent-debates/${card.run_id}/report`)
-      .then(setReport)
-      .catch(() => setReport("The report could not be loaded."))
-      .finally(() => setBusy(false));
+  const [caseOpen, setCaseOpen] = useState(false);
+  const toggleCase = () => {
+    const opening = !caseOpen;
+    setCaseOpen(opening);
+    if (opening && card.has_report && report === null && !busy) {
+      setBusy(true);
+      adminText(`/api/agent-debates/${card.run_id}/report`)
+        .then(setReport)
+        .catch(() => setReport("The report could not be loaded."))
+        .finally(() => setBusy(false));
+    }
   };
   // A failed run is a compact line, never a full card (Kevin, 2026-11-02):
   // eight "not recorded" panels and a raw report dump bury the record. The
@@ -214,25 +193,39 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
           </p>
         )}
 
-        {/* Every section behind a dropdown, closed by default. */}
-        <div className="mt-3 space-y-2">
-          {sections.map((s) => (
-            <DebateSection key={s.key} title={s.title} text={s.text} accent={s.accent} />
-          ))}
-        </div>
+        {/* The full case, on click only (Kevin, 2026-11-03): the list card
+            above is the whole summary -- rating, fence, trader action, the
+            +5d/+20d state, the action text, the stated levels. The cases
+            and the framework report open here, rendered as documents. */}
+        {caseOpen && (
+          <div className="mt-3 space-y-2">
+            {sections.map((sec) => (
+              <div key={sec.key} className={`rounded-lg border ${SECTION_ACCENTS[sec.accent].box} bg-slate-950/30 px-3 py-2.5`}>
+                <div className={`text-xs font-bold uppercase tracking-wider ${SECTION_ACCENTS[sec.accent].title}`}>{sec.title}</div>
+                <div className="mt-1.5"><MdDoc markdown={sec.text} /></div>
+              </div>
+            ))}
+            {busy && <p className="text-xs text-slate-500">Loading the framework report…</p>}
+            {report !== null && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2.5">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-300">Framework report</div>
+                <div className="mt-1.5"><MdDoc markdown={report} /></div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
           <span>
             Run {card.run_at_ct.replace("T", " ").slice(0, 16)} CT · as of {card.as_of_date} · framework {card.framework_short} · {card.llm_model} · cost {typeof card.cost_usd === "number" ? `$${card.cost_usd.toFixed(2)}` : card.cost_usd}
           </span>
           <span>Inputs: {card.inputs_note}</span>
-          {card.has_report && report === null && (
-            <button type="button" className="text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white" disabled={busy} onClick={loadReport}>
-              {busy ? "Loading…" : "Full report"}
-            </button>
-          )}
+          <button type="button" aria-expanded={caseOpen} onClick={toggleCase}
+                  className="inline-flex items-center gap-1 text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
+            {caseOpen ? "Hide the full case" : "Read the full case"}
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${caseOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
         </div>
-        {report !== null && <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs text-slate-300">{report}</pre>}
       </article>
     </li>
   );
