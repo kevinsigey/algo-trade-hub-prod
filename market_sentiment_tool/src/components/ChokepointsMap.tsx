@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { frameFor, tileUrl, type GeoBox } from "@/lib/geoMap";
+import { frameFor, tileLabelUrl, tileUrl, type GeoBox } from "@/lib/geoMap";
 import { getJson } from "@/lib/getJson";
 
 // The Chokepoints monitor on the Oil page (approved plan, Nov 2 2026):
@@ -114,6 +114,10 @@ export default function ChokepointsMap() {
               <img key={`${t.x}-${t.y}`} src={tileUrl(t.x, t.y, frame.zoom)} alt=""
                    className="absolute" style={{ left: t.left, top: t.top, width: 256, height: 256 }} />
             ))}
+            {frame.tiles.map((t) => (
+              <img key={`lbl-${t.x}-${t.y}`} src={tileLabelUrl(t.x, t.y, frame.zoom)} alt=""
+                   className="absolute" style={{ left: t.left, top: t.top, width: 256, height: 256 }} />
+            ))}
             {boxes.map((b) => {
               const r = frame.boxRect(b.box);
               return (
@@ -125,7 +129,7 @@ export default function ChokepointsMap() {
             })}
           </div>
         </div>
-        <span className="absolute bottom-1 right-2 text-[10px] text-slate-400">© OpenStreetMap contributors © CARTO</span>
+        <span className="absolute bottom-1 right-2 text-[10px] text-slate-300">Imagery © Esri, Maxar, Earthstar Geographics</span>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">

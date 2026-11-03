@@ -59,6 +59,14 @@ export function frameFor(bbox: GeoBox, widthPx: number): MapFrame {
 }
 
 export function tileUrl(x: number, y: number, zoom: number): string {
-  // CARTO dark basemap (free with attribution): matches the hub's dark UI.
-  return `https://basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}.png`;
+  // Esri World Imagery (free with attribution). CARTO's basemaps CDN began
+  // serving an "API KEY REQUIRED" placeholder tile in Nov 2026, so the map
+  // renders Esri satellite tiles -- for a strait, the real water/land
+  // contrast is the useful picture anyway. Esri orders tiles z/y/x.
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${y}/${x}`;
+}
+
+export function tileLabelUrl(x: number, y: number, zoom: number): string {
+  // Place/boundary labels drawn over the imagery (transparent layer).
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/${zoom}/${y}/${x}`;
 }
