@@ -1205,6 +1205,19 @@ def deals_summary(run_id: int, _admin: dict = Depends(admin.require_admin), supa
     return deal_store.set_summary(supabase, run_id, text, model)
 
 
+@app.get("/api/geo/regions/{slug}", tags=["Geo"])
+def geo_region(slug: str, supabase=Depends(get_supabase)):
+    """Chokepoints read API: the region's latest snapshot with every measure
+    set against its trailing 30-day median (the Oil page and its map read
+    this; baselines are our own snapshots, never a vendor's normal)."""
+    from tradehub.geo.read import region_view
+
+    view = region_view(supabase, slug)
+    if view is None:
+        raise HTTPException(status_code=404, detail="no such region")
+    return view
+
+
 @app.post("/api/agent/interpret", tags=["Agent"])
 def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin)):
     """In-site agent, phase 1 (the Interpreter): strategy text -> a validated
