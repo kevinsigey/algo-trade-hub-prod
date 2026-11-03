@@ -523,6 +523,7 @@ class _KeyIn(BaseModel):
     max_qty: int = Field(default=100, ge=1, le=100_000)
     max_notional: float = Field(default=25_000, gt=0)
     daily_cap: int = Field(default=50, ge=1, le=10_000)
+    book: str = "main"
 
 
 @app.post("/api/admin/keys", tags=["Admin"], status_code=201)
@@ -535,7 +536,7 @@ def create_machine_key(body: _KeyIn, _admin: dict = Depends(admin.require_admin)
     try:
         row, plaintext = machine_keys.create_key(
             supabase, body.label, body.scopes, max_qty=body.max_qty,
-            max_notional=body.max_notional, daily_cap=body.daily_cap)
+            max_notional=body.max_notional, daily_cap=body.daily_cap, book=body.book)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {**row, "key": plaintext}
@@ -1883,6 +1884,13 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         raise HTTPException(status_code=status, detail=detail)
 
     machine_api.require_scope(supabase, key, "orders:place", route)
+    # Per-book keys (Kevin, 2026-11-03): the order lands on the KEY's book, never a
+    # caller-chosen one -- _MachineOrderIn does not even carry a book field.
+    book = machine_api.key_book(key)
+    from tradehub.portfolio import books
+
+    if book not in books.names():
+        refused("book", 422, f"this key is bound to an unknown book: {book}")
     if not machine_api.machine_orders_enabled():
         refused("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")
     symbol = body.symbol.strip().upper()
@@ -1914,7 +1922,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         # The position fence: a machine stop protects shares actually held, net of
         # resting orders on that side. Unreadable positions fail closed.
         try:
-            capacity = machine_api.stop_capacity(symbol, body.side)
+            capacity = machine_api.stop_capacity(symbol, body.side, book=book)
         except AccountNotConnected:
             refused("account", 424, "the paper account is not connected")
         except Exception:  # noqa: BLE001 -- an unverifiable position is an unplaceable stop
@@ -1947,7 +1955,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
                                     order_type=body.order_type, time_in_force=body.time_in_force,
                                     limit_price=body.limit_price if body.order_type == "limit" else None,
-                                    **submit_kwargs)
+                                    book=book, **submit_kwargs)
     except paper_orders.OrdersDisabled as exc:
         refused("paper_switch_off", 409, str(exc))
     except paper_orders.DuplicateOrder:
@@ -1970,21 +1978,21 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
 
 
 @app.get("/api/v1/portfolio", tags=["Machine API"])
-def get_machine_portfolio(book: str = "main", authorization: str | None = Header(None),
+def get_machine_portfolio(book: str | None = None, authorization: str | None = Header(None),
                           supabase=Depends(get_supabase)):
     """The Portfolio page's payload minus the account number. A read: it works with the kill
-    switch off, so a script can always reconcile (spec §1.4). `book` names the account
-    (item 6: the machine reads used to be main-book only)."""
+    switch off, so a script can always reconcile (spec §1.4). The book served is the KEY's
+    (per-book keys, 2026-11-03): no parameter reads the key's own book, a matching one is
+    accepted, a mismatched one is a 403."""
     from tradehub.api import machine_api, machine_keys
-    from tradehub.portfolio import books, service
+    from tradehub.portfolio import service
 
     if supabase is None:
         raise HTTPException(status_code=503, detail="database unavailable")
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
     machine_api.require_scope(supabase, key, "portfolio:read", "GET /api/v1/portfolio")
-    if book not in books.names():
-        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
+    book = machine_api.resolve_book(supabase, key, book, "GET /api/v1/portfolio")
     payload = service.portfolio(supabase, book_name=book)
     payload.pop("account_number", None)
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/portfolio", "read")
@@ -2006,7 +2014,7 @@ def _machine_order_view(event: dict, order: dict | None) -> dict:
 
 @app.get("/api/v1/orders", tags=["Machine API"])
 def list_machine_orders(limit: int = 50, before: int | None = None, status: str | None = None,
-                        book: str = "main",
+                        book: str | None = None,
                         authorization: str | None = Header(None), supabase=Depends(get_supabase)):
     from tradehub.api import machine_api, machine_keys
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
@@ -2018,10 +2026,7 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
     machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders")
     if status not in (None, "open", "all"):
         raise HTTPException(status_code=422, detail="status must be open or all")
-    from tradehub.portfolio import books
-
-    if book not in books.names():
-        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
+    book = machine_api.resolve_book(supabase, key, book, "GET /api/v1/orders")
     events = machine_api.placed_events(supabase, key["id"])
     if before is not None:
         events = [e for e in events if e["id"] < before]
@@ -2038,14 +2043,13 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
 
 
 @app.get("/api/v1/orders/open", tags=["Machine API"])
-def list_open_orders(book: str = "main", authorization: str | None = Header(None),
+def list_open_orders(book: str | None = None, authorization: str | None = Header(None),
                      supabase=Depends(get_supabase)):
     """The staged book as the broker sees it (2026-11-02): every order resting on the
     paper account, whatever placed it -- machine API, the hub's protective machinery, or
-    the Alpaca app. Declared before /orders/{client_order_id} so "open" is never read
-    as a caller id."""
+    the Alpaca app. The account is the KEY's book (per-book keys, 2026-11-03). Declared
+    before /orders/{client_order_id} so "open" is never read as a caller id."""
     from tradehub.api import machine_api, machine_keys
-    from tradehub.portfolio import books
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
 
     if supabase is None:
@@ -2053,8 +2057,7 @@ def list_open_orders(book: str = "main", authorization: str | None = Header(None
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
     machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/open")
-    if book not in books.names():
-        raise HTTPException(status_code=422, detail=f"unknown book: {book}")
+    book = machine_api.resolve_book(supabase, key, book, "GET /api/v1/orders/open")
     try:
         orders = machine_api.open_broker_orders(book=book)
         reachable = True
@@ -2082,7 +2085,7 @@ def get_machine_order(client_order_id: str, authorization: str | None = Header(N
                                   "refused:ownership", client_order_id=namespaced)
         raise HTTPException(status_code=404, detail="no such order")
     try:
-        broker = machine_api.broker_orders()
+        broker = machine_api.broker_orders(book=machine_api.key_book(key))
     except AccountNotConnected:
         broker = {}
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}", "read",
@@ -2115,15 +2118,16 @@ def cancel_machine_order_route(client_order_id: str, authorization: str | None =
 
     if machine_api.owns_event(supabase, key["id"], namespaced) is None:
         refused("ownership", 404, "no such order")
+    book = machine_api.key_book(key)
     try:
-        broker = machine_api.broker_orders()
+        broker = machine_api.broker_orders(book=book)
     except AccountNotConnected:
         refused("account", 424, "the paper account is not connected")
     order = broker.get(namespaced)
     if order is None:
         refused("broker_missing", 404, "the order is not in the broker's recent window")
     try:
-        paper_orders.cancel_machine_order(order["id"], namespaced)
+        paper_orders.cancel_machine_order(order["id"], namespaced, book=book)
     except paper_orders.OrdersDisabled as exc:
         refused("paper_switch_off", 409, str(exc))
     except paper_orders.OrderGone:

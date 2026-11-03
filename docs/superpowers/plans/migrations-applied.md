@@ -73,8 +73,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 48 | `20261103000004_rls_machine_and_book_tables.sql` |
 | 49 | `20261103000005_journal_frozen_counts.sql` |
 | 50 | `20261103000006_paper_order_checks.sql` |
+| 51 | `20261103000007_api_key_book.sql` |
 
-**Watermark: `20261103000006_paper_order_checks.sql`**
+**Watermark: `20261103000007_api_key_book.sql`**
 
 ## How to record a new one
 
