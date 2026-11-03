@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import CryptoDesk from "@/components/CryptoDesk";
 import OnChainPulse from "@/components/OnChainPulse";
 import { getJson } from "@/lib/getJson";
 import { ctTime, pct, usd, type CryptoBoard, type SniperVerdict } from "@/lib/crypto";
@@ -146,11 +147,13 @@ export default function Crypto() {
       <header>
         <h1 className="text-3xl font-bold">Crypto research</h1>
         <p className="mt-2 text-muted-foreground">
-          The sniper worker stopped on June 2, 2026 — nothing here is a live signal. What remains is worth
-          keeping in the open: live chain state, the Kalshi markets worth tracking, the sniper's closed
-          record, and the research queue.
+          The desk first — the sector read like companies, live. Below it: live chain state, the Kalshi
+          markets worth tracking, the sniper's closed record (the worker stopped June 2, 2026 — it is a
+          record, not a signal), and the research queue.
         </p>
       </header>
+
+      <CryptoDesk />
 
       <OnChainPulse />
 
