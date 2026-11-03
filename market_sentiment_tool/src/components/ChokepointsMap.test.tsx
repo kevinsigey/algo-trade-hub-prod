@@ -63,4 +63,21 @@ describe("ChokepointsMap", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(container.firstChild).toBeNull();
   });
+
+  it("explains each metric and says no coverage instead of a false 0", async () => {
+    const blind = { ...VIEW, vessels: [
+      { mmsi: "1", name: null, ship_type: null, tanker: false, lat: 25, lon: 55, sog: 0, in_gate: false, last_seen: "2026-11-03T10:00:00Z" },
+    ], metrics: [
+      { feed: "ais", metric: "tankers_in_gate", value: 0, baseline: null, delta_pct: null, health: "live" },
+      { feed: "adsb", metric: "mil_total", value: 4, baseline: 2, delta_pct: 100, health: "live" },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(blind), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText("Barrels moving")).toBeInTheDocument();
+    expect(screen.getByText("No coverage")).toBeInTheDocument();
+    expect(screen.getByText(/Zero tankers here means the free feed can.t see them/)).toBeInTheDocument();
+    expect(screen.getByText(/Above normal\./)).toBeInTheDocument();
+    expect(screen.getByText(/Oil's range widens/)).toBeInTheDocument();
+    expect(screen.getByText("In the oil model's test")).toBeInTheDocument();
+  });
 });
