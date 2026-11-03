@@ -118,3 +118,82 @@ def test_ais_health_recent_message_is_live(tmp_path):
     os.utime(path, (now.timestamp(), now.timestamp()))
     _, health = read_state_file(str(path), HORMUZ, now)
     assert health == "live"
+
+
+def test_baselines_median_and_delta():
+    from tradehub.geo.baselines import feed_health, with_baselines
+
+    current = [{"feed": "ais", "metric": "health", "value": None, "health": "live"},
+               {"feed": "ais", "metric": "tankers_in_gate", "value": 12, "health": "live"},
+               {"feed": "firms", "metric": "frp", "value": 50.0, "health": "live"}]
+    history = [{"feed": "ais", "metric": "tankers_in_gate", "value": v}
+               for v in (8, 9, 10, 11, 20)]
+    out = with_baselines(current, history)
+    assert [m["metric"] for m in out] == ["tankers_in_gate", "frp"]  # health row excluded
+    assert out[0]["baseline"] == 10 and out[0]["delta_pct"] == 20.0 and out[0]["baseline_n"] == 5
+    assert out[1]["baseline"] is None and out[1]["delta_pct"] is None  # no history: named, not invented
+    assert feed_health(current) == {"ais": "live", "firms": "live"}
+
+
+class _Q:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def select(self, *_):
+        return self
+
+    def eq(self, col, val):
+        self.rows = [r for r in self.rows if r.get(col) == val]
+        return self
+
+    def gte(self, col, val):
+        self.rows = [r for r in self.rows if str(r.get(col)) >= str(val)]
+        return self
+
+    def lt(self, col, val):
+        self.rows = [r for r in self.rows if str(r.get(col)) < str(val)]
+        return self
+
+    def order(self, col, desc=False):
+        self.rows = sorted(self.rows, key=lambda r: str(r.get(col)), reverse=desc)
+        return self
+
+    def limit(self, n):
+        self.rows = self.rows[:n]
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": self.rows})()
+
+
+class _Fake:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def table(self, _name):
+        return _Q(list(self.rows))
+
+
+def test_region_view_unknown_slug_and_empty():
+    from tradehub.geo.read import region_view
+
+    assert region_view(_Fake([]), "atlantis") is None
+    view = region_view(_Fake([]), "hormuz")
+    assert view["at"] is None and view["metrics"] == [] and "bbox" in view["geometry"]
+
+
+def test_region_view_latest_batch_with_baseline():
+    from tradehub.geo.read import region_view
+
+    rows = [
+        {"region": "hormuz", "feed": "ais", "metric": "tankers_in_gate", "value": 10,
+         "health": "live", "detail": {}, "taken_at": "2026-11-01T00:00:00+00:00"},
+        {"region": "hormuz", "feed": "ais", "metric": "tankers_in_gate", "value": 14,
+         "health": "live", "detail": {}, "taken_at": "2026-11-02T00:00:00+00:00"},
+        {"region": "hormuz", "feed": "ais", "metric": "health", "value": None,
+         "health": "unknown", "detail": {}, "taken_at": "2026-11-02T00:00:00+00:00"},
+    ]
+    view = region_view(_Fake(rows), "hormuz")
+    assert view["feeds"] == {"ais": "unknown"}
+    (metric,) = view["metrics"]
+    assert metric["value"] == 14 and metric["baseline"] == 10 and metric["delta_pct"] == 40.0
