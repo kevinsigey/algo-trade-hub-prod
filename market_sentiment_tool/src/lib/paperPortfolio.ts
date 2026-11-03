@@ -15,6 +15,8 @@ export interface Scoreboard {
 
 export interface PositionRow {
   symbol: string;
+  /** Curated sector from the backend map (tradehub/portfolio/sectors.py); absent on old payloads. */
+  sector?: string | null;
   qty: number | null;
   side: string | null;
   market_value: number;
@@ -44,31 +46,6 @@ export interface ClosedTrade {
   return_pct: number;
   held_days: number;
   idea: string;
-}
-
-export interface ActivityOrder {
-  symbol: string;
-  side: string;
-  qty: number | null;
-  filled_qty: number | null;
-  type: string | null;
-  time_in_force: string | null;
-  status: string;
-  limit_price: number | null;
-  stop_price: number | null;
-  filled_avg_price: number | null;
-  submitted_at: string | null;
-  filled_at: string | null;
-  asset: "stock" | "option";
-  source: string;
-}
-
-export interface ActivityPayload {
-  state: PortfolioState;
-  as_of: string | null;
-  open: ActivityOrder[];
-  recent: ActivityOrder[];
-  trades: ClosedTrade[];
 }
 
 export interface ClosedPayload {

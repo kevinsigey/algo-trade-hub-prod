@@ -12,6 +12,8 @@ import statistics
 from collections import defaultdict, deque
 from datetime import datetime
 
+from tradehub.portfolio.sectors import sector_for
+
 # A fill belongs to an idea by its order's client_order_id tag (`idea-<id>-...`) or a later relabel (spec §4.6).
 MANUAL = "No idea yet (manual)"
 TAG = re.compile(r"^idea-(\d+)-")
@@ -58,6 +60,7 @@ def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str,
             share = part / qty if qty else 1.0
             rows.append({
                 "symbol": p["symbol"],
+                "sector": sector_for(p["symbol"]),
                 "qty": part,
                 "side": p.get("side", "long"),
                 "market_value": value * share,
@@ -66,7 +69,7 @@ def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str,
                 "idea": idea,
             })
     cash = float(account["cash"])
-    rows.append({"symbol": "Cash", "qty": None, "side": None, "market_value": cash,
+    rows.append({"symbol": "Cash", "sector": sector_for("Cash"), "qty": None, "side": None, "market_value": cash,
                  "pct_of_book": cash / equity * 100 if equity else None, "unrealized_pl": None, "idea": None})
     return rows
 
