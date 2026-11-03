@@ -26,6 +26,7 @@ from tradehub.journal.forecasters.news_tone import (
     etf_source,
     xle_source,
 )
+from tradehub.journal.forecasters.crypto_hourly import build_crypto_hourly
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.ppi import build_ppi
@@ -103,6 +104,10 @@ FORECASTERS: list[Forecaster] = [
     # WTI hourly (2026-11-01, Kevin's queue): the live-price/sigma model beside the Kalshi
     # mid and a persistence baseline; the first hourly-cadence family in the journal
     *build_oil_hourly(_LIVE),
+    # Crypto hourly (2026-11-02, Kevin's crypto program step 1): the oil-hourly clone
+    # with realized-vol sigma (preregistered variant 2 passed its replay gate on both
+    # series; the settled-sigma variant 1 tied persistence and never shipped)
+    *build_crypto_hourly(_LIVE),
     # weekly jobless claims (2026-11-01 audit: build): the first-print level model beside
     # the Kalshi mid and a persistence baseline
     *build_claims(_LIVE),
@@ -153,6 +158,11 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # Hourly oil (2026-11-01): the same day-one cautious row, pinned to wti-hourly-v1.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if f.name == "oil_wti_hourly" and getattr(f, "version", None) == "wti-hourly-v1"]
+
+# Hourly crypto (2026-11-02): the same day-one cautious rows, pinned to the v1 lines.
+FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
+                if f.name in ("crypto_btc_hourly", "crypto_eth_hourly")
+                and getattr(f, "version", None) in ("btc-hourly-v1", "eth-hourly-v1")]
 
 # Gas cautious (2026-11-02): gas finally gets its cautious row, pinned to the v2 line.
 # The crude-feature v3 candidate was rejected by its walk-forward replay (paired Brier
