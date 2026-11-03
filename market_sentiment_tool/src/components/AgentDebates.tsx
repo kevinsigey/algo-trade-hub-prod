@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 import { adminJson, adminText, type AgentDebateCard, type AgentDebateFeed } from "@/lib/workshop";
+import {
+  extractSummary,
+  formatPrice,
+  hasText,
+  parsePriceLevels,
+  parseTraderAction,
+  previewLine,
+  type PriceLevels,
+  type TraderAction,
+} from "@/lib/debateSummary";
 
 /**
  * The TradingAgents debate cards + record line. Moved out of the Workshop page
@@ -8,11 +19,14 @@ import { adminJson, adminText, type AgentDebateCard, type AgentDebateFeed } from
  * with a graded record, not a step in the idea pipeline, and the two sharing a
  * page invited exactly the confusion the chip exists to prevent.
  *
- * Visual pass (Kevin, 2026-11-02): the result leads. The decision is the card's
- * headline, the bull and bear cases sit side by side as opposing panels, the
- * four analysts are tiles, and the grades are chips -- the full text is all
- * still here, one glance lower. No strength score is drawn from the text:
- * the panels present the two cases, they do not measure them.
+ * Summary pass (Kevin, 2026-11-02): the card opens with the verdict, a short
+ * extracted summary, and a price ladder when the debate stated levels -- then
+ * every section (bull, bear, the four analysts, trader, risk) sits in a
+ * dropdown closed by default, one-line preview on the header, full text in a
+ * scrollable region. Nothing is generated: the summary and the ladder are
+ * extracted from the stored text only (lib/debateSummary), and a piece the
+ * text does not state is simply not drawn. No strength score either: the
+ * panels present the two cases, they do not measure them.
  */
 
 function decisionClass(decision: string): string {
@@ -27,6 +41,90 @@ function gradeChip(label: string, g: AgentDebateCard["grades"][string]): { text:
   const cls = g.outcome === "hit" ? "border-emerald-400/40 text-emerald-300" : g.outcome === "miss" ? "border-rose-400/40 text-rose-300" : "border-slate-600 text-slate-300";
   return { text: `${label} ${g.outcome} (${g.ret_pct >= 0 ? "+" : ""}${g.ret_pct.toFixed(1)}%)`, cls };
 }
+
+function actionChipClass(action: TraderAction): string {
+  if (action === "BUY") return "border-emerald-400/50 bg-emerald-950/40 text-emerald-300";
+  if (action === "SELL") return "border-rose-400/50 bg-rose-950/40 text-rose-300";
+  return "border-slate-500/50 bg-slate-800/60 text-slate-200";
+}
+
+/**
+ * The stated levels as a horizontal ladder: stop, entry, target(s) placed by
+ * value on one track. Drawn only when the text stated at least two of them --
+ * an unstated level is never invented to complete the picture.
+ */
+function PriceLadder({ levels }: { levels: PriceLevels }) {
+  const points: { label: string; value: number; dot: string; text: string }[] = [];
+  if (levels.stop !== null) points.push({ label: "Stop", value: levels.stop, dot: "bg-rose-400", text: "text-rose-300" });
+  if (levels.entry !== null) points.push({ label: "Entry", value: levels.entry, dot: "bg-sky-400", text: "text-sky-300" });
+  levels.targets.forEach((t, i) =>
+    points.push({ label: levels.targets.length > 1 ? `Target ${i + 1}` : "Target", value: t, dot: "bg-emerald-400", text: "text-emerald-300" }));
+  if (points.length < 2) return null;
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = (max - min) * 0.1 || max * 0.02 || 1;
+  const lo = min - pad;
+  const span = max + pad - lo;
+  return (
+    <figure className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 px-3 pb-2 pt-3" aria-label="Price levels stated in the debate">
+      <figcaption className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Stated levels</figcaption>
+      <div className="relative mx-10 mb-1 mt-5 h-6">
+        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-slate-700" />
+        {points.map((p) => {
+          const pos = ((p.value - lo) / span) * 100;
+          return (
+            <div key={p.label} className="absolute top-1/2" style={{ left: `${pos}%`, transform: `translate(-${pos}%, -50%)` }}>
+              <span className={`absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap text-[11px] font-semibold ${p.text}`}>
+                {p.label} {formatPrice(p.value)}
+              </span>
+              <span className={`block h-2.5 w-2.5 rounded-full ${p.dot}`} />
+            </div>
+          );
+        })}
+      </div>
+    </figure>
+  );
+}
+
+const SECTION_ACCENTS: Record<string, { box: string; title: string }> = {
+  bull: { box: "border-emerald-900/60", title: "text-emerald-300" },
+  bear: { box: "border-rose-900/60", title: "text-rose-300" },
+  plain: { box: "border-slate-800", title: "text-slate-300" },
+};
+
+/** One debate section as a dropdown: name + one-line preview on the header,
+ * the full text in a capped scroll region when opened. Closed by default. */
+function DebateSection({ title, text, accent }: { title: string; text: string; accent: keyof typeof SECTION_ACCENTS }) {
+  const [open, setOpen] = useState(false);
+  const a = SECTION_ACCENTS[accent];
+  return (
+    <div className={`rounded-lg border ${a.box} bg-slate-950/30`}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-baseline gap-3 px-3 py-2.5 text-left"
+      >
+        <span className={`shrink-0 text-xs font-bold uppercase tracking-wider ${a.title}`}>{title}</span>
+        {!open && <span className="min-w-0 flex-1 truncate text-xs text-slate-400">{previewLine(text)}</span>}
+        <ChevronDown className={`h-4 w-4 shrink-0 self-center text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="max-h-96 overflow-auto whitespace-pre-wrap border-t border-slate-800/60 px-3 py-2.5 text-sm leading-relaxed text-slate-200">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ANALYST_SECTIONS: [string, string][] = [
+  ["fundamentals", "Fundamentals"],
+  ["news", "News"],
+  ["sentiment", "Sentiment"],
+  ["technicals", "Technicals"],
+];
 
 export function DebateCard({ card }: { card: AgentDebateCard }) {
   const [report, setReport] = useState<string | null>(null);
@@ -55,6 +153,21 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
   }
   const g5 = gradeChip("+5d", card.grades["+5d"]);
   const g20 = gradeChip("+20d", card.grades["+20d"]);
+  const action = parseTraderAction(card.trader_rationale);
+  const summary = extractSummary(card.risk_verdict, card.trader_rationale);
+  const levels = parsePriceLevels(card.trader_rationale, card.risk_verdict);
+  const sections: { key: string; title: string; text: string; accent: "bull" | "bear" | "plain" }[] = [
+    { key: "bull", title: "Bull case", text: card.bull_case, accent: "bull" as const },
+    { key: "bear", title: "Bear case", text: card.bear_case, accent: "bear" as const },
+    ...ANALYST_SECTIONS.map(([k, label]) => ({
+      key: k,
+      title: label,
+      text: card.analyst_summaries[k] ?? "",
+      accent: "plain" as const,
+    })),
+    { key: "trader", title: "Trader", text: card.trader_rationale, accent: "plain" as const },
+    { key: "risk", title: "Risk panel", text: card.risk_verdict, accent: "plain" as const },
+  ].filter((s) => hasText(s.text));
   return (
     <li>
       <article className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -63,6 +176,7 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
           <span className="text-xl font-bold tracking-tight text-white">{card.ticker}</span>
           <span className={`rounded-lg border px-3 py-1 text-base font-extrabold ${decisionClass(card.decision)}`}>{card.decision}</span>
           <span className="rounded-full border border-violet-400/40 px-2 py-0.5 text-xs font-semibold text-violet-300">{card.chip}</span>
+          {action && <span className={`rounded-full border px-2 py-0.5 text-xs font-bold ${actionChipClass(action)}`}>Trader: {action}</span>}
           {card.stale && <span className="text-xs font-semibold text-amber-300">stale</span>}
           {card.historical_label && <span className="text-xs text-slate-400">{card.historical_label}</span>}
           {card.status !== "complete" && <span className="text-xs font-semibold text-rose-300">{card.status}{card.error ? `: ${card.error}` : ""}</span>}
@@ -72,38 +186,17 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
           </span>
         </div>
 
-        {/* Bull vs bear, side by side. */}
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/20 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-300">Bull case</h3>
-            <p className="mt-1 text-sm leading-relaxed text-slate-200">{card.bull_case}</p>
-          </div>
-          <div className="rounded-lg border border-rose-900/60 bg-rose-950/20 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-rose-300">Bear case</h3>
-            <p className="mt-1 text-sm leading-relaxed text-slate-200">{card.bear_case}</p>
-          </div>
-        </div>
+        {/* The summary: extracted from the risk panel / trader text, never written for it. */}
+        {summary && <p className="mt-3 text-sm leading-relaxed text-slate-200">{summary}</p>}
 
-        {/* The four analysts as tiles. */}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {Object.entries(card.analyst_summaries).map(([k, v]) => (
-            <div key={k} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">{k}</h3>
-              <p className="mt-1 text-xs leading-relaxed text-slate-300">{v}</p>
-            </div>
+        {/* The stated levels, when the debate stated enough of them to draw. */}
+        <PriceLadder levels={levels} />
+
+        {/* Every section behind a dropdown, closed by default. */}
+        <div className="mt-3 space-y-2">
+          {sections.map((s) => (
+            <DebateSection key={s.key} title={s.title} text={s.text} accent={s.accent} />
           ))}
-        </div>
-
-        {/* Trader and risk: the two voices that turn the debate into the decision. */}
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <div className="rounded-lg border border-slate-800 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Trader</h3>
-            <p className="mt-1 text-sm leading-relaxed text-slate-300">{card.trader_rationale}</p>
-          </div>
-          <div className="rounded-lg border border-slate-800 p-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Risk panel</h3>
-            <p className="mt-1 text-sm leading-relaxed text-slate-300">{card.risk_verdict}</p>
-          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">

@@ -66,15 +66,17 @@ describe("Agent debates page", () => {
     expect(screen.getByText("PLTR")).toBeInTheDocument();
     expect(screen.getByText("stale")).toBeInTheDocument();
     expect(screen.getByText(/\+5d hit \(\+3\.2%\)/)).toBeInTheDocument();
-    // The visual pass (Kevin, 2026-11-02): the decision is the card's headline and
-    // the two cases are opposing panels, with the analysts as tiles.
+    // The summary pass (Kevin, 2026-11-02): the decision is the card's headline,
+    // an extracted summary follows, and every section is a dropdown closed by
+    // default -- its one-line preview is what shows ("Growth." / "Valuation.").
+    // A section the run did not record ("fundamentals" here) is not drawn.
     expect(screen.getByText("Buy")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Bull case" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Bear case" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Bull case/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Bear case/ })).toBeInTheDocument();
     expect(screen.getByText("Growth.")).toBeInTheDocument();
     expect(screen.getByText("Valuation.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "fundamentals" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Risk panel" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Fundamentals/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Risk panel/ })).toBeInTheDocument();
     expect(screen.getAllByText(/kept separate from every model statistic/).length).toBeGreaterThan(0);
   });
 
