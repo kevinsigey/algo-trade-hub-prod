@@ -108,3 +108,14 @@ def test_translate_validates_the_models_spec(monkeypatch):
 
     with pytest.raises(tr.TranslateUnavailable, match="nope"):
         tr.translate("???", post=lambda *a, **k: BadResp())
+
+
+def test_catalog_endpoint_carries_the_filter_cards():
+    from fastapi.testclient import TestClient
+
+    from tradehub.api import main
+
+    body = TestClient(main.app).get("/api/screening/catalog").json()
+    assert len(body["cards"]) >= 30
+    mom = next(c for c in body["cards"] if c["id"] == "mom6")
+    assert mom["fn"] == "momentum" and mom["preset"] == {"op": "pct_gte", "value": 75}

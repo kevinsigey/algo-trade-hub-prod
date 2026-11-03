@@ -2983,9 +2983,10 @@ class _ScreenRunIn(BaseModel):
 
 @app.get("/api/screening/catalog", tags=["Screening"])
 def screening_catalog():
+    from tradehub.screening.cards import cards_payload
     from tradehub.screening.catalog import catalog_dict
 
-    return catalog_dict()
+    return {**catalog_dict(), "cards": cards_payload()}
 
 
 class _ScreenIn(BaseModel):
