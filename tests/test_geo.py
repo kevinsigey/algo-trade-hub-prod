@@ -120,6 +120,29 @@ def test_ais_health_recent_message_is_live(tmp_path):
     assert health == "live"
 
 
+def test_ais_health_silent_with_known_vessels_is_stale_last_known(tmp_path):
+    # Kevin's rule (2026-11-03): the feed went quiet 40 minutes ago, but we
+    # hold real positions -- serve that last-known picture flagged stale,
+    # never as live and never hidden behind unknown.
+    from datetime import datetime, timedelta, timezone
+    from tradehub.geo.ais_state import AisState, read_state_file
+    from tradehub.geo.regions import HORMUZ
+
+    t0 = datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc)
+    state = AisState(HORMUZ)
+    state.apply({"MetaData": {"MMSI": "123456789"}, "MessageType": "PositionReport",
+                 "Message": {"PositionReport": {"Latitude": 26.5, "Longitude": 56.3, "Sog": 4}}}, t0)
+    path = tmp_path / "ais-hormuz.json"
+    path.write_text(state.to_json())
+    import os
+    now = t0 + timedelta(minutes=40)
+    os.utime(path, (now.timestamp(), now.timestamp()))  # the consumer still writes fresh state
+    metrics, health = read_state_file(str(path), HORMUZ, now)
+    assert health == "stale"
+    assert metrics["vessels_in_region"] == 1
+    assert metrics["vessels_as_of"] == t0.isoformat()
+
+
 def test_baselines_median_and_delta():
     from tradehub.geo.baselines import feed_health, with_baselines
 

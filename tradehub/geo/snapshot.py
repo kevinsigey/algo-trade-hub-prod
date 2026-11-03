@@ -84,6 +84,12 @@ def run_snapshot(supa, region: Region, *, now: datetime | None = None,
             summary["ais"] = health
             detail = {k: metrics[k] for k in ("anchored_by_place", "connected_s_this_hour",
                                               "msgs_total", "last_msg_at")}
+            if health == "stale":
+                # Kevin's last-known rule (2026-11-03): the counts above are
+                # computed from stored positions, not the live feed -- say so
+                # on every row, with the picture's own timestamp.
+                detail.update({"last_known": True,
+                               "vessels_as_of": metrics.get("vessels_as_of")})
             for metric in AIS_METRICS:
                 rows.append(_row(region.slug, "ais", metric, metrics[metric], health, detail))
     except Exception as exc:  # noqa: BLE001 -- one feed never sinks the snapshot
