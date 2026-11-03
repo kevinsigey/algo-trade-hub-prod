@@ -22,7 +22,7 @@ def _ticker(value: str) -> str:
 class Condition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: Literal["fred", "price", "analyst", "spread", "news"]
+    source: Literal["fred", "price", "analyst", "spread", "news", "dune"]
     series: str = Field(min_length=1, max_length=200)  # spread: "A+B/C+D", the log ratio of two equal-weight baskets
     measure: Literal["level", "change", "pct_change", "vs_sma", "sma_cross", "rsi", "macd", "vs_high", "vs_low",
                      "volatility", "vs_vwap", "net_upgrades", "target_upside", "zscore", "percentile", "revision"]
@@ -72,6 +72,9 @@ MEASURES = {
     # tone itself (-100..+100), change its N-day move, zscore its distance from its
     # N-day mean -- the three reads phase-2 §5.1 names.
     "news": {"level", "change", "zscore"},
+    # Dune (workshop/dune.py): a cached on-chain series from Dune Analytics,
+    # read from the dune_series table -- the same reads as a spread series.
+    "dune": {"level", "change", "pct_change", "vs_sma", "volatility", "zscore", "percentile"},
 }
 
 

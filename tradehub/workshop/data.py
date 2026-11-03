@@ -245,12 +245,12 @@ def revision_series(series_id: str, start: date, *, vintages_fn=None, today: dat
     return pd.Series(out, name=f"{series_id}@revision", dtype=float).sort_index()
 
 
-def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=None, revision_fn=None) -> dict:
+def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=None, revision_fn=None, dune_fn=None) -> dict:
     """Everything a rule reads besides closes: FRED series by id, analyst actions under "<T>@analyst",
     news-tone baskets by name, revision series under "<id>@revision". Option legs add their vol
     indexes and DTB3 (engine.option_series_ids)."""
-    from tradehub.workshop.engine import (analyst_tickers, news_series_ids, option_series_ids,
-                                          revision_series_ids, rule_series_ids)
+    from tradehub.workshop.engine import (analyst_tickers, dune_series_ids, news_series_ids,
+                                          option_series_ids, revision_series_ids, rule_series_ids)
     ids = list(dict.fromkeys(rule_series_ids(spec) + option_series_ids(spec)))
     out = {i: (fred or fred_series)(i, fred_start) for i in ids}
     for t in analyst_tickers(spec):
@@ -259,6 +259,10 @@ def rule_series(spec, fred_start: date, *, fred=None, analyst_fn=None, news_fn=N
         from tradehub.workshop.news import news_tone_series
         for basket in news_series_ids(spec):
             out[basket] = (news_fn or news_tone_series)(basket, fred_start)
+    if dune_series_ids(spec):
+        from tradehub.workshop.dune import dune_series
+        for key in dune_series_ids(spec):
+            out[key] = (dune_fn or dune_series)(key, fred_start)
     for series_id in revision_series_ids(spec):
         out[f"{series_id}@revision"] = (revision_fn or revision_series)(series_id, fred_start)
     return out

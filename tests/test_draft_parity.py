@@ -21,9 +21,9 @@ WORKSHOP_TS = ROOT / "market_sentiment_tool" / "src" / "lib" / "workshop.ts"
 
 _SOURCE_SETS = {
     "P": {"price"},
-    "FP": {"fred", "price", "spread"},
-    "ANY": {"fred", "price", "spread"},
-    "WITH_NEWS": {"fred", "price", "spread", "news"},
+    "FP": {"fred", "price", "spread", "dune"},
+    "ANY": {"fred", "price", "spread", "dune"},
+    "WITH_NEWS": {"fred", "price", "spread", "news", "dune"},
 }
 
 
