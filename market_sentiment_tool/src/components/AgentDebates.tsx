@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { adminJson, adminText, type AgentDebateCard, type AgentDebateFeed } from "@/lib/workshop";
@@ -105,14 +105,37 @@ const ANALYST_SECTIONS: [string, string][] = [
   ["technicals", "Technicals"],
 ];
 
+/**
+ * One point of the case under its own dropdown (Kevin, 2026-11-03, reverting
+ * the single "full case" panel): every section -- bull, bear, each analyst,
+ * trader, risk, the framework report -- opens separately, closed by default,
+ * so the page never becomes one long scroll.
+ */
+function SectionDrop({ title, accent, onFirstOpen, children }: {
+  title: string;
+  accent: { box: string; title: string };
+  onFirstOpen?: () => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`rounded-lg border ${accent.box} bg-slate-950/30`}>
+      <button type="button" aria-expanded={open}
+              onClick={() => { if (!open) onFirstOpen?.(); setOpen((v) => !v); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left">
+        <span className={`text-xs font-bold uppercase tracking-wider ${accent.title}`}>{title}</span>
+        <ChevronDown className={`ml-auto h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {open && <div className="px-3 pb-2.5">{children}</div>}
+    </div>
+  );
+}
+
 export function DebateCard({ card }: { card: AgentDebateCard }) {
   const [report, setReport] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [caseOpen, setCaseOpen] = useState(false);
-  const toggleCase = () => {
-    const opening = !caseOpen;
-    setCaseOpen(opening);
-    if (opening && card.has_report && report === null && !busy) {
+  const loadReport = () => {
+    if (card.has_report && report === null && !busy) {
       setBusy(true);
       adminText(`/api/agent-debates/${card.run_id}/report`)
         .then(setReport)
@@ -193,38 +216,31 @@ export function DebateCard({ card }: { card: AgentDebateCard }) {
           </p>
         )}
 
-        {/* The full case, on click only (Kevin, 2026-11-03): the list card
-            above is the whole summary -- rating, fence, trader action, the
-            +5d/+20d state, the action text, the stated levels. The cases
-            and the framework report open here, rendered as documents. */}
-        {caseOpen && (
-          <div className="mt-3 space-y-2">
-            {sections.map((sec) => (
-              <div key={sec.key} className={`rounded-lg border ${SECTION_ACCENTS[sec.accent].box} bg-slate-950/30 px-3 py-2.5`}>
-                <div className={`text-xs font-bold uppercase tracking-wider ${SECTION_ACCENTS[sec.accent].title}`}>{sec.title}</div>
-                <div className="mt-1.5"><MdDoc markdown={sec.text} /></div>
-              </div>
-            ))}
-            {busy && <p className="text-xs text-slate-500">Loading the framework report…</p>}
-            {report !== null && (
-              <div className="rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2.5">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-300">Framework report</div>
-                <div className="mt-1.5"><MdDoc markdown={report} /></div>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Each point under its own dropdown (Kevin, 2026-11-03): the list
+            card above is the whole summary; the case opens point by point,
+            never as one long scroll. */}
+        <div className="mt-3 space-y-1.5">
+          {sections.map((sec) => (
+            <SectionDrop key={sec.key} title={sec.title} accent={SECTION_ACCENTS[sec.accent]}>
+              <MdDoc markdown={sec.text} />
+            </SectionDrop>
+          ))}
+          {card.has_report && (
+            <SectionDrop title="Framework report" accent={SECTION_ACCENTS.plain} onFirstOpen={loadReport}>
+              {busy && report === null
+                ? <p className="text-xs text-slate-500">Loading the framework report…</p>
+                : report !== null
+                  ? <MdDoc markdown={report} />
+                  : <p className="text-xs text-slate-500">The report could not be loaded.</p>}
+            </SectionDrop>
+          )}
+        </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
           <span>
             Run {card.run_at_ct.replace("T", " ").slice(0, 16)} CT · as of {card.as_of_date} · framework {card.framework_short} · {card.llm_model} · cost {typeof card.cost_usd === "number" ? `$${card.cost_usd.toFixed(2)}` : card.cost_usd}
           </span>
           <span>Inputs: {card.inputs_note}</span>
-          <button type="button" aria-expanded={caseOpen} onClick={toggleCase}
-                  className="inline-flex items-center gap-1 text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
-            {caseOpen ? "Hide the full case" : "Read the full case"}
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${caseOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-          </button>
         </div>
       </article>
     </li>

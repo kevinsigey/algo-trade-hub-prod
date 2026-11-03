@@ -104,6 +104,11 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           <NavLink to="/ideas" className={linkClass}>
             <Lightbulb className="w-5 h-5 text-muted-foreground" /> Ideas
           </NavLink>
+          {/* The Workshop sits beside Ideas (Kevin, 2026-11-03): it is where
+              ideas are drafted and tested, so it lives with them, not in Admin. */}
+          <NavLink to="/workshop" className={linkClass}>
+            <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
+          </NavLink>
           {/* Crypto research sits beside Ideas (Kevin's redesign, 2026-11-02): it is a
               research desk feeding the idea pipeline, not a prediction surface. */}
           <NavLink to="/crypto" className={linkClass}>
@@ -139,10 +144,6 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
         </Group>
         <Group label="Admin">
-          {/* Trading HQ step 2: plain-words idea -> drafted test -> verdict. */}
-          <NavLink to="/workshop" className={linkClass}>
-            <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
-          </NavLink>
           {/* TradingAgents (Kevin, 2026-11-02): the debates get their own tab beside the Workshop --
               an opinion panel with its own graded record, not a step in the idea pipeline. */}
           <NavLink to="/screening" className={linkClass}>

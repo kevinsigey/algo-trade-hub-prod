@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowUp, Loader2, Plus, Trophy, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, Loader2, Plus, Trophy, X } from "lucide-react";
 
 import { adminJson, type ScreenRow } from "@/lib/workshop";
 import {
@@ -20,6 +20,23 @@ function fmtCell(v: unknown): string {
  * in the direction people usually mean. The composed spec is shown
  * read-only for the record. Missing data fails a filter, never reads as
  * zero; a saved screen promotes once into a tracked Workshop idea. */
+/** One library group behind its own dropdown: the whole library is six
+ * closed rows, not a page of cards (Kevin, 2026-11-03). */
+function LibraryGroup({ group, count, children }: { group: string; count: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40">
+      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+              className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left">
+        <span className="text-sm font-medium text-slate-200">{group}</span>
+        <span className="text-xs text-slate-500">{count} filters</span>
+        <ChevronDown className={`ml-auto h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {open && <div className="px-3.5 pb-3.5">{children}</div>}
+    </div>
+  );
+}
+
 export default function Screening() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState("");
@@ -341,10 +358,11 @@ export default function Screening() {
 
       <section aria-label="Filter library" className="mt-8">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Filter library -- pick cards, nudge numbers</h2>
+        {/* The library lives behind dropdowns (Kevin, 2026-11-03): one closed
+            row per group instead of 36 cards of scroll. */}
         {groups.map(([group, gcards]) => (
-          <div key={group} className="mt-4">
-            <h3 className="text-sm font-medium text-slate-300">{group}</h3>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <LibraryGroup key={group} group={group} count={gcards.length}>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {gcards.map((c) => (
                 <div key={c.id} className={`rounded-xl border px-3.5 py-3 ${inTray(c.id)
                   ? "border-emerald-500/50 bg-emerald-500/5" : "border-slate-800 bg-slate-900/60"}`}>
@@ -362,7 +380,7 @@ export default function Screening() {
                 </div>
               ))}
             </div>
-          </div>
+          </LibraryGroup>
         ))}
 
         <div className="mt-4 rounded-xl border border-violet-500/30 bg-slate-900/60 px-3.5 py-3">

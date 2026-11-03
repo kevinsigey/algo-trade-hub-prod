@@ -74,7 +74,7 @@ describe("/oil", () => {
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
   });
 
-  it("leads with the next hour's ladder: the 50% level and the strikes", async () => {
+  it("the frozen record opens from its dropdown: the 50% level and the strikes", async () => {
     const ladder = [100, 101, 102].map((strike, i) => ({
       target: `kalshi:KXWTIH-26NOV0214-T${strike}.00`, probability: [0.9, 0.5, 0.1][i], market_prob: null,
       frozen_at: "2026-11-02T17:55:00+00:00", rebuilt: false, source_hash: "x",
@@ -84,6 +84,9 @@ describe("/oil", () => {
       { forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v1", forecasts: ladder },
     );
     render(<Oil />);
+    // The frozen record hides behind its dropdown (Kevin, 2026-11-03): the
+    // page leads with the live prediction; the locked-in ladder opens on click.
+    fireEvent.click(await screen.findByRole("button", { name: /Frozen record/ }));
     expect(await screen.findByText(/Our 50% level:/)).toBeTruthy();
     // Twice: once in the call, once as the ladder's strike row.
     expect(screen.getAllByText("$101.00").length).toBeGreaterThanOrEqual(2);
@@ -116,6 +119,10 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText("$101.10")).toBeInTheDocument();
     expect(screen.getByText(/Hormuz stress 2/)).toBeInTheDocument();
     expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
+    // Direction reads off the chart + banner now, not the strike list: our
+    // curve gives ~58% to settling above Kalshi's level on this ladder.
+    expect(screen.getByText(/we lean higher than Kalshi/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Chance of settling above each price/ })).toBeInTheDocument();
   });
 
   it("shows the ITM line stat and tags its ladder row when a pick qualifies", async () => {
@@ -132,6 +139,8 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     render(<Oil />);
     expect(await screen.findByText("In-the-money line")).toBeInTheDocument();
     expect(screen.getByText(/clear of the tape 10 min/)).toBeInTheDocument();
+    // The ladder itself sits behind the All strikes dropdown now.
+    fireEvent.click(screen.getByRole("button", { name: /All strikes/ }));
     expect(screen.getByText("ITM line")).toBeInTheDocument();
   });
 });
