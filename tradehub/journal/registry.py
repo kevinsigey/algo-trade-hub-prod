@@ -29,6 +29,7 @@ from tradehub.journal.forecasters.news_tone import (
 from tradehub.journal.forecasters.crypto_hourly import build_crypto_hourly
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
+from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
@@ -104,6 +105,10 @@ FORECASTERS: list[Forecaster] = [
     # WTI hourly (2026-11-01, Kevin's queue): the live-price/sigma model beside the Kalshi
     # mid and a persistence baseline; the first hourly-cadence family in the journal
     *build_oil_hourly(_LIVE),
+    # Geo shadow (2026-11-02, chokepoints plan addition 1): the hourly WTI row again with
+    # sigma widened by the Hormuz stress tier -- shadow only, preregistered paired-Brier
+    # gate at 200 settled (design: shadow-features-design-2026-11-02.md). v1 is untouched.
+    *build_oil_geo_shadow(_LIVE),
     # Crypto hourly (2026-11-02, Kevin's crypto program step 1): the oil-hourly clone
     # with realized-vol sigma (preregistered variant 2 passed its replay gate on both
     # series; the settled-sigma variant 1 tied persistence and never shipped)

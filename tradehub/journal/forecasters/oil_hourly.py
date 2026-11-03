@@ -105,6 +105,14 @@ class OilWtiHourly(_HourlyBase):
     name, version = "oil_wti_hourly", VERSION
 
     def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
+        return self._forecast(entry, now)
+
+    def _forecast(self, entry: CalendarEntry, now: datetime, *,
+                  sigma_mult: float = 1.0, extra: dict | None = None) -> Forecast | None:
+        """The v1 math, with an optional sigma multiplier and payload extras
+        -- the geo shadow variant (oil_geo.py) reuses it so the two rows
+        differ ONLY by the widening, which is what makes their paired
+        grading meaningful."""
         lm = self._open.get(entry.target)
         if lm is None:
             return None
@@ -115,7 +123,7 @@ class OilWtiHourly(_HourlyBase):
         if price is None or now - price.published_at > MAX_PRICE_AGE:
             return None  # no live anchor: a gap, never a stale price dressed as live
         minutes = (lm.market.close_time - now).total_seconds() / 60.0
-        sigma_h = hourly_sigma(changes)
+        sigma_h = hourly_sigma(changes) * sigma_mult
         return Forecast(self.name, self.version, entry.target,
                         hourly_prob(lm.market, price.value, sigma_h, minutes),
                         market_prob=quote_mid(lm),
@@ -123,7 +131,7 @@ class OilWtiHourly(_HourlyBase):
                                  "price_at": price.published_at.isoformat(),
                                  "sigma_h": sigma_h, "sigma_eff": sigma_for(sigma_h, minutes),
                                  "minutes_to_close": round(minutes, 1),
-                                 "changes_used": min(len(changes), 72)})
+                                 "changes_used": min(len(changes), 72), **(extra or {})})
 
 
 class OilHourlyPersistence(_HourlyBase):
