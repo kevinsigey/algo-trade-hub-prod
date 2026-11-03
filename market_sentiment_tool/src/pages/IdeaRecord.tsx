@@ -161,11 +161,30 @@ export default function IdeaRecord() {
     <div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
       <Link to="/ideas" className="text-sm text-slate-400 hover:text-white">← Ideas</Link>
       <h1 className="mt-3 text-2xl font-bold tracking-tight text-white">{data.title}</h1>
-      <p className="mt-1 text-sm text-slate-400">
-        {STATUS_LABEL[data.status]}
-        {data.claim && ` · ${claimLabel(data.claim)}`}
-        {data.killed_at && ` · killed ${data.killed_at.slice(0, 10)}`}
-      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {data.status === "live" && (data.live_books ?? ["main"]).map((b) => (
+          <span key={b} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-300">
+            Live · {b === "big" ? "$1M book" : "Main book"}{data.live_at ? ` · since ${data.live_at.slice(0, 10)}` : ""}
+          </span>
+        ))}
+        {data.status === "tracking" && (
+          <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-300">
+            Tracking{data.tracked_at ? ` since ${data.tracked_at.slice(0, 10)}` : ""} — not trading
+          </span>
+        )}
+        {data.status === "killed" && (
+          <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-300">
+            Killed{data.killed_at ? ` ${data.killed_at.slice(0, 10)}` : ""}
+          </span>
+        )}
+        {data.status === "backtest" && (
+          <span className="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs font-semibold text-slate-300">Backtest only</span>
+        )}
+        <span className="text-sm text-slate-400">
+          {STATUS_LABEL[data.status]}
+          {data.claim && ` · ${claimLabel(data.claim)}`}
+        </span>
+      </div>
       <p className="mt-3 text-slate-300">“{data.plain_words}”</p>
       {data.kind !== "event" && (
         <div className="mt-4">
@@ -175,8 +194,12 @@ export default function IdeaRecord() {
 
       {data.shadow && (
         <section className="mt-8">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Paper record since {data.live_at?.slice(0, 10)}</h2>
-          <div className="mt-2"><PaperLine live={data.shadow} /></div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+            {data.status === "live"
+              ? `Paper record since ${data.live_at?.slice(0, 10)}`
+              : `Forward record since tracking ${data.tracked_at?.slice(0, 10)}${data.killed_at ? ` · ended ${data.killed_at.slice(0, 10)}` : ""}`}
+          </h2>
+          <div className="mt-2"><PaperLine live={data.shadow} mode={data.status === "live" ? "paper" : "forward"} /></div>
           {data.shadow.claim && <p className="mt-1 text-sm text-slate-400">Last 3 months: {data.shadow.claim.label}</p>}
           {(data.shadow.exits?.length ?? 0) > 0 && (
             <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-slate-400">

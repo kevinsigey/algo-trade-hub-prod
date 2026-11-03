@@ -102,34 +102,20 @@ function sectorTotals(tiles: Tile[]): { sector: string; pct: number }[] {
 }
 
 type NodeProps = {
-  x?: number; y?: number; width?: number; height?: number; depth?: number;
+  x?: number; y?: number; width?: number; height?: number;
   name?: string; pct?: number; sector?: string | null;
   symbol?: string; qty?: number | null; side?: string | null;
   market_value?: number; idea?: string | null;
   onHover?: (tile: Tile | null) => void;
 };
 
-/** One treemap node: depth 1 is a group band (sector super-tile or idea
- * band) with its label; depth 2 is a holding tile, colored by sector. */
+/** One holding tile, colored by sector. Group titles are HTML headers above
+ * each group's own treemap (Kevin, 2026-11-02: the SVG band labels overlapped
+ * the tile names where a band's top row started at its left edge) -- a tile
+ * only ever carries its own two lines now. */
 function Node(props: NodeProps) {
-  const { x = 0, y = 0, width = 0, height = 0, depth = 0, name } = props;
-  if (depth === 1) {
-    const color = props.sector ? sectorColor(props.sector) : "#94a3b8";
-    return (
-      <g>
-        <rect x={x} y={y} width={width} height={height}
-              fill={props.sector ? color : "#1e293b"} fillOpacity={props.sector ? 0.16 : 0.5}
-              stroke="#020617" strokeWidth={2} />
-        {width > 70 && height > 30 && (
-          <text x={x + 8} y={y + 16} fill={color} fontSize={11} fontWeight={700}
-                style={{ textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            {name}{props.pct != null ? ` · ${props.pct.toFixed(0)}%` : ""}
-          </text>
-        )}
-      </g>
-    );
-  }
-  if (depth !== 2 || !props.symbol) return <g />;
+  const { x = 0, y = 0, width = 0, height = 0 } = props;
+  if (!props.symbol) return <g />;
   const tile: Tile = {
     symbol: props.symbol, sector: props.sector ?? "Other", qty: props.qty ?? null,
     side: props.side ?? null, market_value: props.market_value ?? 0,
@@ -183,29 +169,53 @@ function Legend({ tiles }: { tiles: Tile[] }) {
   );
 }
 
-function CompositionView({ tiles, grouping, heightClass }: {
-  tiles: Tile[]; grouping: Grouping; heightClass: string;
+const TIP_W = 208;
+const TIP_H = 150;
+
+/** Groups stacked as sections: an HTML header (name + weight) over the group's
+ * own treemap. The hover card clamps inside the container (Kevin, 2026-11-02:
+ * it ran off the sides of the screen) -- it flips left/above the cursor near
+ * an edge and never crosses the container's bounds. */
+function CompositionView({ tiles, grouping, heightClass, rowHeight }: {
+  tiles: Tile[]; grouping: Grouping; heightClass: string; rowHeight: number;
 }) {
-  const [hover, setHover] = useState<{ tile: Tile; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{ tile: Tile; x: number; y: number; w: number; h: number } | null>(null);
   const groups = useMemo(() => buildGroups(tiles, grouping), [tiles, grouping]);
+  const tipLeft = hover ? Math.max(0, Math.min(
+    hover.x + 14 + TIP_W > hover.w ? hover.x - TIP_W - 10 : hover.x + 14, Math.max(0, hover.w - TIP_W))) : 0;
+  const tipTop = hover ? Math.max(0, Math.min(
+    hover.y + 14 + TIP_H > hover.h ? hover.y - TIP_H - 6 : hover.y + 14, Math.max(0, hover.h - TIP_H))) : 0;
   return (
     <div className="relative"
          onMouseMove={(e) => {
            const rect = e.currentTarget.getBoundingClientRect();
            const x = e.clientX - rect.left, y = e.clientY - rect.top;
-           setHover((h) => (h ? { ...h, x, y } : h));
+           setHover((h) => (h ? { ...h, x, y, w: rect.width, h: rect.height } : h));
          }}
          onMouseLeave={() => setHover(null)}>
-      <div className={heightClass} aria-label="Holdings by size, colored by sector">
-        <ResponsiveContainer width="100%" height="100%">
-          <Treemap data={groups} dataKey="size" isAnimationActive={false}
-                   content={<Node onHover={(tile) => setHover((h) => (tile ? { tile, x: h?.x ?? 0, y: h?.y ?? 0 } : null))} />} />
-        </ResponsiveContainer>
+      <div className={`${heightClass} space-y-3 overflow-y-auto pr-1`} aria-label="Holdings by size, colored by sector">
+        {groups.map((g) => (
+          <div key={g.name}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wide"
+                    style={{ color: g.sector ? sectorColor(g.sector) : "#94a3b8" }}>
+                {g.name} · {g.pct.toFixed(0)}%
+              </span>
+            </div>
+            <div className="mt-1" style={{ height: rowHeight }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <Treemap data={g.children} dataKey="size" isAnimationActive={false}
+                         content={<Node onHover={(tile) => setHover((h) => (tile
+                           ? { tile, x: h?.x ?? 0, y: h?.y ?? 0, w: h?.w ?? 0, h: h?.h ?? 0 } : null))} />} />
+              </ResponsiveContainer>
+            </div>
+          </div>
+        ))}
       </div>
       {hover && (
         <div data-testid="tile-tooltip" role="tooltip"
              className="pointer-events-none absolute z-10 w-52 rounded-lg border border-slate-700 bg-slate-900/95 p-2.5 text-xs shadow-xl"
-             style={{ left: Math.max(0, hover.x + 14), top: Math.max(0, hover.y + 14) }}>
+             style={{ left: tipLeft, top: tipTop }}>
           <div className="flex items-center gap-1.5 font-semibold text-white">
             <span aria-hidden="true" className="h-2.5 w-2.5 rounded-[3px]" style={{ background: sectorColor(hover.tile.sector) }} />
             {hover.tile.symbol}
@@ -250,7 +260,7 @@ export default function CompositionBox({ positions, composition, className = "" 
         </div>
       </div>
       <div className="mt-3">
-        <CompositionView tiles={tiles} grouping={grouping} heightClass="h-44" />
+        <CompositionView tiles={tiles} grouping={grouping} heightClass="h-64" rowHeight={84} />
         <Legend tiles={tiles} />
         <ul className="mt-2 max-h-44 space-y-1 overflow-auto">
           {composition.map((c) => (
@@ -283,7 +293,7 @@ export default function CompositionBox({ positions, composition, className = "" 
               </div>
             </div>
             <div className="mt-4">
-              <CompositionView tiles={tiles} grouping={grouping} heightClass="h-[55vh]" />
+              <CompositionView tiles={tiles} grouping={grouping} heightClass="h-[55vh]" rowHeight={120} />
               <Legend tiles={tiles} />
             </div>
           </div>

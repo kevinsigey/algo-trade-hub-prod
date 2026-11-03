@@ -107,9 +107,9 @@ export default function Overview() {
         ) : movers.length === 0 ? (
           <p className="text-sm text-muted-foreground">Not enough settled history yet to rank movers.</p>
         ) : (
-          <ul className="divide-y divide-border border border-border bg-card">
+          <ul className="space-y-2">
             {movers.map((m) => (
-              <li key={m.key} className="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3">
+              <li key={m.key} className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3">
                 <span className="font-semibold text-foreground">{m.label}</span>
                 <span className="text-sm tabular-nums text-muted-foreground">
                   edge {edgeText(m.delta, null)} since {m.since} — {m.delta > 0 ? "improving" : "slipping"}

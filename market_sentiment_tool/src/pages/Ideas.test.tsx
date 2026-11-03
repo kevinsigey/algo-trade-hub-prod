@@ -44,7 +44,7 @@ describe("Ideas record", () => {
     // The live idea names each book it trades on; the backtest-only one names none.
     expect(screen.getByText("Live · Main")).toBeInTheDocument();
     expect(screen.getByText("Live · $1M")).toBeInTheDocument();
-    expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
+    expect(screen.getByText("Claim failing")).toBeInTheDocument();
     expect(screen.getByText("+4.2%")).toBeInTheDocument();
     expect(screen.getByText(/as of 2027-02-12/)).toBeInTheDocument();
   });
@@ -96,7 +96,7 @@ describe("Ideas record", () => {
     expect(screen.getByText("Beat it unseen")).toBeInTheDocument();
     expect(screen.getByText(/Cumulative return since 2020-01-01/)).toBeInTheDocument();
     expect(screen.getByText("GLD")).toBeInTheDocument();
-    expect(screen.getByText("Claim failing on paper")).toBeInTheDocument();
+    expect(screen.getByText("Claim failing")).toBeInTheDocument();
     expect(screen.getByText("stop-loss · 2026-11-05")).toBeInTheDocument();
   });
 
@@ -112,5 +112,35 @@ describe("Ideas record", () => {
     render(<MemoryRouter initialEntries={["/ideas/..%2Fadmin"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     expect(await screen.findByText("No such idea.")).toBeInTheDocument();
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe("Tracked ideas (Kevin, 2026-11-02)", () => {
+  const TRACKED = {
+    id: 7, title: "Chips on a leash", published_at: "2026-11-02", claim: "beats_benchmark", kind: "long_only",
+    latest_verdict: "PASS", variations: 1, result_line: "+14.9 pts/yr vs SPY", result_value: 14.9, result_p: 0.024,
+    status: "tracking", live_at: null, tracked_at: "2026-11-02T23:59:00Z", killed_at: null, live_books: [],
+    live: { days: 70, since: "2026-11-03", as_of: "2027-02-12", state: "live", return_pct: 3.4,
+            bench_return_pct: 1.1, claim: { holds: true, label: "+2.3 pts/yr vs benchmark", days: 63 }, failing: false },
+  };
+
+  it("the card names tracking and shows the forward record against the benchmark", async () => {
+    serve([TRACKED]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    expect(await screen.findByText("Chips on a leash")).toBeInTheDocument();
+    expect(screen.getByText("Tracking since 2026-11-02")).toBeInTheDocument();
+    expect(screen.getByText("Forward")).toBeInTheDocument();
+    expect(screen.getByText("+3.4%")).toBeInTheDocument();
+    expect(screen.getByText(/Claim holding/)).toBeInTheDocument();
+  });
+
+  it("the record page banners tracking and heads the graph as a forward record", async () => {
+    serve({ ...TRACKED, plain_words: "Chips, held loosely.", trades: [],
+            shadow: { ...TRACKED.live, curve: [{ t: "2026-11-03", idea: 0.2, bench: 0.1 }, { t: "2026-12-02", idea: 3.4, bench: 1.1 }], exits: [] },
+            runs: [] });
+    render(<MemoryRouter initialEntries={["/ideas/7"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText(/Tracking since 2026-11-02/)).toBeInTheDocument();
+    expect(screen.getByText(/Forward record since tracking 2026-11-02/)).toBeInTheDocument();
+    expect(screen.getByText("Forward")).toBeInTheDocument();
   });
 });

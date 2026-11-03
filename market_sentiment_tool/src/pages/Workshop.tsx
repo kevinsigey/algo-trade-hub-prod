@@ -34,11 +34,11 @@ export function TradeLabels({ ideas }: { ideas: IdeaRow[] }) {
       <p className="mt-1 text-sm text-slate-400">Which idea each paper trade counts toward. Tagged orders label themselves.</p>
       {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
       {fills?.length === 0 && <p className="mt-3 text-sm text-slate-400">No paper trades yet.</p>}
-      <ul className="mt-3 divide-y divide-slate-800/80">
+      <ul className="mt-3 space-y-2">
         {fills?.map((f) => {
           const name = `${f.symbol} ${f.side} ${f.qty} on ${f.at.slice(0, 10)}`;
           return (
-            <li key={f.order_id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
+            <li key={f.order_id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm">
               <span className="font-mono text-slate-200">{name}</span>
               <span className="flex flex-wrap items-center gap-2">
                 {f.history.length > 0 && <span className="text-xs text-slate-500">was {title(f.history[f.history.length - 1].from)}</span>}
@@ -134,10 +134,10 @@ export default function Workshop() {
       <h2 className="mt-12 text-lg font-semibold text-white">Ideas</h2>
       {ideas === null && !error && <p className="mt-3 text-sm text-slate-400">Loading…</p>}
       {ideas?.length === 0 && <p className="mt-3 text-sm text-slate-400">No ideas yet.</p>}
-      <ul className="mt-3 divide-y divide-slate-800/80">
+      <ul className="mt-3 space-y-2">
         {ideas?.map((i) => (
-          <li key={i.id}>
-            <Link to={`/workshop/${i.id}`} className="flex items-center justify-between gap-3 py-3 hover:text-white">
+          <li key={i.id} className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 hover:border-slate-600">
+            <Link to={`/workshop/${i.id}`} className="flex items-center justify-between gap-3 py-2.5 hover:text-white">
               <span className="text-slate-200">{i.title}</span>
               <span className="flex shrink-0 items-center gap-3 text-xs text-slate-400">
                 {i.runs} {i.runs === 1 ? "run" : "runs"}

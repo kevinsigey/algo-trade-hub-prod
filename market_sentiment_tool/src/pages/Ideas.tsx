@@ -24,14 +24,18 @@ const SORT_LABEL: Record<SortKey, string> = {
   title: "Title A–Z",
 };
 
-/** One line of paper record: idea vs benchmark since go-live, its as-of, and the failing flag. */
-export function PaperLine({ live }: { live: ShadowSummary }) {
+/** One line of forward record: idea vs benchmark since the anchor (go-live for a
+ * traded idea, tracking start for a tracked one -- Kevin, 2026-11-02: a tracked
+ * idea's performance against its metric belongs on the card, at a glance), its
+ * as-of, and the claim's current state. */
+export function PaperLine({ live, mode = "paper" }: { live: ShadowSummary; mode?: "paper" | "forward" }) {
   if (live.days === 0)
     return live.state === "stale"
-      ? <p className="text-sm text-amber-300">No paper days recorded since going live · stale</p>
-      : <p className="text-sm text-slate-400">Paper record starts on the next trading day.</p>;
+      ? <p className="text-sm text-amber-300">{mode === "forward" ? "No forward days recorded since tracking began" : "No paper days recorded since going live"} · stale</p>
+      : <p className="text-sm text-slate-400">{mode === "forward" ? "Forward" : "Paper"} record starts on the next trading day.</p>;
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+      {mode === "forward" && <span className="text-xs font-semibold uppercase tracking-wide text-sky-300">Forward</span>}
       <span className="font-mono text-lg text-white">{signedPct(live.return_pct)}</span>
       <span className="text-slate-400">benchmark {signedPct(live.bench_return_pct)}</span>
       <span className="text-slate-500">
@@ -41,7 +45,9 @@ export function PaperLine({ live }: { live: ShadowSummary }) {
       {live.days < EARLY_N ? (
         <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-300">Too early to say</span>
       ) : live.failing ? (
-        <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs text-rose-300">Claim failing on paper</span>
+        <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs text-rose-300">Claim failing</span>
+      ) : live.claim?.holds ? (
+        <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">Claim holding · {live.claim.label}</span>
       ) : null}
     </div>
   );
@@ -58,6 +64,14 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
             Live · {b === "big" ? "$1M" : "Main"}
           </span>
         ))}
+        {idea.status === "tracking" && (
+          <span className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs font-semibold text-sky-300">
+            Tracking{idea.tracked_at ? ` since ${idea.tracked_at.slice(0, 10)}` : ""}
+          </span>
+        )}
+        {idea.status === "killed" && (
+          <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-300">Killed</span>
+        )}
         <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
         {showKind && <span className="text-xs text-slate-500">· {KIND_LABEL[idea.kind]}</span>}
       </div>
@@ -75,7 +89,7 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
           </p>
         </div>
       )}
-      {idea.live && <div className="mt-3"><PaperLine live={idea.live} /></div>}
+      {idea.live && <div className="mt-3"><PaperLine live={idea.live} mode={idea.status === "live" ? "paper" : "forward"} /></div>}
       {idea.kind !== "event" && (
         <div className="relative z-10 mt-3">
           <PlayCheckButton ideaId={idea.id} source="public" title={idea.title} />
