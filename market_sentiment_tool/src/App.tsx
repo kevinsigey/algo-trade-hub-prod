@@ -25,7 +25,6 @@ import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
-import Agent from "@/pages/Agent";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
@@ -37,7 +36,6 @@ import {
   Briefcase,
   CloudSun,
   FlaskConical,
-  Bot,
   Fuel,
   Handshake,
   HeartPulse,
@@ -110,11 +108,6 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
               ideas are drafted and tested, so it lives with them, not in Admin. */}
           <NavLink to="/workshop" className={linkClass}>
             <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
-          </NavLink>
-          {/* The in-site agent (phases 1-2, Kevin, 2026-11-03) lives with the
-              idea pipeline it feeds: paste -> spec -> gate. */}
-          <NavLink to="/agent" className={linkClass}>
-            <Bot className="w-5 h-5 text-muted-foreground" /> Agent
           </NavLink>
           {/* Crypto research sits beside Ideas (Kevin's redesign, 2026-11-02): it is a
               research desk feeding the idea pipeline, not a prediction surface. */}
@@ -335,7 +328,7 @@ function App() {
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
-          <Route path="/agent" element={<RequireAdmin><Agent /></RequireAdmin>} />
+          <Route path="/agent" element={<Navigate to="/ideas" replace />} />
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />

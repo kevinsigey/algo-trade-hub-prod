@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 
 import { adminJson, verdictTone, type FillRow, type Idea, type IdeaRow, type ScreenRow, type WorkshopDashboard } from "@/lib/workshop";
 import { fmtUsd } from "@/lib/paperPortfolio";
+import NewIdeaBox from "@/components/NewIdeaBox";
 import { SectorTonePanel } from "@/components/SectorTonePanel";
 
 export const toneClass = {
@@ -139,9 +140,6 @@ type Tab = "overview" | "ideas" | "labels" | "screens" | "tone";
  * queue showing only what needs a label, runs summarized instead of listed.
  * The full record of any single idea lives on its own page. */
 export default function Workshop() {
-  const navigate = useNavigate();
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ideas, setIdeas] = useState<IdeaRow[] | null>(null);
   const [dash, setDash] = useState<WorkshopDashboard | null>(null);
@@ -153,24 +151,6 @@ export default function Workshop() {
     adminJson<WorkshopDashboard>("/api/workshop/dashboard").then((d) => setDash(d?.ideas ? d : null)).catch(() => setDash(null));
     adminJson<ScreenRow[]>("/api/screening/screens").then((d) => setScreens(Array.isArray(d) ? d : [])).catch(() => setScreens([]));
   }, []);
-
-  const start = async () => {
-    const words = text.trim();
-    if (!words) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const title = words.length > 80 ? `${words.slice(0, 77)}…` : words;
-      const idea = await adminJson<Idea>("/api/workshop/ideas", {
-        method: "POST",
-        body: JSON.stringify({ title: title.length < 3 ? `${title}…` : title, plain_words: words }),
-      });
-      navigate(`/workshop/${idea.id}?draft=1`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the idea");
-      setBusy(false);
-    }
-  };
 
   const groups = (Object.keys(GROUP_LABEL) as (keyof typeof GROUP_LABEL)[])
     .map((g) => ({ g, rows: (ideas ?? []).filter((i) => ideaGroup(i) === g) }))
@@ -190,25 +170,7 @@ export default function Workshop() {
       <h1 className="text-2xl font-bold tracking-tight text-white">Workshop</h1>
       <p className="mt-1 text-sm text-slate-400">An idea in plain words, tested against what it claims. Every verdict is kept, pass or fail.</p>
 
-      <div className="mt-6 flex gap-2">
-        <textarea
-          id="idea"
-          aria-label="Type an idea in plain words"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={2}
-          placeholder="Gold does better than stocks when rates are going up."
-          className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={start}
-          disabled={busy || !text.trim()}
-          className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-emerald-500 px-4 py-2 font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
-        >
-          {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />} Turn into a test
-        </button>
-      </div>
+      <NewIdeaBox />
       {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
 
       {dash && (
