@@ -5,10 +5,8 @@ import { Loader2 } from "lucide-react";
 import { PlayCheckButton } from "@/components/PlayCheck";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { EARLY_N } from "@/lib/sample";
-import { claimLabel, KIND_LABEL, STATUS_LABEL, verdictTone, type IdeaKind, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
+import { claimLabel, KIND_LABEL, STATUS_LABEL, verdictTone, type PublicIdea, type ShadowSummary } from "@/lib/workshop";
 import { toneClass } from "@/pages/Workshop";
-
-const KIND_ORDER: IdeaKind[] = ["event", "long_short", "wrapped", "long_only"];
 
 export const signedPct = (v: number | null | undefined) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`);
 
@@ -17,12 +15,20 @@ export const pText = (p: number | null | undefined) => (p == null ? null : p < 0
 type SortKey = "grouped" | "value" | "p" | "newest" | "title";
 
 const SORT_LABEL: Record<SortKey, string> = {
-  grouped: "Grouped by type",
+  grouped: "Grouped by bet",
   value: "Strongest result",
   p: "Most significant (lowest p)",
   newest: "Newest first",
   title: "Title A–Z",
 };
+
+/** Standing under the current hub-wide standard (Kevin, 2026-11-03): live,
+ * tracking, or still passing. Everything else was trimmed to the Removed
+ * disclosure below -- kept on the record, out of the way. */
+export function standing(idea: PublicIdea): boolean {
+  if (idea.status === "live" || idea.status === "tracking") return true;
+  return (idea.verdict_now ?? idea.latest_verdict) === "PASS";
+}
 
 /** One line of forward record: idea vs benchmark since the anchor (go-live for a
  * traded idea, tracking start for a tracked one -- Kevin, 2026-11-02: a tracked
@@ -54,11 +60,19 @@ export function PaperLine({ live, mode = "paper" }: { live: ShadowSummary; mode?
 }
 
 function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boolean }) {
+  const verdict = idea.verdict_now ?? idea.latest_verdict;
+  const demoted = idea.verdict_now != null && idea.latest_verdict != null && idea.verdict_now !== idea.latest_verdict;
   return (
     <li className="relative h-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(idea.latest_verdict)]}`}>{idea.latest_verdict ?? "Not run"}</span>
+        <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(verdict)]}`}>{verdict ?? "Not run"}</span>
         <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
+        {idea.gate_overridden && (
+          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-300">Gate overridden</span>
+        )}
+        {idea.hindsight_selected && (
+          <span className="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs font-semibold text-slate-300">Hindsight-selected</span>
+        )}
         {(idea.live_books ?? []).map((b) => (
           <span key={b} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-300">
             Live · {b === "big" ? "$1M" : "Main"}
@@ -73,8 +87,17 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
           <span className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-300">Killed</span>
         )}
         <span className="text-xs text-slate-500">· {idea.variations} {idea.variations === 1 ? "run" : "runs"}</span>
+        {idea.registry?.test_number != null && (
+          <span className="text-xs text-slate-500">· test #{idea.registry.test_number} of {idea.registry.tests_total ?? "—"}</span>
+        )}
         {showKind && <span className="text-xs text-slate-500">· {KIND_LABEL[idea.kind]}</span>}
       </div>
+      {demoted && (
+        <p className="mt-1 text-xs text-amber-300/90">
+          Passed as run — demoted under the hub-wide standard
+          {idea.wf_ok === false ? " (walk-forward)" : idea.fdr_pass === false ? " (FDR over all tests)" : ""}
+        </p>
+      )}
       <h3 className="mt-2 font-semibold text-white">
         <Link to={`/ideas/${idea.id}`} className="after:absolute after:inset-0">{idea.title}</Link>
       </h3>
@@ -99,24 +122,44 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
   );
 }
 
-/** The public Ideas record (Trading HQ spec §4.1): every published idea, fails and kills included. */
+/** The public Ideas record: what still stands leads, grouped by the bet it
+ * actually is; everything that no longer passes sits under Removed, still
+ * on the record (Kevin, 2026-11-03 trim). */
 export default function Ideas() {
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
   const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
   const [sort, setSort] = useState<SortKey>("grouped");
-  const flat = sort === "value" || sort === "p";
-  const sortedAll = useMemo(() => {
-    const all = [...(data ?? [])];
+  const flat = sort !== "grouped";
+  const { standingIdeas, removed } = useMemo(() => {
+    const all = data ?? [];
+    return { standingIdeas: all.filter(standing), removed: all.filter((i) => !standing(i)) };
+  }, [data]);
+  const sortedStanding = useMemo(() => {
+    const all = [...standingIdeas];
     if (sort === "value") all.sort((a, b) => (b.result_value ?? -Infinity) - (a.result_value ?? -Infinity));
     else if (sort === "p") all.sort((a, b) => (a.result_p ?? Infinity) - (b.result_p ?? Infinity));
     else if (sort === "newest") all.sort((a, b) => b.published_at.localeCompare(a.published_at));
     else if (sort === "title") all.sort((a, b) => a.title.localeCompare(b.title));
     return all;
-  }, [data, sort]);
+  }, [standingIdeas, sort]);
+  const families = useMemo(() => {
+    const byKey = new Map<number, PublicIdea[]>();
+    const singles: PublicIdea[] = [];
+    for (const idea of standingIdeas) {
+      if (idea.family && idea.family.size > 1) {
+        const arr = byKey.get(idea.family.key) ?? [];
+        arr.push(idea);
+        byKey.set(idea.family.key, arr);
+      } else singles.push(idea);
+    }
+    const groups = [...byKey.values()].sort((a, b) =>
+      Math.max(...b.map((i) => i.result_value ?? -Infinity)) - Math.max(...a.map((i) => i.result_value ?? -Infinity)));
+    return { groups, singles };
+  }, [standingIdeas]);
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Ideas</h1>
-      <p className="mt-1 text-sm text-slate-400">Every idea published here stays here, pass, fail or killed.</p>
+      <p className="mt-1 text-sm text-slate-400">What still passes leads. Everything removed stays on the record, one click down.</p>
       {summary && (
         <p className="mt-1 text-xs text-slate-500">
           Workshop record: {summary.tested} ideas tested · {summary.passed} passed · {summary.failed} failed · {summary.not_enough_data} not enough data · {summary.published} published here
@@ -135,7 +178,7 @@ export default function Ideas() {
               <option key={k} value={k}>{SORT_LABEL[k]}</option>
             ))}
           </select>
-          {flat && <span className="text-xs text-slate-500">across all types — the claim differs by idea, so read the metric with its claim</span>}
+          {flat && <span className="text-xs text-slate-500">the standing list — the claim differs by idea, so read the metric with its claim</span>}
         </div>
       )}
       {loading && <Loader2 className="mt-8 h-5 w-5 animate-spin text-slate-400" aria-label="Loading" />}
@@ -144,29 +187,45 @@ export default function Ideas() {
       {flat ? (
         <section className="mt-8">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-            All ideas <span className="text-slate-600">· {sortedAll.length} · {SORT_LABEL[sort].toLowerCase()}</span>
+            Standing ideas <span className="text-slate-600">· {sortedStanding.length} · {SORT_LABEL[sort].toLowerCase()}</span>
           </h2>
           <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-            {sortedAll.map((idea) => <IdeaCard key={idea.id} idea={idea} showKind />)}
+            {sortedStanding.map((idea) => <IdeaCard key={idea.id} idea={idea} showKind />)}
           </ul>
         </section>
       ) : (
-        /* Grouped by type, in a grid (Kevin, 2026-11-02): the flat list stopped scanning
-            once the published set grew past a screenful. */
-        KIND_ORDER.map((kind) => {
-          const group = sortedAll.filter((i) => i.kind === kind);
-          if (group.length === 0) return null;
-          return (
-            <section key={kind} className="mt-8">
+        <>
+          {families.groups.map((group) => (
+            <section key={group[0].family!.key} className="mt-8">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-                {KIND_LABEL[kind]} <span className="text-slate-600">· {group.length}</span>
+                One bet · {group[0].family!.tickers.join(" · ")} <span className="text-slate-600">· {group.length} ideas, one position underneath</span>
               </h2>
               <ul className="mt-3 grid gap-3 sm:grid-cols-2">
                 {group.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
               </ul>
             </section>
-          );
-        })
+          ))}
+          {families.singles.length > 0 && (
+            <section className="mt-8">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+                Standalone <span className="text-slate-600">· {families.singles.length}</span>
+              </h2>
+              <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+                {families.singles.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+      {removed.length > 0 && (
+        <details className="mt-10">
+          <summary className="cursor-pointer text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Removed under the current standard <span className="text-slate-600">· {removed.length} · kept on the record</span>
+          </summary>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {removed.map((idea) => <IdeaCard key={idea.id} idea={idea} showKind />)}
+          </ul>
+        </details>
       )}
     </div>
   );

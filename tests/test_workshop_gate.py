@@ -30,10 +30,18 @@ def test_gate_uses_only_new_days():
     assert good["status"] == "ready" and good["size_ok"] and good["reasons"] == []
 
 
-def test_gate_waits():
+def test_gate_no_longer_waits_for_63_days():
+    # The 63-day wait is retired (Kevin, 2026-11-03): the claim is judged on
+    # whatever new data exists -- 40 new days with the claim holding is ready.
     out = gate_check(SPEC, frame(0.002, 0.002, 40), END, 20)
-    assert out["status"] == "waiting" and out["new_days"] == 40 and out["needed"] == MIN_GATE_DAYS == 63
-    assert "40 of 63 new trading days" in out["reasons"][0]
+    assert out["status"] == "ready" and out["new_days"] == 40 and out["needed"] == 0
+    assert out["claim"]["holds"]
+
+
+def test_gate_waits_only_when_there_is_no_new_data():
+    out = gate_check(SPEC, frame(0.002, 0.002, 0), END, 20)
+    assert out["status"] == "waiting" and out["new_days"] == 0
+    assert any("no new data" in r for r in out["reasons"])
 
 
 def test_gate_window_is_last_252():

@@ -11,7 +11,8 @@ from workshop_fake import DB
 
 SPEC = {"title": "Gold when rates rise", "hold": ["GLD"], "otherwise": "SPY", "claim": "beats_benchmark_when",
         "when": {"source": "fred", "series": "DGS10", "measure": "change", "op": ">", "threshold": 0.25}}
-RESULT = {"verdict": "FAIL", "headline": "Did not do what it claims.", "data_end": "2026-10-29"}
+RESULT = {"verdict": "FAIL", "headline": "Did not do what it claims.", "data_end": "2026-10-29",
+          "shuffle": {"p": 0.001, "bar": 0.05}, "walk_forward": {"held": 4, "of": 4, "folds": []}}
 
 
 @pytest.fixture
@@ -123,7 +124,8 @@ def test_fred_start_survives_feb_29():
     assert _fred_start(date(2008, 2, 29)) < date(2005, 3, 1)
 
 
-PASS_RESULT = {"verdict": "PASS", "headline": "Did what it claims on the years it hadn't seen.", "data_end": "2026-10-29"}
+PASS_RESULT = {"verdict": "PASS", "headline": "Did what it claims on the years it hadn't seen.", "data_end": "2026-10-29",
+               "shuffle": {"p": 0.001, "bar": 0.05}, "walk_forward": {"held": 4, "of": 4, "folds": []}}
 
 
 @pytest.fixture
