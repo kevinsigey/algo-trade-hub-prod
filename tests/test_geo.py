@@ -83,3 +83,38 @@ def test_snapshot_dead_feeds_are_unknown_never_zero(tmp_path, monkeypatch):
     assert health[("ais", "health")]["health"] == "unknown"  # no state file: unknown, not 0 ships
     assert health[("firms", "health")]["health"] == "unknown"  # no MAP_KEY yet
     assert out["feeds"]["adsb_jamming"] == "live"
+
+
+def test_ais_health_connected_but_silent_is_unknown(tmp_path):
+    # The Gulf case (Nov 2 2026): the consumer is connected and writing
+    # fresh state, but no vessel message has ever arrived -- the snapshot
+    # must read unknown, never "live" zeros.
+    from datetime import datetime, timezone
+    from tradehub.geo.ais_state import AisState, read_state_file
+    from tradehub.geo.regions import HORMUZ
+
+    now = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)
+    path = tmp_path / "ais-hormuz.json"
+    path.write_text(AisState(HORMUZ).to_json())
+    import os
+    os.utime(path, (now.timestamp(), now.timestamp()))
+    metrics, health = read_state_file(str(path), HORMUZ, now)
+    assert health == "unknown"
+    assert metrics["vessels_in_region"] == 0
+
+
+def test_ais_health_recent_message_is_live(tmp_path):
+    from datetime import datetime, timezone
+    from tradehub.geo.ais_state import AisState, read_state_file
+    from tradehub.geo.regions import HORMUZ
+
+    now = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)
+    state = AisState(HORMUZ)
+    state.apply({"MetaData": {"MMSI": "123456789"}, "MessageType": "PositionReport",
+                 "Message": {"PositionReport": {"Latitude": 26.5, "Longitude": 56.3, "Sog": 4}}}, now)
+    path = tmp_path / "ais-hormuz.json"
+    path.write_text(state.to_json())
+    import os
+    os.utime(path, (now.timestamp(), now.timestamp()))
+    _, health = read_state_file(str(path), HORMUZ, now)
+    assert health == "live"
