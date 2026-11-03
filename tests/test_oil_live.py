@@ -56,6 +56,23 @@ def test_live_ladder_names_a_stale_print_instead_of_dressing_it_up():
     assert out["state"] == "unavailable" and "stale" in out["reason"]
 
 
+def test_live_ladder_tolerates_the_delayed_feed_and_stamps_the_age():
+    # Yahoo's CL=F tape runs ~10-15 min behind the exchange; a 20-minute-old
+    # print is that delay, not a stuck feed. The hero (never scored) stays
+    # live and reports the age so the page can show it.
+    live = FakeLive(_markets(), settled=_settled())
+    delayed = HourlyInputs(live, price_fn=lambda: Observation("WTI:CL=F:last", 101.2, NOW - timedelta(minutes=20)))
+    out = live_ladder(NOW, live=live, inputs=delayed, geo=False)
+    assert out["state"] == "live" and out["price_age_minutes"] == 20.0
+
+
+def test_stale_payload_still_names_the_event():
+    live = FakeLive(_markets(), settled=_settled())
+    stale = HourlyInputs(live, price_fn=lambda: Observation("WTI:CL=F:last", 101.2, NOW - timedelta(minutes=30)))
+    out = live_ladder(NOW, live=live, inputs=stale, geo=False)
+    assert out["event"] == EV_A and out["price_age_minutes"] == 30.0
+
+
 # ---- the ITM line (Kevin, 2026-11-03) --------------------------------------
 
 from datetime import timedelta  # noqa: E402
@@ -89,6 +106,17 @@ def test_itm_pick_qualifies_above_the_tape():
     pick = pick_itm_line(_rows((98.0, 0.65, 0.58)), _tape(NOW, [98.5] * 10), NOW, 98.6)
     assert pick is not None and pick["strike"] == 98.0 and pick["gap_pts"] == 7.0
     assert pick["clear_bars"] == 10
+
+
+def test_itm_pick_reads_the_tapes_own_trailing_window_on_a_delayed_feed():
+    # The tape's last bar is 13 minutes old (the Yahoo delay): the window is
+    # the tape's trailing 10 traded minutes, so the pick can still fire.
+    tape = [(ts - timedelta(minutes=13), c) for ts, c in _tape(NOW, [98.5] * 10)]
+    pick = pick_itm_line(_rows((98.0, 0.65, 0.58)), tape, NOW, 98.6)
+    assert pick is not None and pick["strike"] == 98.0
+    # A tape dead for two hours is not a stable tape: no pick.
+    dead = [(ts - timedelta(hours=2), c) for ts, c in _tape(NOW, [98.5] * 10)]
+    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), dead, NOW, 98.6) is None
 
 
 def test_itm_pick_rejects_a_strike_the_tape_crossed():

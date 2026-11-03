@@ -68,6 +68,7 @@ interface LiveLadder {
   as_of?: string;
   live_price?: number;
   price_at?: string;
+  price_age_minutes?: number;
   our_level?: number | null;
   market_level?: number | null;
   geo?: { stress_score: number; k: number; partial: boolean } | null;
@@ -107,10 +108,10 @@ function DirectionChart({ rows, livePrice, ourLevel, marketLevel }: {
   marketLevel?: number | null;
 }) {
   const W = 720;
-  const H = 190;
+  const H = 196;
   const PL = 36;
   const PR = 12;
-  const PT = 24;
+  const PT = 48;
   const PB = 22;
   const marks = [livePrice, ourLevel, marketLevel].filter((v): v is number => v !== null && v !== undefined);
   const lo = Math.min(...rows.map((r) => r.strike), ...marks);
@@ -120,37 +121,62 @@ function DirectionChart({ rows, livePrice, ourLevel, marketLevel }: {
   const x1 = hi + padX;
   const X = (v: number) => PL + ((v - x0) / (x1 - x0)) * (W - PL - PR);
   const Y = (p: number) => PT + (1 - p) * (H - PT - PB);
-  const line = (pick: (r: LiveRow) => number | null) => {
+  const line = (pick: (r: LiveRow) => number | null, extend: boolean) => {
     const pts = rows.filter((r) => pick(r) !== null).sort((a, b) => a.strike - b.strike);
     if (pts.length < 2) return "";
-    let d = `M ${X(x0).toFixed(1)} ${Y(pick(pts[0])!).toFixed(1)}`;
-    for (const r of pts) d += ` L ${X(r.strike).toFixed(1)} ${Y(pick(r)!).toFixed(1)}`;
-    return d + ` L ${X(x1).toFixed(1)} ${Y(pick(pts[pts.length - 1])!).toFixed(1)}`;
+    let d = extend
+      ? `M ${X(x0).toFixed(1)} ${Y(pick(pts[0])!).toFixed(1)} L ${X(pts[0].strike).toFixed(1)} ${Y(pick(pts[0])!).toFixed(1)}`
+      : `M ${X(pts[0].strike).toFixed(1)} ${Y(pick(pts[0])!).toFixed(1)}`;
+    for (const r of pts.slice(1)) d += ` L ${X(r.strike).toFixed(1)} ${Y(pick(r)!).toFixed(1)}`;
+    if (extend) d += ` L ${X(x1).toFixed(1)} ${Y(pick(pts[pts.length - 1])!).toFixed(1)}`;
+    return d;
   };
-  const marker = (v: number | null | undefined, cls: string, label: string, dash: boolean) =>
-    v === null || v === undefined ? null : (
-      <g key={label}>
-        <line x1={X(v)} x2={X(v)} y1={PT - 6} y2={H - PB} stroke={cls} strokeWidth="1.2" strokeDasharray={dash ? "4 3" : undefined} />
-        <text x={Math.min(Math.max(X(v), PL + 26), W - PR - 26)} y={PT - 10} textAnchor="middle" fontSize="11" fontWeight="600" fill={cls}>{label}</text>
-      </g>
-    );
+  // Marker labels take lanes (Kevin's rule: chart labels never overlap).
+  // Levels cluster -- our 50% level, Kalshi's and the live print can sit
+  // cents apart -- so each label gets the lowest lane its width fits in,
+  // and the marker line starts below the lanes.
+  const LANE_Y = [14, 28, 42];
+  const markerSpecs = [
+    { v: marketLevel, cls: "#94a3b8", label: marketLevel != null ? `Kalshi $${marketLevel.toFixed(2)}` : "", dash: true },
+    { v: ourLevel, cls: "#fbbf24", label: ourLevel != null ? `Us $${ourLevel.toFixed(2)}` : "", dash: true },
+    { v: livePrice, cls: "#f8fafc", label: livePrice != null ? `WTI $${livePrice.toFixed(2)}` : "", dash: false },
+  ].filter((m) => m.v !== null && m.v !== undefined);
+  const laneRight: number[] = [];
+  const placed = markerSpecs
+    .map((m) => {
+      const half = (m.label.length * 6.4) / 2 + 6;
+      const cx = Math.min(Math.max(X(m.v!), PL + half), W - PR - half);
+      return { ...m, cx, half };
+    })
+    .sort((a, b) => a.cx - b.cx)
+    .map((m) => {
+      let lane = LANE_Y.findIndex((_, i) => m.cx - m.half > (laneRight[i] ?? -Infinity) + 8);
+      if (lane === -1) lane = LANE_Y.length - 1;
+      laneRight[lane] = m.cx + m.half;
+      return { ...m, y: LANE_Y[lane] };
+    });
+  const marketPts = rows.filter((r) => r.market !== null);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" role="img" aria-label="Chance of settling above each price: us versus Kalshi">
       {ourLevel != null && marketLevel != null && (
         <rect x={X(Math.min(ourLevel, marketLevel))} width={Math.abs(X(ourLevel) - X(marketLevel))}
-              y={PT - 6} height={H - PT - PB + 6} fill="rgb(251 191 36 / 0.08)" />
+              y={PT - 2} height={H - PT - PB + 2} fill="rgb(251 191 36 / 0.08)" />
       )}
       <line x1={PL} x2={W - PR} y1={Y(0.5)} y2={Y(0.5)} stroke="#475569" strokeWidth="1" strokeDasharray="2 4" />
       <text x={PL - 6} y={Y(0.5) + 4} textAnchor="end" fontSize="10" fill="#64748b">50%</text>
       <text x={PL - 6} y={Y(0.98) + 4} textAnchor="end" fontSize="10" fill="#64748b">100%</text>
       <text x={PL - 6} y={Y(0.02) + 4} textAnchor="end" fontSize="10" fill="#64748b">0%</text>
-      {marketLevel !== null && marketLevel !== undefined && (
-        <path d={line((r) => r.market)} fill="none" stroke="#94a3b8" strokeWidth="1.6" strokeDasharray="5 4" />
-      )}
-      <path d={line((r) => r.ours)} fill="none" stroke="#fbbf24" strokeWidth="2.2" />
-      {marker(marketLevel, "#94a3b8", `Kalshi $${marketLevel?.toFixed(2)}`, true)}
-      {marker(ourLevel, "#fbbf24", `Us $${ourLevel?.toFixed(2)}`, true)}
-      {marker(livePrice, "#f8fafc", `WTI $${livePrice?.toFixed(2)}`, false)}
+      <path d={line((r) => r.market, false)} fill="none" stroke="#94a3b8" strokeWidth="1.6" strokeDasharray="5 4" />
+      {marketPts.map((r) => (
+        <circle key={r.strike} cx={X(r.strike)} cy={Y(r.market!)} r="2.4" fill="#94a3b8" />
+      ))}
+      <path d={line((r) => r.ours, true)} fill="none" stroke="#fbbf24" strokeWidth="2.2" />
+      {placed.map((m) => (
+        <g key={m.label}>
+          <line x1={X(m.v!)} x2={X(m.v!)} y1={PT - 2} y2={H - PB} stroke={m.cls} strokeWidth="1.2" strokeDasharray={m.dash ? "4 3" : undefined} />
+          <text x={m.cx} y={m.y} textAnchor="middle" fontSize="11" fontWeight="600" fill={m.cls}>{m.label}</text>
+        </g>
+      ))}
       <text x={PL} y={H - 6} fontSize="10" fill="#64748b">${x0.toFixed(2)}</text>
       <text x={W - PR} y={H - 6} textAnchor="end" fontSize="10" fill="#64748b">${x1.toFixed(2)}</text>
     </svg>
@@ -172,6 +198,7 @@ function LiveHero() {
   const [live, setLive] = useState<LiveLadder | null>(null);
   const [tick, setTick] = useState(0);
   const [strikesOpen, setStrikesOpen] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), LIVE_REFRESH_MS);
@@ -185,7 +212,7 @@ function LiveHero() {
   if (!live) {
     return (
       <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-        <h2 className="text-lg font-semibold text-white">Next hour — live</h2>
+        <h2 className="text-lg font-semibold text-white">Next hour</h2>
         <p className="mt-1 text-sm text-slate-400">Reading the live market…</p>
       </section>
     );
@@ -193,8 +220,14 @@ function LiveHero() {
   if (live.state !== "live" || !live.rows || !live.event) {
     return (
       <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-        <h2 className="text-lg font-semibold text-white">Next hour — live</h2>
-        <p className="mt-1 text-sm text-slate-400">{live.reason ?? "The live ladder is unavailable right now."}</p>
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h2 className="text-lg font-semibold text-white">Next hour</h2>
+          {live.event && <span className="text-sm text-slate-400">{eventLabel(live.event)}</span>}
+        </div>
+        <p className="mt-1 text-sm text-slate-400">
+          {live.reason ?? "The live ladder is unavailable right now."}
+          {live.price_age_minutes != null && <> The last print is {Math.round(live.price_age_minutes)} minutes old.</>}
+        </p>
       </section>
     );
   }
@@ -238,7 +271,11 @@ function LiveHero() {
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">WTI live</div>
           <div className="mt-1 text-4xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
-          <div className="mt-1 text-xs text-slate-500">the print our probabilities are priced off, right now</div>
+          <div className="mt-1 text-xs text-slate-500">
+            {live.price_age_minutes != null && live.price_age_minutes >= 2
+              ? <>print {Math.round(live.price_age_minutes)} min old · the CL=F feed runs delayed</>
+              : "the print our probabilities are priced off, right now"}
+          </div>
         </div>
         {live.itm && (
           <div>
@@ -267,7 +304,34 @@ function LiveHero() {
           </div>
         );
       })()}
-      <DirectionChart rows={rows} livePrice={live.live_price} ourLevel={live.our_level} marketLevel={live.market_level} />
+      {(() => {
+        // Zoom to the action: strikes where our probability runs 0.5%-99.5%,
+        // plus one strike of run-off at each end so the curves land. Across
+        // all 76 strikes the curves pin to the corners and read as no graph.
+        const sorted = [...rows].sort((a, b) => a.strike - b.strike);
+        const inBand = sorted.filter((r) => r.ours >= 0.005 && r.ours <= 0.995);
+        let chartRows = inBand;
+        if (inBand.length >= 2) {
+          const before = sorted[sorted.indexOf(inBand[0]) - 1];
+          const after = sorted[sorted.indexOf(inBand[inBand.length - 1]) + 1];
+          chartRows = [before, ...inBand, after].filter(Boolean) as LiveRow[];
+        }
+        if (chartRows.length < 4) chartRows = sorted;
+        return <DirectionChart rows={chartRows} livePrice={live.live_price} ourLevel={live.our_level} marketLevel={live.market_level} />;
+      })()}
+
+      <button type="button" aria-expanded={howOpen} onClick={() => setHowOpen((v) => !v)}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
+        How to read this graph
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${howOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {howOpen && (
+        <div className="mt-2 max-w-3xl space-y-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5 text-[13px] leading-relaxed text-slate-300">
+          <div>Each curve reads left to right as price rises: at any price on the bottom axis, the curve's height is the chance the hour <span className="text-white">settles above that price</span>. High on the left (cheap prices are almost surely cleared), low on the right.</div>
+          <div><span className="font-semibold text-amber-300">Amber is us</span>, <span className="font-semibold text-slate-300">dashed grey is Kalshi</span> (dots mark the strikes Kalshi actually quotes — early in the hour only the strikes near the money carry quotes). Where a curve crosses the dotted 50% line is that side's coin-flip level, marked at the top.</div>
+          <div>The <span className="font-semibold text-white">white line is the live WTI print</span>. The shaded band between the two coin-flip levels is the disagreement: our level to the right of Kalshi's means we lean higher, and the banner above puts a number on it.</div>
+        </div>
+      )}
 
       <button type="button" aria-expanded={strikesOpen} onClick={() => setStrikesOpen((v) => !v)}
               className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">

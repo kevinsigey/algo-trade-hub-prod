@@ -144,3 +144,45 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText("ITM line")).toBeInTheDocument();
   });
 });
+
+
+describe("/oil live hero", () => {
+  const livePayload = () => {
+    const rows = [];
+    for (let i = 0; i <= 30; i++) {
+      const strike = 94.19 + i * 0.1;
+      const ours = 1 / (1 + Math.exp((strike - 95.79) / 0.28));
+      const quoted = strike >= 95.39 && strike <= 96.19;
+      rows.push({ strike: Math.round(strike * 100) / 100, ours: Math.round(ours * 10000) / 10000,
+                  market: quoted ? Math.round((1 / (1 + Math.exp((strike - 95.69) / 0.3))) * 10000) / 10000 : null });
+    }
+    return {
+      state: "live", event: "KXWTIH-26NOV0312", minutes_to_close: 40,
+      as_of: "2026-11-03T16:00:00+00:00", live_price: 95.8, price_at: "2026-11-03T15:47:00+00:00",
+      price_age_minutes: 13, our_level: 95.79, market_level: 95.69, geo: null, itm: null, rows,
+    };
+  };
+
+  it("keeps clustered level labels in separate lanes and stamps the print's age", async () => {
+    serve([score()], {}, livePayload());
+    const { container } = render(<Oil />);
+    const us = await screen.findByText("Us $95.79");
+    const kalshi = screen.getByText("Kalshi $95.69");
+    const wti = screen.getByText("WTI $95.80");
+    // The three levels sit within 11 cents: on one line their labels would
+    // sit on top of each other, so the lanes must differ.
+    const ys = new Set([us.getAttribute("y"), kalshi.getAttribute("y"), wti.getAttribute("y")]);
+    expect(ys.size).toBe(3);
+    expect(screen.getByText(/print 13 min old/)).toBeTruthy();
+    expect(container.querySelectorAll("circle").length).toBeGreaterThan(0); // Kalshi's quoted points
+  });
+
+  it("explains the graph behind its toggle", async () => {
+    serve([score()], {}, livePayload());
+    render(<Oil />);
+    await screen.findByText("Us $95.79");
+    fireEvent.click(screen.getByRole("button", { name: /How to read this graph/ }));
+    expect(screen.getByText(/settles above that price/)).toBeTruthy();
+    expect(screen.getByText(/white line is the live WTI print/)).toBeTruthy();
+  });
+});
