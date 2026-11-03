@@ -48,8 +48,8 @@ def main() -> int:
     jobs = [
         ("sp500", lambda: _wiki_tickers("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol"),
          "Wikipedia List of S&P 500 companies"),
-        ("nasdaq100", lambda: _wiki_tickers("https://en.wikipedia.org/wiki/Nasdaq-100", "Ticker"),
-         "Wikipedia Nasdaq-100"),
+        ("nasdaq100", lambda: _wiki_tickers("https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies", "Ticker"),
+         "Wikipedia List of NASDAQ-100 companies"),
     ]
     for name, pull, source in jobs:
         try:
@@ -61,22 +61,21 @@ def main() -> int:
         except Exception as exc:
             failed.append({name: str(exc)[:200]})
     try:
-        # The full listed file is slow through the proxy; a long read timeout
-        # and one retry (the 2026-11-02 first run timed out at 60s).
-        raw = None
-        for attempt in range(2):
-            try:
-                raw = requests.get("https://www.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&offset=0",
-                                   headers={**UA, "Accept": "application/json"}, timeout=240).json()
-                break
-            except Exception:
-                if attempt == 1:
-                    raise
-        assert raw is not None
-        tickers = [r["symbol"].strip() for r in raw["data"]["table"]["rows"] if r.get("symbol")]
+        # The full listed universe comes from Nasdaq Trader's own symbol
+        # directory files (small, canonical): the screener API's full-list
+        # pull read-times-out through the proxy even at 240s (2026-11-02).
+        # Test issues are excluded; the files' footer row is not a symbol.
+        tickers = []
+        for fname, sym_col in (("nasdaqlisted.txt", "Symbol"), ("otherlisted.txt", "ACT Symbol")):
+            text = requests.get(f"https://www.nasdaqtrader.com/dynamic/symdir/{fname}",
+                                headers=UA, timeout=60).text
+            frame = pd.read_csv(io.StringIO(text), sep="|")
+            frame = frame[frame["Test Issue"] == "N"]
+            tickers += [str(x).strip().replace(".", "-") for x in frame[sym_col]
+                        if str(x).strip() and str(x) != "nan"]
         if len(tickers) < 1000:
             raise ValueError(f"suspiciously short list ({len(tickers)})")
-        _write("nasdaq_all", tickers, "Nasdaq screener API (all listed)")
+        _write("nasdaq_all", tickers, "Nasdaq Trader symbol directory (all listed)")
         done.append("nasdaq_all")
     except Exception as exc:
         failed.append({"nasdaq_all": str(exc)[:200]})
