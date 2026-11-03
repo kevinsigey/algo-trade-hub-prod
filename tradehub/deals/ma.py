@@ -108,7 +108,43 @@ def run_ma(inp: dict) -> dict:
         out["acquirer_captures_b"] = round(pv - out["target_captures_b"], 2)
         return out
 
-    return {"acquirer": acq, "target": tgt,
+    # The hub's fair-value estimate for the TARGET: a stated blend of the
+    # method midpoints (revenue 40 / EBITDA 30 / DCF 30, renormalized over
+    # the methods actually present) -- our number, next to the offer.
+    methods = {}
+    for key, field in (("revenue", tgt["fields"].get("revenue")), ("ebitda", tgt["fields"].get("ebitda"))):
+        if field:
+            methods[key] = ((field["ps_low"] + field["ps_high"]) / 2, field["ps_low"], field["ps_high"])
+    if tgt["dcf_ps"] is not None:
+        methods["dcf"] = (tgt["dcf_ps"], tgt["dcf_ps"], tgt["dcf_ps"])
+    weights = {"revenue": 0.40, "ebitda": 0.30, "dcf": 0.30}
+    wsum = sum(weights[k] for k in methods) or 1.0
+    fair = None
+    if methods:
+        ps = sum(methods[k][0] * weights[k] for k in methods) / wsum
+        lo = sum(methods[k][1] * weights[k] for k in methods) / wsum
+        hi = sum(methods[k][2] * weights[k] for k in methods) / wsum
+        if offer_ps < lo:
+            verdict = "the offer sits BELOW our fair-value range -- target holders are leaving money on the table"
+        elif offer_ps > hi:
+            verdict = "the offer pays ABOVE our fair-value range -- the acquirer is paying for the synergies upfront"
+        else:
+            verdict = "the offer sits inside our fair-value range"
+        fair = {"ps": round(ps, 2), "ps_low": round(lo, 2), "ps_high": round(hi, 2),
+                "methods": {k: round(v[0], 2) for k, v in methods.items()},
+                "weights": {k: round(weights[k] / wsum, 2) for k in methods},
+                "vs_offer_pct": round((offer_ps / ps - 1) * 100, 1) if ps else None,
+                "verdict": verdict}
+    if ratio_range is not None and ratio_range["high"] > ratio_range["low"]:
+        ratio_range["position"] = round(
+            min(1.0, max(0.0, (ratio - ratio_range["low"]) / (ratio_range["high"] - ratio_range["low"]))), 2)
+    combined_rev = (None if acq["revenue_b"] is None or tgt["revenue_b"] is None
+                    else round(float(acq["revenue_b"]) + float(tgt["revenue_b"]), 2))
+    combined_ebitda = (None if acq["ebitda_b"] is None or tgt["ebitda_b"] is None
+                       else round(float(acq["ebitda_b"]) + float(tgt["ebitda_b"]), 2))
+    combined_ev = acq_price * acq["shares_b"] + offer_ps * tgt["shares_b"]
+
+    return {"acquirer": acq, "target": tgt, "fair_value": fair,
             "offer": {"cash_ps": cash_ps, "exchange_ratio": ratio, "value_ps": round(offer_ps, 2),
                       "undisturbed_ps": undisturbed, "premium_pct": round(premium_pct, 1) if premium_pct is not None else None},
             "ratio_range": ratio_range,
@@ -117,6 +153,9 @@ def run_ma(inp: dict) -> dict:
                           "combined_ebitda_b": (None if acq["ebitda_b"] is None or tgt["ebitda_b"] is None
                                                 else round(float(acq["ebitda_b"]) + float(tgt["ebitda_b"]), 2)),
                           "new_shares_b": round(new_shares, 3), "combined_shares_b": round(combined_shares, 3),
+                          "ev_at_offer_b": round(combined_ev, 2),
+                          "ev_to_revenue": round(combined_ev / combined_rev, 2) if combined_rev else None,
+                          "ev_to_ebitda": round(combined_ev / combined_ebitda, 2) if combined_ebitda else None,
                           "ownership": {"acquirer_pct": round(acq["shares_b"] / combined_shares * 100, 1),
                                         "target_pct": round(new_shares / combined_shares * 100, 1)}},
             "cases": {name: case(name) for name in ("bear", "base", "bull")},
