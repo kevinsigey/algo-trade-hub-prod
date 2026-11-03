@@ -1083,6 +1083,8 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
     # from the list without opening each idea. Headline when the run stored no
     # claim object (event studies).
     result_line = None
+    result_value = None
+    result_p = None
     if latest:
         claim = (latest.get("result") or {}).get("claim") or {}
         # Stored claim shape: {built: {...}, unseen: {...}} for rule runs -- the
@@ -1090,8 +1092,18 @@ def _public_idea(supabase, idea: dict, runs: list[dict]) -> dict:
         # Flat {label} for simpler results; headline only when neither exists.
         result_line = ((claim.get("unseen") or {}).get("label") or claim.get("label")
                        or (latest.get("result") or {}).get("headline"))
+        # The numeric companions of the line (Kevin, 2026-11-02: performance is
+        # the card's headline and the list must sort by it): the unseen claim
+        # metric itself, and the permutation p the verdict was judged on.
+        unseen = claim.get("unseen") or {}
+        if isinstance(unseen.get("value"), (int, float)):
+            result_value = float(unseen["value"])
+        shuffle = (latest.get("result") or {}).get("shuffle") or {}
+        if isinstance(shuffle.get("p"), (int, float)):
+            result_p = float(shuffle["p"])
     return {"id": idea["id"], "title": idea["title"], "published_at": idea["published_at"],
             "claim": latest["spec"].get("claim") if latest else None, "result_line": result_line,
+            "result_value": result_value, "result_p": result_p,
             "kind": _idea_kind(latest["spec"] if latest else None),
             "latest_verdict": latest["verdict"] if latest else None, "variations": len(runs), "status": status,
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
