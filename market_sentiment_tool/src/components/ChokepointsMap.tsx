@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { frameFor, tileLabelUrl, tileUrl, type GeoBox } from "@/lib/geoMap";
+import { GEO_EXPLAIN, GEO_GROUPS, geoCoverage, geoReading, IN_OIL_MODEL } from "@/lib/geoExplain";
 import { getJson } from "@/lib/getJson";
 
 // The Chokepoints monitor on the Oil page (approved plan, Nov 2 2026):
@@ -46,7 +47,7 @@ const METRIC_LABEL: Record<string, string> = {
   anchored_tankers: "Anchored tankers", tankers_in_region: "Tankers in region",
   vessels_in_region: "Vessels tracked", mil_total: "Military aircraft",
   jamming_intraday: "Jamming share (live)", frp_region_other: "Fire power (other)",
-  quakes_24h: "Quakes 24h",
+  quakes_24h: "Quakes 24h", frp_terminals: "Fire power at terminals", jamming_daily: "Jamming share (daily)",
 };
 
 // The counters lead with these, in this order; anything else the API grows
@@ -137,6 +138,7 @@ export default function ChokepointsMap() {
     ...COUNTER_ORDER.map((k) => byMetric.get(k)).filter((m): m is GeoMetric => !!m && m.value != null),
     ...view.metrics.filter((m) => m.value != null && !COUNTER_ORDER.includes(m.metric) && !FOLDED.has(m.metric)),
   ];
+  const coverage = geoCoverage(vessels);
   const milTanker = byMetric.get("mil_tanker")?.value;
   const milIsr = byMetric.get("mil_isr")?.value;
 
@@ -231,43 +233,71 @@ export default function ChokepointsMap() {
         <span className="absolute bottom-1 right-2 text-[10px] text-slate-300">Imagery © Esri, Maxar, Earthstar Geographics</span>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {counters.map((m) => {
-          const isShare = m.metric.startsWith("jamming");
-          const display = m.value === null ? "—" : isShare ? `${Math.round(m.value * 100)}%` : `${m.value}`;
-          const barPct = m.baseline && m.baseline > 0 && m.value !== null
-            ? Math.min(100, (m.value / m.baseline) * 100) : 0;
-          const up = (m.delta_pct ?? 0) >= 0;
-          return (
-            <div key={`${m.feed}-${m.metric}`} className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2.5">
-              <div className="flex items-center gap-1.5 text-[12px] uppercase tracking-wide text-slate-400">
-                {m.feed === "ais" ? <ShipGlyph /> : m.feed === "adsb" ? <PlaneGlyph /> : null}
-                {METRIC_LABEL[m.metric] ?? m.metric}
-              </div>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-3xl font-bold leading-none text-white">{display}</span>
-                {m.delta_pct != null && (
-                  <span className={`text-[13px] font-semibold ${up ? "text-amber-300" : "text-sky-300"}`}>
-                    {up ? "▲" : "▼"} {`${m.delta_pct >= 0 ? "+" : ""}${m.delta_pct}% vs median ${m.baseline}`}
-                  </span>
-                )}
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-800" aria-hidden="true">
-                <div className={`h-full rounded ${up ? "bg-amber-400/80" : "bg-sky-400/80"}`}
-                     style={{ width: `${barPct}%` }} />
-              </div>
-              {m.metric === "mil_total" && (milTanker != null || milIsr != null) && (
-                <div className="mt-1.5 text-[12px] text-slate-400">
-                  Tankers {milTanker ?? "—"} · ISR {milIsr ?? "—"}
-                </div>
-              )}
-              {m.delta_pct == null && (
-                <div className="mt-1.5 text-[12px] text-slate-500">no baseline yet</div>
-              )}
+      {coverage.gap && (
+        <p className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
+          Ship coverage is thin: {coverage.seen} ships seen, {coverage.inGate} in the transit gate, {coverage.typed} with a
+          known type. Zero tankers here means the free feed can&apos;t see them, not that traffic stopped.
+        </p>
+      )}
+
+      {GEO_GROUPS.map((group) => {
+        const tiles = counters.filter((m) => (GEO_EXPLAIN[m.metric]?.group ?? "background") === group.key);
+        if (tiles.length === 0) return null;
+        return (
+          <div key={group.key}>
+            <h3 className="text-sm font-semibold text-slate-200">{group.title}</h3>
+            <p className="text-xs text-slate-400">{group.note}</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {tiles.map((m) => {
+                const isShare = m.metric.startsWith("jamming");
+                const blind = coverage.gap && group.key === "flow";
+                const display = m.value === null ? "—" : isShare ? `${Math.round(m.value * 100)}%` : `${m.value}`;
+                const barPct = m.baseline && m.baseline > 0 && m.value !== null
+                  ? Math.min(100, (m.value / m.baseline) * 100) : 0;
+                const up = (m.delta_pct ?? 0) >= 0;
+                return (
+                  <div key={`${m.feed}-${m.metric}`} className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-[13px] text-slate-300">
+                      {m.feed === "ais" ? <ShipGlyph /> : m.feed === "adsb" ? <PlaneGlyph /> : null}
+                      {METRIC_LABEL[m.metric] ?? m.metric}
+                    </div>
+                    {blind ? (
+                      <div className="mt-1 text-xl font-semibold text-amber-200">No coverage</div>
+                    ) : (
+                      <>
+                        <div className="mt-1 flex items-baseline gap-2">
+                          <span className="text-3xl font-bold leading-none text-white">{display}</span>
+                          {m.delta_pct != null && (
+                            <span className={`text-[13px] font-semibold ${up ? "text-amber-300" : "text-sky-300"}`}>
+                              {up ? "▲" : "▼"} {`${m.delta_pct >= 0 ? "+" : ""}${m.delta_pct}% vs median ${m.baseline}`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded bg-slate-800" aria-hidden="true">
+                          <div className={`h-full rounded ${up ? "bg-amber-400/80" : "bg-sky-400/80"}`}
+                               style={{ width: `${barPct}%` }} />
+                        </div>
+                      </>
+                    )}
+                    {m.metric === "mil_total" && (milTanker != null || milIsr != null) && (
+                      <div className="mt-1.5 text-[12px] text-slate-400">
+                        Tankers {milTanker ?? "—"} · ISR {milIsr ?? "—"}
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs leading-snug text-slate-300">
+                      {!blind && <span className="font-medium text-white">{geoReading(m.delta_pct)} </span>}
+                      {GEO_EXPLAIN[m.metric]?.effect}
+                    </p>
+                    {IN_OIL_MODEL.has(m.metric) && (
+                      <p className="mt-1 text-[11px] text-slate-400">In the oil model&apos;s test</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
     </section>
   );
 }
