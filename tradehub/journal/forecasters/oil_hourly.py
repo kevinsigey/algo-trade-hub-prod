@@ -10,10 +10,12 @@ settled hour's value as the level, with the same hourly sigma stretched over the
 since that settlement. The registry adds the w25 market-shrunk row
 (`oil_wti_hourly_cautious`) from day one, the daily oil row's precedent.
 
-There is no Brent hourly series and no 15-minute oil series on Kalshi (the 15-minute
-ladders are crypto-only), so this is the intraday oil build; Brent exists only as daily /
-weekly / monthly ladders. Settled values come through `settled_values_recent`: the series
-settles ~30 markets an event, and the full-history pull would grow without bound.
+There is no Brent hourly series, so this is the intraday oil build; Brent exists only as
+daily / weekly / monthly ladders. The 15-minute direction series (KXWTI15M, KXBRENT15M,
+KXNATGAS15M) do exist -- verified live 2026-11-04, correcting an earlier version of this
+note -- and carry their own shadow family (`forecasters/fifteen_min.py`). Settled values
+come through `settled_values_recent`: the series settles ~30 markets an event, and the
+full-history pull would grow without bound.
 """
 
 from __future__ import annotations

@@ -3,8 +3,10 @@
 Kalshi's hourly WTI markets settle on the close of the 1-minute WTI candlestick at the top
 of the hour (Pyth WTI; verified live 2026-11-01: event KXWTIH-26NOV0122 closes 03:00Z and
 its rules read "the close price of the 1-minute candlestick for WTI Oil ... at 10:00 PM
-EST"). There is no Brent hourly series and no 15-minute oil series on Kalshi -- those
-15-minute ladders are crypto-only -- so this hourly WTI model is the intraday oil build.
+EST"). There is no Brent HOURLY series. The 15-minute direction series do exist --
+KXWTI15M / KXBRENT15M / KXNATGAS15M (verified live 2026-11-04; an earlier version of
+this note wrongly said the 15-minute ladders are crypto-only) -- and are covered by
+their own model in `engines/fifteen_min.py`, not by this hourly strike ladder.
 
 The model is deliberately the simplest honest one: the settlement an hour out is a random
 walk from the live CL=F price (the tape the daily engine already validated against Kalshi
