@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-import { LifecyclePanel } from "@/pages/WorkshopIdea";
+import { AutopsyNote, LifecyclePanel } from "@/pages/WorkshopIdea";
 import type { BookLiveState, IdeaDetail, Run } from "@/lib/workshop";
 
 // The panel's signed-in fetch loads the Supabase client: stub it (no session).
@@ -111,5 +111,25 @@ describe("LifecyclePanel — the $1M book block", () => {
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes("/api/workshop/ideas/7/kill?book=big") && c.init?.method === "POST")).toBe(true),
     );
+  });
+});
+
+describe("AutopsyNote", () => {
+  it("names the pattern and what it points at, with no advice once the cap is used", () => {
+    const pattern = { implicates: "gate" as const, text: "9 of 10 trades opened in downtrend lost." };
+    const { rerender } = render(<AutopsyNote autopsy={{ status: "ok", pattern, suggestion: "Try a rule." }} />);
+    expect(screen.getByText("Why it lost")).toBeInTheDocument();
+    expect(screen.getByText(/Points at: market condition/)).toBeInTheDocument();
+    expect(screen.getByText(/Try a rule\./)).toBeInTheDocument();
+    rerender(<AutopsyNote autopsy={{ status: "ok", pattern, suggestion: null }} revising />);
+    expect(screen.getByText("What the last run's losses point at")).toBeInTheDocument();
+    expect(screen.getByText(/used its 5/)).toBeInTheDocument();
+  });
+
+  it("says when there are too few losers and stays quiet when unavailable", () => {
+    const { rerender, container } = render(<AutopsyNote autopsy={{ status: "too_few", trades: 4, losers: 1 }} />);
+    expect(screen.getByText(/Too few losing trades/)).toBeInTheDocument();
+    rerender(<AutopsyNote autopsy={{ status: "unavailable" }} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

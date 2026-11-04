@@ -174,6 +174,15 @@ export interface EventRow {
   date: string; ticker: string; surprise: number | null; ar0: number; car_1_3: number; car_1_5: number; car_1_10: number; pre_5: number;
 }
 
+export interface RunAutopsy {
+  status: "ok" | "too_few" | "unavailable";
+  trades?: number;
+  losers?: number;
+  pattern?: { implicates: "gate" | "entry" | "exit" | "sizing"; text: string } | null;
+  suggestion?: string | null;
+  suggestions_left?: number;
+}
+
 export interface RunResult {
   verdict: Verdict;
   headline: string;
@@ -185,6 +194,8 @@ export interface RunResult {
   shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string; holds?: boolean } | null;
   t_test: { mean_daily_diff: number; t: number; p: number; holds?: boolean } | null;
   periods: { held: number; of: number; holds?: boolean | null } | null;
+  /** Why it lost: the recurring pattern in its losing trades. Old runs have none. */
+  autopsy?: RunAutopsy | null;
   walk_forward?: {
     folds: { start: string; end: string; days: number; holds: boolean | null; value: number | null; label: string; idea_cagr: number | null; bench_cagr: number | null }[];
     held: number; of: number;

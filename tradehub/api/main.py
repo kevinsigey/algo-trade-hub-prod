@@ -1272,6 +1272,18 @@ def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(a
                                      result)
 
 
+def _run_autopsy(spec, prices, fred, div_yields, variation: int) -> dict:
+    """The failure-pattern read for a run. A broken diagnosis never costs the run its verdict."""
+    from tradehub.workshop import autopsy as autopsy_mod
+
+    try:
+        return autopsy_mod.autopsy(workshop_daily_frame(spec, prices, fred, div_yields), hold=list(spec.hold),
+                                   closes=prices, has_exits=spec.exits.any(), variation=variation)
+    except Exception:  # noqa: BLE001
+        log.exception("api: run autopsy failed")
+        return {"status": "unavailable"}
+
+
 @app.post("/api/workshop/ideas/{idea_id}/runs", tags=["Workshop"])
 def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.require_admin),
                  supabase=Depends(get_supabase)):
@@ -1286,10 +1298,11 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     variation = len(found["runs"]) + 1
+    div_yields = workshop_div_yields(spec, prices)
     result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation,
-                      div_yields=workshop_div_yields(spec, prices))
+                      div_yields=div_yields)
     return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
-                                     result)
+                                     {**result, "autopsy": _run_autopsy(spec, prices, fred, div_yields, variation)})
 
 
 # ── Deals and IPOs (Part B): the two builders. A run computes from the inputs
