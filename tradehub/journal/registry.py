@@ -31,6 +31,7 @@ from tradehub.journal.forecasters.natgas_daily import build_natgas_daily
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
+from tradehub.journal.forecasters.oil_geo2 import build_oil_geo2
 from tradehub.journal.forecasters.fifteen_min import build_fifteen_min
 from tradehub.journal.forecasters.oil_pyth import build_oil_hl_shadow, build_oil_pyth_shadow
 from tradehub.journal.forecasters.ppi import build_ppi
@@ -112,6 +113,10 @@ FORECASTERS: list[Forecaster] = [
     # sigma widened by the Hormuz stress tier -- shadow only, preregistered paired-Brier
     # gate at 200 settled (design: shadow-features-design-2026-11-02.md). v1 is untouched.
     *build_oil_geo_shadow(_LIVE),
+    # Geo2 shadows (2026-11-04, Kevin's queue): the sensitive continuous Hormuz
+    # stress (geo/stress.py) widening sigma on the hourly WTI, daily WTI and
+    # daily natgas models -- each its own shadow row, bases untouched.
+    *build_oil_geo2(_LIVE),
     # Pyth shadow (2026-11-04, on Kevin's 14-day trial): v1 with only the anchor swapped for the feed
     # Kalshi settles on, to test whether the delayed CL=F price is why v1 trails the market.
     *build_oil_pyth_shadow(_LIVE),
