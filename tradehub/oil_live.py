@@ -68,7 +68,9 @@ def live_price(now: datetime, pyth_fn=None, delayed_fn=None, free_fn=None) -> tu
         price = (pyth_fn or pyth_oil_price)()
         age = (now - price.published_at).total_seconds()
         if age <= PYTH_MAX_AGE_SECONDS:
-            return price, "pyth", None
+            if price.name == "PYTHOIL":
+                return price, "pyth", None
+            return price, "pyth-wti-future", "PYTHOIL isn't available; using the WTI future"
         why = f"Pyth's price was {round(age)} seconds old"
     except PythUnavailable as exc:
         why = str(exc)

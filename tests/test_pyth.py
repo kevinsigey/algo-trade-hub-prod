@@ -257,3 +257,26 @@ def test_a_reason_echoing_the_key_is_scrubbed(monkeypatch):
     with pytest.raises(PythUnavailable) as err:
         pyth_oil_price(session=Echo(hermes_status=401, body={}))
     assert "supersecret" not in str(err.value)
+
+
+def test_the_future_is_never_labelled_as_the_settlement_feed():
+    from tradehub.backtest.pit import Observation
+    from tradehub.oil_live import live_price
+
+    future = Observation("WTIZ6", 95.2, NOW)
+    settlement = Observation("PYTHOIL", 95.2, NOW)
+    assert live_price(NOW, lambda: settlement, lambda: None, lambda now: None)[1] == "pyth"
+    price, source, why = live_price(NOW, lambda: future, lambda: None, lambda now: None)
+    assert price is future and source == "pyth-wti-future" and "PYTHOIL" in why
+
+
+def test_the_shadow_row_records_which_feed_it_used():
+    from tradehub.backtest.pit import Observation
+    from tradehub.journal.forecasters.oil_pyth import OilWtiHourlyPythShadow
+
+    fc = OilWtiHourlyPythShadow.__new__(OilWtiHourlyPythShadow)
+    fc._inputs = type("I", (), {"price": lambda self, now: Observation("WTIZ6", 95.2, now)})()
+    seen = {}
+    fc._forecast = lambda entry, now, extra=None: seen.update(extra)
+    fc.forecast(None, NOW)
+    assert seen == {"feed": "WTIZ6"}

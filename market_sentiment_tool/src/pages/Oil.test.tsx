@@ -160,6 +160,13 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText(/Closest: Above \$101\.00, YES at 56c, model 58%/)).toBeInTheDocument();
   });
 
+  it("never calls the WTI future the feed Kalshi settles on", async () => {
+    serve([score()], {}, { ...base, best: null, closest: null, price_source: "pyth-wti-future", price_age_minutes: 0 });
+    render(<Oil />);
+    expect(await screen.findByText(/Pyth's WTI future, live but not what Kalshi settles on/)).toBeInTheDocument();
+    expect(screen.queryByText(/the feed Kalshi settles on/)).toBeNull();
+  });
+
   it("warns that a stale price can be the whole gap", async () => {
     serve([score()], {}, { ...base, best: null, closest: null, price_age_minutes: 11 });
     render(<Oil />);

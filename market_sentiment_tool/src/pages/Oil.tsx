@@ -74,7 +74,7 @@ interface LiveLadder {
   live_price?: number;
   price_at?: string;
   price_age_minutes?: number;
-  price_source?: "pyth" | "hyperliquid" | "cl=f";
+  price_source?: "pyth" | "pyth-wti-future" | "hyperliquid" | "cl=f";
   our_level?: number | null;
   market_level?: number | null;
   geo?: { stress_score: number; k: number; partial: boolean } | null;
@@ -281,6 +281,8 @@ function LiveHero() {
           <div className="mt-1 text-xs text-slate-500">
             {live.price_source === "pyth"
               ? "Pyth live, the feed Kalshi settles on"
+              : live.price_source === "pyth-wti-future"
+              ? "Pyth's WTI future, live but not what Kalshi settles on"
               : live.price_source === "hyperliquid"
               ? "Hyperliquid oil perp, live but not what Kalshi settles on"
               : live.price_age_minutes != null && live.price_age_minutes >= 2

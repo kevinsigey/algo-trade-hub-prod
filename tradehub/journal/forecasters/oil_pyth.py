@@ -43,6 +43,10 @@ def _hl_price_or_none():
 class OilWtiHourlyPythShadow(OilWtiHourly):
     name, version = "oil_wti_hourly", VERSION
 
+    def forecast(self, entry, now):
+        price = self._inputs.price(now)  # which Pyth feed answered goes on the row, since they aren't equal
+        return self._forecast(entry, now, extra={"feed": price.name if price else None})
+
 
 def build_oil_pyth_shadow(live, fetch: Callable[[str], Any] | None = None) -> list:
     from tradehub.core.kalshi_feed import fetch_market
