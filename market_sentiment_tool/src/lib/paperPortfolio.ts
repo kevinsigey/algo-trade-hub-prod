@@ -45,6 +45,27 @@ export interface AccountView {
   realized_pl: number | null;
 }
 
+export interface BreakerState {
+  enabled: boolean;
+  tripped: boolean;
+  reasons: string[];
+  daily_limit_pct: number | null;
+  drawdown_limit_pct: number | null;
+  daily_loss_pct: number | null;
+  drawdown_pct: number | null;
+}
+
+/** The rail's line for a book's circuit breaker. */
+export function breakerLabel(b: BreakerState): string {
+  if (b.tripped) return "Tripped";
+  if (!b.enabled) return "Off";
+  const parts = [
+    b.daily_limit_pct != null ? `${(b.daily_loss_pct ?? 0).toFixed(1)}% of ${b.daily_limit_pct}% daily` : null,
+    b.drawdown_limit_pct != null ? `${(b.drawdown_pct ?? 0).toFixed(1)}% of ${b.drawdown_limit_pct}% drawdown` : null,
+  ].filter(Boolean);
+  return `On, ${parts.join(", ")}`;
+}
+
 export interface PortfolioPayload {
   state: PortfolioState;
   as_of: string | null;
@@ -52,6 +73,7 @@ export interface PortfolioPayload {
   book?: string;
   scoreboard: Scoreboard;
   account?: AccountView;
+  breaker?: BreakerState;
   curve: { t: string; portfolio_pct: number; spy_pct: number }[];
   composition: { idea: string; pct_of_book: number; unrealized_pl: number }[];
   positions: PositionRow[];

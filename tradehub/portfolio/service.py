@@ -14,7 +14,7 @@ import os
 import re
 from datetime import UTC, date, datetime
 
-from tradehub.portfolio import book
+from tradehub.portfolio import book, breakers
 from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_price, paper_get
 from tradehub.workshop import store as workshop_store
 
@@ -183,6 +183,7 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         "composition": book.composition(rows),
         "positions": rows,
         "account": book.account_view(account, trades),
+        "breaker": breakers.check(supa, name, read_account=lambda: account, read_snapshots=lambda *_: snaps),
     }
 
 

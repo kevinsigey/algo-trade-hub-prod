@@ -18,7 +18,7 @@ import requests
 
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
-from tradehub.portfolio import book, books, paper_orders, service
+from tradehub.portfolio import book, books, breakers, paper_orders, service
 from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio import options as opt_mod
 from tradehub.portfolio.autotrade import close_options, close_out, plan, plan_options
@@ -140,6 +140,10 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
     def _mid(occ: str):
         return opt_mod.fetch_mid(occ, book=book_name)
 
+    breaker = breakers.check(supa, book_name)
+    if breaker["tripped"]:
+        breakers.notify(supa, book_name, breaker)
+
     summary: dict = {}
     failed: dict[int, str] = {}
     if book_name == "main":  # the main book's live state lives on the idea rows (the record)
@@ -185,6 +189,10 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 if waiting_out:  # a real stop sold it: no buying back until the rule gives a fresh signal
                     rows = [{**r, "status": "skip", "reason": waiting_out} if r["kind"] == "open" else r
                             for r in rows]
+            if breaker["tripped"]:  # closing rows still pass, to get out of positions
+                rows = [{**r, "status": "skip", "waiting": True,
+                         "reason": f"circuit breaker: {'; '.join(breaker['reasons'])}"}
+                        if r["kind"] == "open" and r["status"] in ("send", "manual") else r for r in rows]
             if not closing and exit_reason:
                 rows = [{**r, "reason": r["reason"] or exit_reason} if r["kind"] == "close" else r for r in rows]
             protecting = [o for o in pending
