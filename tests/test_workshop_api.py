@@ -572,3 +572,82 @@ def test_a_run_stores_its_autopsy_and_survives_a_broken_one(api, monkeypatch):
     monkeypatch.setattr(main, "workshop_daily_frame", boom)
     r = c.post(f"/api/workshop/ideas/{idea['id']}/runs", json={"spec": SPEC}).json()
     assert r["result"]["autopsy"]["status"] == "unavailable" and r["result"]["verdict"] == "FAIL"
+
+
+def test_a_paused_idea_is_not_labelled_live_on_that_book(passed):
+    c, db, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/publish")
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 20})
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 8, "book": "big"})
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"})
+    main._bust_ideas_cache()
+    assert c.get("/api/ideas").json()[0]["live_books"] == ["big"]  # main went live but its orders are off
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True})
+    main._bust_ideas_cache()
+    assert c.get("/api/ideas").json()[0]["live_books"] == ["main", "big"]
+
+
+def test_an_aged_ideas_list_answers_at_once_and_rebuilds_behind(passed, monkeypatch):
+    c, _, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/publish")
+    main._bust_ideas_cache()
+    assert len(c.get("/api/ideas").json()) == 1
+    stale = main._IDEAS_CACHE["payload"]
+    main._IDEAS_CACHE["at"] = 0.0
+    builds = []
+
+    class Inline:
+        def __init__(self, target, args, daemon):
+            self.go = lambda: target(*args)
+
+        def start(self):
+            builds.append(self.go)
+
+    monkeypatch.setattr(main.threading, "Thread", Inline)
+    assert c.get("/api/ideas").json() == stale  # the stale answer, not a wait
+    assert len(builds) == 1 and main._IDEAS_REBUILD.locked()
+    assert c.get("/api/ideas").json() == stale and len(builds) == 1  # one rebuild at a time
+    builds[0]()
+    assert not main._IDEAS_REBUILD.locked() and main._IDEAS_CACHE["at"] > 0
+    main._bust_ideas_cache()
+
+
+def test_the_rebuild_keeps_the_last_list_when_it_fails_and_frees_its_lock(monkeypatch):
+    def boom(*a):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(main, "_build_ideas", boom)
+    main._IDEAS_CACHE["payload"] = ["kept"]
+    assert main._IDEAS_REBUILD.acquire(blocking=False)
+    main._rebuild_ideas_in_background(None, ())
+    assert main._IDEAS_CACHE["payload"] == ["kept"] and not main._IDEAS_REBUILD.locked()
+    main._bust_ideas_cache()
+
+
+def test_switching_orders_changes_the_ideas_fingerprint(passed):
+    c, db, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 8, "book": "big"})
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 8})
+    before = main._ideas_fingerprint(db)
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"})
+    after_big = main._ideas_fingerprint(db)
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True})
+    assert len({before, after_big, main._ideas_fingerprint(db)}) == 3
+
+
+def test_a_rebuild_thread_that_cannot_start_frees_its_lock_and_still_answers(passed, monkeypatch):
+    c, _, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/publish")
+    main._bust_ideas_cache()
+    stale = c.get("/api/ideas").json()
+    main._IDEAS_CACHE["at"] = 0.0
+
+    class NoThread:
+        def __init__(self, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(main.threading, "Thread", NoThread)
+    assert c.get("/api/ideas").json() == stale and not main._IDEAS_REBUILD.locked()
+    main._bust_ideas_cache()

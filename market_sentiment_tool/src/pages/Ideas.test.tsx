@@ -184,7 +184,8 @@ describe("Tracked ideas (Kevin, 2026-11-02)", () => {
 });
 
 describe("betLead", () => {
-  const idea = (id: number, status: string, value: number) => ({ id, status, result_value: value }) as unknown as PublicIdea;
+  const idea = (id: number, status: string, value: number) =>
+    ({ id, status, result_value: value, live_books: status === "live" ? ["big"] : [] }) as unknown as PublicIdea;
 
   it("picks the idea trading now, else the best unseen result", () => {
     expect(betLead([idea(1, "backtest", 9), idea(2, "live", 1)]).id).toBe(2);
@@ -195,7 +196,7 @@ describe("betLead", () => {
 describe("Ideas standing", () => {
   it("keeps a failing idea in view while it trades, and clears a failing tracked one", () => {
     const failing = { verdict_now: "FAIL", latest_verdict: "PASS" };
-    expect(standing({ ...failing, status: "live" } as unknown as PublicIdea)).toBe(true);
-    expect(standing({ ...failing, status: "tracking" } as unknown as PublicIdea)).toBe(false);
+    expect(standing({ ...failing, status: "tracking", live_books: ["big"] } as unknown as PublicIdea)).toBe(true);
+    expect(standing({ ...failing, status: "tracking", live_books: [] } as unknown as PublicIdea)).toBe(false);
   });
 });

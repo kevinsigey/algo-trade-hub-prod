@@ -28,7 +28,7 @@ const SORT_LABEL: Record<SortKey, string> = {
  * tracking, or still passing. Everything else was trimmed to the Removed
  * disclosure below -- kept on the record, out of the way. */
 export function standing(idea: PublicIdea): boolean {
-  if (idea.status === "live") return true; // still trading: it stays in view whatever its verdict
+  if ((idea.live_books ?? []).length > 0) return true; // trading on a book: in view whatever its verdict
   return (idea.verdict_now ?? idea.latest_verdict) === "PASS";
 }
 
@@ -135,7 +135,7 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
  * on the record (Kevin, 2026-11-03 trim). */
 /** The idea that speaks for a bet: one trading now, else the best result on unseen years. */
 export function betLead(group: PublicIdea[]): PublicIdea {
-  return [...group].sort((a, b) => Number(b.status === "live") - Number(a.status === "live")
+  return [...group].sort((a, b) => Number((b.live_books ?? []).length > 0) - Number((a.live_books ?? []).length > 0)
     || (b.result_value ?? -Infinity) - (a.result_value ?? -Infinity))[0];
 }
 
