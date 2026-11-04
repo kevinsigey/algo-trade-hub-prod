@@ -30,6 +30,10 @@ def session(status=200, price="9512345", us=1793760000000000):
             return Response(status, {"parsed": {"timestampUs": str(us),
                                                 "priceFeeds": [{"priceFeedId": PYTHOIL_ID, "price": price,
                                                                 "feedUpdateTimestamp": us}]}})
+
+        @staticmethod
+        def get(url, params, headers, timeout):
+            return Response(status if status != 200 else 401, {})
     S.calls = calls
     return S
 
@@ -64,6 +68,10 @@ def test_a_missing_or_future_feed_time_is_refused(monkeypatch, stamp):
         def post(url, json, headers, timeout):
             return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
                 {"priceFeedId": PYTHOIL_ID, "price": "9512345", "feedUpdateTimestamp": stamp}]}})
+
+        @staticmethod
+        def get(url, params, headers, timeout):
+            return Response(401, {})
     with pytest.raises(PythUnavailable):
         pyth_oil_price(session=Bad, now=datetime.fromtimestamp(1793760000, UTC))
 
@@ -178,3 +186,55 @@ def test_the_board_prefers_pyth_then_hyperliquid_then_the_delayed_price():
     assert live_price(NOW, lambda: fresh, lambda: delayed, lambda now: hl)[1] == "pyth"
     assert live_price(NOW, no_pyth, lambda: delayed, lambda now: hl)[:2] == (hl, "hyperliquid")
     assert live_price(NOW, no_pyth, lambda: delayed, no_hl)[:2] == (delayed, "cl=f")
+
+
+# ── when Pro refuses: Pyth's own reason, and the Hermes route ──
+
+class _Routes:
+    """Pro refuses; Hermes answers as given."""
+
+    def __init__(self, hermes_status=200, body=None):
+        self.hermes_status, self.body = hermes_status, body
+        self.urls = []
+
+    def post(self, url, json, headers, timeout):
+        self.urls.append(url)
+        r = Response(403, {})
+        r.text = "not_entitled: feed 3063"
+        return r
+
+    def get(self, url, params, headers, timeout):
+        self.urls.append(url)
+        r = Response(self.hermes_status, self.body)
+        r.text = "unauthorized"
+        return r
+
+
+HERMES = {"parsed": [{"price": {"price": "9512345", "expo": -5, "publish_time": 1793760000}}]}
+
+
+def test_a_pro_refusal_falls_back_to_hermes_on_the_same_key(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+    ob = pyth_oil_price(session=_Routes(body=HERMES), now=datetime.fromtimestamp(1793760000, UTC))
+    assert ob.value == pytest.approx(95.12345) and ob.published_at == datetime.fromtimestamp(1793760000, UTC)
+
+
+def test_when_both_refuse_the_status_carries_pyths_reason_and_not_the_key(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "supersecret")
+    with pytest.raises(PythUnavailable) as err:
+        pyth_oil_price(session=_Routes(hermes_status=401, body={}))
+    text = str(err.value)
+    assert "403" in text and "not_entitled" in text and "401" in text and "supersecret" not in text
+
+
+def test_a_reason_echoing_the_key_is_scrubbed(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "supersecret")
+
+    class Echo(_Routes):
+        def post(self, url, json, headers, timeout):
+            r = Response(403, {})
+            r.text = "bad token supersecret"
+            return r
+    with pytest.raises(PythUnavailable) as err:
+        pyth_oil_price(session=Echo(hermes_status=401, body={}))
+    assert "supersecret" not in str(err.value)
