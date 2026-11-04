@@ -112,7 +112,7 @@ def test_the_live_ladder_says_which_price_it_used(monkeypatch):
     from tradehub.oil_live import live_price
 
     now = datetime(2026, 11, 4, 3, 0, tzinfo=UTC)
-    fresh = Observation("pyth", 95.1, now - timedelta(seconds=1))
+    fresh = Observation("PYTHOIL", 95.1, now - timedelta(seconds=1))
     delayed = Observation("cl", 95.0, now - timedelta(minutes=11))
     def no_hl(_now):
         raise HyperliquidUnavailable("down")
@@ -121,7 +121,7 @@ def test_the_live_ladder_says_which_price_it_used(monkeypatch):
     def refused():
         raise PythUnavailable("Pyth answered 403")
     assert live_price(now, refused, lambda: delayed, no_hl) == (delayed, "cl=f", "Pyth answered 403")
-    stale = Observation("pyth", 95.1, now - timedelta(minutes=5))
+    stale = Observation("PYTHOIL", 95.1, now - timedelta(minutes=5))
     price, source, why = live_price(now, lambda: stale, lambda: delayed, no_hl)
     assert source == "cl=f" and "old" in why
 
@@ -174,7 +174,7 @@ def test_the_board_prefers_pyth_then_hyperliquid_then_the_delayed_price():
     from tradehub.backtest.pit import Observation
     from tradehub.oil_live import live_price
 
-    fresh = Observation("pyth", 95.1, NOW)
+    fresh = Observation("PYTHOIL", 95.1, NOW)
     hl = Observation("hl", 95.2, NOW)
     delayed = Observation("cl", 95.0, NOW - timedelta(minutes=11))
 
