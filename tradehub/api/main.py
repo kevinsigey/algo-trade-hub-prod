@@ -72,6 +72,7 @@ log = logging.getLogger(__name__)
 # Found the hard way on 2026-09-27: /shadow, /api/positions and /api/pnl_summary were all red in
 # production with an error no reader could act on.
 TABLE_MIGRATIONS = {
+    "gap_snapshots": "20261103000009_gap_tracker.sql",
     "signal_events": "20260415090000_signal_events_unification.sql",
     "crypto_signal_events": "20260415090000_signal_events_unification.sql",
     "predictions": "20260416000003_predictions_ledger.sql",
@@ -1437,6 +1438,26 @@ def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin), sup
                      *questions]
         spec = None
     return {"spec": spec, "questions": questions, "model": model, "preflight": ledger}
+
+
+_GAP_DESK_CACHE: dict = {"at": 0.0, "payload": None}
+
+
+@app.get("/api/gaps/desk", tags=["Gap tracker"])
+def get_gap_desk(supabase=Depends(get_supabase)):
+    """The Kalshi gap tracker's paper ledger and evidence. Research only: nothing here places an order."""
+    from tradehub.gaps.report import desk
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    if _GAP_DESK_CACHE["payload"] is not None and time.time() - _GAP_DESK_CACHE["at"] < 120:
+        return _GAP_DESK_CACHE["payload"]
+    try:
+        payload = desk(supabase, datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault("gap_snapshots", exc) from exc
+    _GAP_DESK_CACHE.update(at=time.time(), payload=payload)
+    return payload
 
 
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])

@@ -58,9 +58,11 @@ def settlement_observations(raws: list[dict[str, Any]]) -> list[Observation]:
 
 
 class KalshiLive(KalshiHistoryClient):
+    def open_raws(self, series_ticker: str) -> list[dict[str, Any]]:
+        return self._paginate("/markets", "markets", {"series_ticker": series_ticker, "status": "open", "limit": PAGE_LIMIT})
+
     def open_markets(self, series_ticker: str) -> list[LiveMarket]:
-        raws = self._paginate("/markets", "markets", {"series_ticker": series_ticker, "status": "open", "limit": PAGE_LIMIT})
-        return [LiveMarket(parse_market(r), quote_from_market_raw(r)) for r in raws]
+        return [LiveMarket(parse_market(r), quote_from_market_raw(r)) for r in self.open_raws(series_ticker)]
 
     def settled_values(self, series_ticker: str) -> list[Observation]:
         return settlement_observations(self.settled_markets(series_ticker))
