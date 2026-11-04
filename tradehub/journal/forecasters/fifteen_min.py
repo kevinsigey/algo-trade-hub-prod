@@ -8,10 +8,12 @@ scaled by the trailing 1-minute realized vol over the minutes remaining. The
 anchor tape is Hyperliquid's (free, live); Pyth itself is gated on Kevin's
 trial key, so the perp-vs-index basis is part of what the record grades.
 
-Cadence honesty: the journal runs hourly and its freezes land at minutes
-15-22, so the sampled window is the one opening at :15 each hour, frozen with
-roughly 1.5-7 minutes elapsed. The other three windows each hour are never
-frozen -- a gap in coverage, stated here, not a selection made on outcomes.
+Cadence (v2, Kevin's call 2026-11-04): the model predicts EVERY window.
+A dedicated runner (`scripts/fifteen_min_run.py`, deploy crontab every
+5 minutes) freezes each window once, about 5 minutes in; the journal's
+hourly run dedupes against the same rows. v1 (2026-11-04, a few hours)
+only sampled the window opening at :15 each hour, the journal run's
+phase -- its rows stay in the record as the pilot, labeled v1.
 
 Strictness (the crypto rule): a missing window-open candle, a stale tape, or
 a too-thin sigma tape skips the freeze. The method is never silently swapped,
@@ -44,9 +46,9 @@ MAX_TAPE_STALE = timedelta(minutes=3)
 TAPE_SPAN = timedelta(minutes=150)
 
 SERIES = (
-    {"series": "KXWTI15M", "family": "oil_wti_15m", "name": "oil_wti_15m", "version": "wti-15m-v1"},
-    {"series": "KXBRENT15M", "family": "oil_brent_15m", "name": "oil_brent_15m", "version": "brent-15m-v1"},
-    {"series": "KXNATGAS15M", "family": "natgas_15m", "name": "natgas_15m", "version": "natgas-15m-v1"},
+    {"series": "KXWTI15M", "family": "oil_wti_15m", "name": "oil_wti_15m", "version": "wti-15m-v2"},
+    {"series": "KXBRENT15M", "family": "oil_brent_15m", "name": "oil_brent_15m", "version": "brent-15m-v2"},
+    {"series": "KXNATGAS15M", "family": "natgas_15m", "name": "natgas_15m", "version": "natgas-15m-v2"},
 )
 
 
@@ -127,7 +129,7 @@ class FifteenMinModel:
                                  "remaining_min": round(remaining, 1),
                                  "sigma_1m": sigma, "feed": self.coin,
                                  "basis": "drift-scaled random walk on Hyperliquid 1m "
-                                          "candles (v1, preregistered 2026-11-04)"})
+                                          "candles (v2: every window, preregistered 2026-11-04)"})
 
     def settle(self, target: str, now: datetime) -> Settlement | None:
         return settle_on_kalshi(target, self._fetch_market)

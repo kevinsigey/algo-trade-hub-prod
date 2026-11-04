@@ -6,8 +6,10 @@ a single contract: YES iff the close of the settlement source's 1-minute candle
 at the window's end is at least the close at its start (Pyth PYTHOIL / BRENT /
 NATGAS respectively). A direct direction bet, not a strike ladder.
 
-The model (preregistered 2026-11-04, `*-15m-v1`): by freeze time part of the
-window has already traded. What remains is a random walk, so
+The model (preregistered 2026-11-04, `*-15m-v1`; sampling superseded the
+same day by `*-15m-v2`, Kevin's call -- the math is unchanged): by freeze
+time part of the window has already traded. What remains is a random walk,
+so
 
     P(up) = Phi( ln(price_now / price_at_open) / (sigma_1m * sqrt(minutes_left)) )
 
@@ -15,10 +17,10 @@ with sigma_1m the trailing realized volatility of 1-minute log returns on the
 anchor tape. The anchor is Hyperliquid's perp oracle tape (xyz:CL / xyz:BRENTOIL
 / xyz:NATGAS) -- free and live, where the settlement source (Pyth) is gated on
 Kevin's trial key; the basis between the perp and Pyth's index is part of what
-the shadow's record grades, stated here rather than hidden. The journal's
-hourly run phase (freezes land at minutes 15-22) means the sampled window is
-the one opening at :15 each hour; that phase is part of the preregistration,
-not a choice made after seeing results.
+the shadow's record grades, stated here rather than hidden. v1 sampled only
+the window opening at :15 each hour (the journal run's phase); v2 predicts
+every window from a dedicated 5-minute runner, frozen about 5 minutes in,
+with the exact elapsed/remaining minutes recorded on every row.
 
 The bar (Kevin, 2026-11-04): at a 50c entry the quadratic fee (multiplier 1 on
 all three series) puts break-even at about 52% hits. Simple reversal and

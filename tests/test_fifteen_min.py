@@ -142,3 +142,5 @@ def test_the_build_covers_all_three_series_and_their_market_rows():
         "oil_wti_15m", "oil_brent_15m", "natgas_15m",
         "kalshi_implied_oil_wti_15m", "kalshi_implied_oil_brent_15m", "kalshi_implied_natgas_15m"}
     assert all(f.cadence == "15min" for f in built if hasattr(f, "cadence"))
+    assert {f.version for f in built if not f.name.startswith("kalshi_implied")} == {
+        "wti-15m-v2", "brent-15m-v2", "natgas-15m-v2"}
