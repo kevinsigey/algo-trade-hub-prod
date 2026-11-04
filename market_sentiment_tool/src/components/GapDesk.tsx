@@ -19,7 +19,7 @@ export interface GapDeskPayload {
   grade: { all: Score; crypto: Score; oil: Score };
   ledger: { bankroll: number; return_pct: number; max_drawdown_pct: number; resolved: number; open: number;
             win_rate: number | null; avg_entry_gap_pts: number | null };
-  gross_only: boolean;
+  fee_basis: "net" | "gross" | "mixed";
   open_positions: Position[]; closed_positions: Position[]; top_gaps: GapRow[]; near_misses: GapRow[];
   funnel: Record<string, Record<string, number>>;
 }
@@ -134,7 +134,7 @@ export default function GapDesk({ category }: { category: "oil" | "crypto" }) {
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-5">
         <Stat label="Brier, model minus market" value={num(score.brier_delta)}
               className={score.brier_delta == null ? "text-white" : score.brier_delta < 0 ? "text-emerald-400" : "text-rose-400"} />
-        <Stat label={data.gross_only ? "Paper return (gross)" : "Paper return (net)"} value={fmtPct(ledger.return_pct)} className={tone(ledger.return_pct)} />
+        <Stat label={`Paper return (${data.fee_basis === "mixed" ? "part gross, part net" : data.fee_basis})`} value={fmtPct(ledger.return_pct)} className={tone(ledger.return_pct)} />
         <Stat label="Max drawdown" value={`${ledger.max_drawdown_pct.toFixed(1)}%`} />
         <Stat label="Open positions" value={`${ledger.open} of 5`} />
         <Stat label="Win rate" value={ledger.win_rate == null ? "—" : `${(ledger.win_rate * 100).toFixed(0)}%`} />

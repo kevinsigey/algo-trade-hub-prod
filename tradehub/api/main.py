@@ -72,6 +72,7 @@ log = logging.getLogger(__name__)
 # Found the hard way on 2026-09-27: /shadow, /api/positions and /api/pnl_summary were all red in
 # production with an error no reader could act on.
 TABLE_MIGRATIONS = {
+    "gap_snapshots": "20261103000009_gap_tracker.sql",
     "signal_events": "20260415090000_signal_events_unification.sql",
     "crypto_signal_events": "20260415090000_signal_events_unification.sql",
     "predictions": "20260416000003_predictions_ledger.sql",
@@ -1450,7 +1451,7 @@ def get_gap_desk(supabase=Depends(get_supabase)):
     if _GAP_DESK_CACHE["payload"] is not None and time.time() - _GAP_DESK_CACHE["at"] < 120:
         return _GAP_DESK_CACHE["payload"]
     try:
-        payload = desk(supabase, _dt.now(timezone.utc))
+        payload = desk(supabase, datetime.now(timezone.utc))
     except Exception as exc:  # noqa: BLE001
         raise _table_fault("gap_snapshots", exc) from exc
     _GAP_DESK_CACHE.update(at=time.time(), payload=payload)

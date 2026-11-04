@@ -44,6 +44,9 @@ def main() -> int:
     # job, and paging about it from the journal cron would report someone else's outage under our name.
     report = collect_health(supa)
     alertable = [p for p in report["problems"] if "froze nothing" in p]
+    gaps = summary["gap_tracker"]
+    if isinstance(gaps, str) or gaps.get("errors"):
+        alertable.append(f"gap tracker: {gaps if isinstance(gaps, str) else '; '.join(gaps['errors'])}")
     if summary["failures"]:
         alertable.append(f"journal run failed for: {', '.join(summary['failures'])}")
     alert_on_failures({**report, "problems": alertable})

@@ -138,9 +138,10 @@ def close_position(supa, position: dict, *, now: datetime, reason: str, price: f
                                   "pnl_basis": basis}).eq("id", position["id"]).execute()
 
 
-def manage_position(supa, position: dict, *, now: datetime, row: dict | None, raw: dict | None, fees_known: bool
-                    ) -> None:
-    """Mechanical exits for one open position still listed. A missing exit quote stays open, shown UNKNOWN."""
+def manage_position(supa, position: dict, *, now: datetime, row: dict | None, raw: dict | None, fees_known: bool,
+                    read_book) -> None:
+    """Mechanical exits for one open position still listed. The exit prices the whole position against the
+    bids, not just the best one. A missing quote or a book too thin to hold it stays open, shown UNKNOWN."""
     settles_at = datetime.fromisoformat(str(position["settles_at"]))
     quotes = _quotes(raw) if raw else {}
     side = position["side"]
@@ -150,12 +151,16 @@ def manage_position(supa, position: dict, *, now: datetime, row: dict | None, ra
                                    side_ask=quotes.get(f"{side}_ask"))
     if decision["reason"] is None:
         return
-    bid = quotes.get(f"{side}_bid")
+    contracts = int(position["contracts"])
+    try:
+        bid = logic.exit_fill(read_book(position["ticker"], side), contracts) if quotes.get(f"{side}_bid") else None
+    except Exception:  # noqa: BLE001 -- an unread book is an unknown exit
+        log.exception("gap tracker: exit book read failed for %s", position["ticker"])
+        bid = None
     if bid is None:
-        supa.table(POSITIONS).update({"exit_state": f"UNKNOWN: {decision['reason']} but no bid"}).eq(
+        supa.table(POSITIONS).update({"exit_state": f"UNKNOWN: {decision['reason']} but no bid for the full position"}).eq(
             "id", position["id"]).execute()
         return
-    contracts = int(position["contracts"])
     gross = contracts * (bid - float(position["entry_price"]))
     if fees_known and position.get("entry_fee") is not None:
         fee = logic.fee_dollars(bid, contracts)
@@ -176,18 +181,30 @@ def settle_unresolved(supa, now: datetime, read_market) -> int:
         except Exception:  # noqa: BLE001 -- tried again next run
             log.exception("gap tracker: could not read %s", ticker)
             continue
+        held = supa.table(POSITIONS).select("*").eq("ticker", ticker).eq("status", "open").execute().data or []
         if result not in ("yes", "no"):
+            if result:  # void or scalar: it won't grade, and the position can't be priced
+                for position in held:
+                    supa.table(POSITIONS).update({"exit_state": f"UNKNOWN: market result {result}"}).eq(
+                        "id", position["id"]).execute()
             continue
         outcome = 1 if result == "yes" else 0
-        supa.table(OUTCOMES).insert({"ticker": ticker, "outcome": outcome}).execute()
-        done += 1
-        for position in supa.table(POSITIONS).select("*").eq("ticker", ticker).eq("status", "open").execute().data or []:
+        for position in held:
             fee = position.get("entry_fee")
             pnl = logic.settled_pnl(side=position["side"], outcome=outcome, contracts=int(position["contracts"]),
                                     entry_price=float(position["entry_price"]), entry_fee=float(fee or 0))
             close_position(supa, position, now=now, reason="settlement", price=None, fee=0.0 if fee is not None else None,
                            pnl=pnl, basis=NET if fee is not None else GROSS)
+        # Last: a failure above leaves the ticker unresolved, so the next run retries the position too.
+        supa.table(OUTCOMES).insert({"ticker": ticker, "outcome": outcome}).execute()
+        done += 1
     return done
+
+
+def all_positions(supa) -> list[dict]:
+    from tradehub.api.main import _fetch_all  # the shared ordered pager; imported late
+
+    return _fetch_all(supa, POSITIONS, lambda q: q.select("*"))
 
 
 def open_positions(supa) -> list[dict]:
@@ -228,7 +245,7 @@ def run_tracker(supa, now: datetime, *, live=None, sources=None, read_book=None,
 
     summary: dict[str, Any] = {"settled": settle_unresolved(supa, now, read_market), "logged": 0, "flagged": 0,
                                "opened": 0, "errors": []}
-    ledger = supa.table(POSITIONS).select("*").execute().data or []
+    ledger = all_positions(supa)
     bankroll = logic.summarize_ledger([r for r in ledger if r["status"] == "closed"])["bankroll"]
     held_ever = {r["ticker"] for r in ledger}
     still_open = {r["ticker"]: r for r in ledger if r["status"] == "open"}
@@ -249,7 +266,11 @@ def run_tracker(supa, now: datetime, *, live=None, sources=None, read_book=None,
                 if quotes["mid"] is None and ticker not in still_open:
                     counts["one_sided_skipped"] += 1
                     continue
-                market = parse_market(raw)
+                try:
+                    market = parse_market(raw)
+                except (KeyError, TypeError, ValueError):  # one malformed market skips only itself
+                    log.exception("gap tracker: could not parse %s", ticker)
+                    continue
                 lm = SimpleNamespace(market=market, quote=_quote_for(raw))
                 try:
                     prob, age = _fair_value(source["fc"], lm, now)
@@ -262,7 +283,8 @@ def run_tracker(supa, now: datetime, *, live=None, sources=None, read_book=None,
                 depth_left -= used
                 rows.append(row)
                 if ticker in still_open:
-                    manage_position(supa, still_open[ticker], now=now, row=row, raw=raw, fees_known=fees_known)
+                    manage_position(supa, still_open[ticker], now=now, row=row, raw=raw, fees_known=fees_known,
+                                    read_book=read_book)
                 if row["flagged"]:
                     candidates.append((row, contracts, fees_known))
             for start in range(0, len(rows), 500):

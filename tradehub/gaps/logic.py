@@ -59,6 +59,14 @@ def exit_slippage(bid_levels: list | None, contracts: int) -> float | None:
     return math.inf
 
 
+def exit_fill(bid_levels: list | None, contracts: int) -> float | None:
+    """The average price selling the whole position into these bids. None if they can't hold it."""
+    slip = exit_slippage(bid_levels, contracts)
+    if slip is None or slip == math.inf:
+        return None
+    return max(float(p) for p, _ in bid_levels) * (1 - slip)
+
+
 def gate(*, gap_pts: float | None, hours_to_settle: float, source: str | None, slippage: float | None) -> list[str]:
     """Every gate this contract failed; empty means flagged."""
     failed = []
