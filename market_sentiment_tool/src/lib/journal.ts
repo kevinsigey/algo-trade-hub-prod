@@ -18,7 +18,7 @@ export interface ReliabilityBucket {
 export interface JournalScore {
   forecaster: string;
   forecaster_version: string;
-  cadence: "hourly" | "daily" | "weekly" | "monthly" | "meeting";
+  cadence: "hourly" | "daily" | "weekly" | "monthly" | "meeting" | "15min";
   baseline: Baseline;
   n_targets: number;
   n_settled: number;

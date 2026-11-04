@@ -31,6 +31,7 @@ from tradehub.journal.forecasters.natgas_daily import build_natgas_daily
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
+from tradehub.journal.forecasters.fifteen_min import build_fifteen_min
 from tradehub.journal.forecasters.oil_pyth import build_oil_hl_shadow, build_oil_pyth_shadow
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
@@ -115,6 +116,11 @@ FORECASTERS: list[Forecaster] = [
     # Kalshi settles on, to test whether the delayed CL=F price is why v1 trails the market.
     *build_oil_pyth_shadow(_LIVE),
     *build_oil_hl_shadow(_LIVE),
+    # 15-minute direction (2026-11-04, Kevin's queue): KXWTI15M / KXBRENT15M /
+    # KXNATGAS15M shadows on the Hyperliquid tape -- the drift-scaled walk in
+    # engines/fifteen_min.py, preregistered; the journal's hourly phase samples
+    # the :15 window each hour (see the forecaster's docstring).
+    *build_fifteen_min(_LIVE),
     # Crypto hourly (2026-11-02, Kevin's crypto program step 1): the oil-hourly clone
     # with realized-vol sigma (preregistered variant 2 passed its replay gate on both
     # series; the settled-sigma variant 1 tied persistence and never shipped)
