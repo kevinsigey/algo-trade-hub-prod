@@ -112,7 +112,7 @@ def test_the_live_ladder_says_which_price_it_used(monkeypatch):
     from tradehub.oil_live import live_price
 
     now = datetime(2026, 11, 4, 3, 0, tzinfo=UTC)
-    fresh = Observation("pyth", 95.1, now - timedelta(seconds=1))
+    fresh = Observation("PYTHOIL", 95.1, now - timedelta(seconds=1))
     delayed = Observation("cl", 95.0, now - timedelta(minutes=11))
     def no_hl(_now):
         raise HyperliquidUnavailable("down")
@@ -121,7 +121,7 @@ def test_the_live_ladder_says_which_price_it_used(monkeypatch):
     def refused():
         raise PythUnavailable("Pyth answered 403")
     assert live_price(now, refused, lambda: delayed, no_hl) == (delayed, "cl=f", "Pyth answered 403")
-    stale = Observation("pyth", 95.1, now - timedelta(minutes=5))
+    stale = Observation("PYTHOIL", 95.1, now - timedelta(minutes=5))
     price, source, why = live_price(now, lambda: stale, lambda: delayed, no_hl)
     assert source == "cl=f" and "old" in why
 
@@ -174,7 +174,7 @@ def test_the_board_prefers_pyth_then_hyperliquid_then_the_delayed_price():
     from tradehub.backtest.pit import Observation
     from tradehub.oil_live import live_price
 
-    fresh = Observation("pyth", 95.1, NOW)
+    fresh = Observation("PYTHOIL", 95.1, NOW)
     hl = Observation("hl", 95.2, NOW)
     delayed = Observation("cl", 95.0, NOW - timedelta(minutes=11))
 
@@ -224,7 +224,26 @@ def test_when_both_refuse_the_status_carries_pyths_reason_and_not_the_key(monkey
     with pytest.raises(PythUnavailable) as err:
         pyth_oil_price(session=_Routes(hermes_status=401, body={}))
     text = str(err.value)
-    assert "403" in text and "not_entitled" in text and "401" in text and "supersecret" not in text
+    assert "403 not entitled" in text and "401 unauthorized" in text and "supersecret" not in text
+    assert "feed 3063" not in text  # Pyth's own wording stays in the logs
+
+
+def test_a_refused_settlement_feed_falls_back_to_the_wti_future(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Gated:
+        asked = []
+
+        @staticmethod
+        def post(url, json, headers, timeout):
+            feed = json["priceFeedIds"][0]
+            Gated.asked.append(feed)
+            if feed == PYTHOIL_ID:
+                return Response(403, {})
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                {"priceFeedId": feed, "price": "9512345", "feedUpdateTimestamp": 1793760000000000}]}})
+    ob = pyth_oil_price(session=Gated, now=datetime.fromtimestamp(1793760000, UTC))
+    assert Gated.asked == [3063, 3073] and ob.name == "WTIZ6" and ob.value == pytest.approx(95.12345)
 
 
 def test_a_reason_echoing_the_key_is_scrubbed(monkeypatch):
@@ -238,3 +257,33 @@ def test_a_reason_echoing_the_key_is_scrubbed(monkeypatch):
     with pytest.raises(PythUnavailable) as err:
         pyth_oil_price(session=Echo(hermes_status=401, body={}))
     assert "supersecret" not in str(err.value)
+
+
+def test_the_future_is_never_labelled_as_the_settlement_feed():
+    from tradehub.backtest.pit import Observation
+    from tradehub.oil_live import live_price
+
+    future = Observation("WTIZ6", 95.2, NOW)
+    settlement = Observation("PYTHOIL", 95.2, NOW)
+    assert live_price(NOW, lambda: settlement, lambda: None, lambda now: None)[1] == "pyth"
+    price, source, why = live_price(NOW, lambda: future, lambda: None, lambda now: None)
+    assert price is future and source == "pyth-wti-future" and "PYTHOIL" in why
+
+
+def test_the_shadow_row_records_which_feed_it_used():
+    from tradehub.backtest.pit import Observation
+    from tradehub.journal.forecasters.oil_pyth import OilWtiHourlyPythShadow
+
+    fc = OilWtiHourlyPythShadow.__new__(OilWtiHourlyPythShadow)
+    fc._inputs = type("I", (), {"price": lambda self, now: Observation("WTIZ6", 95.2, now)})()
+    seen = {}
+    fc._forecast = lambda entry, now, extra=None: seen.update(extra)
+    fc.forecast(None, NOW)
+    assert seen == {"feed": "WTIZ6"}
+
+
+def test_when_both_pro_feeds_refuse_the_status_names_both(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+    with pytest.raises(PythUnavailable) as err:
+        pyth_oil_price(session=_Routes(hermes_status=401, body={}))
+    assert "Pro PYTHOIL 403" in str(err.value) and "Pro WTIZ6 403" in str(err.value)
