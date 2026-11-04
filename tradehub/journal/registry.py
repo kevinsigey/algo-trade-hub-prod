@@ -31,6 +31,7 @@ from tradehub.journal.forecasters.natgas_daily import build_natgas_daily
 from tradehub.journal.forecasters.oil import build_brent, build_oil
 from tradehub.journal.forecasters.oil_hourly import build_oil_hourly
 from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
+from tradehub.journal.forecasters.oil_pyth import build_oil_pyth_shadow
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
@@ -110,6 +111,9 @@ FORECASTERS: list[Forecaster] = [
     # sigma widened by the Hormuz stress tier -- shadow only, preregistered paired-Brier
     # gate at 200 settled (design: shadow-features-design-2026-11-02.md). v1 is untouched.
     *build_oil_geo_shadow(_LIVE),
+    # Pyth shadow (2026-11-04, on Kevin's 14-day trial): v1 with only the anchor swapped for the feed
+    # Kalshi settles on, to test whether the delayed CL=F price is why v1 trails the market.
+    *build_oil_pyth_shadow(_LIVE),
     # Crypto hourly (2026-11-02, Kevin's crypto program step 1): the oil-hourly clone
     # with realized-vol sigma (preregistered variant 2 passed its replay gate on both
     # series; the settled-sigma variant 1 tied persistence and never shipped)
