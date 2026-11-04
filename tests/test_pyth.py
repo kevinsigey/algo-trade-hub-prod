@@ -43,6 +43,31 @@ def test_reads_the_settlement_feed_with_the_key_as_a_bearer_token(monkeypatch):
     assert url.endswith("/v1/latest_price") and body["priceFeedIds"] == [3063] and headers["Authorization"] == "Bearer abc"
 
 
+def test_the_age_comes_from_the_feed_not_the_response_wrapper(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Old:
+        @staticmethod
+        def post(url, json, headers, timeout):
+            assert "feedUpdateTimestamp" in json["properties"]
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                {"priceFeedId": PYTHOIL_ID, "price": "9512345", "feedUpdateTimestamp": 1793750000000000}]}})
+    assert pyth_oil_price(session=Old).published_at == datetime.fromtimestamp(1793750000, UTC)
+
+
+@pytest.mark.parametrize("stamp", [None, "junk", 9999999999999999])
+def test_a_missing_or_future_feed_time_is_refused(monkeypatch, stamp):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Bad:
+        @staticmethod
+        def post(url, json, headers, timeout):
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                {"priceFeedId": PYTHOIL_ID, "price": "9512345", "feedUpdateTimestamp": stamp}]}})
+    with pytest.raises(PythUnavailable):
+        pyth_oil_price(session=Bad, now=datetime.fromtimestamp(1793760000, UTC))
+
+
 def test_no_key_says_so_without_calling_out(monkeypatch):
     monkeypatch.delenv("PYTH_API_KEY", raising=False)
     s = session()

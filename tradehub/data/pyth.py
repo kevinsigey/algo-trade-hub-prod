@@ -20,18 +20,19 @@ from tradehub.backtest.pit import Observation
 LATEST_URL = "https://pyth-lazer.dourolabs.app/v1/latest_price"
 PYTHOIL_ID = 3063
 EXPONENT = -5
+MAX_FUTURE_SECONDS = 60
 
 
 class PythUnavailable(Exception):
     """No usable Pyth price. The message is safe to show publicly."""
 
 
-def pyth_oil_price(*, session: Any = requests) -> Observation:
+def pyth_oil_price(*, session: Any = requests, now: datetime | None = None) -> Observation:
     key = os.getenv("PYTH_API_KEY", "").strip()
     if not key:
         raise PythUnavailable("no API key set")
     try:
-        response = session.post(LATEST_URL, json={"priceFeedIds": [PYTHOIL_ID], "properties": ["price"], "formats": [],
+        response = session.post(LATEST_URL, json={"priceFeedIds": [PYTHOIL_ID], "properties": ["price", "feedUpdateTimestamp"], "formats": [],
                                                   "channel": "fixed_rate@200ms"},
                                 headers={"Authorization": f"Bearer {key}"}, timeout=5)
     except requests.RequestException as exc:
@@ -42,11 +43,14 @@ def pyth_oil_price(*, session: Any = requests) -> Observation:
         parsed = response.json()["parsed"]
         feed = next(f for f in parsed["priceFeeds"] if f["priceFeedId"] == PYTHOIL_ID)
         value = int(feed["price"]) * 10.0 ** EXPONENT
-        published = datetime.fromtimestamp(int(parsed["timestampUs"]) / 1_000_000, UTC)
-    except (KeyError, StopIteration, TypeError, ValueError):
+        # The feed's own time, not the response's: a fresh wrapper can carry an old price.
+        published = datetime.fromtimestamp(int(feed["feedUpdateTimestamp"]) / 1_000_000, UTC)
+    except (KeyError, StopIteration, TypeError, ValueError, OverflowError, OSError):
         raise PythUnavailable("Pyth's answer wasn't in the expected shape") from None
     if value <= 0:
         raise PythUnavailable("Pyth returned no price")
+    if (published - (now or datetime.now(UTC))).total_seconds() > MAX_FUTURE_SECONDS:
+        raise PythUnavailable("Pyth's price was stamped in the future")
     return Observation("PYTHOIL", value, published)
 
 
@@ -59,7 +63,8 @@ class HyperliquidUnavailable(Exception):
 
 
 def hyperliquid_oil_price(now: datetime, *, session: Any = requests) -> Observation:
-    """The perp's oracle price. The API stamps no time on it, so it's as of this read."""
+    """The perp's oracle price. The API stamps no time on it, so it's as of this read, and a stuck
+    oracle wouldn't show here; the shadow's grading is what would catch it."""
     try:
         response = session.post(HYPERLIQUID_URL, json={"type": "metaAndAssetCtxs", "dex": "xyz"}, timeout=5)
     except requests.RequestException as exc:

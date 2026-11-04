@@ -3,9 +3,12 @@ the last 20 minutes before a close the hero already shows the NEXT hour's
 event -- and the v1 math recomputed off the live print."""
 from datetime import timedelta
 
+import pytest
+
 from tests.test_journal_oil_hourly import CLOSE, NOW, FakeLive, _settled
 from tradehub.backtest.pit import Observation
 from tradehub.data.kalshi_live import LiveMarket
+from tradehub.data.pyth import HyperliquidUnavailable
 from tradehub.edges import Quote
 from tradehub.journal.forecasters.oil_hourly import HourlyInputs
 from tradehub.markets import parse_market
@@ -27,6 +30,15 @@ CLOSE_B = CLOSE + timedelta(hours=1)
 def _markets():
     return ([_lm2(EV_A, 11, s, CLOSE) for s in (100, 101, 102)]
             + [_lm2(EV_B, 12, s, CLOSE_B) for s in (100, 101, 102)])
+
+
+@pytest.fixture(autouse=True)
+def no_live_feeds(monkeypatch):
+    """These tests pin the delayed-print path: no key, and no network call to the free feed."""
+    def down(_now):
+        raise HyperliquidUnavailable("down in tests")
+    monkeypatch.setattr("tradehub.oil_live.hyperliquid_oil_price", down)
+    monkeypatch.delenv("PYTH_API_KEY", raising=False)
 
 
 def test_pick_event_rolls_to_the_next_hour_inside_twenty_minutes():
@@ -78,8 +90,6 @@ def test_stale_payload_still_names_the_event():
 from datetime import timedelta  # noqa: E402
 
 from tradehub.data.wti import wti_minute_tape  # noqa: E402
-import pytest  # noqa: E402
-
 from tradehub.oil_live import pick_best_strike  # noqa: E402
 
 
