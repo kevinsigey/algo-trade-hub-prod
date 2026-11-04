@@ -384,3 +384,13 @@ def test_public_portfolio_hides_the_account_number(client_with, monkeypatch):
     client = client_with({"portfolio_snapshots": []})
     monkeypatch.setattr("tradehub.portfolio.service.portfolio", lambda *a, **k: {"state": "live", "account_number": "PA2"})
     assert "account_number" not in client.get("/api/portfolio").json()
+
+
+def test_the_portfolio_reports_its_breaker_state(client_with, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_BREAKER_MAX_DD_PCT", "5")
+    monkeypatch.setattr(service, "paper_get", alpaca())
+    body = client_with(FakeSupabase()).get("/api/portfolio").json()
+    assert body["breaker"]["enabled"] is True and body["breaker"]["drawdown_limit_pct"] == 5
+    monkeypatch.delenv("TRADEHUB_BREAKER_MAX_DD_PCT")
+    body = client_with(FakeSupabase()).get("/api/portfolio").json()
+    assert body["breaker"]["enabled"] is False
