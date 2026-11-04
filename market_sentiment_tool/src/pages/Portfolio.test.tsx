@@ -263,6 +263,28 @@ describe("Portfolio positions", () => {
   });
 });
 
+describe("Portfolio circuit breaker", () => {
+  const state = (over: object) => ({
+    enabled: true, tripped: false, reasons: [], daily_limit_pct: 2, drawdown_limit_pct: null,
+    daily_loss_pct: 0.5, drawdown_pct: 1, high_water: 100000, ...over,
+  });
+
+  it("reads off, on and tripped", async () => {
+    serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 }, breaker: state({ enabled: false }) }));
+    const { unmount } = page(<Portfolio />);
+    expect(await screen.findByText("Off")).toBeInTheDocument();
+    unmount();
+    serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 }, breaker: state({}) }));
+    const second = page(<Portfolio />);
+    expect(await screen.findByText("On, 0.5% of 2% daily")).toBeInTheDocument();
+    second.unmount();
+    serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+                    breaker: state({ tripped: true, reasons: ["daily loss 3%"] }) }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/Circuit breaker tripped: daily loss 3%/)).toBeInTheDocument();
+  });
+});
+
 describe("Portfolio helpers", () => {
   it("rebases the chosen range to start at zero", () => {
     const curve = [

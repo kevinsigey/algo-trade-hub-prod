@@ -447,3 +447,38 @@ def test_covered_call_goes_in_once_the_shares_are_held(db, monkeypatch):
     sub = Submit()
     paper_orders_run.run(MORNING, db, submit=sub, closes=_closes_with(SPY=750.0), fred=_fred_stub)
     assert any(c[0] != "SPY" and c[0].startswith("SPY") and c[1] == "sell" for c in sub.calls)
+
+
+def test_a_tripped_breaker_refuses_openings_and_lets_closings_through(db, monkeypatch):
+    monkeypatch.setattr("tradehub.portfolio.breakers.check",
+                        lambda supa, book: {"enabled": True, "tripped": True, "reasons": ["daily loss 3%"]})
+    live_idea(db, 1)
+    sub = Submit()
+    summary, failed = run(db, Alpaca(), sub, monkeypatch)
+    assert sub.calls == [] and failed == {}
+    row = db.db["paper_orders"][0]
+    assert row["status"] == "skipped" and "circuit breaker" in row["reason"]
+    assert [a["kind"] for a in manual_rows(db)] == ["breaker"]
+
+
+def test_a_tripped_breaker_still_closes_a_switched_off_idea(db, monkeypatch):
+    monkeypatch.setattr("tradehub.portfolio.breakers.check",
+                        lambda supa, book: {"enabled": True, "tripped": True, "reasons": ["daily loss 3%"]})
+    live_idea(db, 1)
+    store.set_auto(db, 1, False, "kevin")
+    fills = [{"id": "f1", "order_id": "a", "symbol": "GLD", "side": "buy", "qty": "66", "price": "300",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-GLD-open", "submitted_at": "t1"}]
+    sub = Submit()
+    positions = [{"symbol": "GLD", "qty": "66", "market_value": "19800", "current_price": "300"}]
+    run(db, Alpaca(fills=fills, orders=orders, positions=positions), sub, monkeypatch)
+    assert [(c[0], c[1], c[2]) for c in sub.calls] == [("GLD", "sell", 66)]
+
+
+def test_breakers_off_change_nothing(db, monkeypatch):
+    monkeypatch.delenv("TRADEHUB_BREAKER_DAILY_LOSS_PCT", raising=False)
+    monkeypatch.delenv("TRADEHUB_BREAKER_MAX_DD_PCT", raising=False)
+    live_idea(db, 1)
+    sub = Submit()
+    run(db, Alpaca(), sub, monkeypatch)
+    assert sub.calls[0][0] == "GLD" and manual_rows(db) == []

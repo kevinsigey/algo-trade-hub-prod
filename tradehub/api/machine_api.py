@@ -40,6 +40,16 @@ def authenticate(supa, authorization: str | None) -> dict:
     return key
 
 
+def position_qty(symbol: str, book: str | None = None) -> float:
+    """Signed shares held in `symbol` on this book. A read failure propagates; callers fail closed."""
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    for position in paper_get("/v2/positions", book=book) or []:
+        if (position.get("symbol") or "").upper() == symbol:
+            return float(position.get("qty") or 0)
+    return 0.0
+
+
 def stop_capacity(symbol: str, side: str, book: str | None = None) -> int:
     """Whole shares a new machine protective stop may cover for `symbol`/`side`.
 

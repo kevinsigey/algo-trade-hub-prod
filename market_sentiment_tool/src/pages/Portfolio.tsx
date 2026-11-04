@@ -9,6 +9,7 @@ import CompositionBox from "@/components/CompositionMap";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
+  breakerLabel,
   concentration,
   contractLabel,
   CURVE_RANGES,
@@ -269,6 +270,10 @@ function AccountRail({ data, liveIdeas }: {
         <RailRow label="Realized P&L" value={signed(a?.realized_pl)} className={tone(a?.realized_pl)} />
         <RailRow label="Maintenance margin" value={money(a?.maintenance_margin)} />
         <RailRow label="Positions" value={String(rows.length)} />
+        {data.breaker && (
+          <RailRow label="Circuit breaker" value={breakerLabel(data.breaker)}
+                   className={data.breaker.tripped ? "text-rose-400" : "text-slate-100"} />
+        )}
       </div>
       <div className="mt-2 border-t border-slate-800 pt-2">
         <RailRow label="Since start" value={fmtPct(s.return_pct)} className={tone(s.return_pct)} />
@@ -362,6 +367,12 @@ function Body({ data, liveIdeas, book }: {
     <div className="mt-4 grid gap-3 xl:grid-cols-[19rem_minmax(0,1fr)]">
       <AccountRail data={data} liveIdeas={liveIdeas} />
       <div className="grid min-w-0 content-start gap-3 2xl:grid-cols-3">
+        {data.breaker?.tripped && (
+          <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-200 2xl:col-span-3">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            Circuit breaker tripped: {data.breaker.reasons.join("; ")}. New opening orders are refused; closing and protective orders still pass.
+          </p>
+        )}
         {heavy.map((h) => (
           <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200 2xl:col-span-3">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />

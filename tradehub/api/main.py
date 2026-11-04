@@ -1883,6 +1883,17 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                 f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")
     if machine_api.placed_today(supabase, key["id"]) >= int(key["daily_cap"]):
         refused("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")
+    from tradehub.portfolio import breakers
+
+    breaker = breakers.check(supabase, book)
+    if breaker["tripped"] and body.order_type != "stop":  # a stop is already fenced to protect held shares
+        try:
+            closing = breakers.closes_position(body.side, body.qty, machine_api.position_qty(symbol, book=book))
+        except Exception:  # noqa: BLE001 -- can't tell it's a closing order, so it isn't one
+            refused("position_unverified", 424, "positions could not be read; the circuit breaker cannot pass this order")
+        if not closing:
+            breakers.notify(supabase, book, breaker)
+            refused("circuit_breaker", 409, f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass.")
 
     if body.order_type == "stop":
         client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"

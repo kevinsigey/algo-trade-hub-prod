@@ -622,3 +622,45 @@ def test_a_big_book_key_cancels_on_the_big_book(api4, monkeypatch):
     assert r.status_code == 200
     assert books_seen and all(b == "big" for b in books_seen)
     assert cancels == [("alpaca-1", "ext-1-run-1", "big")]
+
+
+# ── circuit breakers: a tripped book refuses new openings, never exits or protection ──
+
+def _tripped(monkeypatch, qty=0):
+    monkeypatch.setattr("tradehub.portfolio.breakers.check",
+                        lambda supa, book: {"enabled": True, "tripped": True, "reasons": ["daily loss 3%"]})
+    monkeypatch.setattr(machine_api, "position_qty", lambda symbol, book=None: qty)
+
+
+def test_a_tripped_breaker_refuses_an_opening_order_and_raises_a_notice(api, monkeypatch):
+    client, db, sent = api
+    _tripped(monkeypatch)
+    r = _post(client, _key(db))
+    assert r.status_code == 409 and "circuit breaker" in r.json()["detail"] and sent == []
+    assert db.db["manual_actions"][0]["kind"] == "breaker"
+
+
+def test_a_tripped_breaker_lets_a_closing_order_through(api, monkeypatch):
+    client, db, sent = api
+    _tripped(monkeypatch, qty=50)
+    r = _post(client, _key(db), side="sell", qty=50)
+    assert r.status_code == 200 and len(sent) == 1
+
+
+def test_a_tripped_breaker_lets_a_protective_stop_through(api, monkeypatch):
+    client, db, sent = api
+    _tripped(monkeypatch)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 115)
+    r = _post(client, _key(db), side="sell", qty=100, order_type="stop", time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 200 and len(sent) == 1
+
+
+def test_a_tripped_breaker_fails_closed_when_positions_are_unreadable(api, monkeypatch):
+    client, db, sent = api
+    _tripped(monkeypatch)
+
+    def boom(symbol, book=None):
+        raise RuntimeError("broker down")
+    monkeypatch.setattr(machine_api, "position_qty", boom)
+    r = _post(client, _key(db), side="sell", qty=50)
+    assert r.status_code == 424 and sent == []
