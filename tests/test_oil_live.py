@@ -78,7 +78,9 @@ def test_stale_payload_still_names_the_event():
 from datetime import timedelta  # noqa: E402
 
 from tradehub.data.wti import wti_minute_tape  # noqa: E402
-from tradehub.oil_live import pick_itm_line  # noqa: E402
+import pytest  # noqa: E402
+
+from tradehub.oil_live import pick_best_strike  # noqa: E402
 
 
 def _tape(now, prices):
@@ -100,41 +102,36 @@ def test_wti_minute_tape_sorts_and_skips_nan():
     assert [p for _ts, p in tape] == [98.1, 98.2]
 
 
-def test_itm_pick_qualifies_above_the_tape():
-    # Price ran at 98.5-98.7 for 10 minutes; strike 98.00 sits below the
-    # whole window (never the level), we price it 65% vs Kalshi's 58%.
-    pick = pick_itm_line(_rows((98.0, 0.65, 0.58)), _tape(NOW, [98.5] * 10), NOW, 98.6)
-    assert pick is not None and pick["strike"] == 98.0 and pick["gap_pts"] == 7.0
-    assert pick["clear_bars"] == 10
+def _quoted(*rows):
+    return [{"strike": k, "ours": ours, "market": None, "yes_bid": bid, "yes_ask": ask} for k, ours, bid, ask in rows]
 
 
-def test_itm_pick_reads_the_tapes_own_trailing_window_on_a_delayed_feed():
-    # The tape's last bar is 13 minutes old (the Yahoo delay): the window is
-    # the tape's trailing 10 traded minutes, so the pick can still fire.
-    tape = [(ts - timedelta(minutes=13), c) for ts, c in _tape(NOW, [98.5] * 10)]
-    pick = pick_itm_line(_rows((98.0, 0.65, 0.58)), tape, NOW, 98.6)
-    assert pick is not None and pick["strike"] == 98.0
-    # A tape dead for two hours is not a stable tape: no pick.
-    dead = [(ts - timedelta(hours=2), c) for ts, c in _tape(NOW, [98.5] * 10)]
-    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), dead, NOW, 98.6) is None
+def test_best_strike_buys_yes_when_the_model_clears_the_ask():
+    best, closest = pick_best_strike(_quoted((95.19, 0.55, 0.46, 0.48)))
+    assert best["side"] == "yes" and best["strike"] == 95.19 and best["cost"] == 0.48
+    assert best["prob"] == 0.55 and best["edge_pts"] == 7.0 and best["net_pts"] == pytest.approx(5.25, abs=0.01)
+    assert closest == best
 
 
-def test_itm_pick_rejects_a_strike_the_tape_crossed():
-    # The tape dipped through 98.00 inside the window: it WAS the level.
-    prices = [98.5] * 5 + [97.9] + [98.5] * 4
-    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), _tape(NOW, prices), NOW, 98.6) is None
+def test_best_strike_can_be_the_no_side_at_its_own_price():
+    best, _ = pick_best_strike(_quoted((95.19, 0.30, 0.46, 0.48)))
+    assert best["side"] == "no" and best["cost"] == 0.54 and best["prob"] == 0.70 and best["edge_pts"] == 16.0
 
 
-def test_itm_pick_rejects_thin_tape_small_gap_and_off_band():
-    tape = _tape(NOW, [98.5] * 10)
-    assert pick_itm_line(_rows((98.0, 0.65, 0.58)), tape[:4], NOW, 98.6) is None  # thin tape
-    assert pick_itm_line(_rows((98.0, 0.65, 0.63)), tape, NOW, 98.6) is None  # gap < 3 pts
-    assert pick_itm_line(_rows((98.0, 0.52, 0.40)), tape, NOW, 98.6) is None  # below the band
-    assert pick_itm_line(_rows((98.0, 0.80, 0.60)), tape, NOW, 98.6) is None  # above the band
-    assert pick_itm_line(_rows((98.0, 0.65, None)), tape, NOW, 98.6) is None  # no market price
+def test_best_strike_takes_the_largest_edge_after_fees():
+    best, _ = pick_best_strike(_quoted((95.0, 0.60, 0.50, 0.52), (95.5, 0.50, 0.33, 0.35), (96.0, 0.45, 0.40, 0.42)))
+    assert best["strike"] == 95.5
 
 
-def test_itm_pick_prefers_the_strike_closest_to_the_money():
-    rows = _rows((97.5, 0.70, 0.60), (98.0, 0.65, 0.58), (98.25, 0.60, 0.52))
-    pick = pick_itm_line(rows, _tape(NOW, [98.5] * 10), NOW, 98.5)
-    assert pick is not None and pick["strike"] == 98.25
+def test_no_clear_strike_still_names_the_closest():
+    best, closest = pick_best_strike(_quoted((95.0, 0.52, 0.47, 0.49)))
+    assert best is None and closest["strike"] == 95.0 and closest["edge_pts"] == 3.0
+
+
+def test_cheap_lottery_tickets_and_wide_spreads_do_not_qualify():
+    assert pick_best_strike(_quoted((99.0, 0.25, 0.10, 0.12), (98.0, 0.70, 0.40, 0.60))) == (None, None)
+
+
+def test_no_two_sided_quote_means_no_pick_and_no_invented_price():
+    rows = _quoted((95.0, 0.60, None, 0.50), (95.5, 0.60, 0.40, None))
+    assert pick_best_strike(rows) == (None, None)

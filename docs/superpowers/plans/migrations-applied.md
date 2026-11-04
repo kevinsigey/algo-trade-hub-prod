@@ -77,8 +77,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 52 | `20261103000008_idea_critiques.sql` |
 | 53 | `20261103000009_gap_tracker.sql` |
 | 54 | `20261103000010_gap_tracker_paging.sql` |
+| 55 | `20261103000011_oil_best_strike.sql` |
 
-**Watermark: `20261103000010_gap_tracker_paging.sql`**
+**Watermark: `20261103000011_oil_best_strike.sql`**
 
 ## How to record a new one
 
