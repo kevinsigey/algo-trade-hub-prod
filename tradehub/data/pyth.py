@@ -9,6 +9,7 @@ checked, so a shadow model grades whether it can stand in once the Pyth trial en
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from datetime import UTC, datetime
@@ -18,8 +19,14 @@ import requests
 
 from tradehub.backtest.pit import Observation
 
+log = logging.getLogger(__name__)
+
 LATEST_URL = "https://pyth-lazer.dourolabs.app/v1/latest_price"
 PYTHOIL_ID = 3063
+# PYTHOIL is what Kalshi settles on, but it's gated and Kevin's trial isn't entitled to it (403, 2026-11-04).
+# The November WTI future is the nearest open feed. It expires Nov 20, after the trial ends.
+PRO_FEEDS = ((PYTHOIL_ID, "PYTHOIL"), (3073, "WTIZ6"))
+_WORDS = {401: "unauthorized", 403: "not entitled", 429: "rate limited"}
 HERMES_URL = "https://pyth.dourolabs.app/hermes/v2/updates/price/latest"
 HERMES_FEED = "67784f72e95ac01337edb7d7bd5bbd1c03669101b7068a620df228ed4e52ef14"
 EXPONENT = -5
@@ -30,49 +37,56 @@ class PythUnavailable(Exception):
     """No usable Pyth price. The message is safe to show publicly."""
 
 
-def _reason(response: Any, key: str) -> str:
-    """Pyth's own words for a refusal, short and with the key scrubbed, since this goes on a public field."""
-    text = str(getattr(response, "text", "") or "").replace(key, "[key]")
-    return " ".join(text.split())[:120]
+def _refusal(service: str, response: Any, key: str) -> PythUnavailable:
+    """Fixed public wording for a refusal. This reaches a public field, so Pyth's own text, which can name
+    account details, only goes to the logs, with the key scrubbed."""
+    code = response.status_code
+    text = " ".join(str(getattr(response, "text", "") or "").replace(key, "[key]").split())[:300]
+    log.warning("pyth: %s answered %s: %s", service, code, text)
+    return PythUnavailable(f"{service} {code} {_WORDS.get(code, 'error')}")
 
 
 def _pro_price(key: str, session: Any, now: datetime | None) -> Observation:
-    response = session.post(LATEST_URL, json={"priceFeedIds": [PYTHOIL_ID], "properties": ["price", "feedUpdateTimestamp"],
-                                              "formats": [], "channel": "fixed_rate@200ms"},
-                            headers={"Authorization": f"Bearer {key}"}, timeout=5)
-    if response.status_code != 200:
-        raise PythUnavailable(f"Pro {response.status_code} {_reason(response, key)}".strip())
-    try:
-        parsed = response.json()["parsed"]
-        feed = next(f for f in parsed["priceFeeds"] if f["priceFeedId"] == PYTHOIL_ID)
-        value = int(feed["price"]) * 10.0 ** EXPONENT
-        # The feed's own time, not the response's: a fresh wrapper can carry an old price.
-        published = datetime.fromtimestamp(int(feed["feedUpdateTimestamp"]) / 1_000_000, UTC)
-    except (KeyError, StopIteration, TypeError, ValueError, OverflowError, OSError):
-        raise PythUnavailable("Pro's answer wasn't in the expected shape") from None
-    return _checked(value, published, now)
+    last = None
+    for feed_id, name in PRO_FEEDS:
+        response = session.post(LATEST_URL, json={"priceFeedIds": [feed_id], "properties": ["price", "feedUpdateTimestamp"],
+                                                  "formats": [], "channel": "fixed_rate@200ms"},
+                                headers={"Authorization": f"Bearer {key}"}, timeout=5)
+        if response.status_code != 200:
+            last = _refusal(f"Pro {name}", response, key)
+            continue
+        try:
+            parsed = response.json()["parsed"]
+            feed = next(f for f in parsed["priceFeeds"] if f["priceFeedId"] == feed_id)
+            value = int(feed["price"]) * 10.0 ** EXPONENT
+            # The feed's own time, not the response's: a fresh wrapper can carry an old price.
+            published = datetime.fromtimestamp(int(feed["feedUpdateTimestamp"]) / 1_000_000, UTC)
+        except (KeyError, StopIteration, TypeError, ValueError, OverflowError, OSError):
+            raise PythUnavailable("Pro's answer wasn't in the expected shape") from None
+        return _checked(value, published, now, name)
+    raise last
 
 
 def _hermes_price(key: str, session: Any, now: datetime | None) -> Observation:
     response = session.get(HERMES_URL, params={"ids[]": HERMES_FEED, "parsed": "true"},
                            headers={"Authorization": f"Bearer {key}"}, timeout=5)
     if response.status_code != 200:
-        raise PythUnavailable(f"Hermes {response.status_code} {_reason(response, key)}".strip())
+        raise _refusal("Hermes", response, key)
     try:
         price = response.json()["parsed"][0]["price"]
         value = int(price["price"]) * 10.0 ** int(price["expo"])
         published = datetime.fromtimestamp(int(price["publish_time"]), UTC)
     except (KeyError, IndexError, TypeError, ValueError, OverflowError, OSError):
         raise PythUnavailable("Hermes's answer wasn't in the expected shape") from None
-    return _checked(value, published, now)
+    return _checked(value, published, now, "PYTHOIL")
 
 
-def _checked(value: float, published: datetime, now: datetime | None) -> Observation:
+def _checked(value: float, published: datetime, now: datetime | None, name: str) -> Observation:
     if value <= 0:
         raise PythUnavailable("Pyth returned no price")
     if (published - (now or datetime.now(UTC))).total_seconds() > MAX_FUTURE_SECONDS:
         raise PythUnavailable("Pyth's price was stamped in the future")
-    return Observation("PYTHOIL", value, published)
+    return Observation(name, value, published)
 
 
 def pyth_oil_price(*, session: Any = requests, now: datetime | None = None) -> Observation:

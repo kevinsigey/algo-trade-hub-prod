@@ -224,7 +224,26 @@ def test_when_both_refuse_the_status_carries_pyths_reason_and_not_the_key(monkey
     with pytest.raises(PythUnavailable) as err:
         pyth_oil_price(session=_Routes(hermes_status=401, body={}))
     text = str(err.value)
-    assert "403" in text and "not_entitled" in text and "401" in text and "supersecret" not in text
+    assert "403 not entitled" in text and "401 unauthorized" in text and "supersecret" not in text
+    assert "feed 3063" not in text  # Pyth's own wording stays in the logs
+
+
+def test_a_refused_settlement_feed_falls_back_to_the_wti_future(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Gated:
+        asked = []
+
+        @staticmethod
+        def post(url, json, headers, timeout):
+            feed = json["priceFeedIds"][0]
+            Gated.asked.append(feed)
+            if feed == PYTHOIL_ID:
+                return Response(403, {})
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                {"priceFeedId": feed, "price": "9512345", "feedUpdateTimestamp": 1793760000000000}]}})
+    ob = pyth_oil_price(session=Gated, now=datetime.fromtimestamp(1793760000, UTC))
+    assert Gated.asked == [3063, 3073] and ob.name == "WTIZ6" and ob.value == pytest.approx(95.12345)
 
 
 def test_a_reason_echoing_the_key_is_scrubbed(monkeypatch):
