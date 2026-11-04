@@ -1556,18 +1556,20 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
             # payload, so the card chip and the detail view read the same record.
             "critic": {book: payload for book in ("main", "big")
                        if (payload := ((view or {}).get("critics") or {}).get((idea["id"], book)))},
-            "live_books": (["main"] if idea.get("live_at") and not idea.get("killed_at") else [])
+            # Trading now: a paused or killed book doesn't count, so the card can't say Live for it.
+            "live_books": (["main"] if idea.get("live_at") and not idea.get("killed_at") and idea.get("auto_orders") else [])
             + (["big"] if (idea["id"] in big_live if big_live is not None
                            else _big_activation_live(supabase, idea["id"])) else [])}
 
 
 def _big_activation_live(supabase, idea_id: int) -> bool:
     act = workshop_store.activation(supabase, "big", idea_id)
-    return bool(act and act.get("live_at") and not act.get("killed_at"))
+    return bool(act and act.get("live_at") and not act.get("killed_at") and act.get("auto_orders"))
 
 
 _IDEAS_CACHE: dict = {"at": 0.0, "payload": None, "fp": None}
 _IDEAS_CACHE_TTL = 30.0
+_IDEAS_REBUILD = threading.Lock()
 
 
 def _bust_ideas_cache() -> None:
@@ -1595,11 +1597,26 @@ def get_ideas(supabase=Depends(get_supabase)):
     # fingerprint says nothing changed, and never for more than the TTL --
     # the shadow summaries age even when nothing is written.
     fp = _ideas_fingerprint(supabase)
-    if (_IDEAS_CACHE["payload"] is not None and _IDEAS_CACHE["fp"] == fp
-            and time.time() - _IDEAS_CACHE["at"] < _IDEAS_CACHE_TTL):
+    if _IDEAS_CACHE["payload"] is not None and _IDEAS_CACHE["fp"] == fp:
+        # Nothing was written: answer now, and if it has aged, rebuild for the next visitor.
+        if time.time() - _IDEAS_CACHE["at"] >= _IDEAS_CACHE_TTL and _IDEAS_REBUILD.acquire(blocking=False):
+            threading.Thread(target=_rebuild_ideas_in_background, args=(supabase, fp), daemon=True).start()
         return _IDEAS_CACHE["payload"]
+    return _build_ideas(supabase, fp)
+
+
+def _rebuild_ideas_in_background(supabase, fp: tuple) -> None:
+    try:
+        _build_ideas(supabase, fp)
+    except Exception:  # noqa: BLE001 -- the page keeps the last good list; the next visit tries again
+        log.exception("api: ideas rebuild failed")
+    finally:
+        _IDEAS_REBUILD.release()
+
+
+def _build_ideas(supabase, fp: tuple) -> list[dict]:
     big_acts = workshop_store.activations(supabase, "big")
-    big_live = {a["idea_id"] for a in big_acts if a.get("live_at") and not a.get("killed_at")}
+    big_live = {a["idea_id"] for a in big_acts if a.get("live_at") and not a.get("killed_at") and a.get("auto_orders")}
     view = _registry_view(supabase)
     view["overridden_big"] = {a["idea_id"] for a in big_acts
                               if (a.get("gate") or {}).get("status") == "overridden"}
