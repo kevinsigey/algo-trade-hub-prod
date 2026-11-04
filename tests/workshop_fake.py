@@ -29,6 +29,10 @@ class Q:
         self.bounds = (lo, hi)
         return self
 
+    def limit(self, n):
+        self.bounds = (0, n - 1)
+        return self
+
     def insert(self, row):
         self.row = row
         return self
