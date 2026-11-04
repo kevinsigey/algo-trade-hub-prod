@@ -68,7 +68,7 @@ describe("weather page", () => {
     const journal = {
       as_of: "2026-11-01",
       forecasters: [
-        { forecaster: "weather_high", forecaster_version: "ens-v2.1", brier: 0.141, brier_baseline: 0.098, n_settled: 412 },
+        { forecaster: "weather_high", forecaster_version: "ens-v2.1", brier: 0.141, brier_on_baseline: 0.163, n_baseline: 77, brier_baseline: 0.098, n_settled: 412 },
         { forecaster: "weather_high", forecaster_version: "ens-v1", brier: 0.187, brier_baseline: 0.093, n_settled: 900 },
         { forecaster: "baseline_climatology_weather_high", forecaster_version: "v1", brier: 0.210, brier_baseline: null, n_settled: 412 },
       ],
@@ -85,8 +85,9 @@ describe("weather page", () => {
     expect(await screen.findByText(/Our pick leans yes — the ensemble gives it 65%, climatology 55%/)).toBeTruthy();
     expect(screen.getByText(/Our pick leans no — the ensemble gives it 45%, climatology 52%/)).toBeTruthy();
     expect(await screen.findByText(/Ensemble record — settled contracts/)).toBeTruthy();
-    expect(screen.getByText("0.141")).toBeTruthy();
-    expect(screen.getByText("412")).toBeTruthy();
+    expect(screen.getByText("0.163")).toBeTruthy(); // the matched score, not 0.141 over every strike
+    expect(screen.queryByText("0.141")).toBeNull();
+    expect(screen.getByText("77")).toBeTruthy(); // the matched count
   });
 
   it("shows settled history with outcome", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { biasReadout, costsText, pct, skillText, tiles, type JournalScore } from "@/lib/journal";
+import { biasReadout, costsText, matchedBrier, pct, skillText, tiles, type JournalScore } from "@/lib/journal";
 
 function score(over: Partial<JournalScore> = {}): JournalScore {
   return {
@@ -68,5 +68,14 @@ describe("costsText", () => {
       "After fees and spread: -12.5¢ over 4 simulated trades (edge above is before costs)",
     );
     expect(costsText(score({ costs: { n_quoted: 9, n_traded: 4, net_pnl_cents: 30 } }))).toContain("+30.0¢");
+  });
+});
+
+describe("matchedBrier", () => {
+  it("pairs the model and baseline on the same contracts, or says nothing", () => {
+    expect(matchedBrier({ brier_on_baseline: 0.133, brier_baseline: 0.108, n_baseline: 915 }))
+      .toEqual({ ours: 0.133, baseline: 0.108, n: 915 });
+    expect(matchedBrier({ brier_on_baseline: null, brier_baseline: 0.1 })).toBeNull();
+    expect(matchedBrier({ brier_baseline: null })).toBeNull();
   });
 });

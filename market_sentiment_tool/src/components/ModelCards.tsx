@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { GateBadge } from "@/components/GateBadge";
-import type { SeriesEntry } from "@/lib/journal";
+import { matchedBrier, type SeriesEntry } from "@/lib/journal";
 import { STATUS_WORDS, skillText } from "@/lib/journalView";
 import { STATUS_LABEL, byGroup, edgeText, type LeagueRow, type LeagueStatus } from "@/lib/league";
 
@@ -103,12 +103,18 @@ function Card({ row, series }: { row: LeagueRow; series: SeriesEntry[] }) {
             <span>
               Scored {row.scored.toLocaleString()} / {row.needed.toLocaleString()} needed
             </span>
-            {p.score.brier !== null && (
-              <span>
-                Brier {p.score.brier.toFixed(3)}
-                {p.score.brier_baseline !== null ? ` vs ${p.score.brier_baseline.toFixed(3)}` : ""}
-              </span>
-            )}
+            {(() => {
+              const matched = matchedBrier(p.score);
+              if (matched) {
+                return (
+                  <span>
+                    Brier {matched.ours.toFixed(3)} vs {matched.baseline.toFixed(3)}
+                    {matched.n != null ? ` on ${matched.n.toLocaleString()} matched contracts` : ""}
+                  </span>
+                );
+              }
+              return p.score.brier !== null ? <span>Brier {p.score.brier.toFixed(3)}, no baseline to compare</span> : null;
+            })()}
           </div>
         </>
       )}

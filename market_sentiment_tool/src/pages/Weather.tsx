@@ -214,11 +214,11 @@ function EnsembleRecord() {
           {built.map((f) => (
             <tr key={f.name} className="border-t border-slate-800/60">
               <td className="py-1.5 text-slate-300">{f.label}</td>
-              <td className="py-1.5 text-right font-semibold text-slate-50">{b(f.v21?.brier)}</td>
-              <td className="py-1.5 text-right text-slate-300">{b(f.v1?.brier)}</td>
+              <td className="py-1.5 text-right font-semibold text-slate-50">{b(f.v21?.brier_on_baseline ?? f.v21?.brier)}</td>
+              <td className="py-1.5 text-right text-slate-300">{b(f.v1?.brier_on_baseline ?? f.v1?.brier)}</td>
               <td className="py-1.5 text-right text-slate-300">{b(f.v21?.brier_baseline)}</td>
               <td className="py-1.5 text-right text-slate-300">{b(f.c?.brier)}</td>
-              <td className="py-1.5 text-right text-slate-400">{f.v21 ? f.v21.n_settled : "—"}</td>
+              <td className="py-1.5 text-right text-slate-400">{f.v21 ? f.v21.n_baseline ?? f.v21.n_settled : "—"}</td>
             </tr>
           ))}
         </tbody>
