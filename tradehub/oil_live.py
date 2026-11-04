@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tradehub.data.kalshi_live import KalshiLive
+from tradehub.data.pyth import HyperliquidUnavailable, PythUnavailable, hyperliquid_oil_price, pyth_oil_price
 from tradehub.engines.oil_hourly import hourly_changes, hourly_prob, hourly_sigma, sigma_for
 from tradehub.journal.forecasters.oil_hourly import (
     MIN_CHANGES,
@@ -44,11 +45,9 @@ CACHE_SECONDS = 20.0
 # it stays live on a print up to 25 minutes old and stamps the print's age
 # on the payload so the page can show it honestly. Older than that is a
 # stuck feed, and the payload names it (with the event attached, so the
-# page can still title itself). The real fix is a real-time source --
-# Kalshi settles these markets on Pyth, but Pyth's Hermes price updates
-# now sit behind an API key (401 without one, verified 2026-11-03); that
-# key is Kevin's call.
+# page can still title itself). With a Pyth key the hero uses the feed Kalshi settles on instead.
 LIVE_MAX_PRICE_AGE = timedelta(minutes=25)
+PYTH_MAX_AGE_SECONDS = 120
 
 # The best strike (Kevin, 2026-11-03): where the model beats what the contract actually costs. A YES
 # costs the ask and a NO costs one minus the bid, so a pick is always a price that could be paid, as
@@ -59,6 +58,24 @@ BEST_COST_BAND = (0.20, 0.80)
 BEST_MAX_SPREAD = 0.08
 TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
+
+def live_price(now: datetime, pyth_fn=None, delayed_fn=None, free_fn=None) -> tuple[Any, str, str | None]:
+    """(price, source, why Pyth wasn't used): the feed Kalshi settles on when it answers fresh, then the
+    free perp, then the delayed print. `why` is public, so anyone can see whether the key is working
+    without seeing the key."""
+    try:
+        price = (pyth_fn or pyth_oil_price)()
+        age = (now - price.published_at).total_seconds()
+        if age <= PYTH_MAX_AGE_SECONDS:
+            return price, "pyth", None
+        why = f"Pyth's price was {round(age)} seconds old"
+    except PythUnavailable as exc:
+        why = str(exc)
+    try:
+        return (free_fn or hyperliquid_oil_price)(now), "hyperliquid", why
+    except HyperliquidUnavailable:
+        return delayed_fn(), "cl=f", why
 
 
 def pick_event(events: dict[str, list], now: datetime) -> tuple[str, list] | None:
@@ -145,7 +162,7 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
     changes = hourly_changes(inputs.settled(now))
     if len(changes) < MIN_CHANGES:
         return {"state": "unavailable", "reason": "not enough settled hours yet"}
-    price = inputs.price(now)
+    price, price_source, pyth_status = live_price(now, delayed_fn=lambda: inputs.price(now))
     if price is None or now - price.published_at > LIVE_MAX_PRICE_AGE:
         stale: dict[str, Any] = {"state": "unavailable",
                                  "reason": "the live WTI print is stale",
@@ -177,6 +194,8 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
         "minutes_to_close": round(minutes, 1),
         "as_of": now.isoformat(),
         "live_price": price.value,
+        "price_source": price_source,
+        "pyth_status": pyth_status,
         "price_at": price.published_at.isoformat(),
         "price_age_minutes": round((now - price.published_at).total_seconds() / 60, 1),
         "sigma_h": round(sigma_h, 4),
