@@ -148,6 +148,8 @@ def test_hyperliquid_reads_the_oil_perp_oracle_with_no_key(monkeypatch):
     ([{"universe": [{"name": "xyz:GOLD"}]}, [{"oraclePx": "1"}]], 200),
     ([{"universe": [{"name": "xyz:CL"}]}, [{"oraclePx": None}]], 200),
     ({"unexpected": True}, 200),
+    ([{"universe": [{"name": "xyz:CL"}]}, [{"oraclePx": "NaN"}]], 200),
+    ([{"universe": [{"name": "xyz:CL"}]}, [{"oraclePx": "inf"}]], 200),
 ])
 def test_hyperliquid_failures_are_unavailable_not_a_price(body, status):
     with pytest.raises(HyperliquidUnavailable):

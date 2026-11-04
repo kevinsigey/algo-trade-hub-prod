@@ -9,6 +9,7 @@ checked, so a shadow model grades whether it can stand in once the Pyth trial en
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -77,6 +78,6 @@ def hyperliquid_oil_price(now: datetime, *, session: Any = requests) -> Observat
         value = float(contexts[names.index(HYPERLIQUID_OIL)]["oraclePx"])
     except (KeyError, IndexError, TypeError, ValueError):
         raise HyperliquidUnavailable("Hyperliquid's answer wasn't in the expected shape") from None
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise HyperliquidUnavailable("Hyperliquid returned no price")
     return Observation(HYPERLIQUID_OIL, value, now)
