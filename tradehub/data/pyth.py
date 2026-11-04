@@ -57,12 +57,25 @@ def _pro_price(key: str, session: Any, now: datetime | None) -> Observation:
             continue
         try:
             parsed = response.json()["parsed"]
-            feed = next(f for f in parsed["priceFeeds"] if f["priceFeedId"] == feed_id)
+            # A 200 can carry an empty priceFeeds list: on the trial key the one open
+            # feed (WTIZ6) answers exactly that (verified live 2026-11-04). That is a
+            # feed with no price, not a malformed answer -- and it must not end the
+            # search, so it is recorded as this feed's refusal and the loop goes on.
+            feed = next((f for f in parsed["priceFeeds"]
+                         if str(f.get("priceFeedId")) == str(feed_id)), None)
+        except (KeyError, TypeError, AttributeError):
+            refused.append(f"Pro {name}'s answer wasn't in the expected shape")
+            continue
+        if feed is None:
+            refused.append(f"Pro {name} answered with no price")
+            continue
+        try:
             value = int(feed["price"]) * 10.0 ** EXPONENT
             # The feed's own time, not the response's: a fresh wrapper can carry an old price.
             published = datetime.fromtimestamp(int(feed["feedUpdateTimestamp"]) / 1_000_000, UTC)
-        except (KeyError, StopIteration, TypeError, ValueError, OverflowError, OSError):
-            raise PythUnavailable("Pro's answer wasn't in the expected shape") from None
+        except (KeyError, TypeError, ValueError, OverflowError, OSError):
+            refused.append(f"Pro {name}'s answer wasn't in the expected shape")
+            continue
         return _checked(value, published, now, name)
     raise PythUnavailable("; ".join(refused))
 

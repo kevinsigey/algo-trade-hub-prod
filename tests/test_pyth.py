@@ -287,3 +287,58 @@ def test_when_both_pro_feeds_refuse_the_status_names_both(monkeypatch):
     with pytest.raises(PythUnavailable) as err:
         pyth_oil_price(session=_Routes(hermes_status=401, body={}))
     assert "Pro PYTHOIL 403" in str(err.value) and "Pro WTIZ6 403" in str(err.value)
+
+
+def test_an_empty_feed_list_is_a_no_price_refusal_not_a_shape_error(monkeypatch):
+    """Verified live 2026-11-04: the trial key's one open feed (WTIZ6, 3073)
+    answers 200 with an EMPTY priceFeeds list. That is 'no price', not a
+    malformed answer -- and the public status must say which."""
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Empty:
+        @staticmethod
+        def post(url, json, headers, timeout):
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": []}})
+
+        @staticmethod
+        def get(url, params, headers, timeout):
+            return Response(401, {})
+    with pytest.raises(PythUnavailable) as exc:
+        pyth_oil_price(session=Empty)
+    assert "no price" in str(exc.value)
+    assert "expected shape" not in str(exc.value)
+
+
+def test_one_silent_feed_falls_through_to_the_next(monkeypatch):
+    """A feed that answers with no price must not end the search: the next
+    entitled feed still gets its chance."""
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class Mixed:
+        @staticmethod
+        def post(url, json, headers, timeout):
+            if json["priceFeedIds"] == [3073]:
+                return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                    {"priceFeedId": 3073, "price": "9612345", "feedUpdateTimestamp": 1793760000000000}]}})
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": []}})
+
+        @staticmethod
+        def get(url, params, headers, timeout):
+            return Response(401, {})
+    ob = pyth_oil_price(session=Mixed)
+    assert ob.value == pytest.approx(96.12345) and ob.name == "WTIZ6"
+
+
+def test_a_feed_id_returned_as_a_string_still_matches(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+
+    class StrId:
+        @staticmethod
+        def post(url, json, headers, timeout):
+            return Response(200, {"parsed": {"timestampUs": "1793760000000000", "priceFeeds": [
+                {"priceFeedId": str(PYTHOIL_ID), "price": "9512345", "feedUpdateTimestamp": 1793760000000000}]}})
+
+        @staticmethod
+        def get(url, params, headers, timeout):
+            return Response(401, {})
+    assert pyth_oil_price(session=StrId).value == pytest.approx(95.12345)
