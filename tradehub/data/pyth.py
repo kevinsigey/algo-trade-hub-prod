@@ -1,7 +1,10 @@
-"""The live WTI price Kalshi settles its hourly oil markets on: Pyth's PYTHOIL feed.
+"""Live WTI prices: Pyth's PYTHOIL feed, which Kalshi settles its hourly oil markets on, and a free stand-in.
 
 Pyth Pro needs an API key (PYTH_API_KEY; Kevin's trial started 2026-11-04 and runs 14 days). Feed ID and
 exponent are from Pyth's public symbol list. An error names what went wrong and never carries the key.
+
+Hyperliquid's xyz:CL oil perpetual needs no key. It isn't what Kalshi settles on, and its oracle's source isn't
+checked, so a shadow model grades whether it can stand in once the Pyth trial ends.
 """
 
 from __future__ import annotations
@@ -45,3 +48,30 @@ def pyth_oil_price(*, session: Any = requests) -> Observation:
     if value <= 0:
         raise PythUnavailable("Pyth returned no price")
     return Observation("PYTHOIL", value, published)
+
+
+HYPERLIQUID_URL = "https://api.hyperliquid.xyz/info"
+HYPERLIQUID_OIL = "xyz:CL"
+
+
+class HyperliquidUnavailable(Exception):
+    """No usable Hyperliquid price."""
+
+
+def hyperliquid_oil_price(now: datetime, *, session: Any = requests) -> Observation:
+    """The perp's oracle price. The API stamps no time on it, so it's as of this read."""
+    try:
+        response = session.post(HYPERLIQUID_URL, json={"type": "metaAndAssetCtxs", "dex": "xyz"}, timeout=5)
+    except requests.RequestException as exc:
+        raise HyperliquidUnavailable(f"Hyperliquid could not be reached ({type(exc).__name__})") from None
+    if response.status_code != 200:
+        raise HyperliquidUnavailable(f"Hyperliquid answered {response.status_code}")
+    try:
+        meta, contexts = response.json()
+        names = [a["name"] for a in meta["universe"]]
+        value = float(contexts[names.index(HYPERLIQUID_OIL)]["oraclePx"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise HyperliquidUnavailable("Hyperliquid's answer wasn't in the expected shape") from None
+    if value <= 0:
+        raise HyperliquidUnavailable("Hyperliquid returned no price")
+    return Observation(HYPERLIQUID_OIL, value, now)

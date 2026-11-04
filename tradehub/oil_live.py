@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tradehub.data.kalshi_live import KalshiLive
-from tradehub.data.pyth import PythUnavailable, pyth_oil_price
+from tradehub.data.pyth import HyperliquidUnavailable, PythUnavailable, hyperliquid_oil_price, pyth_oil_price
 from tradehub.engines.oil_hourly import hourly_changes, hourly_prob, hourly_sigma, sigma_for
 from tradehub.journal.forecasters.oil_hourly import (
     MIN_CHANGES,
@@ -60,17 +60,23 @@ TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
-def live_price(now: datetime, pyth_fn=pyth_oil_price, delayed_fn=None) -> tuple[Any, str, str | None]:
-    """(price, source, why Pyth wasn't used). The live feed when it answers fresh, else the delayed one.
-    `why` is public, so anyone can see whether the key is working without seeing the key."""
+def live_price(now: datetime, pyth_fn=pyth_oil_price, delayed_fn=None,
+               free_fn=hyperliquid_oil_price) -> tuple[Any, str, str | None]:
+    """(price, source, why Pyth wasn't used): the feed Kalshi settles on when it answers fresh, then the
+    free perp, then the delayed print. `why` is public, so anyone can see whether the key is working
+    without seeing the key."""
     try:
         price = pyth_fn()
+        age = (now - price.published_at).total_seconds()
+        if age <= PYTH_MAX_AGE_SECONDS:
+            return price, "pyth", None
+        why = f"Pyth's price was {round(age)} seconds old"
     except PythUnavailable as exc:
-        return delayed_fn(), "cl=f", str(exc)
-    age = (now - price.published_at).total_seconds()
-    if age > PYTH_MAX_AGE_SECONDS:
-        return delayed_fn(), "cl=f", f"Pyth's price was {round(age)} seconds old"
-    return price, "pyth", None
+        why = str(exc)
+    try:
+        return free_fn(now), "hyperliquid", why
+    except HyperliquidUnavailable:
+        return delayed_fn(), "cl=f", why
 
 
 def pick_event(events: dict[str, list], now: datetime) -> tuple[str, list] | None:

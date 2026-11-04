@@ -2,8 +2,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tradehub.data.pyth import PYTHOIL_ID, PythUnavailable, pyth_oil_price
-from tradehub.journal.forecasters.oil_pyth import VERSION, build_oil_pyth_shadow
+from tradehub.data.pyth import (
+    PYTHOIL_ID,
+    HyperliquidUnavailable,
+    PythUnavailable,
+    hyperliquid_oil_price,
+    pyth_oil_price,
+)
+from tradehub.journal.forecasters.oil_pyth import HL_VERSION, VERSION, build_oil_hl_shadow, build_oil_pyth_shadow
 
 
 class Response:
@@ -75,11 +81,73 @@ def test_the_live_ladder_says_which_price_it_used(monkeypatch):
     now = datetime(2026, 11, 4, 3, 0, tzinfo=UTC)
     fresh = Observation("pyth", 95.1, now - timedelta(seconds=1))
     delayed = Observation("cl", 95.0, now - timedelta(minutes=11))
-    assert live_price(now, lambda: fresh, lambda: delayed) == (fresh, "pyth", None)
+    def no_hl(_now):
+        raise HyperliquidUnavailable("down")
+    assert live_price(now, lambda: fresh, lambda: delayed, no_hl) == (fresh, "pyth", None)
 
     def refused():
         raise PythUnavailable("Pyth answered 403")
-    assert live_price(now, refused, lambda: delayed) == (delayed, "cl=f", "Pyth answered 403")
+    assert live_price(now, refused, lambda: delayed, no_hl) == (delayed, "cl=f", "Pyth answered 403")
     stale = Observation("pyth", 95.1, now - timedelta(minutes=5))
-    price, source, why = live_price(now, lambda: stale, lambda: delayed)
+    price, source, why = live_price(now, lambda: stale, lambda: delayed, no_hl)
     assert source == "cl=f" and "old" in why
+
+
+# ── the free Hyperliquid feed ──
+
+class _Hl:
+    def __init__(self, body, status=200):
+        self.body, self.status = body, status
+        self.calls = []
+
+    def post(self, url, json, timeout):
+        self.calls.append((url, json))
+        return Response(self.status, self.body)
+
+
+UNIVERSE = [{"universe": [{"name": "xyz:BRENTOIL"}, {"name": "xyz:CL"}]},
+            [{"oraclePx": "102.89", "markPx": "102.9"}, {"oraclePx": "95.25", "markPx": "95.27"}]]
+NOW = datetime(2026, 11, 4, 3, 0, tzinfo=UTC)
+
+
+def test_hyperliquid_reads_the_oil_perp_oracle_with_no_key(monkeypatch):
+    monkeypatch.delenv("PYTH_API_KEY", raising=False)
+    s = _Hl(UNIVERSE)
+    ob = hyperliquid_oil_price(NOW, session=s)
+    assert ob.value == 95.25 and ob.published_at == NOW
+    assert s.calls[0][1] == {"type": "metaAndAssetCtxs", "dex": "xyz"}
+
+
+@pytest.mark.parametrize("body, status", [
+    (UNIVERSE, 500),
+    ([{"universe": [{"name": "xyz:GOLD"}]}, [{"oraclePx": "1"}]], 200),
+    ([{"universe": [{"name": "xyz:CL"}]}, [{"oraclePx": None}]], 200),
+    ({"unexpected": True}, 200),
+])
+def test_hyperliquid_failures_are_unavailable_not_a_price(body, status):
+    with pytest.raises(HyperliquidUnavailable):
+        hyperliquid_oil_price(NOW, session=_Hl(body, status))
+
+
+def test_the_hyperliquid_shadow_is_its_own_row(monkeypatch):
+    live = type("L", (), {"open_markets": lambda self, s: [], "settled_values_recent": lambda self, s, n: []})()
+    fc = build_oil_hl_shadow(live, fetch=lambda t: None)[0]
+    assert fc.name == "oil_wti_hourly" and fc.version == HL_VERSION and fc.version != VERSION
+
+
+def test_the_board_prefers_pyth_then_hyperliquid_then_the_delayed_price():
+    from tradehub.backtest.pit import Observation
+    from tradehub.oil_live import live_price
+
+    fresh = Observation("pyth", 95.1, NOW)
+    hl = Observation("hl", 95.2, NOW)
+    delayed = Observation("cl", 95.0, NOW - timedelta(minutes=11))
+
+    def no_pyth():
+        raise PythUnavailable("no API key set")
+
+    def no_hl(now):
+        raise HyperliquidUnavailable("down")
+    assert live_price(NOW, lambda: fresh, lambda: delayed, lambda now: hl)[1] == "pyth"
+    assert live_price(NOW, no_pyth, lambda: delayed, lambda now: hl)[:2] == (hl, "hyperliquid")
+    assert live_price(NOW, no_pyth, lambda: delayed, no_hl)[:2] == (delayed, "cl=f")
