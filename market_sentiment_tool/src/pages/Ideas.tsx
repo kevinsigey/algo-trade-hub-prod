@@ -28,7 +28,7 @@ const SORT_LABEL: Record<SortKey, string> = {
  * tracking, or still passing. Everything else was trimmed to the Removed
  * disclosure below -- kept on the record, out of the way. */
 export function standing(idea: PublicIdea): boolean {
-  if (idea.status === "live" || idea.status === "tracking") return true;
+  if (idea.status === "live") return true; // still trading: it stays in view whatever its verdict
   return (idea.verdict_now ?? idea.latest_verdict) === "PASS";
 }
 
@@ -103,7 +103,7 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
       {demoted && (
         <p className="mt-1 text-xs text-amber-300/90">
           Passed as run — demoted under the hub-wide standard
-          {idea.wf_ok === false ? " (walk-forward)" : idea.fdr_pass === false ? " (FDR over all tests)" : ""}
+          {idea.wf_ok === false ? " (walk-forward)" : idea.p_ok === false ? " (p over 0.01)" : idea.fdr_pass === false ? " (FDR over all tests)" : ""}
         </p>
       )}
       <h3 className="mt-2 font-semibold text-white">
@@ -133,6 +133,33 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
 /** The public Ideas record: what still stands leads, grouped by the bet it
  * actually is; everything that no longer passes sits under Removed, still
  * on the record (Kevin, 2026-11-03 trim). */
+/** The idea that speaks for a bet: one trading now, else the best result on unseen years. */
+export function betLead(group: PublicIdea[]): PublicIdea {
+  return [...group].sort((a, b) => Number(b.status === "live") - Number(a.status === "live")
+    || (b.result_value ?? -Infinity) - (a.result_value ?? -Infinity))[0];
+}
+
+/** One card per bet: ideas sharing names are one bet, so the rest sit one click down. */
+function BetGroup({ group }: { group: PublicIdea[] }) {
+  const lead = betLead(group);
+  const rest = group.filter((i) => i.id !== lead.id);
+  return (
+    <>
+      <ul className="mt-3 grid gap-3 sm:grid-cols-2"><IdeaCard idea={lead} /></ul>
+      {rest.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+            {rest.length} more on this bet
+          </summary>
+          <ul className="mt-2 grid gap-3 sm:grid-cols-2">
+            {rest.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
+
 export default function Ideas() {
   const session = useAdminSession();
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
@@ -219,9 +246,7 @@ export default function Ideas() {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
                 One bet · {group[0].family!.tickers.join(" · ")} <span className="text-slate-600">· {group.length} ideas, one position underneath</span>
               </h2>
-              <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-                {group.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
-              </ul>
+              <BetGroup group={group} />
             </section>
           ))}
           {families.singles.length > 0 && (

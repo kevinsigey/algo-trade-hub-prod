@@ -609,6 +609,7 @@ export interface PublicIdea {
   verdict_now?: Verdict | null;
   fdr_pass?: boolean | null;
   wf_ok?: boolean | null;
+  p_ok?: boolean | null;
   /** Ideas betting on the same names are one bet, however wrapped. */
   family?: { key: number; size: number; tickers: string[]; members: number[] } | null;
   origin?: "manual" | "lab" | "screen" | null;

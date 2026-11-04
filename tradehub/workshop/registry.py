@@ -6,8 +6,10 @@ judged against every test the hub has run:
 
 - a Benjamini-Hochberg FDR bar (q = 0.05) over the family of every idea's
   latest saved run -- a hub-wide Bonferroni bar is unreachable at 1,000
-  permutations (0.05/63 < 1/1001), FDR is the honest adjustment; and
-- the claim must have held in at least half its walk-forward folds.
+  permutations (0.05/63 < 1/1001), FDR is the honest adjustment;
+- p at or under 0.01 (Kevin, 2026-11-03): 26 ideas tie at the shuffle's floor
+  of 0.001, and that pile loosened the FDR bar to about p = 0.036; and
+- the claim must have held in at least 3 of 4 walk-forward folds.
 
 Pure functions over run rows; the API layer feeds them and consumers
 (the Ideas record, the go-live gate, tracking) read the adjusted verdict.
@@ -19,16 +21,18 @@ from __future__ import annotations
 import re
 
 FDR_Q = 0.05
+P_MAX = 0.01
+WF_MIN_SHARE = 0.75
 
 _LAB_RE = re.compile(r"random lab|lab\s?gated|lab\d|sweep survivor", re.IGNORECASE)
 
 
 def wf_ok(walk_forward: dict | None) -> bool:
-    """The claim held in at least half the judged walk-forward folds.
+    """The claim held in at least 3 of 4 judged walk-forward folds.
     No judged folds means durability is unverifiable, not fine."""
     if not walk_forward or not walk_forward.get("of"):
         return False
-    return walk_forward["held"] * 2 >= walk_forward["of"]
+    return walk_forward["held"] >= WF_MIN_SHARE * walk_forward["of"]
 
 
 def bh_rejected(pvals: list[float], q: float = FDR_Q) -> set[int]:
@@ -45,8 +49,8 @@ def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
     """Each idea's current standing under the hub-wide standard.
 
     Input: idea id -> its latest SAVED run row (verdict + result). A stored
-    PASS is demoted when its p fails the FDR bar or its walk-forward falls
-    short; every other verdict stands as stored."""
+    PASS is demoted when its p fails the FDR bar or P_MAX, or its walk-forward
+    falls short; every other verdict stands as stored."""
     def _p(run: dict):
         return ((run.get("result") or {}).get("shuffle") or {}).get("p")
 
@@ -60,9 +64,11 @@ def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
         ok_wf = wf_ok(wf)
         verdict = run.get("verdict")
         now = verdict
-        if verdict == "PASS" and (fdr.get(iid) is not True or not ok_wf):
+        p = _p(run)
+        ok_p = None if p is None else float(p) <= P_MAX
+        if verdict == "PASS" and (fdr.get(iid) is not True or not ok_wf or not ok_p):
             now = "FAIL"
-        out[iid] = {"verdict_now": now, "fdr_pass": fdr.get(iid),
+        out[iid] = {"verdict_now": now, "fdr_pass": fdr.get(iid), "p_ok": ok_p,
                     "wf_ok": ok_wf if wf is not None else None, "p": _p(run)}
     return out
 
