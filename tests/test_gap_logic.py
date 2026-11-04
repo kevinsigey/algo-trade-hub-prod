@@ -3,7 +3,9 @@ import math
 import pytest
 
 from tradehub.gaps.logic import (
+    MAX_PER_EVENT,
     MAX_POSITIONS,
+    event_of,
     evidence_status,
     executable_gap,
     exit_decision,
@@ -146,5 +148,9 @@ def test_ledger_summary_returns_and_drawdown_from_closed_trades_only():
     assert out["avg_entry_gap_pts"] == pytest.approx(9.0)
 
 
-def test_position_limit_is_five():
-    assert MAX_POSITIONS == 5
+def test_position_limits():
+    assert MAX_POSITIONS == 5 and MAX_PER_EVENT == 2
+
+
+def test_event_comes_from_the_ticker():
+    assert event_of("KXWTI-26NOV0414-T95.99") == "KXWTI-26NOV0414"

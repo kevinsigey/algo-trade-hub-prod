@@ -130,8 +130,29 @@ def test_an_unnamed_resolution_source_fails_the_gate():
 
 def test_never_more_than_five_open():
     db = Store()
-    _run(db, [raw(f"KXBTC-{i}") for i in range(8)])
+    _run(db, [raw(f"KXBTC-E{i}-T1") for i in range(8)])
     assert len(db.db[POSITIONS]) == logic.MAX_POSITIONS
+
+
+def test_an_event_holds_two_positions_at_most_biggest_gaps_first():
+    db = Store()
+    raws = [raw("KXWTI-E1-T1", ask="0.60", no_ask="0.42"), raw("KXWTI-E1-T2", ask="0.50", no_ask="0.52"),
+            raw("KXWTI-E1-T3", ask="0.55", no_ask="0.47"), raw("KXWTI-E2-T1", ask="0.60", no_ask="0.42")]
+    summary = _run(db, raws)
+    assert summary["flagged"] == 4 and summary["opened"] == 3
+    tickers = {p["ticker"] for p in db.db[POSITIONS]}
+    assert tickers == {"KXWTI-E1-T2", "KXWTI-E1-T3", "KXWTI-E2-T1"}  # T1 had E1's smallest gap
+    assert sum(r["flagged"] for r in db.db[SNAPSHOTS]) == 4  # the third is still on the record
+
+
+def test_positions_already_over_the_event_limit_block_new_ones_and_stay_open():
+    db = Store()
+    for i in range(3):
+        db.table(POSITIONS).insert({"ticker": f"KXWTI-E1-T{i}", "status": "open", "side": "yes", "contracts": 1,
+                                    "settles_at": (NOW + timedelta(hours=9)).isoformat(), "model_at_entry": 0.75,
+                                    "entry_price": 0.5, "entry_fee": 0.0, "gap_pts": 9.0}).execute()
+    assert _run(db, [raw("KXWTI-E1-T9")])["opened"] == 0
+    assert [p["status"] for p in db.db[POSITIONS]] == ["open", "open", "open"]
 
 
 def test_a_closed_gap_exits_at_the_bid_net_of_fees():

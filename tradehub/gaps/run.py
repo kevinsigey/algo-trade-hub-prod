@@ -212,7 +212,10 @@ def open_positions(supa) -> list[dict]:
 
 
 def _maybe_open(supa, row: dict, contracts: int, *, now: datetime, fees_known: bool, held: set[str]) -> bool:
-    if contracts <= 0 or row["ticker"] in held or len(open_positions(supa)) >= logic.MAX_POSITIONS:
+    still_open = open_positions(supa)
+    same_event = [p for p in still_open if logic.event_of(p["ticker"]) == logic.event_of(row["ticker"])]
+    if (contracts <= 0 or row["ticker"] in held or len(still_open) >= logic.MAX_POSITIONS
+            or len(same_event) >= logic.MAX_PER_EVENT):
         return False
     price = row["yes_ask"] if row["side"] == "yes" else row["no_ask"]
     supa.table(POSITIONS).insert({
