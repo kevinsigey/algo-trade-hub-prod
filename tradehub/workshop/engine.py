@@ -227,13 +227,13 @@ def p_value(actual: float, perm: np.ndarray) -> tuple[float, float]:
 def verdict_of(holds: bool, p: float, bar: float, wf: dict | None = None) -> str:
     """PASS = the claim holds on unseen years AND p clears the bar AND --
     when walk-forward folds were judged (workshop runs) -- the claim held
-    in at least half of them (Kevin, 2026-11-03: the folds were computed
-    but ignored, so an edge that only ever worked in the last stretch
-    passed). wf=None keeps the legacy callers (event studies)."""
+    in at least 3 of 4 of them and p is at or under 0.01 (Kevin, 2026-11-03:
+    an edge that only worked in the last stretch passed, and p = 0.03 cleared
+    the old bar). wf=None keeps the legacy callers (event studies)."""
     if wf is not None:
-        from tradehub.workshop.registry import wf_ok
+        from tradehub.workshop.registry import P_MAX, wf_ok
 
-        if not wf_ok(wf):
+        if not wf_ok(wf) or p > P_MAX:
             return "FAIL"
     return "PASS" if holds and p < bar else "FAIL"
 

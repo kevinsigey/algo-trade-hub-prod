@@ -30,6 +30,7 @@ def _canon(spec: dict) -> tuple:
 def _kill_reason(idea: dict, now: dict | None, stored: str | None) -> str:
     if now and now["verdict_now"] != stored:
         why = [w for w, failed in (("the hub-wide FDR bar", now.get("fdr_pass") is False),
+                                   ("p at or under 0.01", now.get("p_ok") is False),
                                    ("walk-forward", now.get("wf_ok") is False)) if failed]
         return f"fails the current standard: {' and '.join(why) or 'the hub-wide bar'}"
     return f"killed on {str(idea.get('killed_at'))[:10]}"
@@ -65,5 +66,5 @@ def preflight(supa, draft: dict, latest: dict[int, dict]) -> dict:
             "best_prior": best, "killed": killed,
             "duplicate_of_killed": next((k["idea_id"] for k in killed if k["exact"]), None),
             "bar": {"ideas_tested": len(latest),
-                    "standard": "the claim holds on unseen years, clears the hub-wide FDR bar (q=0.05), "
-                                "and holds in at least half the walk-forward folds"}}
+                    "standard": "the claim holds on unseen years, clears the hub-wide FDR bar (q=0.05) with p at or "
+                                "under 0.01, and holds in at least 3 of 4 walk-forward folds"}}

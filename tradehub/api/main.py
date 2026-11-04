@@ -940,10 +940,12 @@ def _gate(supabase, idea_id: int, size_pct: float | None) -> tuple[dict, dict | 
         why = []
         if adj["fdr_pass"] is False:
             why.append("its p-value does not survive the hub-wide FDR adjustment over every idea's test")
+        if adj.get("p_ok") is False:
+            why.append(f"its p-value of {adj['p']:.3f} is over the 0.01 standard")
         if adj["wf_ok"] is False:
             wf = (latest.get("result") or {}).get("walk_forward") or {}
             why.append(f"its claim held in only {wf.get('held')} of {wf.get('of')} walk-forward folds "
-                       "(the standard is at least half)")
+                       "(the standard is at least 3 of 4)")
         return {"status": "fails", "new_days": 0, "needed": 0, "claim": None, "size_ok": None,
                 "reasons": ["the latest run's PASS no longer stands under the hub-wide standard "
                             "(Kevin, 2026-11-03): " + "; ".join(why)]}, latest
@@ -1014,7 +1016,7 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
     if adj is not None and adj["verdict_now"] != "PASS":
         raise HTTPException(status_code=409,
                             detail="this run's PASS no longer stands under the hub-wide standard "
-                                   "(FDR over all tests + walk-forward in at least half the folds)")
+                                   "(FDR over all tests, p at or under 0.01, and 3 of 4 walk-forward folds)")
     if (run.get("spec") or {}).get("kind") == "event":
         raise HTTPException(status_code=409, detail="event studies are research only: they don't track forward")
     try:
@@ -1540,6 +1542,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
             "verdict_now": adj["verdict_now"] if adj else None,
             "fdr_pass": adj["fdr_pass"] if adj else None,
             "wf_ok": adj["wf_ok"] if adj else None,
+            "p_ok": adj.get("p_ok") if adj else None,
             "family": fam, "origin": origin,
             "hindsight_selected": _registry.hindsight_selected(origin) if origin else False,
             "gate_overridden": bool((idea.get("gate") or {}).get("status") == "overridden")

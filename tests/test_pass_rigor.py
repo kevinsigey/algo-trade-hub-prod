@@ -24,7 +24,8 @@ def _frame(tickers, start):
 
 
 def test_verdict_requires_walk_forward_in_half_the_folds():
-    assert verdict_of(True, 0.001, 0.05, {"held": 2, "of": 4}) == "PASS"
+    assert verdict_of(True, 0.001, 0.05, {"held": 3, "of": 4}) == "PASS"
+    assert verdict_of(True, 0.001, 0.05, {"held": 2, "of": 4}) == "FAIL"  # Kevin's bar, 2026-11-03: 3 of 4
     assert verdict_of(True, 0.001, 0.05, {"held": 4, "of": 4}) == "PASS"
     assert verdict_of(True, 0.001, 0.05, {"held": 1, "of": 4}) == "FAIL"
     assert verdict_of(True, 0.001, 0.05, {"held": 0, "of": 4}) == "FAIL"
@@ -77,3 +78,23 @@ def test_origin_classification():
     assert registry.origin_of(plain, {7}) == "screen"
     assert registry.hindsight_selected("lab") and registry.hindsight_selected("screen")
     assert not registry.hindsight_selected("manual")
+
+
+def test_p_must_be_at_or_under_one_percent():
+    assert verdict_of(True, 0.01, 0.05, {"held": 4, "of": 4}) == "PASS"
+    assert verdict_of(True, 0.011, 0.05, {"held": 4, "of": 4}) == "FAIL"
+    assert verdict_of(True, 0.011, 0.05, None) == "PASS"  # event studies keep their own bar
+
+
+def test_adjusted_demotes_a_p_over_the_bar_and_says_which_rule():
+    latest = {1: _run("PASS", 0.001, 4, 4), 2: _run("PASS", 0.02, 4, 4), 3: _run("PASS", 0.001, 2, 4)}
+    out = registry.adjusted(latest)
+    assert out[1]["verdict_now"] == "PASS" and out[1]["p_ok"] is True
+    assert out[2]["verdict_now"] == "FAIL" and out[2]["p_ok"] is False and out[2]["fdr_pass"] is True
+    assert out[3]["verdict_now"] == "FAIL" and out[3]["wf_ok"] is False
+
+
+def test_a_new_stricter_verdict_changes_no_stored_verdict():
+    run = _run("PASS", 0.02, 4, 4)
+    registry.adjusted({1: run})
+    assert run["verdict"] == "PASS"

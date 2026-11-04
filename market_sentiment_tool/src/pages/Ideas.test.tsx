@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import IdeaRecord from "@/pages/IdeaRecord";
-import Ideas from "@/pages/Ideas";
+import Ideas, { betLead, standing } from "@/pages/Ideas";
+import type { PublicIdea } from "@/lib/workshop";
 
 // The pages share helpers with the Workshop, which imports the Supabase client; CI has no Supabase env.
 vi.mock("@/lib/supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
@@ -179,5 +180,22 @@ describe("Tracked ideas (Kevin, 2026-11-02)", () => {
     expect(await screen.findByText(/Tracking since 2026-11-02/)).toBeInTheDocument();
     expect(screen.getByText(/Forward record since tracking 2026-11-02/)).toBeInTheDocument();
     expect(screen.getByText("Forward")).toBeInTheDocument();
+  });
+});
+
+describe("betLead", () => {
+  const idea = (id: number, status: string, value: number) => ({ id, status, result_value: value }) as unknown as PublicIdea;
+
+  it("picks the idea trading now, else the best unseen result", () => {
+    expect(betLead([idea(1, "backtest", 9), idea(2, "live", 1)]).id).toBe(2);
+    expect(betLead([idea(1, "backtest", 2), idea(2, "tracking", 5)]).id).toBe(2);
+  });
+});
+
+describe("Ideas standing", () => {
+  it("keeps a failing idea in view while it trades, and clears a failing tracked one", () => {
+    const failing = { verdict_now: "FAIL", latest_verdict: "PASS" };
+    expect(standing({ ...failing, status: "live" } as unknown as PublicIdea)).toBe(true);
+    expect(standing({ ...failing, status: "tracking" } as unknown as PublicIdea)).toBe(false);
   });
 });
