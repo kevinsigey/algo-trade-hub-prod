@@ -5,6 +5,7 @@ import { Chip, type Tone } from "@/components/Chip";
 import { JournalDetail } from "@/components/JournalDetail";
 import { getJson } from "@/lib/getJson";
 import ChokepointsMap from "@/components/ChokepointsMap";
+import GapDesk from "@/components/GapDesk";
 import { NextRelease } from "@/components/NextRelease";
 import { Stat } from "@/components/Stat";
 import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal";
@@ -631,6 +632,8 @@ export default function Oil() {
       <FrozenRecord ours={ours} market={market} />
 
       <ChokepointsMap />
+
+      <GapDesk category="oil" />
 
       <NextRelease family="oil" title="Next settlement" />
 

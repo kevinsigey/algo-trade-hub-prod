@@ -1437,6 +1437,26 @@ def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin), sup
     return {"spec": spec, "questions": questions, "model": model, "preflight": ledger}
 
 
+_GAP_DESK_CACHE: dict = {"at": 0.0, "payload": None}
+
+
+@app.get("/api/gaps/desk", tags=["Gap tracker"])
+def get_gap_desk(supabase=Depends(get_supabase)):
+    """The Kalshi gap tracker's paper ledger and evidence. Research only: nothing here places an order."""
+    from tradehub.gaps.report import desk
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    if _GAP_DESK_CACHE["payload"] is not None and time.time() - _GAP_DESK_CACHE["at"] < 120:
+        return _GAP_DESK_CACHE["payload"]
+    try:
+        payload = desk(supabase, _dt.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault("gap_snapshots", exc) from exc
+    _GAP_DESK_CACHE.update(at=time.time(), payload=payload)
+    return payload
+
+
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])
 def deals_public(ticker: str, source: str = "yahoo", _admin: dict = Depends(admin.require_admin)):
     """Prefill a public company's side of the M&A form: market data (Yahoo)

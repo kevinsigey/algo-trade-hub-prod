@@ -1,3 +1,4 @@
+import GapDesk from "@/components/GapDesk";
 import { useEffect, useState } from "react";
 
 import CryptoDesk from "@/components/CryptoDesk";
@@ -194,6 +195,7 @@ export default function Crypto() {
           ))}
         </div>
       </section>
+      <GapDesk category="crypto" />
     </div>
   );
 }

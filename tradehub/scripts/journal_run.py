@@ -30,6 +30,14 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         summary["previews"] = f"failed: {exc}"
 
+    # The gap tracker: a paper ledger beside the journal, on the same clock. Never fatal to the run above.
+    try:
+        from tradehub.gaps.run import run_tracker
+
+        summary["gap_tracker"] = run_tracker(supa, datetime.now(UTC))
+    except Exception as exc:  # noqa: BLE001
+        summary["gap_tracker"] = f"failed: {exc}"
+
     # Failure notifier, scoped to the two things this job is asked to alert on: the run itself failing,
     # and a daily family freezing nothing for 24h. Timer staleness and the order-book file are on the
     # /health page but are NOT alerts here -- a scan that has not run for 3h is a fact about the scan

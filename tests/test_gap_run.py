@@ -1,0 +1,228 @@
+"""The tracker from stored market snapshots, through a fake store: no network, no order path."""
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from workshop_fake import DB
+
+from tradehub.gaps import logic
+from tradehub.gaps.report import desk
+from tradehub.gaps.run import GROSS, NET, OUTCOMES, POSITIONS, RUNS, SNAPSHOTS, run_tracker
+
+NOW = datetime(2026, 11, 4, 12, 15, tzinfo=UTC)
+SERIES = {"fee_type": "quadratic", "fee_multiplier": 1, "settlement_sources": [{"name": "CF Benchmarks"}]}
+BOOK = [["0.50", "5000"], ["0.58", "5000"]]
+
+
+class Store(DB):
+    def __init__(self):
+        super().__init__()
+        self.unresolved = []
+
+    def rpc(self, name, params):
+        rows = [{"ticker": t} for t in self.unresolved]
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=rows))
+
+
+def raw(ticker="KXBTC-A", hours=5.0, bid="0.58", ask="0.60", no_bid="0.40", no_ask="0.42"):
+    close = (NOW + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+    return {"ticker": ticker, "event_ticker": "KXBTC-E", "close_time": close, "yes_bid_dollars": bid,
+            "yes_ask_dollars": ask, "no_bid_dollars": no_bid, "no_ask_dollars": no_ask, "floor_strike": 100.0,
+            "strike_type": "greater", "last_price_dollars": "0.59", "volume_fp": "100.00", "open_interest_fp": "50.00",
+            "rules_primary": "Resolves on BRTI."}
+
+
+class Model:
+    name, version = "crypto_btc_hourly", "btc-hourly-v1"
+
+    def __init__(self, prob):
+        self.prob = prob
+
+    def forecast(self, entry, now):
+        if self.prob is None:
+            return None
+        return SimpleNamespace(probability=self.prob, payload={"price_at": (now - timedelta(minutes=2)).isoformat()})
+
+
+def _run(db, raws, *, prob=0.75, book=BOOK, now=NOW, series=SERIES, market=None):
+    live = SimpleNamespace(open_raws=lambda s: raws)
+    source = {"category": "crypto", "series": "KXBTC", "fc": Model(prob)}
+    return run_tracker(db, now, live=live, sources=[source], read_book=lambda t, s: book,
+                       read_market=market or (lambda t: {}), read_series=lambda s: series)
+
+
+@pytest.fixture(autouse=True)
+def plain_market(monkeypatch):
+    monkeypatch.setattr("tradehub.gaps.run.parse_market", lambda r: SimpleNamespace(
+        ticker=r["ticker"], close_time=datetime.fromisoformat(r["close_time"].replace("Z", "+00:00"))))
+
+
+def test_a_passing_gap_logs_flags_and_opens_one_paper_position():
+    db = Store()
+    summary = _run(db, [raw()])
+    assert summary["logged"] == 1 and summary["flagged"] == 1 and summary["opened"] == 1
+    snap = db.db[SNAPSHOTS][0]
+    assert snap["side"] == "yes" and snap["gap_pts"] == pytest.approx(15.0) and snap["flagged"] is True
+    assert snap["mid"] == pytest.approx(0.59) and snap["resolution_source"] == "CF Benchmarks"
+    assert snap["model_data_age_s"] == pytest.approx(120)
+    pos = db.db[POSITIONS][0]
+    assert pos["entry_price"] == 0.60 and pos["contracts"] == logic.half_kelly_contracts(0.75, 0.60, 10_000)
+    assert pos["entry_fee"] == pytest.approx(logic.fee_dollars(0.60, pos["contracts"])) and "settlement" in pos["exit_condition"]
+    assert db.db[RUNS][0]["logged"] == 1
+
+
+def test_a_second_run_does_not_open_the_same_contract_again():
+    db = Store()
+    _run(db, [raw()])
+    assert _run(db, [raw()], now=NOW + timedelta(minutes=5))["opened"] == 0
+    assert len(db.db[POSITIONS]) == 1
+
+
+def test_one_sided_contracts_are_counted_not_logged():
+    db = Store()
+    _run(db, [raw(bid="0.0000")])
+    assert SNAPSHOTS not in db.db or db.db[SNAPSHOTS] == []
+    assert db.db[RUNS][0]["one_sided_skipped"] == 1 and db.db[RUNS][0]["open_markets"] == 1
+
+
+def test_an_unknown_model_reads_unknown_never_zero():
+    db = Store()
+    _run(db, [raw()], prob=None)
+    snap = db.db[SNAPSHOTS][0]
+    assert snap["model_prob"] is None and snap["gap_pts"] is None and snap["failed"] == ["model_or_market_unknown"]
+
+
+def test_near_misses_say_why_and_only_reach_the_book_when_needed():
+    db = Store()
+    reads = []
+    live = SimpleNamespace(open_raws=lambda s: [raw(), raw("KXBTC-B", hours=1.5)])
+    source = {"category": "crypto", "series": "KXBTC", "fc": Model(0.62)}
+    run_tracker(db, NOW, live=live, sources=[source], read_book=lambda t, s: reads.append(t) or BOOK,
+                read_market=lambda t: {}, read_series=lambda s: SERIES)
+    assert db.db[SNAPSHOTS][0]["failed"] == ["gap"]
+    assert db.db[SNAPSHOTS][1]["failed"] == ["gap", "too_close_to_settlement"]
+    assert reads == []
+
+
+def test_an_unreadable_book_is_liquidity_unknown_and_never_flags():
+    db = Store()
+    live = SimpleNamespace(open_raws=lambda s: [raw()])
+    source = {"category": "crypto", "series": "KXBTC", "fc": Model(0.75)}
+
+    def boom(t, s):
+        raise RuntimeError("no book")
+    run_tracker(db, NOW, live=live, sources=[source], read_book=boom, read_market=lambda t: {}, read_series=lambda s: SERIES)
+    assert db.db[SNAPSHOTS][0]["failed"] == ["liquidity_unknown"] and db.db[POSITIONS] == []
+
+
+def test_a_thin_book_fails_on_depth():
+    db = Store()
+    _run(db, [raw()], book=[["0.58", "1"]])
+    assert db.db[SNAPSHOTS][0]["failed"] == ["not_enough_depth"]
+
+
+def test_an_unnamed_resolution_source_fails_the_gate():
+    db = Store()
+    _run(db, [raw()], series={**SERIES, "settlement_sources": []})
+    snap = db.db[SNAPSHOTS][0]
+    assert snap["resolution_source"] is None and snap["failed"] == ["resolution_source_unknown"]
+
+
+def test_never_more_than_five_open():
+    db = Store()
+    _run(db, [raw(f"KXBTC-{i}") for i in range(8)])
+    assert len(db.db[POSITIONS]) == logic.MAX_POSITIONS
+
+
+def test_a_closed_gap_exits_at_the_bid_net_of_fees():
+    db = Store()
+    _run(db, [raw()])
+    pos = db.db[POSITIONS][0]
+    _run(db, [raw(bid="0.72", ask="0.74", no_bid="0.26", no_ask="0.28")], now=NOW + timedelta(hours=1))
+    assert pos["status"] == "closed" and pos["exit_reason"] == "gap_closed" and pos["exit_price"] == 0.72
+    expected = pos["contracts"] * (0.72 - 0.60) - pos["entry_fee"] - logic.fee_dollars(0.72, pos["contracts"])
+    assert pos["pnl"] == pytest.approx(expected) and pos["pnl_basis"] == NET
+
+
+def test_a_missing_exit_quote_stays_open_and_says_unknown():
+    db = Store()
+    _run(db, [raw()])
+    pos = db.db[POSITIONS][0]
+    _run(db, [raw(bid="0.0000", ask="0.74")], now=NOW + timedelta(hours=1))
+    assert pos["status"] == "open" and pos["exit_state"].startswith("UNKNOWN") and pos.get("pnl") is None
+
+
+def test_unknown_fees_are_labelled_gross():
+    db = Store()
+    _run(db, [raw()], series={**SERIES, "fee_type": "something_new"})
+    pos = db.db[POSITIONS][0]
+    assert pos["entry_fee"] is None
+    _run(db, [raw(bid="0.72", ask="0.74")], now=NOW + timedelta(hours=1), series={**SERIES, "fee_type": "something_new"})
+    assert pos["pnl_basis"] == GROSS and pos["pnl"] == pytest.approx(pos["contracts"] * 0.12)
+
+
+def test_settlement_records_the_outcome_and_closes_the_position():
+    db = Store()
+    _run(db, [raw()])
+    pos = db.db[POSITIONS][0]
+    db.unresolved = ["KXBTC-A"]
+    _run(db, [], market=lambda t: {"result": "yes"}, now=NOW + timedelta(hours=6))
+    assert db.db[OUTCOMES][0] == {**db.db[OUTCOMES][0], "ticker": "KXBTC-A", "outcome": 1}
+    assert pos["exit_reason"] == "settlement"
+    assert pos["pnl"] == pytest.approx(pos["contracts"] * 0.40 - pos["entry_fee"])
+
+
+def test_an_unsettled_result_records_nothing():
+    db = Store()
+    db.unresolved = ["KXBTC-A"]
+    _run(db, [], market=lambda t: {"result": ""})
+    assert OUTCOMES not in db.db
+
+
+def test_one_bad_series_is_reported_and_others_continue():
+    db = Store()
+
+    def boom(s):
+        raise RuntimeError("series down")
+    summary = run_tracker(
+        db, NOW, live=SimpleNamespace(open_raws=boom),
+        sources=[{"category": "crypto", "series": "KXBTC", "fc": Model(0.75)}],
+        read_book=lambda t, s: BOOK, read_market=lambda t: {}, read_series=lambda s: SERIES)
+    assert "series down" in summary["errors"][0] and "series down" in db.db[RUNS][0]["error"]
+
+
+# ── the desk read ──
+
+class ReportStore(Store):
+    def __init__(self, pairs=(), funnel=()):
+        super().__init__()
+        self.rpcs = {"gap_first_pairs": list(pairs), "gap_funnel": list(funnel)}
+
+    def rpc(self, name, params=None):
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=self.rpcs.get(name, [])))
+
+
+def test_the_desk_starts_at_zero_and_says_not_enough_evidence():
+    out = desk(ReportStore(), NOW)
+    assert out["evidence"]["status"] == "NOT ENOUGH EVIDENCE" and out["evidence"]["pairs"] == 0
+    assert out["started_at"] is None and out["grade"]["all"]["brier_delta"] is None
+    assert out["ledger"]["resolved"] == 0 and out["ledger"]["return_pct"] == 0 and out["top_gaps"] == []
+
+
+def test_the_desk_reports_pairs_funnel_ledger_and_current_gaps():
+    pairs = [{"category": "crypto", "model": 0.8, "market": 0.5, "outcome": 1}]
+    funnel = [{"category": "crypto", "reason": "rows", "n": 10}, {"category": "crypto", "reason": "gap", "n": 9},
+              {"category": "crypto", "reason": "flagged", "n": 1}]
+    db = ReportStore(pairs, funnel)
+    db.db[RUNS] = [{"id": 1, "taken_at": "2026-10-01T00:00:00+00:00", "series": "KXBTC", "error": None}]
+    db.db[SNAPSHOTS] = [
+        {"id": 1, "taken_at": "2026-10-01T00:00:00+00:00", "ticker": "OLD", "flagged": True, "gap_pts": 20.0, "side": "yes"},
+        {"id": 2, "taken_at": "2026-10-01T00:00:00+00:00", "ticker": "A", "flagged": True, "gap_pts": 9.0, "side": "yes"},
+        {"id": 3, "taken_at": "2026-10-01T00:00:00+00:00", "ticker": "B", "flagged": True, "gap_pts": 12.0, "side": "no"},
+    ]
+    db.db[POSITIONS] = [{"id": 1, "ticker": "A", "status": "open", "gap_pts": 9.0, "pnl": None, "exit_at": None, "opened_at": "x"}]
+    out = desk(db, NOW)
+    assert out["evidence"]["days"] == pytest.approx(34.5, abs=0.1) and out["evidence"]["pairs"] == 1
+    assert out["grade"]["crypto"]["n"] == 1
+    assert out["funnel"]["crypto"] == {"rows": 10, "gap": 9, "flagged": 1}
+    assert [g["ticker"] for g in out["top_gaps"]][:2] == ["OLD", "B"] and len(out["open_positions"]) == 1
