@@ -136,7 +136,7 @@ export default function GapDesk({ category }: { category: "oil" | "crypto" }) {
               className={score.brier_delta == null ? "text-white" : score.brier_delta < 0 ? "text-emerald-400" : "text-rose-400"} />
         <Stat label={`Paper return (${data.fee_basis === "mixed" ? "part gross, part net" : data.fee_basis})`} value={fmtPct(ledger.return_pct)} className={tone(ledger.return_pct)} />
         <Stat label="Max drawdown" value={`${ledger.max_drawdown_pct.toFixed(1)}%`} />
-        <Stat label="Open positions" value={`${ledger.open} of 5`} />
+        <Stat label="Open positions (max 2 per event)" value={`${ledger.open} of 5`} />
         <Stat label="Win rate" value={ledger.win_rate == null ? "—" : `${(ledger.win_rate * 100).toFixed(0)}%`} />
       </dl>
       {open.length > 0 && <div className="mt-4"><h3 className="mb-1 text-xs font-medium text-slate-300">Open paper positions</h3><PositionTable rows={open} /></div>}

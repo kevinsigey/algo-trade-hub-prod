@@ -13,11 +13,17 @@ MAX_EXIT_SLIPPAGE = 0.03
 BANKROLL = 10_000.0
 MAX_POSITION_PCT = 6.0
 MAX_POSITIONS = 5
+MAX_PER_EVENT = 2  # Kevin, 2026-11-03: neighbouring strikes are one bet; one kept trades too slow to build
 EXIT_GAP_PTS = 2.0
 EXIT_MODEL_MOVE_PTS = 5.0
 EXIT_HOURS = 1.0
 MIN_DAYS, MIN_PAIRS = 28, 150
 EPSILON = 1e-6  # keeps log loss finite on a forecast of exactly 0 or 1
+
+
+def event_of(ticker: str) -> str:
+    """KXWTI-26NOV0414-T95.99 belongs to event KXWTI-26NOV0414."""
+    return ticker.rsplit("-", 1)[0]
 
 
 def executable_gap(model_prob: float | None, *, yes_ask: float | None, no_ask: float | None
