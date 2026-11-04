@@ -41,17 +41,32 @@ function eventLabel(event: string): string {
   return `${month} ${Number(day)} · ${hour % 12 === 0 ? 12 : hour % 12} ${hour < 12 ? "AM" : "PM"} ET`;
 }
 
-/** The strike where P(above) crosses 50%, interpolated; null when the ladder never crosses. */
-function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null): number | null {
+/** The strike where P(above) crosses `level`, interpolated; null when the ladder never crosses. */
+function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null, level = 0.5): number | null {
   for (let i = 0; i + 1 < rows.length; i++) {
     const a = pick(rows[i]);
     const b = pick(rows[i + 1]);
     if (a === null || b === null) continue;
-    if (a >= 0.5 && b <= 0.5 && a !== b) {
-      return rows[i].strike + ((a - 0.5) / (a - b)) * (rows[i + 1].strike - rows[i].strike);
+    if (a >= level && b <= level && a !== b) {
+      return rows[i].strike + ((a - level) / (a - b)) * (rows[i + 1].strike - rows[i].strike);
     }
   }
   return null;
+}
+
+/** Kalshi's taker fee rate — mirrors `TAKER_FEE_RATE` in tradehub/oil_live.py. */
+const TAKER_FEE_RATE = 0.07;
+
+/**
+ * The highest price (in dollars) at which a contract with model probability
+ * `prob` still breaks even after the quadratic taker fee: solves
+ * prob − p − rate·p·(1−p) = 0. This is the "buy below" limit — pay more
+ * than this and the fee eats the whole edge.
+ */
+export function buyBelowLimit(prob: number): number {
+  const r = TAKER_FEE_RATE;
+  const disc = Math.max(0, (1 + r) * (1 + r) - 4 * r * prob);
+  return ((1 + r) - Math.sqrt(disc)) / (2 * r);
 }
 
 
@@ -81,24 +96,6 @@ interface LiveLadder {
   best?: StrikePick | null;
   closest?: StrikePick | null;
   rows?: LiveRow[];
-}
-
-/** P(settles above x) read off a ladder by interpolation; null when unusable. */
-function probAbove(rows: LiveRow[], x: number, pick: (r: LiveRow) => number | null): number | null {
-  const pts = rows.filter((r) => pick(r) !== null).sort((a, b) => a.strike - b.strike);
-  if (pts.length < 2) return null;
-  if (x <= pts[0].strike) return pick(pts[0]);
-  if (x >= pts[pts.length - 1].strike) return pick(pts[pts.length - 1]);
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    if (x >= a.strike && x <= b.strike) {
-      const pa = pick(a)!;
-      const pb = pick(b)!;
-      return pa + ((x - a.strike) / (b.strike - a.strike)) * (pb - pa);
-    }
-  }
-  return null;
 }
 
 /**
@@ -259,7 +256,8 @@ function LiveHero() {
         )}
       </div>
 
-      <BestStrike best={live.best ?? null} closest={live.closest ?? null} priceAge={live.price_age_minutes ?? null} />
+      <RangeBand rows={rows} />
+      <TradeVerdict best={live.best ?? null} closest={live.closest ?? null} priceAge={live.price_age_minutes ?? null} />
       <StrikeBoard rows={rows} best={live.best ?? null} ourLevel={live.our_level ?? null} />
 
       <div className="mt-4 grid gap-4 text-center sm:grid-cols-3">
@@ -293,22 +291,6 @@ function LiveHero() {
       </div>
 
       {(() => {
-        const pAbove = live.market_level != null ? probAbove(rows, live.market_level, (r) => r.ours) : null;
-        if (pAbove === null || live.market_level == null) return null;
-        const lean = pAbove > 0.53 ? "higher" : pAbove < 0.47 ? "lower" : "inline";
-        return (
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5">
-            <span className={`text-2xl font-bold tabular-nums ${lean === "higher" ? "text-emerald-300" : lean === "lower" ? "text-rose-300" : "text-slate-200"}`}>
-              {lean === "higher" ? "▲" : lean === "lower" ? "▼" : "◆"} {(pAbove * 100).toFixed(0)}%
-            </span>
-            <span className="text-sm text-slate-300">
-              {lean === "higher" ? "we lean higher than Kalshi" : lean === "lower" ? "we lean lower than Kalshi" : "we sit in line with Kalshi"}
-              {" "}— the chance the hour settles above Kalshi's 50% level (${live.market_level.toFixed(2)})
-            </span>
-          </div>
-        );
-      })()}
-      {(() => {
         // Zoom to the action: strikes where our probability runs 0.5%-99.5%,
         // plus one strike of run-off at each end so the curves land. Across
         // all 76 strikes the curves pin to the corners and read as no graph.
@@ -333,7 +315,7 @@ function LiveHero() {
         <div className="mt-2 max-w-3xl space-y-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5 text-[13px] leading-relaxed text-slate-300">
           <div>Each curve reads left to right as price rises: at any price on the bottom axis, the curve's height is the chance the hour <span className="text-white">settles above that price</span>. High on the left (cheap prices are almost surely cleared), low on the right.</div>
           <div><span className="font-semibold text-amber-300">Amber is us</span>, <span className="font-semibold text-slate-300">dashed grey is Kalshi</span> (dots mark the strikes Kalshi actually quotes — early in the hour only the strikes near the money carry quotes). Where a curve crosses the dotted 50% line is that side's coin-flip level, marked at the top.</div>
-          <div>The <span className="font-semibold text-white">white line is the live WTI print</span>. The shaded band between the two coin-flip levels is the disagreement: our level to the right of Kalshi's means we lean higher, and the banner above puts a number on it.</div>
+          <div>The <span className="font-semibold text-white">white line is the live WTI print</span>. The shaded band between the two coin-flip levels is where the two centres disagree; the 80% ranges at the top are read off these same curves, at the 90% and 10% heights. A centre gap is not a direction call — the model has no direction view.</div>
         </div>
       )}
 
@@ -385,24 +367,76 @@ function pickLabel(p: StrikePick): string {
   return `${p.side === "yes" ? "Above" : "Below"} $${p.strike.toFixed(2)}`;
 }
 
-/** The answer first: which strike the model favors at the price it actually costs, and how that has gone. */
-export function BestStrike({ best, closest, priceAge }: { best: StrikePick | null; closest: StrikePick | null; priceAge: number | null }) {
+/** "$100.20 – $104.30"; a missing end means the range runs past the ladder's edge. */
+function rangeText(lo: number | null, hi: number | null, first: number, last: number): string {
+  if (lo === null && hi === null) return "outside the ladder";
+  const loText = lo === null ? `$${first.toFixed(2)}−` : `$${lo.toFixed(2)}`;
+  const hiText = hi === null ? `$${last.toFixed(2)}+` : `$${hi.toFixed(2)}`;
+  return `${loText} – ${hiText}`;
+}
+
+/**
+ * The top of the page (Kevin's rebuild, 2026-11-04): the RANGE first — the
+ * model's product is a range, not a direction. Our 80% range (the strikes
+ * where P(above) crosses 90% and 10%) with Kalshi's implied range beside
+ * it, and direction stated plainly: No call. The model centres on the live
+ * print, so it has no direction view to sell; the levels below show where
+ * its centre sits against Kalshi's.
+ */
+export function RangeBand({ rows }: { rows: LiveRow[] }) {
+  const sorted = [...rows].sort((a, b) => a.strike - b.strike);
+  if (sorted.length < 2) return null;
+  const first = sorted[0].strike;
+  const last = sorted[sorted.length - 1].strike;
+  const our = rangeText(crossing(sorted, (r) => r.ours, 0.9), crossing(sorted, (r) => r.ours, 0.1), first, last);
+  const kalshiPts = sorted.filter((r) => r.market !== null);
+  const kalshi = kalshiPts.length < 2
+    ? "not quoted yet"
+    : rangeText(crossing(sorted, (r) => r.market, 0.9), crossing(sorted, (r) => r.market, 0.1), first, last);
+  return (
+    <div className="mt-4 rounded-lg border border-slate-700 bg-slate-950/40 p-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Our 80% range</div>
+          <div className="mt-1 text-3xl font-bold tabular-nums text-white">{our}</div>
+          <div className="mt-1 text-xs text-slate-500">where we put 4-in-5 odds on the settle landing</div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Kalshi's 80% range</div>
+          <div className="mt-1 text-3xl font-bold tabular-nums text-slate-200">{kalshi}</div>
+          <div className="mt-1 text-xs text-slate-500">the same band read off Kalshi's quoted ladder</div>
+        </div>
+      </div>
+      <p className="mt-3 text-sm text-slate-300">
+        Direction: <span className="font-semibold text-white">No call</span>
+        <span className="text-slate-400"> — the model centres on the live print; it prices the range, not the direction.</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The trade verdict: either "No trade", or the one strike worth acting on
+ * stated as a buy-below limit (the most that can be paid before the fee
+ * eats the edge) — never as a bare "best strike" at whatever it costs now.
+ */
+export function TradeVerdict({ best, closest, priceAge }: { best: StrikePick | null; closest: StrikePick | null; priceAge: number | null }) {
   const stale = priceAge != null && priceAge >= 2;
   return (
     <div className={`mt-4 rounded-lg border p-4 ${best ? (best.side === "yes" ? "border-emerald-500/60 bg-emerald-500/10" : "border-rose-500/60 bg-rose-500/10") : "border-slate-700 bg-slate-950/40"}`}>
-      <h3 className="text-sm font-medium text-slate-300">Best strike this hour</h3>
+      <h3 className="text-sm font-medium text-slate-300">Trade this hour</h3>
       {best ? (
         <>
           <div className={`mt-1 text-4xl font-bold tabular-nums ${best.side === "yes" ? "text-emerald-300" : "text-rose-300"}`}>
             {best.side === "yes" ? "▲" : "▼"} {pickLabel(best)}
           </div>
           <p className="mt-1 text-base text-slate-100 tabular-nums">
-            {best.side === "yes" ? "YES" : "NO"} costs {cents(best.cost)} · model says {Math.round(best.prob * 100)}% · edge +{best.edge_pts.toFixed(0)} pts (+{best.net_pts.toFixed(1)} after fee)
+            Buy {best.side === "yes" ? "YES" : "NO"} below {cents(buyBelowLimit(best.prob))} · now {cents(best.cost)} · model says {Math.round(best.prob * 100)}% · +{best.net_pts.toFixed(1)} pts after fee at the ask
           </p>
         </>
       ) : (
         <>
-          <div className="mt-1 text-2xl font-semibold text-slate-200">No clear strike right now</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-200">No trade</div>
           <p className="mt-1 text-sm text-slate-400 tabular-nums">
             {closest
               ? <>Closest: {pickLabel(closest)}, {closest.side === "yes" ? "YES" : "NO"} at {cents(closest.cost)}, model {Math.round(closest.prob * 100)}%. A pick needs 5+ points over the cost.</>
@@ -449,12 +483,17 @@ export function StrikeBoard({ rows, best, ourLevel }: { rows: LiveRow[]; best: S
             <th scope="col" className="py-1 text-right font-medium">Model</th>
             <th scope="col" className="py-1 text-right font-medium">YES costs</th>
             <th scope="col" className="py-1 text-right font-medium">NO costs</th>
-            <th scope="col" className="py-1 text-right font-medium">Best edge</th>
+            <th scope="col" className="py-1 text-right font-medium">Buy below</th>
           </tr>
         </thead>
         <tbody>
           {shown.map((r) => {
             const e = edge(r);
+            // The buy-below limit for the row's better side: the most that
+            // side can cost before the fee eats the model's edge entirely.
+            const limit = e === null ? null
+              : e.side === "YES" ? (r.yes_ask != null ? buyBelowLimit(r.ours) : null)
+              : (r.yes_bid != null ? buyBelowLimit(1 - r.ours) : null);
             const isBest = best?.strike === r.strike;
             return (
               <tr key={r.strike} className={`border-t border-slate-800/60 ${isBest ? (best?.side === "yes" ? "bg-emerald-500/15" : "bg-rose-500/15") : ""}`}>
@@ -467,7 +506,7 @@ export function StrikeBoard({ rows, best, ourLevel }: { rows: LiveRow[]; best: S
                 <td className="py-1.5 text-right text-slate-300">{r.yes_ask == null ? "—" : cents(r.yes_ask)}</td>
                 <td className="py-1.5 text-right text-slate-300">{r.yes_bid == null ? "—" : cents(1 - r.yes_bid)}</td>
                 <td className={`py-1.5 text-right ${e && e.pts >= 5 ? "font-semibold text-emerald-300" : "text-slate-400"}`}>
-                  {e ? `${e.side} ${e.pts >= 0 ? "+" : "−"}${Math.abs(e.pts).toFixed(0)}` : "—"}
+                  {e && limit !== null ? `${e.side} ≤ ${cents(limit)}` : "—"}
                 </td>
               </tr>
             );

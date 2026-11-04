@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import Oil, { BestStrike, StrikeBoard } from "@/pages/Oil";
+import Oil, { StrikeBoard, TradeVerdict } from "@/pages/Oil";
 import type { JournalFeed, JournalResponse, JournalScore } from "@/lib/journal";
 import { copyWords } from "@/test/copyWords";
 
@@ -119,9 +119,14 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText("$101.10")).toBeInTheDocument();
     expect(screen.getByText(/Hormuz stress 2/)).toBeInTheDocument();
     expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
-    // Direction reads off the chart + banner now, not the strike list: our
-    // curve gives ~58% to settling above Kalshi's level on this ladder.
-    expect(screen.getByText(/we lean higher than Kalshi/)).toBeInTheDocument();
+    // The top leads with the range now (Kevin, 2026-11-04): our 80% range
+    // off this ladder starts at the 90% crossing, $100.20, and direction is
+    // a No call -- the model centres on the live print.
+    expect(screen.getByText(/Our 80% range/)).toBeInTheDocument();
+    expect(screen.getByText(/\$100\.20/)).toBeInTheDocument();
+    expect(screen.getByText(/Kalshi's 80% range/)).toBeInTheDocument();
+    expect(screen.getByText(/No call/)).toBeInTheDocument();
+    expect(screen.queryByText(/we lean higher than Kalshi/)).toBeNull();
     expect(screen.getByRole("img", { name: /Chance of settling above each price/ })).toBeInTheDocument();
   });
 
@@ -135,13 +140,16 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     live_price: 101.2, our_level: 101.35, market_level: 101.1, rows: quotedRows,
   };
 
-  it("names the best strike big, at what it costs, and marks it on the board", async () => {
+  it("names the best strike big, as a buy-below limit, and marks it on the board", async () => {
     serve([score()], {}, { ...base, best: { strike: 101, side: "yes", prob: 0.62, cost: 0.56, edge_pts: 6, net_pts: 4.3 }, price_age_minutes: 0 });
     render(<Oil />);
     expect(await screen.findByText(/▲ Above \$101\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/YES costs 56c · model says 62% · edge \+6 pts \(\+4\.3 after fee\)/)).toBeInTheDocument();
+    // Buy-below for a 62% model price under the quadratic fee is 60.3c.
+    expect(screen.getByText(/Buy YES below 60\.3c/)).toBeInTheDocument();
+    expect(screen.getByText(/now 56c · model says 62% · \+4\.3 pts after fee at the ask/)).toBeInTheDocument();
     expect(screen.getByText("best")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "NO costs" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Buy below" })).toBeInTheDocument();
     expect(screen.getByText("46c")).toBeInTheDocument(); // the 101 strike's NO: one minus the 54c bid
     expect(screen.queryByText(/old, and Kalshi settles/)).toBeNull();
   });
@@ -150,13 +158,14 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     serve([score()], {}, { ...base, best: { strike: 102, side: "no", prob: 0.82, cost: 0.8, edge_pts: 5, net_pts: 3.9 } });
     render(<Oil />);
     expect(await screen.findByText(/▼ Below \$102\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/NO costs 80c/)).toBeInTheDocument();
+    expect(screen.getByText(/Buy NO below 80\.9c/)).toBeInTheDocument();
+    expect(screen.getByText(/now 80c/)).toBeInTheDocument();
   });
 
-  it("says when no strike qualifies, and how close the nearest came", async () => {
+  it("says No trade when no strike qualifies, and how close the nearest came", async () => {
     serve([score()], {}, { ...base, best: null, closest: { strike: 101, side: "yes", prob: 0.58, cost: 0.56, edge_pts: 2, net_pts: 0.3 } });
     render(<Oil />);
-    expect(await screen.findByText("No clear strike right now")).toBeInTheDocument();
+    expect(await screen.findByText("No trade")).toBeInTheDocument();
     expect(screen.getByText(/Closest: Above \$101\.00, YES at 56c, model 58%/)).toBeInTheDocument();
   });
 
@@ -241,7 +250,7 @@ describe("best strike record", () => {
       frozen: 3, settled: 2, hits: 1, hit_rate: 0.5, net_per_contract: -0.04,
       backtest: { events: 40, picks: 30, hits: 10, avg_model: 0.585, avg_cost: 0.415, net_per_contract: -0.0967 },
     }), { status: 200 })));
-    render(<BestStrike best={null} closest={null} priceAge={null} />);
+    render(<TradeVerdict best={null} closest={null} priceAge={null} />);
     expect(await screen.findByText(/This signal hasn't made money so far/)).toBeInTheDocument();
     expect(screen.getByText(/−9\.7c per contract after fees/)).toBeInTheDocument();
     expect(screen.getByText(/−4c per contract/)).toBeInTheDocument();
