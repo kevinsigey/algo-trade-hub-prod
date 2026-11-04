@@ -621,3 +621,33 @@ def test_the_rebuild_keeps_the_last_list_when_it_fails_and_frees_its_lock(monkey
     main._rebuild_ideas_in_background(None, ())
     assert main._IDEAS_CACHE["payload"] == ["kept"] and not main._IDEAS_REBUILD.locked()
     main._bust_ideas_cache()
+
+
+def test_switching_orders_changes_the_ideas_fingerprint(passed):
+    c, db, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 8, "book": "big"})
+    c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 8})
+    before = main._ideas_fingerprint(db)
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True, "book": "big"})
+    after_big = main._ideas_fingerprint(db)
+    c.post(f"/api/workshop/ideas/{i}/auto", json={"on": True})
+    assert len({before, after_big, main._ideas_fingerprint(db)}) == 3
+
+
+def test_a_rebuild_thread_that_cannot_start_frees_its_lock_and_still_answers(passed, monkeypatch):
+    c, _, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/publish")
+    main._bust_ideas_cache()
+    stale = c.get("/api/ideas").json()
+    main._IDEAS_CACHE["at"] = 0.0
+
+    class NoThread:
+        def __init__(self, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(main.threading, "Thread", NoThread)
+    assert c.get("/api/ideas").json() == stale and not main._IDEAS_REBUILD.locked()
+    main._bust_ideas_cache()

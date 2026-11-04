@@ -1580,14 +1580,15 @@ def _ideas_fingerprint(supabase) -> tuple:
     """A cheap mutation detector for the ideas cache: lifecycle timestamps,
     the newest run and the save count. Any write that changes what the list
     shows -- endpoint or direct -- changes the fingerprint."""
-    ideas = supabase.table("ideas").select("id,published_at,live_at,killed_at,tracked_at").execute().data or []
+    ideas = supabase.table("ideas").select("id,published_at,live_at,killed_at,tracked_at,auto_orders").execute().data or []
     runs = supabase.table("idea_runs").select("id").execute().data or []
     saves = supabase.table("idea_run_saves").select("run_id").execute().data or []
-    acts = supabase.table("book_activations").select("book,idea_id,live_at,killed_at").execute().data or []
+    acts = supabase.table("book_activations").select("book,idea_id,live_at,killed_at,auto_orders").execute().data or []
     return (tuple(sorted((i["id"], i.get("published_at"), i.get("live_at"), i.get("killed_at"),
-                          i.get("tracked_at")) for i in ideas)),
+                          i.get("tracked_at"), bool(i.get("auto_orders"))) for i in ideas)),
             max((r["id"] for r in runs), default=0), len(saves),
-            tuple(sorted((a["book"], a["idea_id"], a.get("live_at"), a.get("killed_at")) for a in acts)))
+            tuple(sorted((a["book"], a["idea_id"], a.get("live_at"), a.get("killed_at"), bool(a.get("auto_orders")))
+                         for a in acts)))
 
 
 @app.get("/api/ideas", tags=["Ideas"])
@@ -1600,7 +1601,11 @@ def get_ideas(supabase=Depends(get_supabase)):
     if _IDEAS_CACHE["payload"] is not None and _IDEAS_CACHE["fp"] == fp:
         # Nothing was written: answer now, and if it has aged, rebuild for the next visitor.
         if time.time() - _IDEAS_CACHE["at"] >= _IDEAS_CACHE_TTL and _IDEAS_REBUILD.acquire(blocking=False):
-            threading.Thread(target=_rebuild_ideas_in_background, args=(supabase, fp), daemon=True).start()
+            try:
+                threading.Thread(target=_rebuild_ideas_in_background, args=(supabase, fp), daemon=True).start()
+            except RuntimeError:  # the list we have is still the right answer
+                _IDEAS_REBUILD.release()
+                log.exception("api: could not start the ideas rebuild")
         return _IDEAS_CACHE["payload"]
     return _build_ideas(supabase, fp)
 
