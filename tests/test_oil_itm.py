@@ -10,8 +10,8 @@ NOW = datetime(2026, 11, 3, 14, 30, tzinfo=UTC)
 
 
 def test_grade_math():
-    assert grade(98.0, 0.58, 98.42) == (True, 0.42)
-    assert grade(98.0, 0.58, 97.90) == (False, -0.58)
+    assert grade("yes", 98.0, 0.58, 98.42) == (True, 0.4029)
+    assert grade("yes", 98.0, 0.58, 97.90) == (False, -0.5971)
 
 
 def test_freeze_window():
@@ -78,7 +78,7 @@ def _ladder(minutes=30.0, itm=True):
     def fn(_now):
         view = {"state": "live", "event": "KXWTIH-26NOV0311", "minutes_to_close": minutes,
                 "live_price": 98.6,
-                "itm": {"strike": 98.0, "ours": 0.65, "market": 0.58} if itm else None}
+                "best": {"strike": 98.0, "side": "yes", "prob": 0.65, "cost": 0.58, "edge_pts": 7.0} if itm else None}
         return view
 
     return fn
@@ -102,7 +102,30 @@ def test_run_freezes_once_inside_the_window_and_grades():
     out = run(fake, now=NOW, live=_Live(), ladder_fn=_ladder(itm=False))
     assert out["graded"] == 1
     row = next(r for r in fake.store["oil_itm_lines"] if r["id"] == 99)
-    assert row["settled"] is True and row["hit"] is True and row["ev"] == 0.42
+    assert row["settled"] is True and row["hit"] is True and row["ev"] == 0.4029  # 42c less the taker fee
+
+
+def test_a_no_pick_wins_when_the_value_settles_at_or_under_the_strike():
+    assert grade("no", 98.0, 0.40, 97.5) == (True, 0.5832)
+    assert grade("no", 98.0, 0.40, 98.5) == (False, -0.4168)
+    assert grade("yes", 98.0, 0.40, 98.5) == (True, 0.5832)
+
+
+def test_a_frozen_pick_stores_its_side_cost_and_edge():
+    fake = _Fake()
+    run(fake, now=NOW, live=_Live(), ladder_fn=_ladder())
+    row = fake.store["oil_itm_lines"][0]
+    assert row["side"] == "yes" and row["cost"] == 0.58 and row["edge_pts"] == 7.0 and row["ours"] == 0.65
+
+
+def test_the_record_carries_the_replay_of_the_rule():
+    class WithBacktest(_Fake):
+        def rpc(self, name):
+            row = {"events": 40, "picks": 30, "hits": 10, "avg_model": 0.585, "avg_cost": 0.415, "net_per_contract": -0.0967}
+            return type("Q", (), {"execute": lambda self: type("R", (), {"data": [row]})()})()
+
+    assert record(WithBacktest())["backtest"]["picks"] == 30
+    assert record(_Fake())["backtest"] is None  # unreadable is unknown, and never costs the record
 
 
 def test_record_aggregates():
@@ -117,5 +140,5 @@ def test_record_aggregates():
     ]
     rec = record(fake)
     assert rec["frozen"] == 3 and rec["settled"] == 2 and rec["hits"] == 1
-    assert rec["hit_rate"] == 0.5 and rec["ev_per_dollar"] == -0.065
+    assert rec["hit_rate"] == 0.5 and rec["net_per_contract"] == -0.065
     assert rec["recent"][0]["event_ticker"] == "E1"

@@ -31,7 +31,6 @@ from tradehub.journal.forecasters.oil_hourly import (
     SERIES,
     HourlyInputs,
 )
-from tradehub.data.wti import wti_minute_tape
 from tradehub.journal.kalshi_linked import quote_mid
 
 MIN_MINUTES = 20.0
@@ -50,18 +49,15 @@ CACHE_SECONDS = 20.0
 # now sit behind an API key (401 without one, verified 2026-11-03); that
 # key is Kevin's call.
 LIVE_MAX_PRICE_AGE = timedelta(minutes=25)
-TAPE_MAX_AGE = timedelta(minutes=60)
 
-# The ITM line (Kevin, 2026-11-03): on the live ladder, the strike where
-# the bet is a bit more likely than a coin flip AND we like it more than
-# Kalshi does AND the tape has kept clear of it -- the strike was never
-# the 50% level over the last stretch. A selection rule on the v1 Normal
-# model, nothing more; picks get frozen and graded (tradehub/oil_itm.py).
-ITM_BAND = (0.55, 0.75)
-ITM_MIN_GAP = 0.03
-ITM_LOOKBACK_MIN = 10
-ITM_MIN_BARS = 6
-ITM_MIN_CLEARANCE = 0.05
+# The best strike (Kevin, 2026-11-03): where the model beats what the contract actually costs. A YES
+# costs the ask and a NO costs one minus the bid, so a pick is always a price that could be paid, as
+# Kalshi's own strike list shows it. Long shots and wide markets don't qualify. Picks get frozen and
+# graded (tradehub/oil_itm.py), and the page shows that record next to the pick.
+BEST_MIN_EDGE_PTS = 5.0
+BEST_COST_BAND = (0.20, 0.80)
+BEST_MAX_SPREAD = 0.08
+TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
@@ -95,44 +91,24 @@ def _crossing(rows: list[dict], key: str) -> float | None:
     return None
 
 
-def pick_itm_line(rows: list[dict], tape: list, now: datetime,
-                  live_price: float) -> dict | None:
-    """The ITM pick from a live ladder, or None. Pure, so the rule tests
-    without a market. `tape` is [(bar time, close)] oldest first."""
-    if not tape:
-        return None
-    # The window is the tape's OWN trailing minutes, not the wall clock's:
-    # the CL=F tape runs ~10-15 minutes behind the exchange, so a window
-    # keyed to `now` was always empty and the pick could never fire. A tape
-    # whose last bar is older than TAPE_MAX_AGE is a dead feed, not a
-    # stable one -- no pick.
-    end = max(ts for ts, _c in tape)
-    if now - end > TAPE_MAX_AGE:
-        return None
-    window = [(ts, c) for ts, c in tape
-              if 0 <= (end - ts).total_seconds() <= ITM_LOOKBACK_MIN * 60]
-    if len(window) < ITM_MIN_BARS:
-        return None
+def pick_best_strike(rows: list[dict]) -> tuple[dict | None, dict | None]:
+    """(the pick, the closest candidate). The pick clears the edge bar; the closest may not, so the page
+    can say how near it came. Pure, so the rule tests without a market."""
     candidates = []
     for row in rows:
-        ours, market = row.get("ours"), row.get("market")
-        if ours is None or market is None:
+        bid, ask, ours = row.get("yes_bid"), row.get("yes_ask"), row.get("ours")
+        if bid is None or ask is None or ours is None or ask - bid > BEST_MAX_SPREAD:
             continue
-        if not ITM_BAND[0] <= ours <= ITM_BAND[1] or ours - market < ITM_MIN_GAP:
-            continue
-        strike = row["strike"]
-        sides = {(c > strike) - (c < strike) for _ts, c in window}
-        if len(sides) != 1 or 0 in sides:
-            continue  # the tape crossed (or touched) the strike: it WAS the level
-        if min(abs(c - strike) for _ts, c in window) < ITM_MIN_CLEARANCE:
-            continue  # too close to call clear
-        candidates.append(row)
+        for side, prob, cost in (("yes", ours, ask), ("no", 1 - ours, round(1 - bid, 4))):
+            if BEST_COST_BAND[0] <= cost <= BEST_COST_BAND[1]:
+                fee = TAKER_FEE_RATE * cost * (1 - cost)
+                candidates.append({"strike": row["strike"], "side": side, "prob": round(prob, 4), "cost": cost,
+                                   "edge_pts": round((prob - cost) * 100, 2),
+                                   "net_pts": round((prob - cost - fee) * 100, 2)})
     if not candidates:
-        return None
-    best = min(candidates, key=lambda r: abs(r["strike"] - live_price))
-    return {"strike": best["strike"], "ours": best["ours"], "market": best["market"],
-            "gap_pts": round((best["ours"] - best["market"]) * 100, 1),
-            "clear_bars": len(window)}
+        return None, None
+    closest = max(candidates, key=lambda c: c["net_pts"])
+    return (closest if closest["edge_pts"] >= BEST_MIN_EDGE_PTS else None), closest
 
 
 def _geo_chip() -> dict | None:
@@ -152,7 +128,7 @@ def _geo_chip() -> dict | None:
 
 
 def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs | None = None,
-                geo: bool = True, tape_fn=wti_minute_tape) -> dict[str, Any]:
+                geo: bool = True) -> dict[str, Any]:
     """The live ladder payload. Degrades to {"state": "unavailable",
     "reason": ...} -- a named gap, never invented numbers."""
     now = now or datetime.now(UTC)
@@ -187,17 +163,15 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
             continue
         rows.append({"strike": lm.market.floor_strike,
                      "ours": round(hourly_prob(lm.market, price.value, sigma_h, minutes), 4),
-                     "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None)})
+                     "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None),
+                     "yes_bid": lm.quote.yes_bid, "yes_ask": lm.quote.yes_ask})
     if not rows:
         return {"state": "unavailable", "reason": "the event carries no strikes"}
-    itm = None
-    try:
-        itm = pick_itm_line(rows, tape_fn(), now, price.value)
-    except Exception:  # noqa: BLE001 -- the pick is additive; its absence never sinks the ladder
-        itm = None
+    best, closest = pick_best_strike(rows)
     return {
         "state": "live",
-        "itm": itm,
+        "best": best,
+        "closest": closest,
         "event": event,
         "close_time": markets[0].market.close_time.isoformat(),
         "minutes_to_close": round(minutes, 1),

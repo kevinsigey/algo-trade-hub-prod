@@ -55,11 +55,15 @@ function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null): num
 }
 
 
-interface LiveRow { strike: number; ours: number; market: number | null }
-interface ItmPick { strike: number; ours: number; market: number; gap_pts: number; clear_bars: number }
-interface ItmRecord {
+interface LiveRow { strike: number; ours: number; market: number | null; yes_bid?: number | null; yes_ask?: number | null }
+interface StrikePick {
+  strike: number; side: "yes" | "no"; prob: number; cost: number; edge_pts: number; net_pts: number;
+}
+interface StrikeRecord {
   frozen: number; settled: number; hits: number;
-  hit_rate: number | null; ev_per_dollar: number | null;
+  hit_rate: number | null; net_per_contract: number | null;
+  backtest: { events: number; picks: number; hits: number; avg_model: number | null; avg_cost: number | null;
+              net_per_contract: number | null } | null;
 }
 interface LiveLadder {
   state: string;
@@ -73,7 +77,8 @@ interface LiveLadder {
   our_level?: number | null;
   market_level?: number | null;
   geo?: { stress_score: number; k: number; partial: boolean } | null;
-  itm?: ItmPick | null;
+  best?: StrikePick | null;
+  closest?: StrikePick | null;
   rows?: LiveRow[];
 }
 
@@ -198,7 +203,6 @@ const LIVE_REFRESH_MS = 30 * 1000;
 function LiveHero() {
   const [live, setLive] = useState<LiveLadder | null>(null);
   const [tick, setTick] = useState(0);
-  const [strikesOpen, setStrikesOpen] = useState(false);
   const [howOpen, setHowOpen] = useState(false);
 
   useEffect(() => {
@@ -233,8 +237,6 @@ function LiveHero() {
     );
   }
   const rows = live.rows;
-  const band = rows.filter((r) => r.ours >= 0.02 && r.ours <= 0.98);
-  const shown = band.length >= 3 ? band : rows;
   const levelText = (v: number | null | undefined) => (v === null || v === undefined ? "outside the ladder" : `$${v.toFixed(2)}`);
   const gap = live.our_level != null && live.market_level != null ? live.our_level - live.market_level : null;
   const asOf = live.as_of ? new Date(live.as_of) : null;
@@ -256,7 +258,10 @@ function LiveHero() {
         )}
       </div>
 
-      <div className={`mt-4 grid gap-4 text-center ${live.itm ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+      <BestStrike best={live.best ?? null} closest={live.closest ?? null} priceAge={live.price_age_minutes ?? null} />
+      <StrikeBoard rows={rows} best={live.best ?? null} ourLevel={live.our_level ?? null} />
+
+      <div className="mt-4 grid gap-4 text-center sm:grid-cols-3">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Our 50% level</div>
           <div className="mt-1 text-4xl font-bold tabular-nums text-white">{levelText(live.our_level)}</div>
@@ -278,15 +283,6 @@ function LiveHero() {
               : "the print our probabilities are priced off, right now"}
           </div>
         </div>
-        {live.itm && (
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-400">In-the-money line</div>
-            <div className="mt-1 text-4xl font-bold tabular-nums text-emerald-300">${live.itm.strike.toFixed(2)}</div>
-            <div className="mt-1 text-xs text-slate-500">
-              we say {(live.itm.ours * 100).toFixed(0)}% · Kalshi {(live.itm.market * 100).toFixed(0)}% (+{live.itm.gap_pts.toFixed(0)}) · clear of the tape {live.itm.clear_bars} min
-            </div>
-          </div>
-        )}
       </div>
 
       {(() => {
@@ -334,57 +330,6 @@ function LiveHero() {
         </div>
       )}
 
-      <button type="button" aria-expanded={strikesOpen} onClick={() => setStrikesOpen((v) => !v)}
-              className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
-        All strikes
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${strikesOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-      </button>
-      {strikesOpen && (
-      <table className="mt-2 w-full text-sm tabular-nums">
-        <thead>
-          <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
-            <th className="py-1 font-medium">Strike</th>
-            <th className="py-1 font-medium">Us</th>
-            <th className="py-1 font-medium">Kalshi</th>
-            <th className="py-1 text-right font-medium">Gap</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map((r) => {
-            const isLevel = live.our_level != null && Math.abs(r.strike - live.our_level) === Math.min(...shown.map((x) => Math.abs(x.strike - (live.our_level ?? 0))));
-            const isItm = live.itm != null && r.strike === live.itm.strike;
-            return (
-              <tr key={r.strike} className={`border-t border-slate-800/60 ${isItm ? "bg-emerald-500/10" : isLevel ? "bg-slate-800/40" : ""}`}>
-                <td className="py-1.5 font-mono text-white">
-                  ${r.strike.toFixed(2)}
-                  {isLevel && <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-amber-300">our 50% level</span>}
-                  {isItm && <span className="ml-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-300">ITM line</span>}
-                </td>
-                <td className="py-1.5 pr-2">
-                  <span className="flex items-center gap-2">
-                    <span className="h-2 rounded bg-amber-400/80" style={{ width: `${Math.max(2, r.ours * 60)}px` }} />
-                    <span className="text-slate-200">{(r.ours * 100).toFixed(0)}%</span>
-                  </span>
-                </td>
-                <td className="py-1.5 pr-2">
-                  {r.market === null ? (
-                    <span className="text-slate-500">—</span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <span className="h-2 rounded bg-slate-400/80" style={{ width: `${Math.max(2, r.market * 60)}px` }} />
-                      <span className="text-slate-300">{(r.market * 100).toFixed(0)}%</span>
-                    </span>
-                  )}
-                </td>
-                <td className="py-1.5 text-right text-slate-300">
-                  {r.market === null ? "—" : `${r.ours - r.market >= 0 ? "+" : "−"}${Math.abs((r.ours - r.market) * 100).toFixed(0)} pts`}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      )}
       <p className="mt-3 text-[11px] text-slate-600">
         Recomputed every 30 seconds. Inside the last 20 minutes, this is already the next hour.
       </p>
@@ -392,25 +337,140 @@ function LiveHero() {
   );
 }
 
-function ItmRecordStrip() {
-  const [rec, setRec] = useState<ItmRecord | null>(null);
+const cents = (v: number) => `${(v * 100).toFixed(1).replace(/\.0$/, "")}c`;
+const signedCents = (v: number) => `${v >= 0 ? "+" : "−"}${cents(Math.abs(v))}`;
+
+/** How the pick has done: the rule replayed over frozen quotes, and its own graded picks since. */
+function StrikeRecordLine() {
+  const [rec, setRec] = useState<StrikeRecord | null>(null);
   useEffect(() => {
     let stop = false;
-    getJson<ItmRecord>("/api/oil/itm-record").then((r) => { if (!stop) setRec(r); }).catch(() => {});
+    getJson<StrikeRecord>("/api/oil/itm-record").then((r) => { if (!stop) setRec(r); }).catch(() => {});
     return () => { stop = true; };
   }, []);
-  if (!rec || typeof rec.frozen !== "number" || rec.frozen === 0) return null;
+  if (!rec || typeof rec.frozen !== "number") return null;
+  const replay = rec.backtest;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-[13px] text-slate-400">
-      <span className="font-semibold text-emerald-300">ITM line record</span>
-      <span>{rec.frozen} frozen · {rec.settled} settled</span>
-      {rec.hit_rate !== null && <span>{rec.hits} hit ({(rec.hit_rate * 100).toFixed(0)}%)</span>}
-      {rec.ev_per_dollar !== null && (
-        <span>at Kalshi's price: <span className={rec.ev_per_dollar >= 0 ? "text-emerald-300" : "text-rose-300"}>
-          {rec.ev_per_dollar >= 0 ? "+" : "−"}${Math.abs(rec.ev_per_dollar).toFixed(2)} per $1
-        </span></span>
+    <div className="mt-2 space-y-0.5 text-[13px] text-slate-300">
+      {replay && replay.picks > 0 && replay.net_per_contract != null && replay.avg_model != null && (
+        <p>
+          On past frozen quotes: <span className="tabular-nums">{replay.hits} of {replay.picks}</span> picks hit
+          ({Math.round((replay.hits / replay.picks) * 100)}%, the model said {Math.round(replay.avg_model * 100)}%),{" "}
+          <span className={`font-semibold tabular-nums ${replay.net_per_contract >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            {signedCents(replay.net_per_contract)} per contract after fees
+          </span>.
+          {replay.net_per_contract < 0 && " This signal hasn't made money so far."}
+        </p>
       )}
-      <span className="text-slate-600">a calibration record — it never trades</span>
+      {rec.settled > 0 && rec.net_per_contract != null && (
+        <p>
+          Picks graded since this went up: <span className="tabular-nums">{rec.hits} of {rec.settled}</span> hit,{" "}
+          <span className={`font-semibold tabular-nums ${rec.net_per_contract >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+            {signedCents(rec.net_per_contract)} per contract
+          </span>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function pickLabel(p: StrikePick): string {
+  return `${p.side === "yes" ? "Above" : "Below"} $${p.strike.toFixed(2)}`;
+}
+
+/** The answer first: which strike the model favors at the price it actually costs, and how that has gone. */
+export function BestStrike({ best, closest, priceAge }: { best: StrikePick | null; closest: StrikePick | null; priceAge: number | null }) {
+  const stale = priceAge != null && priceAge >= 2;
+  return (
+    <div className={`mt-4 rounded-lg border p-4 ${best ? (best.side === "yes" ? "border-emerald-500/60 bg-emerald-500/10" : "border-rose-500/60 bg-rose-500/10") : "border-slate-700 bg-slate-950/40"}`}>
+      <h3 className="text-sm font-medium text-slate-300">Best strike this hour</h3>
+      {best ? (
+        <>
+          <div className={`mt-1 text-4xl font-bold tabular-nums ${best.side === "yes" ? "text-emerald-300" : "text-rose-300"}`}>
+            {best.side === "yes" ? "▲" : "▼"} {pickLabel(best)}
+          </div>
+          <p className="mt-1 text-base text-slate-100 tabular-nums">
+            {best.side === "yes" ? "YES" : "NO"} costs {cents(best.cost)} · model says {Math.round(best.prob * 100)}% · edge +{best.edge_pts.toFixed(0)} pts (+{best.net_pts.toFixed(1)} after fee)
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="mt-1 text-2xl font-semibold text-slate-200">No clear strike right now</div>
+          <p className="mt-1 text-sm text-slate-400 tabular-nums">
+            {closest
+              ? <>Closest: {pickLabel(closest)}, {closest.side === "yes" ? "YES" : "NO"} at {cents(closest.cost)}, model {Math.round(closest.prob * 100)}%. A pick needs 5+ points over the cost.</>
+              : "Kalshi has no two-sided quotes in a tradable range for this hour yet."}
+          </p>
+        </>
+      )}
+      <StrikeRecordLine />
+      {stale && (
+        <p className="mt-1 text-[13px] text-amber-200">
+          The model's WTI price is {Math.round(priceAge)} min old, and Kalshi settles on a live feed, so part of any gap can just be the delay.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The strikes as Kalshi lists them: what YES and NO cost at each, the model, and the edge on the better side. */
+export function StrikeBoard({ rows, best, ourLevel }: { rows: LiveRow[]; best: StrikePick | null; ourLevel: number | null }) {
+  const [all, setAll] = useState(false);
+  const sorted = [...rows].sort((a, b) => b.strike - a.strike);
+  const quoted = sorted.filter((r) => r.yes_bid != null || r.yes_ask != null);
+  const contested = sorted.filter((r) => r.ours >= 0.1 && r.ours <= 0.9);
+  const near = quoted.filter((r) => r.ours >= 0.05 && r.ours <= 0.95);
+  const base = near.length >= 3 ? near : contested.length >= 3 ? contested : sorted;
+  // 15 rows around the pick, or the model's 50% level, so the action never scrolls off.
+  const center = best?.strike ?? ourLevel ?? base[Math.floor(base.length / 2)]?.strike ?? 0;
+  const shown = all ? sorted : [...base].sort((a, b) => Math.abs(a.strike - center) - Math.abs(b.strike - center))
+    .slice(0, 15).sort((a, b) => b.strike - a.strike);
+  const levelStrike = ourLevel == null ? null
+    : sorted.reduce((a, b) => (Math.abs(b.strike - ourLevel) < Math.abs(a.strike - ourLevel) ? b : a), sorted[0]).strike;
+  const edge = (r: LiveRow) => {
+    const yes = r.yes_ask != null ? (r.ours - r.yes_ask) * 100 : null;
+    const no = r.yes_bid != null ? (r.yes_bid - r.ours) * 100 : null;
+    if (yes == null && no == null) return null;
+    return (yes ?? -Infinity) >= (no ?? -Infinity) ? { side: "YES", pts: yes as number } : { side: "NO", pts: no as number };
+  };
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-sm tabular-nums">
+        <thead>
+          <tr className="text-left text-xs text-slate-400">
+            <th scope="col" className="py-1 font-medium">Settles above</th>
+            <th scope="col" className="py-1 text-right font-medium">Model</th>
+            <th scope="col" className="py-1 text-right font-medium">YES costs</th>
+            <th scope="col" className="py-1 text-right font-medium">NO costs</th>
+            <th scope="col" className="py-1 text-right font-medium">Best edge</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((r) => {
+            const e = edge(r);
+            const isBest = best?.strike === r.strike;
+            return (
+              <tr key={r.strike} className={`border-t border-slate-800/60 ${isBest ? (best?.side === "yes" ? "bg-emerald-500/15" : "bg-rose-500/15") : ""}`}>
+                <td className="py-1.5 text-white">
+                  ${r.strike.toFixed(2)}
+                  {isBest && <span className="ml-2 text-xs font-semibold text-emerald-200">best</span>}
+                  {r.strike === levelStrike && !isBest && <span className="ml-2 text-xs text-amber-300">our 50% level</span>}
+                </td>
+                <td className="py-1.5 text-right text-slate-100">{(r.ours * 100).toFixed(0)}%</td>
+                <td className="py-1.5 text-right text-slate-300">{r.yes_ask == null ? "—" : cents(r.yes_ask)}</td>
+                <td className="py-1.5 text-right text-slate-300">{r.yes_bid == null ? "—" : cents(1 - r.yes_bid)}</td>
+                <td className={`py-1.5 text-right ${e && e.pts >= 5 ? "font-semibold text-emerald-300" : "text-slate-400"}`}>
+                  {e ? `${e.side} ${e.pts >= 0 ? "+" : "−"}${Math.abs(e.pts).toFixed(0)}` : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <button type="button" onClick={() => setAll((v) => !v)} aria-expanded={all}
+              className="mt-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
+        {all ? "Show strikes near the money" : `All ${sorted.length} strikes`}
+      </button>
     </div>
   );
 }
@@ -448,11 +508,11 @@ function NextHourHero({ ours, market }: { ours: JournalFeed | null; market: Jour
     })
     .filter((r) => Number.isFinite(r.strike))
     .sort((a, b) => a.strike - b.strike);
-  const band = rows.filter((r) => r.ours >= 0.02 && r.ours <= 0.98);
-  const shown = band.length >= 3 ? band : rows;
   const ourLevel = crossing(rows, (r) => r.ours);
   const marketLevel = crossing(rows, (r) => r.market);
   const frozenAt = new Date(Math.max(...group.map((f) => Date.parse(f.frozen_at))));
+  const band = rows.filter((r) => r.ours >= 0.02 && r.ours <= 0.98);
+  const shown = band.length >= 3 ? band : rows;
   const levelText = (v: number | null) => (v === null ? "outside the ladder" : `$${v.toFixed(2)}`);
   return (
     <section aria-label="Next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
@@ -534,7 +594,7 @@ function FrozenRecord({ ours, market }: { ours: JournalFeed | null; market: Jour
       </button>
       {open && (
         <div className="space-y-3 px-4 pb-4">
-          <ItmRecordStrip />
+          
           <NextHourHero ours={ours} market={market} />
           <div className="text-right text-[11px] text-slate-600">Refreshes every 10 minutes.</div>
         </div>
