@@ -280,3 +280,10 @@ def test_the_shadow_row_records_which_feed_it_used():
     fc._forecast = lambda entry, now, extra=None: seen.update(extra)
     fc.forecast(None, NOW)
     assert seen == {"feed": "WTIZ6"}
+
+
+def test_when_both_pro_feeds_refuse_the_status_names_both(monkeypatch):
+    monkeypatch.setenv("PYTH_API_KEY", "abc")
+    with pytest.raises(PythUnavailable) as err:
+        pyth_oil_price(session=_Routes(hermes_status=401, body={}))
+    assert "Pro PYTHOIL 403" in str(err.value) and "Pro WTIZ6 403" in str(err.value)

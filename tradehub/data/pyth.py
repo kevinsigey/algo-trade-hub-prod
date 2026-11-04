@@ -47,13 +47,13 @@ def _refusal(service: str, response: Any, key: str) -> PythUnavailable:
 
 
 def _pro_price(key: str, session: Any, now: datetime | None) -> Observation:
-    last = None
+    refused = []
     for feed_id, name in PRO_FEEDS:
         response = session.post(LATEST_URL, json={"priceFeedIds": [feed_id], "properties": ["price", "feedUpdateTimestamp"],
                                                   "formats": [], "channel": "fixed_rate@200ms"},
                                 headers={"Authorization": f"Bearer {key}"}, timeout=5)
         if response.status_code != 200:
-            last = _refusal(f"Pro {name}", response, key)
+            refused.append(str(_refusal(f"Pro {name}", response, key)))
             continue
         try:
             parsed = response.json()["parsed"]
@@ -64,7 +64,7 @@ def _pro_price(key: str, session: Any, now: datetime | None) -> Observation:
         except (KeyError, StopIteration, TypeError, ValueError, OverflowError, OSError):
             raise PythUnavailable("Pro's answer wasn't in the expected shape") from None
         return _checked(value, published, now, name)
-    raise last
+    raise PythUnavailable("; ".join(refused))
 
 
 def _hermes_price(key: str, session: Any, now: datetime | None) -> Observation:
