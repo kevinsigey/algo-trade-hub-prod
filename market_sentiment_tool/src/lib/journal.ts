@@ -24,6 +24,9 @@ export interface JournalScore {
   n_settled: number;
   brier: number | null;
   brier_baseline: number | null;
+  /** This model's Brier on only the contracts its baseline priced: the fair partner of brier_baseline. */
+  brier_on_baseline?: number | null;
+  n_baseline?: number | null;
   bss: number | null;
   /** Paired Brier gap vs baseline on the same contracts: negative = better than baseline. */
   gap?: number | null;
@@ -166,6 +169,15 @@ export function baselineWord(baseline: Baseline): string {
   if (baseline === "market") return "vs the Kalshi market";
   if (baseline === "climatology") return "vs climatology";
   return "no baseline";
+}
+
+/** The head-to-head: model and baseline on the same contracts. `brier` also counts far strikes nobody
+ * prices, which are almost free to get right, so setting it against the baseline flatters the model. */
+export function matchedBrier(score: {
+  brier_on_baseline?: number | null; brier_baseline: number | null; n_baseline?: number | null;
+}): { ours: number; baseline: number; n: number | null } | null {
+  if (score.brier_on_baseline == null || score.brier_baseline == null) return null;
+  return { ours: score.brier_on_baseline, baseline: score.brier_baseline, n: score.n_baseline ?? null };
 }
 
 export function brierText(value: number | null): string {

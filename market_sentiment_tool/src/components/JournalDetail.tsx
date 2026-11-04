@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 import { getJson } from "@/lib/getJson";
-import { biasReadout, costsText, pct, type JournalFeed } from "@/lib/journal";
+import { biasReadout, costsText, matchedBrier, pct, type JournalFeed } from "@/lib/journal";
 import type { ViewRow } from "@/lib/journalView";
 
 /**
@@ -55,13 +55,14 @@ export function JournalDetail({ row }: { row: ViewRow }) {
 
   const bias = biasReadout(score.reliability);
   const costs = costsText(score);
+  const matched = matchedBrier(score);
   return (
     <div className="grid gap-6 py-4 md:grid-cols-2">
       <div>
         <div className="mb-2 font-mono text-xs text-slate-500">{row.key}</div>
         {row.market && (
           <div className="mb-2 text-sm text-slate-300">
-            Kalshi price scores {row.market.brier?.toFixed(3) ?? "—"}; this scores {score.brier?.toFixed(3) ?? "—"} (lower is better).
+            Kalshi price scores {(matched?.baseline ?? row.market.brier)?.toFixed(3) ?? "—"}; this scores {(matched?.ours ?? score.brier)?.toFixed(3) ?? "—"}{matched?.n != null ? ` on the same ${matched.n.toLocaleString()} contracts` : ""} (lower is better).
           </div>
         )}
         {costs && <div className="mb-2 text-sm text-slate-400">{costs}</div>}

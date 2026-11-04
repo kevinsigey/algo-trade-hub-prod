@@ -9,7 +9,7 @@ import { league } from "@/lib/league";
 function score(over: Partial<JournalScore> = {}): JournalScore {
   return {
     forecaster: "spy_quant", forecaster_version: "spy-wf-v1", cadence: "daily", baseline: "market",
-    n_targets: 240, n_settled: 210, brier: 0.19, brier_baseline: 0.211, bss: 0.08,
+    n_targets: 240, n_settled: 210, brier: 0.19, brier_on_baseline: 0.204, n_baseline: 150, brier_baseline: 0.211, bss: 0.08,
     gap: -0.021, gap_se: 0.008,
     reliability: [], murphy: {}, calibration_ready: true,
     gate_status: "SHADOW", gate_reasons: ["needs a longer settled record"], computed_at: "2026-10-01T13:00:00+00:00",
@@ -61,7 +61,7 @@ describe("ModelCards", () => {
     expect(screen.getByText("−0.012")).toBeInTheDocument();
     expect(screen.getAllByText("Behind").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Scored 210 \/ 200 needed/)).toBeInTheDocument();
-    expect(screen.getByText(/Brier 0.190 vs 0.211/)).toBeInTheDocument();
+    expect(screen.getByText(/Brier 0.204 vs 0.211 on 150 matched contracts/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Edge trend/ })).toBeInTheDocument();
   });
 
