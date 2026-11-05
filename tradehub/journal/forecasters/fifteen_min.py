@@ -76,6 +76,36 @@ class FifteenMinInputs:
         return self._tapes[coin]
 
 
+def read_window(close_time: datetime, tape: list, now: datetime) -> dict | None:
+    """The model's read of one window from the 1-minute tape, or None when the tape can't support it: a missing
+    open candle, a stale tape or too little history is a gap, never an approximation. The journal's freeze and
+    the Oil page's live view both read through here, so what's shown is what's graded."""
+    window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
+    open_price = dict(tape).get(window_open - timedelta(minutes=1))
+    if open_price is None:
+        return None  # no candle closing at the window open: skip, never approximate it
+    completed = [(t, v) for t, v in tape if t + timedelta(minutes=1) <= now]
+    if not completed:
+        return None
+    last_t, price = completed[-1]
+    effective_now = last_t + timedelta(minutes=1)
+    if now - effective_now > MAX_TAPE_STALE:
+        return None  # a stale tape is a gap, never a live price dressed as one
+    run = [completed[-1]]  # the unbroken minutes behind this one: a gap would read as a one-minute return
+    for t, v in reversed(completed[-91:-1]):
+        if run[-1][0] - t != timedelta(minutes=1):
+            break
+        run.append((t, v))
+    sigma = realized_sigma_1m([v for _t, v in reversed(run)])
+    if sigma is None:
+        return None  # tape too thin: skip the freeze, never swap the sigma method
+    remaining = (close_time - effective_now).total_seconds() / 60.0
+    return {"open_price": open_price, "price": price, "price_at": effective_now.isoformat(),
+            "elapsed_min": round((effective_now - window_open).total_seconds() / 60.0, 1),
+            "remaining_min": round(remaining, 1), "sigma_1m": sigma,
+            "prob_up": prob_up(open_price, price, sigma, remaining)}
+
+
 class FifteenMinModel:
     cadence = CADENCE
 
@@ -99,35 +129,16 @@ class FifteenMinModel:
         lm = self._open.get(entry.target)
         if lm is None:
             return None
-        close_time = lm.market.close_time
-        window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
-        tape = self._inputs.tape(self.coin, now)
-        by_open = {t: v for t, v in tape}
-        open_price = by_open.get(window_open - timedelta(minutes=1))
-        if open_price is None:
-            return None  # no candle closing at the window open: skip, never approximate it
-        completed = [(t, v) for t, v in tape if t + timedelta(minutes=1) <= now]
-        if not completed:
+        read = read_window(lm.market.close_time, self._inputs.tape(self.coin, now), now)
+        if read is None or read["remaining_min"] < FREEZE_MIN_ELAPSED:
             return None
-        last_t, price = completed[-1]
-        effective_now = last_t + timedelta(minutes=1)
-        if now - effective_now > MAX_TAPE_STALE:
-            return None  # a stale tape is a gap, never a live price dressed as one
-        remaining = (close_time - effective_now).total_seconds() / 60.0
-        if remaining < FREEZE_MIN_ELAPSED:
-            return None
-        sigma = realized_sigma_1m([v for _t, v in completed[-91:]])
-        if sigma is None:
-            return None  # tape too thin: skip the freeze, never swap the sigma method
-        elapsed = (effective_now - window_open).total_seconds() / 60.0
-        return Forecast(self.name, self.version, entry.target,
-                        prob_up(open_price, price, sigma, remaining),
+        return Forecast(self.name, self.version, entry.target, read["prob_up"],
                         market_prob=quote_mid(lm),
-                        payload={**quote_payload(lm), "open_price": open_price,
-                                 "price": price, "price_at": effective_now.isoformat(),
-                                 "elapsed_min": round(elapsed, 1),
-                                 "remaining_min": round(remaining, 1),
-                                 "sigma_1m": sigma, "feed": self.coin,
+                        payload={**quote_payload(lm), "open_price": read["open_price"],
+                                 "price": read["price"], "price_at": read["price_at"],
+                                 "elapsed_min": read["elapsed_min"],
+                                 "remaining_min": read["remaining_min"],
+                                 "sigma_1m": read["sigma_1m"], "feed": self.coin,
                                  "basis": "drift-scaled random walk on Hyperliquid 1m "
                                           "candles (v2: every window, preregistered 2026-11-04)"})
 

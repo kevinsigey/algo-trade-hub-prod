@@ -4,26 +4,23 @@ import { ChevronDown } from "lucide-react";
 import { Chip, type Tone } from "@/components/Chip";
 import { JournalDetail } from "@/components/JournalDetail";
 import { getJson } from "@/lib/getJson";
-import ChokepointsMap from "@/components/ChokepointsMap";
+import { FifteenMinutePanel } from "@/components/FifteenMinutePanel";
 import GapDesk from "@/components/GapDesk";
+import { LiveChip } from "@/components/LiveChip";
 import { NextRelease } from "@/components/NextRelease";
 import { Stat } from "@/components/Stat";
 import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal";
 import { STATUS_WORDS, skillText, totals, viewRows, type Status, type ViewRow } from "@/lib/journalView";
+import { buyBelowLimit, cents } from "@/lib/oilFees";
 
 /**
- * /oil: the Commodities dashboard (Kevin's redesign, 2026-11-03).
- *
- * The hero is LIVE: the next hour's ladder recomputed every 30 seconds off
- * the current WTI print (the endpoint already rolls to the following hour
- * inside the last 20 minutes before a close), our 50% level against
- * Kalshi's, big and center. Below it the Hormuz chokepoints tracker, then
- * the frozen ladder the journal locked in (~65 minutes before each hour)
- * and the scoring/settlements record behind dropdowns -- the graded truth,
- * kept visibly separate from the live display.
+ * /oil: the two live predictions, one page. The next 15 minutes first, because it turns over fastest and states a
+ * direction, then the next hour's range and strikes. The graded record sits below both, kept visibly apart from the
+ * live display. The Hormuz tracker has its own tab (OilLayout).
  */
 const STATUS_TONE: Record<Status, Tone> = { waiting: "quiet", early: "quiet", ahead: "good", behind: "bad", promoted: "good" };
 const OIL = new Set(["oil_wti", "oil_wti_cautious", "kalshi_implied_oil", "baseline_persistence_oil"]);
+const OIL_15M = new Set(["oil_wti_15m", "oil_brent_15m", "natgas_15m", "kalshi_implied_oil_wti_15m", "kalshi_implied_oil_brent_15m", "kalshi_implied_natgas_15m"]);
 const OIL_HOURLY = new Set(["oil_wti_hourly", "oil_wti_hourly_cautious", "kalshi_implied_oil_hourly", "baseline_persistence_oil_hourly"]);
 const REFRESH_MS = 10 * 60 * 1000;
 
@@ -53,22 +50,6 @@ function crossing(rows: LadderRow[], pick: (r: LadderRow) => number | null, leve
   }
   return null;
 }
-
-/** Kalshi's taker fee rate — mirrors `TAKER_FEE_RATE` in tradehub/oil_live.py. */
-const TAKER_FEE_RATE = 0.07;
-
-/**
- * The highest price (in dollars) at which a contract with model probability
- * `prob` still breaks even after the quadratic taker fee: solves
- * prob − p − rate·p·(1−p) = 0. This is the "buy below" limit — pay more
- * than this and the fee eats the whole edge.
- */
-export function buyBelowLimit(prob: number): number {
-  const r = TAKER_FEE_RATE;
-  const disc = Math.max(0, (1 + r) * (1 + r) - 4 * r * prob);
-  return ((1 + r) - Math.sqrt(disc)) / (2 * r);
-}
-
 
 interface LiveRow { strike: number; ours: number; market: number | null; yes_bid?: number | null; yes_ask?: number | null }
 interface StrikePick {
@@ -239,11 +220,9 @@ function LiveHero() {
   const gap = live.our_level != null && live.market_level != null ? live.our_level - live.market_level : null;
   const asOf = live.as_of ? new Date(live.as_of) : null;
   return (
-    <section aria-label="Live next hour" className="rounded-xl border border-amber-500/40 bg-slate-900/70 p-5">
+    <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/70 p-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-rose-300">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" /> Live
-        </span>
+        <LiveChip />
         <h2 className="text-xl font-semibold text-white">Next hour — {eventLabel(live.event)}</h2>
         <span className="text-xs text-slate-500">
           closes in ~{Math.max(0, Math.round(live.minutes_to_close ?? 0))} min
@@ -263,19 +242,19 @@ function LiveHero() {
       <div className="mt-4 grid gap-4 text-center sm:grid-cols-3">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Our 50% level</div>
-          <div className="mt-1 text-4xl font-bold tabular-nums text-white">{levelText(live.our_level)}</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-white">{levelText(live.our_level)}</div>
           <div className="mt-1 text-xs text-slate-500">the settle price we call a coin flip</div>
         </div>
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Kalshi's 50% level</div>
-          <div className="mt-1 text-4xl font-bold tabular-nums text-slate-200">{levelText(live.market_level)}</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-slate-200">{levelText(live.market_level)}</div>
           <div className="mt-1 text-xs text-slate-500">
             {gap === null ? "no clean crossing in the market ladder" : <>we sit <span className={gap >= 0 ? "text-amber-300" : "text-sky-300"}>{gap >= 0 ? "+" : "−"}${Math.abs(gap).toFixed(2)}</span> vs the market</>}
           </div>
         </div>
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">WTI live</div>
-          <div className="mt-1 text-4xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
           <div className="mt-1 text-xs text-slate-500">
             {live.price_source === "hyperliquid"
               ? "Hyperliquid oil perp, live but not what Kalshi settles on"
@@ -322,7 +301,6 @@ function LiveHero() {
   );
 }
 
-const cents = (v: number) => `${(v * 100).toFixed(1).replace(/\.0$/, "")}c`;
 const signedCents = (v: number) => `${v >= 0 ? "+" : "−"}${cents(Math.abs(v))}`;
 
 /** How the pick has done: the rule replayed over frozen quotes, and its own graded picks since. */
@@ -717,37 +695,28 @@ export default function Oil() {
 
   const rows = viewRows(data.forecasters.filter((s) => OIL.has(s.forecaster)));
   const hourlyRows = viewRows(data.forecasters.filter((s) => OIL_HOURLY.has(s.forecaster)));
+  const fifteenRows = viewRows(data.forecasters.filter((s) => OIL_15M.has(s.forecaster)));
   const t = totals(rows);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6 md:p-8">
-      <header>
-        <h1 className="text-3xl font-bold text-white">Commodities — WTI crude oil</h1>
-        <p className="mt-2 text-slate-400">Live hourly oil, Hormuz, and the graded record.</p>
-      </header>
-
+    <div className="space-y-6">
+      <FifteenMinutePanel />
       <LiveHero />
 
-      {/* The frozen record hides behind a dropdown (Kevin, 2026-11-03): the
-          live next-hour prediction is what the page leads with; the locked-in
-          ladder and its grades open only on request. */}
-      <FrozenRecord ours={ours} market={market} />
-
-      <ChokepointsMap />
-
-      <GapDesk category="oil" />
-
-      <NextRelease family="oil" title="Next settlement" />
-
-      <section aria-label="Totals" className="grid gap-3 sm:grid-cols-2">
-        <Stat value={t.frozen} label="forecasts locked in" />
-        <Stat value={t.scored} label="scored so far" />
+      <section aria-label="Track record" className="space-y-3 pt-4">
+        <h2 className="text-xl font-semibold text-white">Track record</h2>
+        <section aria-label="Totals" className="grid gap-3 sm:grid-cols-2">
+          <Stat value={t.frozen} label="forecasts locked in" />
+          <Stat value={t.scored} label="scored so far" />
+        </section>
+        {t.frozen === 0 && <p className="text-slate-400">Nothing locked in yet. The next one locks 2 hours before the settlement.</p>}
+        <NextRelease family="oil" title="Next settlement" />
+        <FrozenRecord ours={ours} market={market} />
+        <RecordSection title="15-minute settlements" rows={fifteenRows} />
+        <RecordSection title="Hourly settlements" rows={hourlyRows} />
+        <RecordSection title="Daily settlement" rows={rows} />
+        <GapDesk category="oil" />
       </section>
-
-      {t.frozen === 0 && <p className="text-slate-400">Nothing locked in yet. The next one locks 2 hours before the settlement.</p>}
-
-      <RecordSection title="Daily settlement" rows={rows} />
-      <RecordSection title="Hourly settlements" rows={hourlyRows} />
     </div>
   );
 }

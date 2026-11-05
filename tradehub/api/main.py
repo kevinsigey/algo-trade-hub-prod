@@ -1407,12 +1407,21 @@ def oil_itm_record(supabase=Depends(get_supabase)) -> dict:
 def oil_hourly_live():
     """The Commodities hero: the v1 hourly WTI model recomputed against the
     live market (tradehub/oil_live.py) -- the soonest event closing >= 20
-    minutes out, our probabilities from the live CL=F print beside Kalshi's
+    minutes out, our probabilities from the live price beside Kalshi's
     current mids, 20-second server cache. Display only: the graded record
     is the journal's frozen ladder, which this never touches."""
     from tradehub.oil_live import live_ladder_cached
 
     return live_ladder_cached()
+
+
+@app.get("/api/oil/fifteen-live", tags=["Oil"])
+def oil_fifteen_live():
+    """The live 15-minute read for WTI, Brent and natural gas (tradehub/oil_live.py): the math the journal
+    freezes, on every open window, beside Kalshi's prices. Display only; 10-second server cache."""
+    from tradehub.oil_live import fifteen_live_cached
+
+    return fifteen_live_cached()
 
 
 @app.post("/api/agent/interpret", tags=["Agent"])

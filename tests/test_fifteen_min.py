@@ -144,3 +144,63 @@ def test_the_build_covers_all_three_series_and_their_market_rows():
     assert all(f.cadence == "15min" for f in built if hasattr(f, "cadence"))
     assert {f.version for f in built if not f.name.startswith("kalshi_implied")} == {
         "wti-15m-v2", "brent-15m-v2", "natgas-15m-v2"}
+
+
+# ── the live read on the Oil page ─────────────────────────────────────────────
+
+def _live_page(now, tape=None, markets=None):
+    from tradehub.oil_live import fifteen_live
+
+    inputs = FifteenMinInputs(candles_fn=lambda coin, s, e: tape if tape is not None else _tape())
+    live = _Live([_market(T0 + timedelta(minutes=15))] if markets is None else markets)
+    return fifteen_live(now, live=live, inputs=inputs)
+
+
+def test_the_live_read_matches_what_the_journal_freezes():
+    now = T0 + timedelta(minutes=5)
+    model = _model(now)
+    entry = model.targets(now)[0]
+    frozen = model.forecast(entry, now)
+    out = _live_page(now)
+    wti = next(m for m in out["markets"] if m["series"] == "KXWTI15M")
+    assert out["state"] == "live" and wti["state"] == "live"
+    assert wti["prob_up"] == pytest.approx(frozen.probability, abs=1e-4)
+    assert wti["open_price"] == 100.0 and wti["minutes_left"] == 10.0
+    assert wti["yes_bid"] == 0.48 and wti["yes_ask"] == 0.52
+
+
+def test_the_live_read_carries_a_buy_only_when_the_edge_clears_the_bar():
+    now = T0 + timedelta(minutes=5)
+    wti = next(m for m in _live_page(now)["markets"] if m["series"] == "KXWTI15M")
+    assert wti["prob_up"] > 0.57 and wti["best"]["side"] == "yes" and wti["best"]["cost"] == 0.52
+    flat = next(m for m in _live_page(now, tape=_tape(drift=0.0))["markets"] if m["series"] == "KXWTI15M")
+    assert flat["best"] is None
+
+
+def test_the_live_read_keeps_going_inside_the_last_minutes_of_a_window():
+    # The journal stops freezing here, but the page still shows the open window.
+    now = T0 + timedelta(minutes=14)
+    wti = next(m for m in _live_page(now)["markets"] if m["series"] == "KXWTI15M")
+    assert wti["state"] == "live" and wti["minutes_left"] == 1.0
+
+
+def test_a_market_it_cannot_read_says_why_and_never_invents_a_number():
+    now = T0 + timedelta(minutes=5)
+    no_window = _live_page(now, markets=[])["markets"][0]
+    assert no_window["state"] == "unavailable" and "prob_up" not in no_window and no_window["reason"]
+    no_tape = _live_page(now, tape=[])["markets"][0]
+    assert no_tape["state"] == "unavailable" and "prob_up" not in no_tape
+
+
+def test_sigma_only_reads_the_unbroken_run_of_minutes():
+    # A missing minute would count a two-minute return as one and overstate the volatility.
+    now = T0 + timedelta(minutes=5)
+    tape = _tape()
+    broken = [c for c in tape if c[0] != now - timedelta(minutes=60)]
+    from tradehub.journal.forecasters.fifteen_min import read_window
+
+    close = T0 + timedelta(minutes=15)
+    whole = read_window(close, tape, now)["sigma_1m"]
+    split = read_window(close, broken, now)["sigma_1m"]
+    assert split != whole
+    assert split == realized_sigma_1m([v for t, v in tape if now - timedelta(minutes=60) < t < now])

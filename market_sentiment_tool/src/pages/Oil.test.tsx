@@ -13,13 +13,15 @@ function score(over: Partial<JournalScore> = {}): JournalScore {
   };
 }
 
-function serve(forecasters: JournalScore[], feed: Partial<JournalFeed> = {}, live?: unknown) {
+function serve(forecasters: JournalScore[], feed: Partial<JournalFeed> = {}, live?: unknown, fifteen?: unknown) {
   const journal: JournalResponse = {
     as_of: "x", forecasters, headline: { forecasters: forecasters.length, calibrated: 0, frozen_calibrated: 0, settled_calibrated: 0, promoted: 0, market_skill: null },
   };
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
-    const body = u.includes("/api/oil/hourly-live")
+    const body = u.includes("/api/oil/fifteen-live")
+      ? (fifteen ?? { state: "live", markets: [] })
+      : u.includes("/api/oil/hourly-live")
       ? (live ?? { state: "unavailable", reason: "no live ladder in this test" })
       : u.includes("/api/journal/feed")
         ? { forecaster: "oil_wti", forecaster_version: "wti-v1", generated_at: "x", forecasts: [], calibration: [], gate_status: "SHADOW", provisional: true, ...feed }
@@ -37,7 +39,7 @@ describe("/oil", () => {
       score({ forecaster: "spy_quant", forecaster_version: "spy-wf-v1", cadence: "daily" }),
     ]);
     const { container } = render(<Oil />);
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Commodities — WTI crude oil", level: 1 })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Track record" })).toBeTruthy());
     // The record sits behind the Daily dropdown now (2026-11-02 dashboard pass).
     fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
@@ -98,6 +100,42 @@ describe("/oil", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ detail: "down" }) }) as Response));
     render(<Oil />);
     await waitFor(() => expect(screen.getByText(/Oil forecasts unavailable: down/)).toBeTruthy());
+  });
+});
+
+describe("/oil 15-minute panel", () => {
+  const market = {
+    series: "KXWTI15M", label: "WTI", state: "live", close_time: "2026-11-05T05:30:00+00:00", minutes_left: 10,
+    open_price: 86.88, price: 87.03, official_open: 86.92, prob_up: 0.71, market: 0.62, yes_bid: 0.6, yes_ask: 0.62,
+    best: { strike: 0, side: "yes", prob: 0.71, cost: 0.62, edge_pts: 9, net_pts: 7.4 },
+  };
+
+  it("puts both live predictions on one page and leaves Hormuz to its own tab", async () => {
+    serve([score()], {}, undefined, { state: "live", markets: [market] });
+    render(<Oil />);
+    expect(await screen.findByRole("region", { name: "Next 15 minutes" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Live next hour" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Chokepoints monitor" })).toBeNull();
+  });
+
+  it("states the direction, Kalshi's number and the most to pay", async () => {
+    serve([score()], {}, undefined, { state: "live", markets: [market] });
+    render(<Oil />);
+    expect(await screen.findByText(/71% up/)).toBeInTheDocument();
+    expect(screen.getByText("Kalshi 62% up")).toBeInTheDocument();
+    expect(screen.getByText(/Buy YES below/)).toBeInTheDocument();
+    expect(screen.getByText(/\+\$0\.15 since the open/)).toBeInTheDocument();
+  });
+
+  it("reads a fall as down, says No trade without an edge, and names a gap instead of inventing a number", async () => {
+    serve([score()], {}, undefined, { state: "live", markets: [
+      { ...market, price: 86.7, prob_up: 0.3, market: 0.31, best: null },
+      { series: "KXNATGAS15M", label: "Natural gas", state: "unavailable", reason: "no window open right now" },
+    ] });
+    render(<Oil />);
+    expect(await screen.findByText(/70% down/)).toBeInTheDocument();
+    expect(screen.getByText("No trade")).toBeInTheDocument();
+    expect(screen.getByText("no window open right now")).toBeInTheDocument();
   });
 });
 
