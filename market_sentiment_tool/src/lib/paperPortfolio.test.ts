@@ -59,3 +59,31 @@ describe("dayMovers", () => {
     expect(down.map((r) => r.symbol)).toEqual(["S1", "S4"]);
   });
 });
+
+describe("ideaScorecard on incomplete or short rows", () => {
+  const base = { qty: 1, side: "long", pct_of_book: null } as const;
+
+  it("reads a missing day or open P&L as unknown, never as zero", () => {
+    const rows = [{ ...base, symbol: "A", idea: "X", market_value: 100, cost_basis: 90, unrealized_pl: 10, day_pl: 2 },
+                  { ...base, symbol: "B", idea: "X", market_value: 100, cost_basis: 100, unrealized_pl: null, day_pl: null }] as PositionRow[];
+    const [x] = ideaScorecard(rows, 1000, []);
+    expect(x.day_pl).toBeNull();
+    expect(x.unrealized).toBeNull();
+    expect(x.return_pct).toBeNull();
+  });
+
+  it("sizes and returns a short on its gross exposure", () => {
+    const rows = [{ ...base, symbol: "S", idea: "Short", side: "short", market_value: -500, cost_basis: -600, unrealized_pl: 100, day_pl: 5 }] as PositionRow[];
+    const [s] = ideaScorecard(rows, 1000, []);
+    expect(s.pct).toBeCloseTo(50);
+    expect(s.return_pct).toBeCloseTo(100 / 600 * 100);
+  });
+});
+
+describe("dayMovers when day P&L is unknown", () => {
+  it("says the day is unknown rather than flat", () => {
+    const rows = [{ symbol: "A", day_pl: null, market_value: 1 }] as PositionRow[];
+    expect(dayMovers(rows).known).toBe(false);
+    expect(dayMovers([{ symbol: "A", day_pl: 0, market_value: 1 } as PositionRow]).known).toBe(true);
+  });
+});

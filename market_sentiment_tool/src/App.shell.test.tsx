@@ -190,3 +190,14 @@ describe("the rail's own controls", () => {
     expect(within(rail).getByRole("link", { name: /^oil$/i })).toHaveAttribute("href", "/oil");
   });
 });
+
+describe("the rail's stored preferences", () => {
+  it("ignores a stored value of the wrong shape", () => {
+    try { window.localStorage.setItem("atr:nav-closed-groups", "null"); window.localStorage.setItem("atr:nav-collapsed", "\"yes\""); } catch { /* blocked */ }
+    renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    expect(rail).toHaveAttribute("data-collapsed", "false");
+    expect(within(rail).getByRole("button", { name: /^markets$/i })).toHaveAttribute("aria-expanded", "true");
+    try { window.localStorage.clear(); } catch { /* blocked */ }
+  });
+});

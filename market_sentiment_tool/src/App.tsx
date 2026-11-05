@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 // Pages
 import Overview from "@/pages/Overview";
@@ -102,11 +102,12 @@ const NAV: { label: string; items: NavItem[] }[] = [
 ];
 
 /** A per-browser preference. Storage can be missing or blocked (private window, preview); the nav works without it. */
-function useStored<T>(key: string, initial: T): [T, (v: T) => void] {
+function useStored<T>(key: string, initial: T, valid: (v: unknown) => v is T): [T, (v: T) => void] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = window.localStorage.getItem(key);
-      return raw == null ? initial : (JSON.parse(raw) as T);
+      const parsed: unknown = raw == null ? initial : JSON.parse(raw);
+      return valid(parsed) ? parsed : initial;  // a hand-edited or old value never breaks the nav
     } catch {
       return initial;
     }
@@ -156,7 +157,9 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
 }) => {
   const { data, loading } = useApi<PortfolioPayload>("/api/portfolio");
   const admin = useAdminSession();
-  const [closed, setClosed] = useStored<string[]>("atr:nav-closed-groups", []);
+  const [closed, setClosed] = useStored<string[]>("atr:nav-closed-groups", [],
+    (v): v is string[] => Array.isArray(v) && v.every((g) => typeof g === "string"));
+  const uid = useId();
   // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
   const book = data?.scoreboard && data.state !== "not_connected" ? data : null;
   const toggleGroup = (label: string) =>
@@ -184,7 +187,7 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
       <nav onClick={onNavigate} aria-label="Site" className={`flex-1 overflow-y-auto ${collapsed ? "flex flex-col items-center gap-1 px-2" : "space-y-4 px-3"}`}>
         {NAV.map((group, gi) => {
           const open = collapsed || !closed.includes(group.label);
-          const id = `nav-group-${gi}`;
+          const id = `${uid}-group-${gi}`;
           return (
             <div key={group.label} className={collapsed && gi > 0 ? "mt-2 w-full border-t border-slate-800/80 pt-3 flex flex-col items-center gap-1" : collapsed ? "flex flex-col items-center gap-1" : ""}>
               {!collapsed && (
@@ -215,11 +218,13 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
       </nav>
 
       <div className={`border-t border-slate-900 ${collapsed ? "p-2" : "p-3"}`}>
-        <NavLink to="/portfolio" onClick={onNavigate} title={collapsed ? "Paper account" : undefined}
+        <NavLink to="/portfolio" onClick={onNavigate}
+                 title={collapsed ? (book ? `Paper account · ${stateLabel(book.state, book.as_of)}` : "Paper account") : undefined}
                  className={`block rounded-xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${collapsed ? "px-1 py-2 text-center" : "p-3"}`}>
           <div className={`flex items-center gap-2 text-xs font-medium text-slate-400 ${collapsed ? "justify-center" : ""}`}>
             <Wallet className="h-4 w-4" aria-hidden="true" />
             <span className={collapsed ? "sr-only" : ""}>Paper account</span>
+            {collapsed && book && <span className="sr-only">{stateLabel(book.state, book.as_of)}</span>}
           </div>
           <div className={`mt-1 font-bold tabular-nums tracking-tight ${collapsed ? "text-[11px]" : "text-xl"} ${book ? "text-white" : "text-slate-400"}`}>
             {book ? (collapsed ? compactUsd(book.scoreboard.equity) : fmtUsd(book.scoreboard.equity, { whole: true }))
@@ -238,7 +243,7 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
  * the breakpoint is CSS, so there is no width check in JavaScript to fall out of step with it.
  */
 const SidebarRail = () => {
-  const [collapsed, setCollapsed] = useStored<boolean>("atr:nav-collapsed", false);
+  const [collapsed, setCollapsed] = useStored<boolean>("atr:nav-collapsed", false, (v): v is boolean => typeof v === "boolean");
   return (
     <div
       data-testid="sidebar-rail"

@@ -364,7 +364,8 @@ function Body({ data, liveIdeas, book }: {
         ))}
         <div className="min-w-0 2xl:col-span-2"><Performance data={data} /></div>
         <CompositionBox positions={data.positions} composition={data.composition} />
-        <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={liveIdeas} />
+        {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
+        <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
         <MoversBox rows={rows} />
         <Box title={`Positions · ${rows.length}`} className="2xl:col-span-3">
           <PositionsTable rows={rows} />
@@ -414,7 +415,7 @@ function IdeasBox({ rows, equity, liveIdeas }: {
                 <tr key={c.idea} className={manual ? "text-slate-400" : "text-slate-200"}>
                   <td className="max-w-[22rem] py-2 pr-3">
                     {c.id != null ? (
-                      <Link to={`/ideas/${c.id}`} className="line-clamp-2 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
+                      <Link to={`/workshop/${c.id}`} className="line-clamp-2 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
                     ) : <span className="line-clamp-2">{c.idea}</span>}
                     <div className="text-[11px] text-slate-500">
                       {c.positions === 0 ? "nothing held yet" : `${c.positions} position${c.positions === 1 ? "" : "s"}`}
@@ -437,9 +438,9 @@ function IdeasBox({ rows, equity, liveIdeas }: {
                     </div>
                   </td>
                   <td className="py-2 pr-3 text-right">{fmtUsd(c.value, { whole: true })}</td>
-                  <td className={`py-2 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
+                  <td className={`py-2 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
                   <td className={`py-2 text-right ${tone(c.unrealized)}`}>
-                    {c.positions ? fmtUsd(c.unrealized, { signed: true, whole: true }) : "—"}
+                    {c.positions && c.unrealized != null ? fmtUsd(c.unrealized, { signed: true, whole: true }) : "—"}
                     {c.return_pct != null && <div className="text-[11px]">{fmtPct(c.return_pct)}</div>}
                   </td>
                 </tr>
@@ -454,7 +455,7 @@ function IdeasBox({ rows, equity, liveIdeas }: {
 
 /** Today's biggest dollar moves, so a bad day reads as "which names", not just a total. */
 function MoversBox({ rows }: { rows: PositionRow[] }) {
-  const { up, down } = useMemo(() => dayMovers(rows), [rows]);
+  const { up, down, known } = useMemo(() => dayMovers(rows), [rows]);
   const line = (r: PositionRow) => (
     <li key={r.symbol} className="flex items-baseline justify-between gap-2 py-1">
       <span className="font-medium text-slate-200">{r.symbol}</span>
@@ -464,7 +465,9 @@ function MoversBox({ rows }: { rows: PositionRow[] }) {
   );
   return (
     <Box title="Today's movers">
-      {up.length + down.length === 0 ? (
+      {!known && rows.length > 0 ? (
+        <p className="text-sm text-slate-400">Today's P&amp;L isn't available right now.</p>
+      ) : up.length + down.length === 0 ? (
         <p className="text-sm text-slate-400">No moves yet today.</p>
       ) : (
         <div className="grid grid-cols-2 gap-4 text-sm">
