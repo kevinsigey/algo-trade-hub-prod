@@ -188,3 +188,17 @@ def test_close_options_prices_at_mid_or_hands_off():
     assert rows[0]["status"] == "send" and rows[0]["limit_price"] == 6.0
     rows = close_options(50, {HELD_LONG: 2}, DAY, fake_mid({}))
     assert rows[0]["status"] == "manual"
+
+
+def test_a_killed_idea_closes_its_spread_as_one_order():
+    # Idea 50, 2026-11-04: the kill sent two single-leg closes. Alpaca refused the long leg as "uncovered"
+    # because the short was still open, which left one leg behind.
+    rows = close_options(50, {B_OCC: 1, S_OCC: -1}, DAY, fake_mid({B_OCC: 5.0, S_OCC: 3.0}))
+    assert len(rows) == 1 and rows[0]["kind"] == "close" and rows[0]["limit_price"] == -2.0
+    assert [(l["symbol"], l["position_intent"]) for l in rows[0]["mleg"]] == [
+        (B_OCC, "sell_to_close"), (S_OCC, "buy_to_close")]
+
+
+def test_a_leg_left_on_its_own_still_closes_singly():
+    rows = close_options(50, {B_OCC: 1}, DAY, fake_mid({B_OCC: 5.0}))
+    assert len(rows) == 1 and "mleg" not in rows[0] and rows[0]["side"] == "sell"
