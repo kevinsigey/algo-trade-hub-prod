@@ -47,7 +47,8 @@ describe("Portfolio ↔ Workshop", () => {
     const f = route({ "/api/portfolio": { body: PORTFOLIO }, "/api/workshop/ideas": { body: IDEAS } });
     render(<MemoryRouter><Portfolio /></MemoryRouter>);
     const link = await screen.findByRole("link", { name: "TEST: 1 share XLE" });
-    expect(link).toHaveAttribute("href", "/workshop/12");
+    // The By-idea box lists live ideas even before they hold anything, linked to their record.
+    expect(link).toHaveAttribute("href", "/ideas/12");
     expect(screen.queryByText("Old XLE test")).not.toBeInTheDocument();
     expect(screen.queryByText("Ballast")).not.toBeInTheDocument();
     const call = f.mock.calls.find(([u]) => String(u).includes("/api/workshop/ideas"));

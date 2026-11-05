@@ -36,6 +36,8 @@ import {
   BarChart3,
   BookOpen,
   Briefcase,
+  ChevronDown,
+  House,
   CloudSun,
   FlaskConical,
   Fuel,
@@ -53,168 +55,200 @@ import {
   LogOut,
   Menu,
   MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Trophy,
   Wallet,
-  X
+  X,
+  type LucideIcon,
 } from "lucide-react";
 
-const linkClass = ({ isActive }: { isActive: boolean }) =>
-  `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-secondary text-foreground font-semibold' : 'hover:bg-slate-900 text-slate-400 hover:text-slate-200'}`;
-
-const Group = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div>
-    <div className="px-3 pb-1 text-xs font-medium text-slate-500">{label}</div>
-    <div className="space-y-1">{children}</div>
-  </div>
-);
+type NavItem = { to: string; label: string; icon: LucideIcon; end?: boolean; sub?: boolean };
 
 /**
- * The nav itself, written once and shared by the desktop rail and the phone overlay.
+ * The nav, once, as data: the rail, the collapsed rail and the phone overlay all draw it.
  *
- * Four groups (Trading HQ spec §4.1): the public Portfolio, Ideas and Predictions, and the operator
- * pages behind Kevin's login. Moved pages keep their URLs, so the shared global nav's links still work.
- *
- * `onNavigate` is the overlay's way of saying "the reader picked a page": the drawer closes, so a
- * new page is never read through it. The rail passes nothing, because the rail is always there.
+ * Kevin, 2026-11-05: the old five groups had grown to twenty links, with the Overview missing and
+ * research pages split between "Ideas" and "Predictions". Four groups now, in the order a visit
+ * runs: what the money is doing, the markets being read, the graded record, the operator pages.
+ * Every page keeps its URL, so the shared global nav's links still work.
  */
-const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
+const NAV: { label: string; items: NavItem[] }[] = [
+  { label: "Trade", items: [
+    { to: "/", label: "Overview", icon: House, end: true },
+    { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
+    { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
+    { to: "/ideas", label: "Ideas", icon: Lightbulb },
+    { to: "/workshop", label: "Workshop", icon: FlaskConical },
+  ] },
+  { label: "Markets", items: [
+    { to: "/oil", label: "Oil", icon: Fuel, end: true },
+    { to: "/oil/hormuz", label: "Hormuz tracker", icon: Ship, sub: true },
+    { to: "/crypto", label: "Crypto research", icon: LineChart },
+    { to: "/macro", label: "Macro predictions", icon: Landmark },
+    { to: "/weather", label: "Weather", icon: CloudSun },
+    { to: "/sports", label: "Sports", icon: Trophy },
+  ] },
+  { label: "Track record", items: [
+    { to: "/journal", label: "Model Tracker", icon: BookOpen },
+  ] },
+  { label: "Admin", items: [
+    { to: "/screening", label: "Screening", icon: ListFilter },
+    { to: "/deals", label: "Deals and IPOs", icon: Handshake },
+    { to: "/debates", label: "Agent debates", icon: MessagesSquare },
+    { to: "/health", label: "Health", icon: HeartPulse },
+    { to: "/machine-keys", label: "Machine keys", icon: KeyRound },
+  ] },
+];
+
+/** A per-browser preference. Storage can be missing or blocked (private window, preview); the nav works without it. */
+function useStored<T>(key: string, initial: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw == null ? initial : (JSON.parse(raw) as T);
+    } catch {
+      return initial;
+    }
+  });
+  const save = (v: T) => {
+    setValue(v);
+    try { window.localStorage.setItem(key, JSON.stringify(v)); } catch { /* the choice lasts this visit */ }
+  };
+  return [value, save];
+}
+
+const itemClass = (collapsed: boolean, sub?: boolean) => ({ isActive }: { isActive: boolean }) =>
+  [
+    "group/link relative flex items-center rounded-lg text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400",
+    collapsed ? "h-10 w-10 justify-center" : `gap-3 px-3 py-2 ${sub ? "ml-5 py-1.5" : ""}`,
+    isActive ? "bg-slate-800/80 text-white font-semibold" : "text-slate-400 hover:bg-slate-900 hover:text-slate-100",
+  ].join(" ");
+
+function NavEntry({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+  const Icon = item.icon;
+  return (
+    <NavLink to={item.to} end={item.end} className={itemClass(collapsed, item.sub)} title={collapsed ? item.label : undefined}>
+      {({ isActive }) => (
+        <>
+          {isActive && !collapsed && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-emerald-400" />}
+          <Icon className={`${item.sub && !collapsed ? "h-4 w-4" : "h-[18px] w-[18px]"} shrink-0 ${isActive ? "text-emerald-300" : ""}`} aria-hidden="true" />
+          <span className={collapsed ? "sr-only" : "truncate"}>{item.label}</span>
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+function compactUsd(v: number): string {
+  return Math.abs(v) >= 1_000_000 ? `$${(v / 1_000_000).toFixed(2)}M` : `$${(v / 1000).toFixed(1)}k`;
+}
+
+/**
+ * The nav body, shared by the rail and the phone overlay.
+ *
+ * `collapsed` draws icons only (names stay for screen readers and as hover titles); `onToggle` is
+ * the rail's collapse control, which the overlay does not have. `onNavigate` is the overlay's way
+ * of saying "the reader picked a page": the drawer closes, so a new page is never read through it.
+ */
+const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
+  onNavigate?: () => void; collapsed?: boolean; onToggle?: () => void;
+}) => {
   const { data, loading } = useApi<PortfolioPayload>("/api/portfolio");
   const admin = useAdminSession();
+  const [closed, setClosed] = useStored<string[]>("atr:nav-closed-groups", []);
   // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
   const book = data?.scoreboard && data.state !== "not_connected" ? data : null;
+  const toggleGroup = (label: string) =>
+    setClosed(closed.includes(label) ? closed.filter((g) => g !== label) : [...closed, label]);
+  const SignIcon = admin === "admin" ? LogOut : Lock;
 
   return (
     <>
-      <div className="p-6">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center border border-border">
-            <Activity className="w-5 h-5 text-foreground" />
-          </div>
-          <span className="font-display text-2xl font-semibold tracking-wide text-foreground uppercase">Algo Trade Hub</span>
-        </div>
+      <div className={`flex items-center ${collapsed ? "flex-col gap-3 px-2 py-5" : "gap-3 px-5 py-5"}`}>
+        <NavLink to="/" onClick={onNavigate} className="flex min-w-0 items-center gap-3 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400" aria-label="Algo Trade Hub home">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary">
+            <Activity className="h-5 w-5 text-foreground" aria-hidden="true" />
+          </span>
+          {!collapsed && <span className="truncate font-display text-xl font-semibold uppercase tracking-wide text-foreground">Algo Trade Hub</span>}
+        </NavLink>
+        {onToggle && (
+          <button type="button" onClick={onToggle} aria-pressed={collapsed}
+                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  className={`${collapsed ? "" : "ml-auto"} inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-900 hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400`}>
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" aria-hidden="true" /> : <PanelLeftClose className="h-4 w-4" aria-hidden="true" />}
+          </button>
+        )}
       </div>
 
-      <nav onClick={onNavigate} className="flex-1 overflow-y-auto px-4 space-y-5 mt-2">
-        <Group label="Portfolio">
-          <NavLink to="/portfolio" className={linkClass}>
-            <LayoutDashboard className="w-5 h-5" /> Portfolio
-          </NavLink>
-          <NavLink to="/portfolio/closed" className={linkClass}>
-            <History className="w-5 h-5 text-muted-foreground" /> Trades and Orders
-          </NavLink>
-        </Group>
-        <Group label="Ideas">
-          <NavLink to="/ideas" className={linkClass}>
-            <Lightbulb className="w-5 h-5 text-muted-foreground" /> Ideas
-          </NavLink>
-          {/* The Workshop sits beside Ideas (Kevin, 2026-11-03): it is where
-              ideas are drafted and tested, so it lives with them, not in Admin. */}
-          <NavLink to="/workshop" className={linkClass}>
-            <FlaskConical className="w-5 h-5 text-muted-foreground" /> Workshop
-          </NavLink>
-          {/* Crypto research sits beside Ideas (Kevin's redesign, 2026-11-02): it is a
-              research desk feeding the idea pipeline, not a prediction surface. */}
-          <NavLink to="/crypto" className={linkClass}>
-            <LineChart className="w-5 h-5 text-muted-foreground" /> Crypto research
-          </NavLink>
-        </Group>
-        {/* Commodities gets its own tab above Macro (Kevin's redesign, 2026-11-03):
-            the Oil dashboard outgrew a card on the Macro page. Hormuz is a sub-item of Oil
-            (Kevin, 2026-11-05): the live predictions on one tab, the tracker on its own. */}
-        <Group label="Commodities">
-          <NavLink to="/oil" end className={linkClass}>
-            <Fuel className="w-5 h-5 text-muted-foreground" /> Oil
-          </NavLink>
-          <NavLink to="/oil/hormuz" className={(s) => `${linkClass(s)} ml-5`}>
-            <Ship className="w-4 h-4 text-muted-foreground" /> Hormuz tracker
-          </NavLink>
-        </Group>
-        <Group label="Predictions">
-          <NavLink to="/journal" className={linkClass}>
-            {/* The flagship (v2 spec §11): every forecaster's frozen, settled, scored record.
-                Renamed to Model Tracker in Kevin's 2026-11-01 redesign: the page leads with
-                one card per model; the Journal league table is a tab inside it. Route unchanged. */}
-            <BookOpen className="w-5 h-5 text-foreground" /> Model Tracker
-          </NavLink>
-          <NavLink to="/sports" className={linkClass}>
-            <Trophy className="w-5 h-5 text-muted-foreground" /> Sports
-          </NavLink>
-          {/* Jobs and CPI are detail pages now (phase-3 §1); the nav leads with the Macro
-              dashboard. The CPI honesty rule moved with the content: its macro card carries
-              the "display, not opportunities" line, so the claim is still never made. */}
-          <NavLink to="/macro" className={linkClass}>
-            <Landmark className="w-5 h-5 text-muted-foreground" /> Macro predictions
-          </NavLink>
-          <NavLink to="/weather" className={linkClass}>
-            <CloudSun className="w-5 h-5 text-muted-foreground" /> Weather
-          </NavLink>
-        </Group>
-        <Group label="Admin">
-          {/* TradingAgents (Kevin, 2026-11-02): the debates get their own tab beside the Workshop --
-              an opinion panel with its own graded record, not a step in the idea pipeline. */}
-          <NavLink to="/screening" className={linkClass}>
-            <ListFilter className="w-5 h-5 text-muted-foreground" /> Screening
-          </NavLink>
-          <NavLink to="/deals" className={linkClass}>
-            <Handshake className="w-5 h-5 text-muted-foreground" /> Deals and IPOs
-          </NavLink>
-          <NavLink to="/debates" className={linkClass}>
-            <MessagesSquare className="w-5 h-5 text-muted-foreground" /> Agent debates
-          </NavLink>
-          {/* Engine Scoreboard and Models merged into the Model Tracker's Backtests tab
-              (Kevin's call, 2026-11-02) -- one backtest surface, reached from the Tracker.
-              Their routes remain as redirects for bookmarks and typed names. */}
-          {/* Freshness of every timer and forecaster: "is anything running", not "who is winning". */}
-          <NavLink to="/health" className={linkClass}>
-            <HeartPulse className="w-5 h-5 text-teal-400" /> Health
-          </NavLink>
-          {/* Phase-2 machine API, step 1: key lifecycle + audit. The routes the keys serve come later. */}
-          <NavLink to="/machine-keys" className={linkClass}>
-            <KeyRound className="w-5 h-5 text-muted-foreground" /> Machine keys
-          </NavLink>
-          {admin === "admin" ? (
-            <button type="button" onClick={() => void supabase.auth.signOut()} className={`${linkClass({ isActive: false })} w-full`}>
-              <LogOut className="w-5 h-5" /> Sign out
-            </button>
-          ) : (
-            <NavLink to="/login" className={linkClass}>
-              <Lock className="w-5 h-5" /> Sign in
-            </NavLink>
-          )}
-        </Group>
+      <nav onClick={onNavigate} aria-label="Site" className={`flex-1 overflow-y-auto ${collapsed ? "flex flex-col items-center gap-1 px-2" : "space-y-4 px-3"}`}>
+        {NAV.map((group, gi) => {
+          const open = collapsed || !closed.includes(group.label);
+          const id = `nav-group-${gi}`;
+          return (
+            <div key={group.label} className={collapsed && gi > 0 ? "mt-2 w-full border-t border-slate-800/80 pt-3 flex flex-col items-center gap-1" : collapsed ? "flex flex-col items-center gap-1" : ""}>
+              {!collapsed && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); toggleGroup(group.label); }}
+                        aria-expanded={open} aria-controls={id}
+                        className="flex w-full items-center rounded-md px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 hover:text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
+                  {group.label}
+                  <ChevronDown className={`ml-auto h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none ${open ? "" : "-rotate-90"}`} aria-hidden="true" />
+                </button>
+              )}
+              {open && (
+                <div id={id} className={collapsed ? "contents" : "space-y-0.5"}>
+                  {group.items.map((item) => <NavEntry key={item.to} item={item} collapsed={collapsed} />)}
+                  {group.label === "Admin" && (admin === "admin" ? (
+                    <button type="button" onClick={() => void supabase.auth.signOut()}
+                            className={`${itemClass(collapsed)({ isActive: false })} ${collapsed ? "" : "w-full"}`} title={collapsed ? "Sign out" : undefined}>
+                      <SignIcon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                      <span className={collapsed ? "sr-only" : ""}>Sign out</span>
+                    </button>
+                  ) : (
+                    <NavEntry item={{ to: "/login", label: "Sign in", icon: Lock }} collapsed={collapsed} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
-      <div className="p-4 border-t border-slate-900">
-        <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-800 shadow-sm">
-          <div className="flex items-center gap-2 mb-2 text-slate-400 text-sm font-medium">
-            <Wallet className="w-4 h-4" aria-hidden="true" /> Paper account
+      <div className={`border-t border-slate-900 ${collapsed ? "p-2" : "p-3"}`}>
+        <NavLink to="/portfolio" onClick={onNavigate} title={collapsed ? "Paper account" : undefined}
+                 className={`block rounded-xl border border-slate-800 bg-slate-900/50 hover:border-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${collapsed ? "px-1 py-2 text-center" : "p-3"}`}>
+          <div className={`flex items-center gap-2 text-xs font-medium text-slate-400 ${collapsed ? "justify-center" : ""}`}>
+            <Wallet className="h-4 w-4" aria-hidden="true" />
+            <span className={collapsed ? "sr-only" : ""}>Paper account</span>
           </div>
-          <div className={`text-2xl font-bold tabular-nums tracking-tight ${book ? "text-white" : "text-slate-400"}`}>
-            {book ? fmtUsd(book.scoreboard.equity, { whole: true }) : loading ? "—" : "Not connected"}
+          <div className={`mt-1 font-bold tabular-nums tracking-tight ${collapsed ? "text-[11px]" : "text-xl"} ${book ? "text-white" : "text-slate-400"}`}>
+            {book ? (collapsed ? compactUsd(book.scoreboard.equity) : fmtUsd(book.scoreboard.equity, { whole: true }))
+              : loading ? "—" : collapsed ? "off" : "Not connected"}
           </div>
-          {book && <div className="mt-1 text-[11px] text-slate-400">{stateLabel(book.state, book.as_of)}</div>}
-        </div>
+          {book && !collapsed && <div className="mt-0.5 text-[11px] text-slate-500">{stateLabel(book.state, book.as_of)}</div>}
+        </NavLink>
       </div>
     </>
   );
 };
 
 /**
- * The rail: the sidebar as it has always been, from 768px up.
- *
- * Below that it is display:none, because on a 375px phone a 256px rail took two thirds of the
- * screen and left every page squeezed into what was left. `hidden md:flex` is the whole of that
- * decision: the breakpoint is CSS, so there is no width check in JavaScript to fall out of step
- * with the stylesheet, and at 768px and up this is byte-for-byte the sidebar it was.
+ * The rail, from 768px up. It collapses to a 72px icon column (Kevin, 2026-11-05), remembered per
+ * browser. Below 768px it is display:none and the menu button opens the same nav as an overlay;
+ * the breakpoint is CSS, so there is no width check in JavaScript to fall out of step with it.
  */
-const SidebarRail = () => (
-  <div
-    data-testid="sidebar-rail"
-    className="hidden md:flex flex-col w-64 bg-slate-950 text-slate-200 border-r border-slate-900 h-screen sticky top-0"
-  >
-    <SidebarBody />
-  </div>
-);
+const SidebarRail = () => {
+  const [collapsed, setCollapsed] = useStored<boolean>("atr:nav-collapsed", false);
+  return (
+    <div
+      data-testid="sidebar-rail"
+      data-collapsed={collapsed ? "true" : "false"}
+      className={`hidden md:flex flex-col shrink-0 ${collapsed ? "w-[72px]" : "w-64"} bg-slate-950 text-slate-200 border-r border-slate-900 h-screen sticky top-0 transition-[width] duration-200 ease-out motion-reduce:transition-none`}
+    >
+      <SidebarBody collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+    </div>
+  );
+};
 
 /**
  * The shell: the rail beside the page, and -- on a phone -- a menu button that opens the same nav

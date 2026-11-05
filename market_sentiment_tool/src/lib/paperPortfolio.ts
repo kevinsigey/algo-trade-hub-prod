@@ -274,3 +274,59 @@ export interface ManualActionsPayload {
   book: string;
   actions: ManualAction[];
 }
+
+export interface IdeaCard {
+  idea: string;
+  id: number | null;
+  positions: number;
+  value: number;
+  pct: number;
+  day_pl: number;
+  unrealized: number;
+  /** Unrealized P&L over cost; null when nothing is held. */
+  return_pct: number | null;
+  /** The idea's set size, % of the book; known only for live ideas the admin list returns. */
+  target_pct: number | null;
+}
+
+/**
+ * One row per idea in the book: what it holds, today's move, the open P&L, and how far it sits
+ * from its set size. Manual shares are one row per symbol, so a hand position never hides inside
+ * a bucket. Live ideas that hold nothing yet still appear, at zero.
+ */
+export function ideaScorecard(rows: PositionRow[], equity: number,
+                              live: { id: number; title: string; size_pct: number | null }[]): IdeaCard[] {
+  const cards = new Map<string, IdeaCard>();
+  const card = (idea: string): IdeaCard => {
+    if (!cards.has(idea)) {
+      const l = live.find((x) => x.title === idea);
+      cards.set(idea, { idea, id: l?.id ?? null, positions: 0, value: 0, pct: 0, day_pl: 0, unrealized: 0,
+                        return_pct: null, target_pct: l?.size_pct ?? null });
+    }
+    return cards.get(idea)!;
+  };
+  const cost = new Map<string, number>();
+  for (const r of rows) {
+    const name = r.idea && r.idea !== "No idea yet (manual)" ? r.idea : `${r.symbol} (manual)`;
+    const c = card(name);
+    c.positions += 1;
+    c.value += r.market_value;
+    c.day_pl += r.day_pl ?? 0;
+    c.unrealized += r.unrealized_pl ?? 0;
+    cost.set(name, (cost.get(name) ?? 0) + (r.cost_basis ?? r.market_value - (r.unrealized_pl ?? 0)));
+  }
+  for (const l of live) card(l.title);
+  return [...cards.values()]
+    .map((c) => ({ ...c, pct: equity ? (c.value / equity) * 100 : 0,
+                   return_pct: cost.get(c.idea) ? (c.unrealized / cost.get(c.idea)!) * 100 : null }))
+    .sort((a, b) => b.value - a.value);
+}
+
+/** Today's biggest movers by dollar P&L, gains and losses apart; flat rows are left out. */
+export function dayMovers(rows: PositionRow[], n = 3): { up: PositionRow[]; down: PositionRow[] } {
+  const moved = rows.filter((r) => r.day_pl);
+  return {
+    up: moved.filter((r) => r.day_pl! > 0).sort((a, b) => b.day_pl! - a.day_pl!).slice(0, n),
+    down: moved.filter((r) => r.day_pl! < 0).sort((a, b) => a.day_pl! - b.day_pl!).slice(0, n),
+  };
+}
