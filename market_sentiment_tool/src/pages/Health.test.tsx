@@ -107,6 +107,29 @@ describe("Health page", () => {
     expect(screen.queryByRole("button", { name: "Re-run" })).toBeNull();
   });
 
+  it("keeps a re-run that was asked for when the page's first read answers late", async () => {
+    let answerFirstRead: (v: unknown) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/health/rerun") && init?.method !== "POST") {
+        await new Promise((resolve) => { answerFirstRead = resolve; });
+      }
+      const body = url.includes("/api/health/rerun")
+        ? init?.method === "POST" ? { status: "pending", job: "scan" } : { pending: {} }
+        : { status: "ok", report: REPORT };
+      return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body } as unknown as Response;
+    }));
+    const { fireEvent } = await import("@testing-library/react");
+    render(<Health />);
+    await screen.findByText("Timers fresh");
+    fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
+    await screen.findByText(/Re-run pending/);
+    answerFirstRead(undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText(/Re-run pending/)).toBeTruthy();
+  });
+
   it("shows a healthy report as Healthy with no problems", async () => {
     vi.stubGlobal(
       "fetch",

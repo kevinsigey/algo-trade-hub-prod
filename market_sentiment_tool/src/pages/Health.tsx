@@ -160,7 +160,7 @@ function HealthBody({ report }: { report: import("@/lib/health").HealthReport })
   const [rerunNote, setRerunNote] = useState<string | null>(null);
   useEffect(() => {
     adminJson<{ pending: Record<string, RerunRequest> }>("/api/health/rerun")
-      .then((r) => setRerunPending(r.pending ?? {}))
+      .then((r) => setRerunPending((asked) => ({ ...(r.pending ?? {}), ...asked })))
       .catch(() => undefined);
   }, []);
   const askRerun = (job: string) => {
