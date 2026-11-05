@@ -79,12 +79,13 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 54 | `20261103000010_gap_tracker_paging.sql` |
 | 55 | `20261103000011_oil_best_strike.sql` |
 | 56 | `20261104000001_journal_calendars_cadence_15min.sql` |
+| 57 | `20261105000001_oil_best_strike_live_feed.sql` |
 
-**Watermark: `20261104000001_journal_calendars_cadence_15min.sql`**
+**Watermark: `20261105000001_oil_best_strike_live_feed.sql`**
 
 ## How to record a new one
 
-1. Apply the migration to the production Supabase project (the agent does **not** apply migrations).
+1. Apply the migration to the production Supabase project. Agents may apply it through the Supabase connector or CLI (Kevin, 2026-11-01), and it counts as applied only after the change is read back.
 2. Add a row to the table above, in filename order.
 3. Update the watermark line.
 4. `tests/test_migrations_recorded.py` must pass before the PR merges.

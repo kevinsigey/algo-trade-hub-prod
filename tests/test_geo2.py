@@ -107,3 +107,15 @@ def test_daily_shadows_recompute_from_the_base_payload():
     gb = gbase.forecast(gbase.targets(GAS_NOW)[0], GAS_NOW)
     assert gfc is not None and gb is not None
     assert gfc.payload["sigma_d"] > gb.payload["sigma_d"] and gfc.probability != gb.probability
+
+
+def test_the_live_feed_row_keeps_stress_and_anchor_separate_from_the_other_rows():
+    from tradehub.journal.forecasters.oil_geo2 import HL_HOURLY_VERSION, HOURLY_VERSION, OilWtiHourlyHlGeo2Shadow, build_oil_geo2
+    from tradehub.journal.forecasters.oil_hl import _hl_price_or_none
+
+    live = type("L", (), {"open_markets": lambda self, s: [], "settled_values_recent": lambda self, s, n: []})()
+    rows = build_oil_geo2(live, fetch=lambda t: None, provider=lambda now: ([], []))
+    row = next(f for f in rows if isinstance(f, OilWtiHourlyHlGeo2Shadow))
+    assert row.name == "oil_wti_hourly" and row.version == HL_HOURLY_VERSION == "wti-hourly-v6-hl-geo2-shadow"
+    assert row._inputs._price_fn is _hl_price_or_none
+    assert HL_HOURLY_VERSION != HOURLY_VERSION
