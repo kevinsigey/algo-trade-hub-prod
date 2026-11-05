@@ -93,9 +93,18 @@ class StalePrices(Exception):
     """The rule's prices don't reach the last trading day yet: the target would be the day before's."""
 
 
+def _stops_under_moves(pending: list[dict], moves: dict[str, tuple[int, str]]) -> list[dict]:
+    """Machine stops already resting when a move was made. A stop placed after the move stays, and so does any
+    order whose age can't be read: cancelling is what removes protection."""
+    return [o for o in pending
+            if paper_orders.MACHINE_STOP_TAG.match(o.get("client_order_id") or "")
+            and o["symbol"] in moves and o.get("submitted_at")
+            and datetime.fromisoformat(o["submitted_at"]) <= datetime.fromisoformat(moves[o["symbol"]][1])]
+
+
 def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, closes=data.closes,
-         fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel
-         ) -> tuple[dict, dict[int, str]]:
+         fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=paper_orders.cancel,
+         cancel_machine=paper_orders.cancel_machine_order) -> tuple[dict, dict[int, str]]:
     day = now.astimezone(NY).date()
     try:
         calendar = [date.fromisoformat(c["date"]) for c in
@@ -114,7 +123,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
         raw_fills, titles, labels = service._fills(), service._titles(supa, public=False), store.labels(supa)
         fills = book.tag_fills(raw_fills, client_ids, labels, titles)
         named = {order for order, idea_id in labels.items() if idea_id is not None}  # a None label is still manual
-        moved = book.manual_move_orders(fills, store.manual_moves(supa, book_name), named)
+        moves = store.manual_moves(supa, book_name)
+        moved = book.manual_move_orders(fills, moves, named)
         for order_id, idea_id in moved.items():  # a rebalance: the idea takes the shares, and trades the difference
             store.add_label(supa, order_id, idea_id, "rebalance")
         if moved:
@@ -158,6 +168,24 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
     else:  # every other book reads its own activations: different ideas, sizes, strategies
         jobs = ([(i, False) for i in store.auto_activations(supa, book_name)]
                 + [(i, True) for i in store.closing_activations(supa, book_name)])
+    managed = {idea["id"] for idea, _ in jobs}
+    uncertain: set[str] = set()  # symbols whose old stop may still rest, or just sold: nothing trades them today
+    # Kevin, 2026-11-05: an open sell stop blocks the idea's orders. It goes before any idea plans, because other
+    # ideas buy the same symbol. Only a move to an idea with a job: otherwise nothing would manage the shares.
+    for order in _stops_under_moves(pending, moves):
+        idea_id = moves[order["symbol"]][0]
+        if idea_id not in managed:
+            continue
+        row = _cancel(order, cancel_machine, "a rebalance handed these shares to an idea")
+        store.log_orders(supa, idea_id, str(day), [row], book=book_name)
+        if row["status"] == "sent":
+            pending = [o for o in pending if o["id"] != order["id"]]
+            waiting = [w for w in waiting if w[0] != order["client_order_id"]]
+            continue
+        uncertain.add(order["symbol"])
+        if row["status"] != "already sent":
+            failed[idea_id] = f"stop on {order['symbol']}: {row['reason']}"[:300]
+            store.add_manual_action(supa, book_name, idea_id, "order", order["symbol"], row["reason"] or "needs a hand")
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
@@ -200,6 +228,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 rows = [{**r, "status": "skip", "waiting": True,
                          "reason": f"circuit breaker: {'; '.join(breaker['reasons'])}"}
                         if r["kind"] == "open" and r["status"] in ("send", "manual") else r for r in rows]
+            rows = [{**r, "status": "skip", "reason": f"the old stop on {r['symbol']} did not cleanly cancel: waiting a day"}
+                    if r["symbol"] in uncertain else r for r in rows]
             if not closing and exit_reason:
                 rows = [{**r, "reason": r["reason"] or exit_reason} if r["kind"] == "close" else r for r in rows]
             protecting = [o for o in pending
@@ -240,7 +270,7 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
 
 
 def run(now: datetime, supa, *, book_name: str = "main", submit=None, closes=data.closes,
-        fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=None
+        fred=data.fred_series, bars=data.bars, analyst=data.analyst, cancel=None, cancel_machine=None
         ) -> tuple[dict, dict[int, str]]:
     """One book's morning pass. The book rides the context variable so every account read
     below (account, positions, orders, fills) resolves to that book's own Alpaca account."""
@@ -251,10 +281,11 @@ def run(now: datetime, supa, *, book_name: str = "main", submit=None, closes=dat
                                                 client_order_id, book=book_name)
             return paper_orders.submit(symbol, qty, side, client_order_id, book=book_name, **kw)
     cancel = cancel or (lambda *a, **k: paper_orders.cancel(*a, book=book_name, **k))
+    cancel_machine = cancel_machine or (lambda *a, **k: paper_orders.cancel_machine_order(*a, book=book_name, **k))
     token = books.use_book(book_name)
     try:
         return _run(now, supa, book_name, submit=submit, closes=closes, fred=fred, bars=bars,
-                    analyst=analyst, cancel=cancel)
+                    analyst=analyst, cancel=cancel, cancel_machine=cancel_machine)
     finally:
         books.reset_book(token)
 
