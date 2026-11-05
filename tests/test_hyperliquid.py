@@ -4,7 +4,7 @@ import pytest
 
 from tradehub.backtest.pit import Observation
 from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_candles, hyperliquid_oil_price
-from tradehub.journal.forecasters.oil_hl import HL_VERSION, build_oil_hl_shadow
+from tradehub.journal.forecasters.oil_hl import HL_VERSION, _hl_price_or_none, build_oil_hl_shadow
 from tradehub.oil_live import live_price
 
 NOW = datetime(2026, 11, 4, 3, 0, tzinfo=UTC)
@@ -74,6 +74,7 @@ def test_the_hyperliquid_shadow_is_its_own_row():
     live = type("L", (), {"open_markets": lambda self, s: [], "settled_values_recent": lambda self, s, n: []})()
     fc = build_oil_hl_shadow(live, fetch=lambda t: None)[0]
     assert fc.name == "oil_wti_hourly" and fc.version == HL_VERSION == "wti-hourly-v4-hl-shadow"
+    assert fc._inputs._price_fn is _hl_price_or_none  # the anchor is the whole point of this row
 
 
 def test_the_board_uses_hyperliquid_then_says_when_it_fell_back_to_the_delayed_price():

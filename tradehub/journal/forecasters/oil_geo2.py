@@ -4,6 +4,10 @@ widening sigma on three existing models, each as its own shadow row.
   oil_wti_hourly @ wti-hourly-v5-geo2-shadow -- beside the v2 geo shadow,
   whose three binary thresholds and k in {1.0, 1.25, 1.5} it refines, not
   replaces (v2's record and gate are untouched).
+  oil_wti_hourly @ wti-hourly-v6-hl-geo2-shadow -- the same widening on the live
+  Hyperliquid anchor, graded in pairs against v4 (2026-11-05). v5 sits on the
+  delayed CL=F print, where a wider sigma also hides the lag, so v5 beating v1
+  can't say whether the stress itself is worth anything.
   oil_wti @ wti-v2-geo2-shadow and natgas_daily @ natgas-v2-geo2-shadow --
   the daily grain, where a Hormuz event actually reprices: the same stress
   read widening the daily sigma. The daily adapters recompute the base
@@ -34,6 +38,7 @@ from tradehub.journal.forecasters.oil_geo import REGION
 from tradehub.journal.forecasters.oil_hourly import OilWtiHourly, sigma_for
 
 HOURLY_VERSION = "wti-hourly-v5-geo2-shadow"
+HL_HOURLY_VERSION = "wti-hourly-v6-hl-geo2-shadow"
 DAILY_VERSION = "wti-v2-geo2-shadow"
 NATGAS_VERSION = "natgas-v2-geo2-shadow"
 HISTORY_PER_METRIC = 700   # ~7 days of 15-minute batches
@@ -102,6 +107,10 @@ class OilWtiHourlyGeo2Shadow(_Geo2, OilWtiHourly):
         return self._forecast(entry, now, sigma_mult=k, extra=extra)
 
 
+class OilWtiHourlyHlGeo2Shadow(OilWtiHourlyGeo2Shadow):
+    version = HL_HOURLY_VERSION
+
+
 class OilWtiDailyGeo2Shadow(_Geo2, OilWti):
     name, version = "oil_wti", DAILY_VERSION
 
@@ -155,10 +164,12 @@ def build_oil_geo2(live, fetch: Callable[[str], Any] | None = None, provider=Non
     from tradehub.core.supabase_client import get_client
     from tradehub.journal.forecasters.natgas_daily import DailyInputs
     from tradehub.journal.forecasters.oil import OilInputs
+    from tradehub.journal.forecasters.oil_hl import _hl_price_or_none
     from tradehub.journal.forecasters.oil_hourly import HourlyInputs
 
     fetch = fetch or fetch_market
     provider = provider or Geo2SnapshotProvider(get_client)
     return [OilWtiHourlyGeo2Shadow(live, fetch, HourlyInputs(live), provider),
+            OilWtiHourlyHlGeo2Shadow(live, fetch, HourlyInputs(live, price_fn=_hl_price_or_none), provider),
             OilWtiDailyGeo2Shadow(live, fetch, OilInputs(live), provider),
             NatgasDailyGeo2Shadow(live, fetch, DailyInputs(live), provider)]

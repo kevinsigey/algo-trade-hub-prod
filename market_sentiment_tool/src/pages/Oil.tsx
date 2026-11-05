@@ -317,7 +317,7 @@ function StrikeRecordLine() {
     <div className="mt-2 space-y-0.5 text-[13px] text-slate-300">
       {replay && replay.picks > 0 && replay.net_per_contract != null && replay.avg_model != null && (
         <p>
-          On past frozen quotes: <span className="tabular-nums">{replay.hits} of {replay.picks}</span> picks hit
+          On the live feed so far: <span className="tabular-nums">{replay.hits} of {replay.picks}</span> picks hit
           ({Math.round((replay.hits / replay.picks) * 100)}%, the model said {Math.round(replay.avg_model * 100)}%),{" "}
           <span className={`font-semibold tabular-nums ${replay.net_per_contract >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
             {signedCents(replay.net_per_contract)} per contract after fees
