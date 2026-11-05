@@ -173,9 +173,25 @@ def test_open_cost_gives_qty_and_average_entry_per_idea():
     assert out["GLD"][1] == (25.0, pytest.approx(220.0)) and out["QQQ"][2] == (-5.0, pytest.approx(400.0))
 
 
+def _move_fill(order, side, qty, idea=None, at="2026-11-02T14:00:00Z"):
+    return {"order_id": order, "symbol": "XLU", "side": side, "qty": str(qty), "idea_id": idea, "transaction_time": at}
+
+
+MOVE = {"XLU": (9, "2026-11-05T09:00:00+00:00")}
+
+
 def test_moves_take_only_the_manual_shares_still_open():
-    fill = lambda o, side, q, idea=None: {"order_id": o, "symbol": "XLU", "side": side, "qty": str(q), "idea_id": idea}
-    fills = [fill("old-buy", "buy", 10), fill("old-sell", "sell", 10), fill("a", "buy", 5), fill("idea", "buy", 7, 3),
-             fill("b", "sell", 2), fill("a", "buy", 1)]
-    assert book.manual_move_orders(fills, {"XLU": 9}) == {"a": 9, "b": 9}
-    assert book.manual_move_orders(fills, {"XLP": 9}) == {}
+    fills = [_move_fill("old-buy", "buy", 10), _move_fill("old-sell", "sell", 10), _move_fill("a", "buy", 5),
+             _move_fill("idea", "buy", 7, 3), _move_fill("b", "sell", 2), _move_fill("a", "buy", 1)]
+    assert book.manual_move_orders(fills, MOVE, set()) == {"a": 9, "b": 9}
+    assert book.manual_move_orders(fills, {"XLP": MOVE["XLU"]}, set()) == {}
+
+
+def test_a_move_never_takes_manual_shares_bought_after_it():
+    fills = [_move_fill("a", "buy", 5), _move_fill("later", "buy", 3, at="2026-11-05T15:00:00Z")]
+    assert book.manual_move_orders(fills, MOVE, set()) == {"a": 9}
+
+
+def test_a_move_never_overrides_a_label_someone_already_set():
+    fills = [_move_fill("kept-manual", "buy", 5), _move_fill("a", "buy", 1)]
+    assert book.manual_move_orders(fills, MOVE, {"kept-manual"}) == {"a": 9}

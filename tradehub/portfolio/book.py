@@ -36,20 +36,24 @@ def tag_fills(fills: list[dict], client_ids: dict[str, str], labels: dict[str, i
     return out
 
 
-def manual_move_orders(fills: list[dict], moves: dict[str, int]) -> dict[str, int]:
+def manual_move_orders(fills: list[dict], moves: dict[str, tuple[int, str]], labelled: set[str]) -> dict[str, int]:
     """Order id -> idea id for the manual shares a rebalance hands to an idea, so the idea trades only the
-    difference. Only orders since the symbol's manual shares were last flat move: closed trades keep their record."""
+    difference. A move covers shares held when it was made: later manual orders stay manual, an order someone
+    already labelled keeps its label, and only orders since the symbol's manual shares were last flat move, so
+    closed trades keep their record."""
     open_orders: dict[str, list[str]] = {}
     net: dict[str, float] = {}
     for f in fills:  # oldest first
-        symbol = f["symbol"]
-        if f.get("idea_id") is not None or symbol not in moves:
+        symbol, order = f["symbol"], f["order_id"]
+        if f.get("idea_id") is not None or symbol not in moves or order in labelled:
             continue
-        open_orders.setdefault(symbol, []).append(f["order_id"])
+        if datetime.fromisoformat(f["transaction_time"]) > datetime.fromisoformat(moves[symbol][1]):
+            continue
+        open_orders.setdefault(symbol, []).append(order)
         net[symbol] = net.get(symbol, 0.0) + float(f["qty"]) * (1 if f["side"] == "buy" else -1)
         if abs(net[symbol]) < 1e-9:
             open_orders[symbol] = []
-    return {order: moves[symbol] for symbol, orders in open_orders.items() for order in orders}
+    return {order: moves[symbol][0] for symbol, orders in open_orders.items() for order in orders}
 
 
 def _pct(new: float, old: float) -> float:

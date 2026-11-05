@@ -1,5 +1,6 @@
 -- A rebalance hands a book's manual shares of a symbol to an idea (Kevin, 2026-11-04: move the correct number of
--- shares, don't close and reopen). The morning order job reads this and writes the matching order_labels.
+-- shares, don't close and reopen). The morning order job reads this and writes the matching order_labels; a move
+-- covers shares held when it was made, never later manual orders.
 create table if not exists public.manual_moves (
   id bigint generated always as identity primary key,
   book text not null,
