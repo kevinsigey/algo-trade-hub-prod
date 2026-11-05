@@ -1403,6 +1403,19 @@ def oil_itm_record(supabase=Depends(get_supabase)) -> dict:
                 "ev_per_dollar": None, "recent": []}
 
 
+@app.get("/api/oil/fifteen-rule", tags=["Oil"])
+def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
+    """The 15-minute trade rule's paper record (Kevin, 2026-11-05): replay and forward apart.
+    Public and fail-soft: an unreadable journal reads as an empty record, never a 500."""
+    from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, record, summarize
+
+    try:
+        return record(supabase)
+    except Exception:  # noqa: BLE001
+        return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
+                "by_series": {}, "pending": 0, "recent": [], "unavailable": True}
+
+
 @app.get("/api/oil/hourly-live", tags=["Oil"])
 def oil_hourly_live():
     """The Commodities hero: the v1 hourly WTI model recomputed against the
