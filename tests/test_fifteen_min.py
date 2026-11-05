@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tradehub.data.kalshi_live import LiveMarket
-from tradehub.data.pyth import HyperliquidUnavailable, hyperliquid_candles
+from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_candles
 from tradehub.edges import Quote
 from tradehub.engines.fifteen_min import SIGMA_FLOOR, prob_up, realized_sigma_1m
 from tradehub.journal.forecasters.fifteen_min import FifteenMinInputs, build_fifteen_min
@@ -49,7 +49,7 @@ class _Resp:
 
 
 def test_candles_parse_to_open_time_and_close():
-    rows = [{"t": 1793760000000, "c": "96.10"}, {"t": 1793759940000, "c": "96.00"}]
+    rows = [{"t": 1793769360000, "c": "96.10"}, {"t": 1793769300000, "c": "96.00"}]
 
     class S:
         @staticmethod

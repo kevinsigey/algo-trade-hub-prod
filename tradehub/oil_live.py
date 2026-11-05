@@ -1,7 +1,7 @@
 """The LIVE hourly WTI ladder for the Commodities tab hero (Kevin's
 redesign, 2026-11-03). The journal's frozen ladder is the graded record;
 this is the same v1 model recomputed against the market as it stands NOW
--- our probability is a pure function of the live CL=F price and the
+-- our probability is a pure function of the live price and the
 minutes to close, so it tightens as the hour runs. Nothing here is
 frozen or graded; the page labels it LIVE and keeps the frozen record
 below it.
@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tradehub.data.kalshi_live import KalshiLive
-from tradehub.data.pyth import HyperliquidUnavailable, PythUnavailable, hyperliquid_oil_price, pyth_oil_price
+from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_oil_price
 from tradehub.engines.oil_hourly import hourly_changes, hourly_prob, hourly_sigma, sigma_for
 from tradehub.journal.forecasters.oil_hourly import (
     MIN_CHANGES,
@@ -45,9 +45,8 @@ CACHE_SECONDS = 20.0
 # it stays live on a print up to 25 minutes old and stamps the print's age
 # on the payload so the page can show it honestly. Older than that is a
 # stuck feed, and the payload names it (with the event attached, so the
-# page can still title itself). With a Pyth key the hero uses the feed Kalshi settles on instead.
+# page can still title itself). The hero normally uses the live Hyperliquid perp; CL=F is only the fallback.
 LIVE_MAX_PRICE_AGE = timedelta(minutes=25)
-PYTH_MAX_AGE_SECONDS = 120
 
 # The best strike (Kevin, 2026-11-03): where the model beats what the contract actually costs. A YES
 # costs the ask and a NO costs one minus the bid, so a pick is always a price that could be paid, as
@@ -60,24 +59,12 @@ TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
-def live_price(now: datetime, pyth_fn=None, delayed_fn=None, free_fn=None) -> tuple[Any, str, str | None]:
-    """(price, source, why Pyth wasn't used): the feed Kalshi settles on when it answers fresh, then the
-    free perp, then the delayed print. `why` is public, so anyone can see whether the key is working
-    without seeing the key."""
+def live_price(now: datetime, delayed_fn=None, free_fn=None) -> tuple[Any, str]:
+    """(price, source): the free live perp, then the delayed print, named so the page can say which."""
     try:
-        price = (pyth_fn or pyth_oil_price)()
-        age = (now - price.published_at).total_seconds()
-        if age <= PYTH_MAX_AGE_SECONDS:
-            if price.name == "PYTHOIL":
-                return price, "pyth", None
-            return price, "pyth-wti-future", "PYTHOIL isn't available; using the WTI future"
-        why = f"Pyth's price was {round(age)} seconds old"
-    except PythUnavailable as exc:
-        why = str(exc)
-    try:
-        return (free_fn or hyperliquid_oil_price)(now), "hyperliquid", why
+        return (free_fn or hyperliquid_oil_price)(now), "hyperliquid"
     except HyperliquidUnavailable:
-        return delayed_fn(), "cl=f", why
+        return delayed_fn(), "cl=f"
 
 
 def pick_event(events: dict[str, list], now: datetime) -> tuple[str, list] | None:
@@ -164,7 +151,7 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
     changes = hourly_changes(inputs.settled(now))
     if len(changes) < MIN_CHANGES:
         return {"state": "unavailable", "reason": "not enough settled hours yet"}
-    price, price_source, pyth_status = live_price(now, delayed_fn=lambda: inputs.price(now))
+    price, price_source = live_price(now, delayed_fn=lambda: inputs.price(now))
     if price is None or now - price.published_at > LIVE_MAX_PRICE_AGE:
         stale: dict[str, Any] = {"state": "unavailable",
                                  "reason": "the live WTI print is stale",
@@ -197,7 +184,6 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
         "as_of": now.isoformat(),
         "live_price": price.value,
         "price_source": price_source,
-        "pyth_status": pyth_status,
         "price_at": price.published_at.isoformat(),
         "price_age_minutes": round((now - price.published_at).total_seconds() / 60, 1),
         "sigma_h": round(sigma_h, 4),

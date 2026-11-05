@@ -14,10 +14,11 @@ so
     P(up) = Phi( ln(price_now / price_at_open) / (sigma_1m * sqrt(minutes_left)) )
 
 with sigma_1m the trailing realized volatility of 1-minute log returns on the
-anchor tape. The anchor is Hyperliquid's perp oracle tape (xyz:CL / xyz:BRENTOIL
-/ xyz:NATGAS) -- free and live, where the settlement source (Pyth) is gated on
-Kevin's trial key; the basis between the perp and Pyth's index is part of what
-the shadow's record grades, stated here rather than hidden. v1 sampled only
+anchor tape. The anchor is Hyperliquid's perp trade candles (xyz:CL / xyz:BRENTOIL
+/ xyz:NATGAS; candle closes are trades, not the oracle the hourly board reads) --
+free and live, where the settlement source (Pyth) is gated; the basis between the
+perp and Pyth's index is part of what the shadow's record grades, stated here
+rather than hidden. v1 sampled only
 the window opening at :15 each hour (the journal run's phase); v2 predicts
 every window from a dedicated 5-minute runner, frozen about 5 minutes in,
 with the exact elapsed/remaining minutes recorded on every row.
