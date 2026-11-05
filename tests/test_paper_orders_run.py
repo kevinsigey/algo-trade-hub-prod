@@ -606,6 +606,28 @@ def test_when_the_stop_sold_during_the_cancel_the_idea_does_not_sell_again(db, m
         "the old stop on META did not cleanly cancel: waiting a day"]
 
 
+def test_a_stop_that_part_filled_before_its_cancel_holds_the_symbol(db, monkeypatch):
+    live_idea(db, 2)
+    store.set_auto(db, 2, False, "kevin")
+    store.kill(db, 2)
+    store.add_manual_move(db, "main", "META", 2, "kevin")
+    fills = [_manual_fill("f1", "m", "META", "buy", 2, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "META", "qty": "2", "market_value": "1200", "current_price": "600"}]
+
+    class PartFilled(Alpaca):
+        def __call__(self, path, params=None):
+            if path.startswith("/v2/orders/"):
+                return {"id": path.rsplit("/", 1)[1], "status": "canceled", "filled_qty": "1"}
+            return super().__call__(path, params)
+
+    monkeypatch.setattr(service, "paper_get", PartFilled(
+        fills=fills, positions=positions, pending=[_ext_stop("old", "META", qty="2")],
+        orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]))
+    sub = Submit()
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, cancel_machine=lambda oid, cid: None)
+    assert sub.calls == []
+
+
 def test_a_stop_that_will_not_cancel_also_stops_a_small_buy_on_that_symbol(db, monkeypatch):
     live_idea(db, 1)
     store.add_manual_move(db, "main", "GLD", 1, "kevin")

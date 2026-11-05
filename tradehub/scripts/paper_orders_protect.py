@@ -40,8 +40,12 @@ def _cancel(order: dict, cancel, why: str) -> dict:
         cancel(order["id"], order["client_order_id"])
         # Alpaca's DELETE only starts the cancel: the shares stay held until the order reads canceled.
         for _ in range(20):
-            status = service.paper_get(f"/v2/orders/{order['id']}")["status"]
+            current = service.paper_get(f"/v2/orders/{order['id']}")
+            status = current["status"]
             if status in DONE:
+                if float(current.get("filled_qty") or 0):
+                    return {**row, "status": "already sent", "filled": True,
+                            "reason": "the protective order part filled before it was cancelled"}
                 return {**row, "status": "sent", "reason": f"cancelled protective order: {why}"}
             if status == "filled":
                 return {**row, "status": "already sent", "filled": True,
