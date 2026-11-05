@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tradehub.backtest.pit import Observation
-from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_oil_price
+from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_candles, hyperliquid_oil_price
 from tradehub.journal.forecasters.oil_hl import HL_VERSION, build_oil_hl_shadow
 from tradehub.oil_live import live_price
 
@@ -20,14 +20,19 @@ class Response:
         return self._body
 
 
+def _candle(minutes_ago, close):
+    return {"t": int((NOW - timedelta(minutes=minutes_ago)).timestamp() * 1000), "c": close}
+
+
 class _Hl:
-    def __init__(self, body, status=200):
+    def __init__(self, body, status=200, candles=None):
         self.body, self.status = body, status
+        self.candles = [_candle(2, "95.20"), _candle(1, "95.26")] if candles is None else candles
         self.calls = []
 
     def post(self, url, json, timeout):
         self.calls.append((url, json))
-        return Response(self.status, self.body)
+        return Response(self.status, self.candles if json["type"] == "candleSnapshot" else self.body)
 
 
 def test_hyperliquid_reads_the_oil_perp_oracle_with_no_key():
@@ -48,6 +53,21 @@ def test_hyperliquid_reads_the_oil_perp_oracle_with_no_key():
 def test_hyperliquid_failures_are_unavailable_not_a_price(body, status):
     with pytest.raises(HyperliquidUnavailable):
         hyperliquid_oil_price(NOW, session=_Hl(body, status))
+
+
+@pytest.mark.parametrize("candles", [
+    [],                                  # nothing has traded
+    [_candle(9, "95.26")],               # the tape stopped
+    [_candle(1, "90.00")],               # the oracle froze while trades moved on
+])
+def test_a_price_the_trade_tape_cant_vouch_for_is_unavailable(candles):
+    with pytest.raises(HyperliquidUnavailable):
+        hyperliquid_oil_price(NOW, session=_Hl(UNIVERSE, candles=candles))
+
+
+def test_candles_outside_the_window_asked_for_are_dropped():
+    s = _Hl(UNIVERSE, candles=[_candle(30, "1"), _candle(5, "2"), _candle(0, "3")])
+    assert [v for _t, v in hyperliquid_candles("xyz:CL", NOW - timedelta(minutes=10), NOW, session=s)] == [2.0]
 
 
 def test_the_hyperliquid_shadow_is_its_own_row():

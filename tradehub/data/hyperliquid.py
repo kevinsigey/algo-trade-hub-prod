@@ -9,7 +9,7 @@ about 2.5c. OKX's perps did no better and Yahoo's closer match runs about 10 min
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
@@ -18,6 +18,11 @@ from tradehub.backtest.pit import Observation
 
 HYPERLIQUID_URL = "https://api.hyperliquid.xyz/info"
 HYPERLIQUID_OIL = "xyz:CL"
+# The oracle read carries no time, so the trade tape vouches for it: a tape that stopped, or trades that have moved
+# away from the oracle, mean the price can't be called live.
+TAPE_CHECK_SPAN = timedelta(minutes=10)
+TAPE_MAX_AGE = timedelta(minutes=5)
+ORACLE_MAX_GAP = 0.01
 
 
 class HyperliquidUnavailable(Exception):
@@ -25,8 +30,7 @@ class HyperliquidUnavailable(Exception):
 
 
 def hyperliquid_price(coin: str, now: datetime, *, session: Any = requests) -> Observation:
-    """One xyz perp's oracle price. The API stamps no time on it, so it's as of this read, and a stuck
-    oracle wouldn't show here; the shadows' grading is what would catch it."""
+    """One xyz perp's oracle price, as of this read, once the trade tape has vouched for it."""
     try:
         response = session.post(HYPERLIQUID_URL, json={"type": "metaAndAssetCtxs", "dex": "xyz"}, timeout=5)
     except requests.RequestException as exc:
@@ -41,6 +45,11 @@ def hyperliquid_price(coin: str, now: datetime, *, session: Any = requests) -> O
         raise HyperliquidUnavailable("Hyperliquid's answer wasn't in the expected shape") from None
     if not math.isfinite(value) or value <= 0:
         raise HyperliquidUnavailable("Hyperliquid returned no price")
+    tape = hyperliquid_candles(coin, now - TAPE_CHECK_SPAN, now, session=session)
+    if not tape or now - tape[-1][0] > TAPE_MAX_AGE:
+        raise HyperliquidUnavailable("Hyperliquid's trades have stopped")
+    if abs(value / tape[-1][1] - 1) > ORACLE_MAX_GAP:
+        raise HyperliquidUnavailable("Hyperliquid's oracle has moved away from its trades")
     return Observation(coin, value, now)
 
 
@@ -68,4 +77,4 @@ def hyperliquid_candles(coin: str, start: datetime, end: datetime, *,
                 for c in response.json()]
     except (KeyError, TypeError, ValueError, OverflowError, OSError):
         raise HyperliquidUnavailable("Hyperliquid's candles weren't in the expected shape") from None
-    return sorted((t, v) for t, v in rows if math.isfinite(v) and v > 0)
+    return sorted((t, v) for t, v in rows if start <= t < end and math.isfinite(v) and v > 0)

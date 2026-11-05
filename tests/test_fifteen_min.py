@@ -49,7 +49,7 @@ class _Resp:
 
 
 def test_candles_parse_to_open_time_and_close():
-    rows = [{"t": 1793760000000, "c": "96.10"}, {"t": 1793759940000, "c": "96.00"}]
+    rows = [{"t": 1793769360000, "c": "96.10"}, {"t": 1793769300000, "c": "96.00"}]
 
     class S:
         @staticmethod
