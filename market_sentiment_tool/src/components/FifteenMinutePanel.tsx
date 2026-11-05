@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
+import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 import { LiveChip } from "@/components/LiveChip";
 import { getJson } from "@/lib/getJson";
 import { buyBelowLimit, cents } from "@/lib/oilFees";
@@ -117,6 +118,7 @@ export function FifteenMinutePanel() {
           </p>
         </>
       )}
+      <FifteenRuleRecord />
     </section>
   );
 }
