@@ -52,7 +52,15 @@ const BASE: Record<string, string> = {
 
 const VERSIONED: Record<string, string> = {
   "cpi_nowcast@cpi-core-v1": "Core inflation (CPI)",
+  "oil_wti_hourly@wti-hourly-v4-hl-shadow": "WTI crude oil (hourly, live feed)",
+  "oil_wti_hourly@wti-hourly-v1": "WTI crude oil (hourly, old delayed feed)",
+  "oil_wti_hourly@wti-hourly-v2-geo-shadow": "WTI crude oil (hourly, delayed feed + Hormuz)",
+  "oil_wti_hourly@wti-hourly-v5-geo2-shadow": "WTI crude oil (hourly, delayed feed + Hormuz stress)",
+  "oil_wti_hourly@wti-hourly-v6-hl-geo2-shadow": "WTI crude oil (hourly, live feed + Hormuz stress)",
 };
+
+/** The hourly WTI headline (Kevin, 2026-11-05): the live-feed model. Its version keeps "-shadow" so its record stays one line. */
+export const HOURLY_HEADLINE = "wti-hourly-v4-hl-shadow";
 
 /** Plan 15: a market-anchored copy of a model, graded beside it. Named after the model it shadows. */
 export const CAUTIOUS_SUFFIX = "_cautious";

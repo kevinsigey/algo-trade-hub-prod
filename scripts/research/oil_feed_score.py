@@ -12,9 +12,6 @@ def g(u,data=None):
     except Exception as e:
         return {"err":str(e)[:100]}
 ts=lambda s:int(D.datetime.fromisoformat(s.replace("Z","+00:00")).timestamp())
-print("hermes public:",str(g("https://hermes.pyth.network/v2/updates/price/latest?ids[]=67784f72e95ac01337edb7d7bd5bbd1c03669101b7068a620df228ed4e52ef14&parsed=true"))[:220])
-print("wti1m public:",str(g("https://hermes.pyth.network/v2/updates/price/latest?ids[]=f2464139c45f26097e0173b03207c4a490dbd8bf1b72dfbf064eeb832c7c2933&parsed=true").get("parsed"))[:220])
-print("hist syms:",str(g("https://history.pyth-lazer.dourolabs.app/history/v1/symbols?query=PYTHOIL"))[:300])
 print("okx inst:",[x["instId"] for x in g("https://www.okx.com/api/v5/public/instruments?instType=SWAP").get("data",[]) if x["instId"].split("-")[0] in("CL","BZ","NG","BRENT","BRN","NATGAS","WTI","OIL")])
 now=int(time.time()); start=now-4*86400
 def hl(c):

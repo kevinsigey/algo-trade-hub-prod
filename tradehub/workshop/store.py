@@ -79,6 +79,17 @@ def add_label(supa, order_id: str, idea_id: int | None, by: str) -> dict:
     return supa.table(LABELS).insert({"order_id": order_id, "idea_id": idea_id, "by": by}).execute().data[0]
 
 
+def add_manual_move(supa, book: str, symbol: str, idea_id: int, by: str) -> dict:
+    return supa.table("manual_moves").insert({"book": book, "symbol": symbol, "idea_id": idea_id, "by": by}
+                                             ).execute().data[0]
+
+
+def manual_moves(supa, book: str) -> dict[str, int]:
+    """Symbol -> idea id that takes this book's manual shares of it; the latest move wins."""
+    return {r["symbol"]: r["idea_id"] for r in supa.table("manual_moves").select("*").eq("book", book).order("id")
+            .execute().data}
+
+
 def label_history(supa) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for r in supa.table(LABELS).select("*").order("id").execute().data:

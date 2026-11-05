@@ -1,5 +1,6 @@
 import pytest
 
+from tradehub.portfolio import book
 from tradehub.portfolio.book import MANUAL, closed_trades, composition, curve, positions_view, scoreboard, win_rate
 
 
@@ -170,3 +171,11 @@ def test_open_cost_gives_qty_and_average_entry_per_idea():
              {**fill("QQQ", "sell", 5, 400, "2026-11-02"), "idea": 2}]
     out = open_cost(fills)
     assert out["GLD"][1] == (25.0, pytest.approx(220.0)) and out["QQQ"][2] == (-5.0, pytest.approx(400.0))
+
+
+def test_moves_take_only_the_manual_shares_still_open():
+    fill = lambda o, side, q, idea=None: {"order_id": o, "symbol": "XLU", "side": side, "qty": str(q), "idea_id": idea}
+    fills = [fill("old-buy", "buy", 10), fill("old-sell", "sell", 10), fill("a", "buy", 5), fill("idea", "buy", 7, 3),
+             fill("b", "sell", 2), fill("a", "buy", 1)]
+    assert book.manual_move_orders(fills, {"XLU": 9}) == {"a": 9, "b": 9}
+    assert book.manual_move_orders(fills, {"XLP": 9}) == {}

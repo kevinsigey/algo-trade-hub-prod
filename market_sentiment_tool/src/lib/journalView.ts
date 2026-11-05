@@ -1,4 +1,4 @@
-import { baselineName, CAUTIOUS_SUFFIX, forecasterLabel } from "@/lib/forecasterLabels";
+import { baselineName, CAUTIOUS_SUFFIX, forecasterLabel, HOURLY_HEADLINE } from "@/lib/forecasterLabels";
 import { EXPERIMENTAL, tiles, type Baseline, type JournalScore } from "@/lib/journal";
 import { EARLY_N } from "@/lib/sample";
 
@@ -65,9 +65,11 @@ export function viewRows(scores: JournalScore[]): ViewRow[] {
   }));
 }
 
-/** Rows with at least one scored forecast first (most evidence first); the rest wait. */
+const isHeadline = (r: ViewRow) => (r.score.forecaster_version === HOURLY_HEADLINE ? 1 : 0);
+
+/** Rows with at least one scored forecast first (the hourly headline, then most evidence first); the rest wait. */
 export function split(rows: ViewRow[]): { results: ViewRow[]; waiting: ViewRow[] } {
-  const results = rows.filter((r) => r.scored > 0).sort((a, b) => b.scored - a.scored);
+  const results = rows.filter((r) => r.scored > 0).sort((a, b) => isHeadline(b) - isHeadline(a) || b.scored - a.scored);
   const waiting = rows.filter((r) => r.scored === 0).sort((a, b) => a.label.localeCompare(b.label));
   return { results, waiting };
 }

@@ -72,8 +72,21 @@ describe("/oil", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Hourly settlements/ })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: /Hourly settlements/ }));
     fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
-    expect(screen.getByRole("heading", { name: "WTI crude oil (hourly settlement)" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "WTI crude oil (hourly, old delayed feed)" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
+  });
+
+  it("the frozen record reads the live-feed model when both hourly models are there", async () => {
+    serve([
+      score({ forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v1", cadence: "hourly", n_targets: 40 }),
+      score({ forecaster: "oil_wti_hourly", forecaster_version: "wti-hourly-v4-hl-shadow", cadence: "hourly", n_targets: 20 }),
+    ]);
+    render(<Oil />);
+    await waitFor(() => {
+      const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+      expect(urls.some((u) => u.includes("forecaster=oil_wti_hourly&version=wti-hourly-v4-hl-shadow"))).toBe(true);
+      expect(urls.some((u) => u.includes("version=wti-hourly-v1"))).toBe(false);
+    });
   });
 
   it("the frozen record opens from its dropdown: the 50% level and the strikes", async () => {

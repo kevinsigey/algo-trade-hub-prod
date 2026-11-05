@@ -111,7 +111,13 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
         # Fail closed: unlike the public page, an unreadable order map or label table stops the run. Unknown
         # holdings would look like zero shares and every idea would buy its full size again.
         client_ids = service._orders()
-        fills = book.tag_fills(service._fills(), client_ids, store.labels(supa), service._titles(supa, public=False))
+        raw_fills, titles = service._fills(), service._titles(supa, public=False)
+        fills = book.tag_fills(raw_fills, client_ids, store.labels(supa), titles)
+        moved = book.manual_move_orders(fills, store.manual_moves(supa, book_name))
+        for order_id, idea_id in moved.items():  # a rebalance: the idea takes the shares, and trades the difference
+            store.add_label(supa, order_id, idea_id, "rebalance")
+        if moved:
+            fills = book.tag_fills(raw_fills, client_ids, store.labels(supa), titles)
     except AccountNotConnected:
         return {"account": "not connected"}, {}
     # Shares per symbol per idea id (FIFO lots, tags + relabels); account-wide signed value per symbol.

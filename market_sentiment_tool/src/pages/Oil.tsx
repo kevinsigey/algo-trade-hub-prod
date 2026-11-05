@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HOURLY_HEADLINE } from "@/lib/forecasterLabels";
 import { ChevronDown } from "lucide-react";
 
 import { Chip, type Tone } from "@/components/Chip";
@@ -10,7 +11,7 @@ import { LiveChip } from "@/components/LiveChip";
 import { NextRelease } from "@/components/NextRelease";
 import { Stat } from "@/components/Stat";
 import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal";
-import { STATUS_WORDS, skillText, totals, viewRows, type Status, type ViewRow } from "@/lib/journalView";
+import { STATUS_WORDS, skillText, totals, split, viewRows, type Status, type ViewRow } from "@/lib/journalView";
 import { buyBelowLimit, cents } from "@/lib/oilFees";
 
 /**
@@ -676,7 +677,8 @@ export default function Oil() {
 
   useEffect(() => {
     if (!data) return;
-    const hourly = data.forecasters.find((s) => s.forecaster === "oil_wti_hourly");
+    const hourly = data.forecasters.find((s) => s.forecaster_version === HOURLY_HEADLINE)
+      ?? data.forecasters.find((s) => s.forecaster === "oil_wti_hourly");
     const implied = data.forecasters.find((s) => s.forecaster === "kalshi_implied_oil_hourly");
     if (hourly) {
       getJson<JournalFeed>(`/api/journal/feed?forecaster=oil_wti_hourly&version=${hourly.forecaster_version}&limit=250`)
@@ -694,7 +696,8 @@ export default function Oil() {
   if (!data) return <div className="p-8 text-slate-400">Loading…</div>;
 
   const rows = viewRows(data.forecasters.filter((s) => OIL.has(s.forecaster)));
-  const hourlyRows = viewRows(data.forecasters.filter((s) => OIL_HOURLY.has(s.forecaster)));
+  const hourlySplit = split(viewRows(data.forecasters.filter((s) => OIL_HOURLY.has(s.forecaster))));
+  const hourlyRows = [...hourlySplit.results, ...hourlySplit.waiting];
   const fifteenRows = viewRows(data.forecasters.filter((s) => OIL_15M.has(s.forecaster)));
   const t = totals(rows);
 
