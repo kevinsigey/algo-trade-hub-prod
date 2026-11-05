@@ -504,6 +504,20 @@ def test_a_move_hands_manual_shares_to_the_idea_and_buys_only_the_difference(db,
     assert len(db.db["order_labels"]) == 1
 
 
+def test_a_move_takes_shares_whose_label_names_no_idea(db, monkeypatch):
+    # The machine door labels every order, with no idea when the caller names none: that is still manual.
+    live_idea(db, 1)
+    store.add_label(db, "m", None, "api:mac scripts")
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    sub = Submit()
+    run(db, Alpaca(fills=fills, orders=[{"id": "m", "client_order_id": "ext-1-mirror", "submitted_at": "t"}],
+                   positions=positions), sub, monkeypatch)
+    assert [(c[0], c[1], c[2]) for c in sub.calls] == [("GLD", "buy", 16)]
+    assert store.labels(db) == {"m": 1}
+
+
 def test_a_move_can_wind_down_manual_shares_through_a_killed_idea(db, monkeypatch):
     live_idea(db, 2)
     store.set_auto(db, 2, False, "kevin")
