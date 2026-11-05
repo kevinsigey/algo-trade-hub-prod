@@ -163,21 +163,29 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
 
     summary: dict = {}
     failed: dict[int, str] = {}
-    for order in _stops_under_moves(pending, moves):  # Kevin, 2026-11-05: an open sell stop blocks the idea's orders
-        idea_id = moves[order["symbol"]][0]
-        row = _cancel(order, cancel_machine, "a rebalance handed these shares to an idea")
-        store.log_orders(supa, idea_id, str(day), [row], book=book_name)
-        if row["status"] in ("sent", "already sent"):
-            pending = [o for o in pending if o["id"] != order["id"]]
-            waiting = [w for w in waiting if w[0] != order["client_order_id"]]
-        else:
-            failed[idea_id] = f"stop on {order['symbol']}: {row['reason']}"[:300]
-            store.add_manual_action(supa, book_name, idea_id, "order", order["symbol"], row["reason"] or "needs a hand")
     if book_name == "main":  # the main book's live state lives on the idea rows (the record)
         jobs = [(i, False) for i in store.auto_ideas(supa)] + [(i, True) for i in store.closing_ideas(supa)]
     else:  # every other book reads its own activations: different ideas, sizes, strategies
         jobs = ([(i, False) for i in store.auto_activations(supa, book_name)]
                 + [(i, True) for i in store.closing_activations(supa, book_name)])
+    managed = {idea["id"] for idea, _ in jobs}
+    uncertain: set[str] = set()  # symbols whose old stop may still rest, or just sold: nothing trades them today
+    # Kevin, 2026-11-05: an open sell stop blocks the idea's orders. It goes before any idea plans, because other
+    # ideas buy the same symbol. Only a move to an idea with a job: otherwise nothing would manage the shares.
+    for order in _stops_under_moves(pending, moves):
+        idea_id = moves[order["symbol"]][0]
+        if idea_id not in managed:
+            continue
+        row = _cancel(order, cancel_machine, "a rebalance handed these shares to an idea")
+        store.log_orders(supa, idea_id, str(day), [row], book=book_name)
+        if row["status"] == "sent":
+            pending = [o for o in pending if o["id"] != order["id"]]
+            waiting = [w for w in waiting if w[0] != order["client_order_id"]]
+            continue
+        uncertain.add(order["symbol"])
+        if row["status"] != "already sent":
+            failed[idea_id] = f"stop on {order['symbol']}: {row['reason']}"[:300]
+            store.add_manual_action(supa, book_name, idea_id, "order", order["symbol"], row["reason"] or "needs a hand")
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
@@ -220,6 +228,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                 rows = [{**r, "status": "skip", "waiting": True,
                          "reason": f"circuit breaker: {'; '.join(breaker['reasons'])}"}
                         if r["kind"] == "open" and r["status"] in ("send", "manual") else r for r in rows]
+            rows = [{**r, "status": "skip", "reason": f"the old stop on {r['symbol']} did not cleanly cancel: waiting a day"}
+                    if r["symbol"] in uncertain else r for r in rows]
             if not closing and exit_reason:
                 rows = [{**r, "reason": r["reason"] or exit_reason} if r["kind"] == "close" else r for r in rows]
             protecting = [o for o in pending

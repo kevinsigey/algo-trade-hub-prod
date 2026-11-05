@@ -572,6 +572,57 @@ def test_a_stop_that_will_not_cancel_is_flagged_and_the_idea_does_not_buy_agains
     assert sub.calls == []
 
 
+def test_a_stop_stays_when_no_job_manages_the_receiving_idea(db, monkeypatch):
+    live_idea(db, 1)
+    store.add_manual_move(db, "main", "GLD", 2, "kevin")  # idea 2 was never switched on
+    monkeypatch.setattr(service, "paper_get", Alpaca(pending=[_ext_stop("old", "GLD")]))
+    log = []
+    paper_orders_run.run(MORNING, db, submit=Submit(), closes=closes, fred=None,
+                         cancel_machine=lambda oid, cid: log.append(oid))
+    assert log == []
+
+
+def test_when_the_stop_sold_during_the_cancel_the_idea_does_not_sell_again(db, monkeypatch):
+    live_idea(db, 2)
+    store.set_auto(db, 2, False, "kevin")
+    store.kill(db, 2)
+    store.add_manual_move(db, "main", "META", 2, "kevin")
+    fills = [_manual_fill("f1", "m", "META", "buy", 2, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "META", "qty": "2", "market_value": "1200", "current_price": "600"}]
+
+    class StopFilled(Alpaca):
+        def __call__(self, path, params=None):
+            if path.startswith("/v2/orders/"):
+                return {"id": path.rsplit("/", 1)[1], "status": "filled"}
+            return super().__call__(path, params)
+
+    monkeypatch.setattr(service, "paper_get", StopFilled(
+        fills=fills, positions=positions, pending=[_ext_stop("old", "META", qty="2")],
+        orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]))
+    sub = Submit()
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, cancel_machine=lambda oid, cid: None)
+    assert sub.calls == []
+    assert [r["reason"] for r in db.db["paper_orders"] if r["status"] == "skipped"] == [
+        "the old stop on META did not cleanly cancel: waiting a day"]
+
+
+def test_a_stop_that_will_not_cancel_also_stops_a_small_buy_on_that_symbol(db, monkeypatch):
+    live_idea(db, 1)
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    monkeypatch.setattr(service, "paper_get", Alpaca(
+        fills=fills, positions=positions, pending=[_ext_stop("old", "GLD", qty="1")],
+        orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]))
+
+    def refuse(oid, cid):
+        raise paper_orders.OrderRejected("HTTP 500")
+
+    sub = Submit()
+    paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, cancel_machine=refuse)
+    assert sub.calls == []
+
+
 def test_no_move_means_no_machine_stop_is_touched(db, monkeypatch):
     live_idea(db, 1)
     monkeypatch.setattr(service, "paper_get", Alpaca(pending=[_ext_stop("old", "GLD")]))
