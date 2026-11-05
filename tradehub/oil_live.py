@@ -27,6 +27,8 @@ from typing import Any
 from tradehub.data.kalshi_live import KalshiLive
 from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_oil_price
 from tradehub.engines.oil_hourly import hourly_changes, hourly_prob, hourly_sigma, sigma_for
+from tradehub.engines.fifteen_min import SERIES_COINS, WINDOW_MINUTES
+from tradehub.journal.forecasters.fifteen_min import FifteenMinInputs, read_window
 from tradehub.journal.forecasters.oil_hourly import (
     MIN_CHANGES,
     SERIES,
@@ -57,6 +59,9 @@ BEST_COST_BAND = (0.20, 0.80)
 BEST_MAX_SPREAD = 0.08
 TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
+FIFTEEN_CACHE_SECONDS = 10.0
+FIFTEEN_LABELS = {"KXWTI15M": "WTI", "KXBRENT15M": "Brent", "KXNATGAS15M": "Natural gas"}
+_fifteen_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
 def live_price(now: datetime, delayed_fn=None, free_fn=None) -> tuple[Any, str]:
@@ -203,4 +208,50 @@ def live_ladder_cached() -> dict[str, Any]:
         return _cache["payload"]
     payload = live_ladder()
     _cache.update(at=now_s, payload=payload)
+    return payload
+
+
+def _fifteen_market(series: str, live, inputs: FifteenMinInputs, now: datetime) -> dict[str, Any]:
+    base = {"series": series, "label": FIFTEEN_LABELS[series]}
+    window = timedelta(minutes=WINDOW_MINUTES)
+    current = [lm for lm in live.open_markets(series) if lm.market.close_time - window <= now < lm.market.close_time]
+    if not current:
+        return {**base, "state": "unavailable", "reason": "no window open right now"}
+    lm = current[0]
+    read = read_window(lm.market.close_time, inputs.tape(SERIES_COINS[series], now), now)
+    if read is None:
+        return {**base, "state": "unavailable", "reason": "the live price tape can't support a read right now"}
+    row = {"strike": 0.0, "ours": read["prob_up"], "yes_bid": lm.quote.yes_bid, "yes_ask": lm.quote.yes_ask}
+    best, closest = pick_best_strike([row])
+    return {**base, "state": "live", "ticker": lm.market.ticker, "close_time": lm.market.close_time.isoformat(),
+            "minutes_left": read["remaining_min"], "elapsed_min": read["elapsed_min"],
+            "open_price": read["open_price"], "price": read["price"], "price_at": read["price_at"],
+            "official_open": lm.market.floor_strike, "prob_up": round(read["prob_up"], 4),
+            "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None),
+            "yes_bid": lm.quote.yes_bid, "yes_ask": lm.quote.yes_ask, "best": best, "closest": closest}
+
+
+def fifteen_live(now: datetime | None = None, *, live=None, inputs: FifteenMinInputs | None = None) -> dict[str, Any]:
+    """The live 15-minute read for the Oil page: the same math the journal freezes, on every open window, with
+    Kalshi's current prices. Display only. One unreadable market says why and leaves the others up."""
+    now = now or datetime.now(UTC)
+    live = live or KalshiLive()
+    inputs = inputs or FifteenMinInputs()
+    markets = []
+    for series in SERIES_COINS:
+        try:
+            markets.append(_fifteen_market(series, live, inputs, now))
+        except Exception:  # noqa: BLE001 -- one bad market must not blank the panel
+            markets.append({"series": series, "label": FIFTEEN_LABELS[series], "state": "unavailable",
+                            "reason": "this market couldn't be read just now"})
+    return {"state": "live", "as_of": now.isoformat(), "markets": markets}
+
+
+def fifteen_live_cached() -> dict[str, Any]:
+    """10-second server cache: the page polls every 15s."""
+    now_s = time.monotonic()
+    if _fifteen_cache["payload"] is not None and now_s - _fifteen_cache["at"] < FIFTEEN_CACHE_SECONDS:
+        return _fifteen_cache["payload"]
+    payload = fifteen_live()
+    _fifteen_cache.update(at=now_s, payload=payload)
     return payload

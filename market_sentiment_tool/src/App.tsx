@@ -7,6 +7,8 @@ import SportsEdges from "@/pages/SportsEdges";
 import Macro from "@/pages/Macro";
 import JobsNowcast from "@/pages/JobsNowcast";
 import Cpi from "@/pages/Cpi";
+import OilLayout from "@/components/OilLayout";
+import Hormuz from "@/pages/Hormuz";
 import Oil from "@/pages/Oil";
 import Journal from "@/pages/Journal";
 import Health from "@/pages/Health";
@@ -37,6 +39,7 @@ import {
   CloudSun,
   FlaskConical,
   Fuel,
+  Ship,
   Handshake,
   HeartPulse,
   History,
@@ -116,11 +119,14 @@ const SidebarBody = ({ onNavigate }: { onNavigate?: () => void }) => {
           </NavLink>
         </Group>
         {/* Commodities gets its own tab above Macro (Kevin's redesign, 2026-11-03):
-            the Oil dashboard outgrew a card on the Macro page -- live hourly
-            prediction, the Hormuz tracker and the graded records live there. */}
+            the Oil dashboard outgrew a card on the Macro page. Hormuz is a sub-item of Oil
+            (Kevin, 2026-11-05): the live predictions on one tab, the tracker on its own. */}
         <Group label="Commodities">
-          <NavLink to="/oil" className={linkClass}>
+          <NavLink to="/oil" end className={linkClass}>
             <Fuel className="w-5 h-5 text-muted-foreground" /> Oil
+          </NavLink>
+          <NavLink to="/oil/hormuz" className={(s) => `${linkClass(s)} ml-5`}>
+            <Ship className="w-4 h-4 text-muted-foreground" /> Hormuz tracker
           </NavLink>
         </Group>
         <Group label="Predictions">
@@ -371,7 +377,10 @@ function App() {
           <Route path="/macro" element={<Macro />} />
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />
-          <Route path="/oil" element={<Oil />} />
+          <Route path="/oil" element={<OilLayout />}>
+            <Route index element={<Oil />} />
+            <Route path="hormuz" element={<Hormuz />} />
+          </Route>
           <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
           <Route path="/machine-keys" element={<RequireAdmin><MachineKeys /></RequireAdmin>} />
           <Route path="/weather" element={<Weather />} />
