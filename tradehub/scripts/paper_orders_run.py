@@ -113,7 +113,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
         client_ids = service._orders()
         raw_fills, titles, labels = service._fills(), service._titles(supa, public=False), store.labels(supa)
         fills = book.tag_fills(raw_fills, client_ids, labels, titles)
-        moved = book.manual_move_orders(fills, store.manual_moves(supa, book_name), set(labels))
+        named = {order for order, idea_id in labels.items() if idea_id is not None}  # a None label is still manual
+        moved = book.manual_move_orders(fills, store.manual_moves(supa, book_name), named)
         for order_id, idea_id in moved.items():  # a rebalance: the idea takes the shares, and trades the difference
             store.add_label(supa, order_id, idea_id, "rebalance")
         if moved:
