@@ -437,4 +437,4 @@ def close_options(idea_id: int, held_contracts: dict[str, float], day: date, mid
                                 f"close {occ} by hand -- no tradable quote to price the exit"))
         else:
             rows.append(_opt_row(idea_id, occ, -qty, "close", m, day))
-    return rows
+    return _pair_verticals(idea_id, rows, day)
