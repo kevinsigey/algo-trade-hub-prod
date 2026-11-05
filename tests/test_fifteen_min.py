@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tradehub.data.kalshi_live import LiveMarket
-from tradehub.data.pyth import HyperliquidUnavailable, hyperliquid_candles
+from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_candles
 from tradehub.edges import Quote
 from tradehub.engines.fifteen_min import SIGMA_FLOOR, prob_up, realized_sigma_1m
 from tradehub.journal.forecasters.fifteen_min import FifteenMinInputs, build_fifteen_min

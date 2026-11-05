@@ -89,7 +89,7 @@ interface LiveLadder {
   live_price?: number;
   price_at?: string;
   price_age_minutes?: number;
-  price_source?: "pyth" | "pyth-wti-future" | "hyperliquid" | "cl=f";
+  price_source?: "hyperliquid" | "cl=f";
   our_level?: number | null;
   market_level?: number | null;
   geo?: { stress_score: number; k: number; partial: boolean } | null;
@@ -277,11 +277,7 @@ function LiveHero() {
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">WTI live</div>
           <div className="mt-1 text-4xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
           <div className="mt-1 text-xs text-slate-500">
-            {live.price_source === "pyth"
-              ? "Pyth live, the feed Kalshi settles on"
-              : live.price_source === "pyth-wti-future"
-              ? "Pyth's WTI future, live but not what Kalshi settles on"
-              : live.price_source === "hyperliquid"
+            {live.price_source === "hyperliquid"
               ? "Hyperliquid oil perp, live but not what Kalshi settles on"
               : live.price_age_minutes != null && live.price_age_minutes >= 2
               ? <>print {Math.round(live.price_age_minutes)} min old · the CL=F feed runs delayed</>

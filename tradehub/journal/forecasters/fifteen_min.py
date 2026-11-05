@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from tradehub.core.kalshi_feed import fetch_market
-from tradehub.data.pyth import HyperliquidUnavailable, hyperliquid_candles
+from tradehub.data.hyperliquid import HyperliquidUnavailable, hyperliquid_candles
 from tradehub.engines.fifteen_min import SERIES_COINS, WINDOW_MINUTES, prob_up, realized_sigma_1m
 from tradehub.journal.contract import CalendarEntry, Forecast, Settlement
 from tradehub.journal.kalshi_linked import (
