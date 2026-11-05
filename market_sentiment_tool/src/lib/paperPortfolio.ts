@@ -274,3 +274,65 @@ export interface ManualActionsPayload {
   book: string;
   actions: ManualAction[];
 }
+
+export interface IdeaCard {
+  idea: string;
+  id: number | null;
+  positions: number;
+  value: number;
+  /** Gross exposure over equity: a short counts at its size, not netted against longs. */
+  pct: number;
+  /** Null when any holding's figure is unknown: a missing figure is never read as zero. */
+  day_pl: number | null;
+  unrealized: number | null;
+  /** Open P&L over gross cost; null when nothing is held or a figure is unknown. */
+  return_pct: number | null;
+  /** The idea's set size, % of the book; known only for live ideas the admin list returns. */
+  target_pct: number | null;
+}
+
+/**
+ * One row per idea in the book: what it holds, today's move, the open P&L, and how far it sits
+ * from its set size. Manual shares are one row per symbol, so a hand position never hides inside
+ * a bucket. Live ideas that hold nothing yet still appear, at zero.
+ * ponytail: keyed by title, since positions carry only the title; two live ideas sharing a title would merge.
+ */
+export function ideaScorecard(rows: PositionRow[], equity: number,
+                              live: { id: number; title: string; size_pct: number | null }[]): IdeaCard[] {
+  const cards = new Map<string, IdeaCard & { gross: number; cost: number }>();
+  const card = (idea: string) => {
+    if (!cards.has(idea)) {
+      const l = live.find((x) => x.title === idea);
+      cards.set(idea, { idea, id: l?.id ?? null, positions: 0, value: 0, pct: 0, day_pl: 0, unrealized: 0,
+                        return_pct: null, target_pct: l?.size_pct ?? null, gross: 0, cost: 0 });
+    }
+    return cards.get(idea)!;
+  };
+  for (const r of rows) {
+    const c = card(r.idea && r.idea !== "No idea yet (manual)" ? r.idea : `${r.symbol} (manual)`);
+    c.positions += 1;
+    c.value += r.market_value;
+    c.gross += Math.abs(r.market_value);
+    c.day_pl = c.day_pl == null || r.day_pl == null ? null : c.day_pl + r.day_pl;
+    c.unrealized = c.unrealized == null || r.unrealized_pl == null ? null : c.unrealized + r.unrealized_pl;
+    c.cost += Math.abs(r.cost_basis ?? r.market_value - (r.unrealized_pl ?? 0));
+  }
+  for (const l of live) card(l.title);
+  return [...cards.values()]
+    .map(({ gross, cost, ...c }) => ({
+      ...c,
+      pct: equity ? (gross / equity) * 100 : 0,
+      return_pct: c.positions && c.unrealized != null && cost ? (c.unrealized / cost) * 100 : null,
+    }))
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+}
+
+/** Today's biggest movers by dollar P&L, gains and losses apart. `known` is false when no row has a day figure. */
+export function dayMovers(rows: PositionRow[], n = 3): { up: PositionRow[]; down: PositionRow[]; known: boolean } {
+  const moved = rows.filter((r) => r.day_pl);
+  return {
+    up: moved.filter((r) => r.day_pl! > 0).sort((a, b) => b.day_pl! - a.day_pl!).slice(0, n),
+    down: moved.filter((r) => r.day_pl! < 0).sort((a, b) => a.day_pl! - b.day_pl!).slice(0, n),
+    known: rows.some((r) => r.day_pl != null),
+  };
+}

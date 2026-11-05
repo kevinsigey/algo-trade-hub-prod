@@ -153,3 +153,51 @@ describe("the shell from 768px up", () => {
     expect(screen.getByTestId("sidebar-backdrop").className).toContain("md:hidden");
   });
 });
+
+describe("the rail's own controls", () => {
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch { /* storage blocked: the rail still renders */ }
+  });
+
+  it("links home to the Overview", () => {
+    renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    expect(within(rail).getByRole("link", { name: /^overview$/i })).toHaveAttribute("href", "/");
+  });
+
+  it("collapses to icons, keeps every link's name, and remembers the choice", () => {
+    const first = renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    fireEvent.click(within(rail).getByRole("button", { name: /collapse sidebar/i }));
+    expect(rail).toHaveAttribute("data-collapsed", "true");
+    expect(within(rail).getByRole("link", { name: /^portfolio$/i })).toHaveAttribute("href", "/portfolio");
+    expect(within(rail).getByRole("button", { name: /expand sidebar/i })).toHaveAttribute("aria-pressed", "true");
+    first.unmount();
+
+    renderShell();
+    expect(screen.getByTestId("sidebar-rail")).toHaveAttribute("data-collapsed", "true");
+  });
+
+  it("folds a group away and opens it again", () => {
+    renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    const toggle = within(rail).getByRole("button", { name: /^markets$/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(rail).queryByRole("link", { name: /^oil$/i })).toBeNull();
+    fireEvent.click(toggle);
+    expect(within(rail).getByRole("link", { name: /^oil$/i })).toHaveAttribute("href", "/oil");
+  });
+});
+
+describe("the rail's stored preferences", () => {
+  it("ignores a stored value of the wrong shape", () => {
+    try { window.localStorage.setItem("atr:nav-closed-groups", "null"); window.localStorage.setItem("atr:nav-collapsed", "\"yes\""); } catch { /* blocked */ }
+    renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    expect(rail).toHaveAttribute("data-collapsed", "false");
+    expect(within(rail).getByRole("button", { name: /^markets$/i })).toHaveAttribute("aria-expanded", "true");
+    try { window.localStorage.clear(); } catch { /* blocked */ }
+  });
+});

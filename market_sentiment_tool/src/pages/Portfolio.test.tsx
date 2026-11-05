@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import ClosedTrades from "@/pages/ClosedTrades";
@@ -254,7 +254,8 @@ describe("Portfolio positions", () => {
       ],
     }));
     page(<Portfolio />);
-    const names = () => screen.getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
+    const table = () => screen.getByText("Positions · 3").closest("section")!;
+    const names = () => within(table()).getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
     await screen.findByText("Positions · 3");
     expect(names()).toEqual(["MU", "NVDA", "NVDA Dec 4 2026 $200 call"]);
     expect(screen.getByText("$300.00")).toBeInTheDocument();

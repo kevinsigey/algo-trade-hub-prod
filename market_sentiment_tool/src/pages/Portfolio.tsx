@@ -11,6 +11,8 @@ import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   breakerLabel,
   concentration,
+  dayMovers,
+  ideaScorecard,
   contractLabel,
   CURVE_RANGES,
   curveRange,
@@ -238,10 +240,7 @@ export default function Portfolio() {
   );
 }
 
-function AccountRail({ data, liveIdeas }: {
-  data: PortfolioPayload;
-  liveIdeas: { id: number; title: string; size_pct: number | null }[];
-}) {
+function AccountRail({ data }: { data: PortfolioPayload }) {
   const s = data.scoreboard;
   const a = data.account;
   const cashRow = data.positions.find((p) => p.symbol === "Cash");
@@ -280,22 +279,6 @@ function AccountRail({ data, liveIdeas }: {
         <RailRow label="SPY same period" value={fmtPct(s.spy_return_pct)} />
         <RailRow label="Ahead of SPY" value={fmtPts(s.ahead_pts)} className={tone(s.ahead_pts)} />
       </div>
-      {liveIdeas.length > 0 && (
-        <div className="mt-2 border-t border-slate-800 pt-2">
-          <div className="flex items-baseline justify-between py-1 text-sm">
-            <span className="text-slate-400">Ideas trading here</span>
-            <Link to="/workshop" className="text-xs text-emerald-300 hover:text-emerald-200">Workshop</Link>
-          </div>
-          <ul>
-            {liveIdeas.map((idea) => (
-              <li key={idea.id} className="flex items-baseline justify-between gap-3 py-0.5 text-xs">
-                <Link to={`/workshop/${idea.id}`} className="truncate text-slate-200 hover:text-emerald-300" title={idea.title}>{idea.title}</Link>
-                <span className="shrink-0 tabular-nums text-slate-400">{idea.size_pct ?? "—"}%</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </aside>
   );
 }
@@ -311,7 +294,7 @@ function Performance({ data }: { data: PortfolioPayload }) {
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
     { label: "Max drawdown", value: fmtPct(s.max_drawdown_pct) },
     { label: "Sharpe", value: s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
-    { label: "Win rate", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
+    { label: "Closed-trade win rate", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
   ];
   return (
     <Box title="Performance vs SPY"
@@ -365,7 +348,7 @@ function Body({ data, liveIdeas, book }: {
   const heavy = concentration(rows);
   return (
     <div className="mt-4 grid gap-3 xl:grid-cols-[19rem_minmax(0,1fr)]">
-      <AccountRail data={data} liveIdeas={liveIdeas} />
+      <AccountRail data={data} />
       <div className="grid min-w-0 content-start gap-3 2xl:grid-cols-3">
         {data.breaker?.tripped && (
           <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-200 2xl:col-span-3">
@@ -381,6 +364,9 @@ function Body({ data, liveIdeas, book }: {
         ))}
         <div className="min-w-0 2xl:col-span-2"><Performance data={data} /></div>
         <CompositionBox positions={data.positions} composition={data.composition} />
+        {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
+        <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
+        <MoversBox rows={rows} />
         <Box title={`Positions · ${rows.length}`} className="2xl:col-span-3">
           <PositionsTable rows={rows} />
         </Box>
@@ -392,6 +378,104 @@ function Body({ data, liveIdeas, book }: {
         <OrderForm book={book} />
       </div>
     </div>
+  );
+}
+
+/**
+ * The book by idea (Kevin, 2026-11-05): what each idea holds, today's move, its open P&L and how
+ * far it sits from its set size. Set sizes come from the admin idea list, so a signed-out visit
+ * shows the holdings without the target column.
+ */
+function IdeasBox({ rows, equity, liveIdeas }: {
+  rows: PositionRow[]; equity: number; liveIdeas: { id: number; title: string; size_pct: number | null }[];
+}) {
+  const cards = useMemo(() => ideaScorecard(rows, equity, liveIdeas), [rows, equity, liveIdeas]);
+  const scale = Math.max(10, ...cards.map((c) => Math.max(c.pct, c.target_pct ?? 0)));
+  const known = cards.some((c) => c.target_pct != null);
+  return (
+    <Box title={`By idea · ${cards.filter((c) => c.id != null || !c.idea.endsWith("(manual)")).length} ideas`}
+         className="2xl:col-span-2"
+         right={<span className="text-xs text-slate-500">{known ? "bar: held · tick: set size" : "bar: % of book"}</span>}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-left text-xs text-slate-500">
+              <th className="pb-2 pr-3 font-medium">Idea</th>
+              <th className="pb-2 pr-3 font-medium">Size</th>
+              <th className="pb-2 pr-3 text-right font-medium">Value</th>
+              <th className="pb-2 pr-3 text-right font-medium">Today</th>
+              <th className="pb-2 text-right font-medium">Open P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/70">
+            {cards.map((c) => {
+              const manual = c.id == null && c.idea.endsWith("(manual)");
+              const off = c.target_pct != null ? c.pct - c.target_pct : null;
+              return (
+                <tr key={c.idea} className={manual ? "text-slate-400" : "text-slate-200"}>
+                  <td className="max-w-[22rem] py-2 pr-3">
+                    {c.id != null ? (
+                      <Link to={`/workshop/${c.id}`} className="line-clamp-2 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
+                    ) : <span className="line-clamp-2">{c.idea}</span>}
+                    <div className="text-[11px] text-slate-500">
+                      {c.positions === 0 ? "nothing held yet" : `${c.positions} position${c.positions === 1 ? "" : "s"}`}
+                    </div>
+                  </td>
+                  <td className="w-44 py-2 pr-3">
+                    <div className="relative h-1.5 rounded-full bg-slate-800" role="img"
+                         aria-label={`${c.pct.toFixed(1)}% of the book${c.target_pct != null ? `, set size ${c.target_pct}%` : ""}`}>
+                      <div className={`absolute inset-y-0 left-0 rounded-full ${manual ? "bg-slate-500" : "bg-emerald-400/80"}`}
+                           style={{ width: `${Math.min(100, (c.pct / scale) * 100)}%` }} />
+                      {c.target_pct != null && (
+                        <div className="absolute -top-1 h-3.5 w-px bg-slate-200" style={{ left: `${Math.min(100, (c.target_pct / scale) * 100)}%` }} />
+                      )}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-400">
+                      {c.pct.toFixed(1)}%
+                      {off != null && Math.abs(off) >= 1 && (
+                        <span className="text-amber-300"> · {off > 0 ? `${off.toFixed(1)} pts over` : `${(-off).toFixed(1)} pts under`}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3 text-right">{fmtUsd(c.value, { whole: true })}</td>
+                  <td className={`py-2 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
+                  <td className={`py-2 text-right ${tone(c.unrealized)}`}>
+                    {c.positions && c.unrealized != null ? fmtUsd(c.unrealized, { signed: true, whole: true }) : "—"}
+                    {c.return_pct != null && <div className="text-[11px]">{fmtPct(c.return_pct)}</div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Box>
+  );
+}
+
+/** Today's biggest dollar moves, so a bad day reads as "which names", not just a total. */
+function MoversBox({ rows }: { rows: PositionRow[] }) {
+  const { up, down, known } = useMemo(() => dayMovers(rows), [rows]);
+  const line = (r: PositionRow) => (
+    <li key={r.symbol} className="flex items-baseline justify-between gap-2 py-1">
+      <span className="font-medium text-slate-200">{r.symbol}</span>
+      <span className="text-xs text-slate-500">{fmtPct(r.change_pct)}</span>
+      <span className={`ml-auto tabular-nums ${tone(r.day_pl)}`}>{fmtUsd(r.day_pl, { signed: true, whole: true })}</span>
+    </li>
+  );
+  return (
+    <Box title="Today's movers">
+      {!known && rows.length > 0 ? (
+        <p className="text-sm text-slate-400">Today's P&amp;L isn't available right now.</p>
+      ) : up.length + down.length === 0 ? (
+        <p className="text-sm text-slate-400">No moves yet today.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><div className="text-xs text-slate-500">Gaining</div><ul>{up.map(line)}</ul>{!up.length && <p className="py-1 text-slate-500">None</p>}</div>
+          <div><div className="text-xs text-slate-500">Losing</div><ul>{down.map(line)}</ul>{!down.length && <p className="py-1 text-slate-500">None</p>}</div>
+        </div>
+      )}
+    </Box>
   );
 }
 
