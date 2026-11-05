@@ -208,3 +208,17 @@ describe("skill never prints as zero when it is not zero", () => {
     expect(skillText(0)).toBe("0.00");
   });
 });
+
+describe("the hourly WTI headline (Kevin, 2026-11-05)", () => {
+  const card = (version: string, n: number) => ({
+    forecaster: "oil_wti_hourly", forecaster_version: version, cadence: "hourly", baseline: "market",
+    n_targets: n, n_settled: n, bss: null, gate_status: null,
+  }) as unknown as JournalScore;
+
+  it("leads with the live-feed model even though the old model has more evidence", () => {
+    const rows = viewRows([card("wti-hourly-v1", 6000), card("wti-hourly-v4-hl-shadow", 2700)]);
+    expect(split(rows).results.map((r) => r.label)).toEqual([
+      "WTI crude oil (hourly, live feed)", "WTI crude oil (hourly, old delayed feed)",
+    ]);
+  });
+});

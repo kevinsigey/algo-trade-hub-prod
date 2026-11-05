@@ -482,3 +482,46 @@ def test_breakers_off_change_nothing(db, monkeypatch):
     sub = Submit()
     run(db, Alpaca(), sub, monkeypatch)
     assert sub.calls[0][0] == "GLD" and manual_rows(db) == []
+
+
+def _manual_fill(fid, order, symbol, side, qty, at):
+    return {"id": fid, "order_id": order, "symbol": symbol, "side": side, "qty": str(qty), "price": "300",
+            "transaction_time": at}
+
+
+def test_a_move_hands_manual_shares_to_the_idea_and_buys_only_the_difference(db, monkeypatch):
+    live_idea(db, 1)  # target 66 GLD (20% of $100k at $300)
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    alpaca = Alpaca(fills=fills, orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}],
+                    positions=positions)
+    sub = Submit()
+    run(db, alpaca, sub, monkeypatch)
+    assert [(c[0], c[1], c[2]) for c in sub.calls] == [("GLD", "buy", 16)]
+    assert store.labels(db) == {"m": 1}
+    run(db, alpaca, Submit(), monkeypatch)  # the second run has nothing left to hand over
+    assert len(db.db["order_labels"]) == 1
+
+
+def test_a_move_can_wind_down_manual_shares_through_a_killed_idea(db, monkeypatch):
+    live_idea(db, 2)
+    store.set_auto(db, 2, False, "kevin")
+    store.kill(db, 2)
+    store.add_manual_move(db, "main", "META", 2, "kevin")
+    fills = [_manual_fill("f1", "m", "META", "buy", 2, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "META", "qty": "2", "market_value": "1200", "current_price": "600"}]
+    sub = Submit()
+    run(db, Alpaca(fills=fills, orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}],
+                   positions=positions), sub, monkeypatch)
+    assert [(c[0], c[1], c[2]) for c in sub.calls] == [("META", "sell", 2)]
+
+
+def test_a_move_on_the_other_book_leaves_this_book_alone(db, monkeypatch):
+    live_idea(db, 1)
+    store.add_manual_move(db, "big", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    run(db, Alpaca(fills=fills, orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}],
+                   positions=[{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]),
+        Submit(), monkeypatch)
+    assert store.labels(db) == {}
