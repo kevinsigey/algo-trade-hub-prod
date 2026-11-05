@@ -518,6 +518,69 @@ def test_a_move_takes_shares_whose_label_names_no_idea(db, monkeypatch):
     assert store.labels(db) == {"m": 1}
 
 
+def _ext_stop(oid, symbol, at="2026-11-02T16:23:41.987629123Z", cid=None, qty="1"):
+    return {"id": oid, "symbol": symbol, "side": "sell", "qty": qty, "stop_price": "250",
+            "client_order_id": cid or f"ext-1-stop-mirror-{oid}", "submitted_at": at}
+
+
+def test_a_move_cancels_only_the_older_machine_stops_on_its_symbol_before_trading(db, monkeypatch):
+    live_idea(db, 1)  # target 66 GLD
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    log = []
+
+    def submit(symbol, qty, side, client_order_id, **kw):
+        log.append(("submit", symbol, side, qty))
+        return {"id": "o1"}
+
+    monkeypatch.setattr(service, "paper_get", Alpaca(
+        fills=fills, positions=positions, pending=[_ext_stop("old", "GLD", qty="50")],
+        orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]))
+    paper_orders_run.run(MORNING, db, submit=submit, closes=closes, fred=None,
+                         cancel_machine=lambda oid, cid: log.append(("cancel", oid)))
+    assert log == [("cancel", "old"), ("submit", "GLD", "buy", 16)]
+    cancelled = [r for r in db.db["paper_orders"] if r["symbol"] == "GLD" and "cancelled" in (r["reason"] or "")]
+    assert [(r["idea_id"], r["status"]) for r in cancelled] == [(1, "sent")]
+
+
+def test_only_a_machine_stop_older_than_the_move_on_its_own_symbol_is_chosen():
+    moves = {"GLD": (1, "2026-11-05T09:50:56.023793+00:00")}
+    old = _ext_stop("old", "GLD")
+    pending = [old, _ext_stop("new", "GLD", at="2026-11-05T15:00:00Z"), _ext_stop("other", "XOM"),
+               _ext_stop("bare", "GLD", at=None), _ext_stop("hand", "GLD", cid="manual-stop-1"),
+               _ext_stop("idea", "GLD", cid="idea-1-stop-20261105")]
+    assert paper_orders_run._stops_under_moves(pending, moves) == [old]
+
+
+def test_a_stop_that_will_not_cancel_is_flagged_and_the_idea_does_not_buy_against_it(db, monkeypatch):
+    live_idea(db, 1)
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    monkeypatch.setattr(service, "paper_get", Alpaca(
+        fills=fills, positions=positions, pending=[_ext_stop("old", "GLD", qty="50")],
+        orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]))
+
+    def refuse(oid, cid):
+        raise paper_orders.OrderRejected("HTTP 500")
+
+    sub = Submit()
+    _, failed = paper_orders_run.run(MORNING, db, submit=sub, closes=closes, fred=None, cancel_machine=refuse)
+    assert failed[1].startswith("stop on GLD")
+    assert [(a["symbol"], a["kind"]) for a in db.db["manual_actions"]] == [("GLD", "order")]
+    assert sub.calls == []
+
+
+def test_no_move_means_no_machine_stop_is_touched(db, monkeypatch):
+    live_idea(db, 1)
+    monkeypatch.setattr(service, "paper_get", Alpaca(pending=[_ext_stop("old", "GLD")]))
+    log = []
+    paper_orders_run.run(MORNING, db, submit=Submit(), closes=closes, fred=None,
+                         cancel_machine=lambda oid, cid: log.append(oid))
+    assert log == []
+
+
 def test_a_move_can_wind_down_manual_shares_through_a_killed_idea(db, monkeypatch):
     live_idea(db, 2)
     store.set_auto(db, 2, False, "kevin")
