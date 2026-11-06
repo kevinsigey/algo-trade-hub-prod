@@ -79,3 +79,27 @@ def test_the_route_reads_unavailable_rather_than_erroring(monkeypatch):
     monkeypatch.setattr(cw, "watch", boom)
     body = TestClient(main.app).get("/api/crypto/watch").json()
     assert body == {"state": "unavailable"}
+
+
+def test_an_upstream_reply_of_the_wrong_shape_reads_as_that_source_down(monkeypatch):
+    monkeypatch.setattr(cw, "_post", lambda body: {"unexpected": True})
+    try:
+        cw._live_ctx()
+    except cw.SourceDown:
+        pass
+    else:
+        raise AssertionError("a wrong-shaped reply must read as the source down")
+
+
+def test_a_failed_refresh_is_cached_briefly_so_viewers_do_not_hammer_the_sources(monkeypatch):
+    calls = []
+
+    def boom(**_k):
+        calls.append(1)
+        raise RuntimeError("everything down")
+
+    monkeypatch.setattr(cw, "build_watch", boom)
+    cw._cache.update(at=0.0, payload=None)
+    first, second = cw.watch(), cw.watch()
+    assert first == second == {"state": "unavailable"} and len(calls) == 1
+    cw._cache.update(at=0.0, payload=None)

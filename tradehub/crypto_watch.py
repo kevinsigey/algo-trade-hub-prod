@@ -18,9 +18,11 @@ with viewers.
 
 from __future__ import annotations
 
+import functools
 import itertools
 import math
 import statistics
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -34,6 +36,7 @@ STABLES = "https://stablecoins.llama.fi/stablecoincharts/all"
 MEMPOOL = "https://mempool.space/api/v1/fees/recommended"
 COINS = ("BTC", "ETH")
 CACHE_SECONDS = 300.0
+FAIL_CACHE_SECONDS = 60.0  # a failed refresh is served this long, so viewers never hammer the sources
 LABELS = ((0.25, "Calm"), (0.5, "Watch"), (math.inf, "Stressed"))
 WEIGHTS = {"funding": 2, "premium": 1, "realized_vol": 2, "implied_vol": 2, "open_interest": 0, "stablecoins": 1, "fees": 0}
 
@@ -228,6 +231,18 @@ def _get(url: str, params: dict | None = None) -> Any:
         raise SourceDown(url) from exc
 
 
+def _shape(fn):
+    """A reply of the wrong shape is that source down, never an exception that escapes the cache."""
+    @functools.wraps(fn)
+    def wrapped(*args):
+        try:
+            return fn(*args)
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
+            raise SourceDown(fn.__name__) from exc
+    return wrapped
+
+
+@_shape
 def _live_ctx() -> dict:
     meta, ctxs = _post({"type": "metaAndAssetCtxs"})
     names = [u["name"] for u in meta["universe"]]
@@ -238,35 +253,46 @@ def _ms(days: int) -> int:
     return int((datetime.now(UTC) - timedelta(days=days)).timestamp() * 1000)
 
 
+@_shape
 def _live_funding(coin: str) -> list:
     return [row["fundingRate"] for row in _post({"type": "fundingHistory", "coin": coin, "startTime": _ms(30)})]
 
 
+@_shape
 def _live_closes(coin: str) -> list:
     rows = _post({"type": "candleSnapshot", "req": {"coin": coin, "interval": "1h", "startTime": _ms(30),
                                                     "endTime": int(time.time() * 1000)}})
     return [float(c["c"]) for c in sorted(rows, key=lambda c: c["t"])]
 
 
+@_shape
 def _live_dvol(coin: str) -> list:
     body = _get(DERIBIT, {"currency": coin, "start_timestamp": _ms(30), "end_timestamp": int(time.time() * 1000),
                           "resolution": 3600})
     return [float(row[4]) for row in body["result"]["data"]]
 
 
+@_shape
 def _live_stables() -> list:
     rows = _get(STABLES)
     return [float(r["totalCirculatingUSD"]["peggedUSD"]) for r in rows[-40:]]
 
 
-_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+_cache: dict[str, Any] = {"at": 0.0, "payload": None, "ttl": CACHE_SECONDS}
+_refresh = threading.Lock()
 
 
 def watch() -> dict[str, Any]:
-    now_s = time.monotonic()
-    if _cache["payload"] is not None and now_s - _cache["at"] < CACHE_SECONDS:
-        return _cache["payload"]
-    payload = build_watch(ctx=_live_ctx, funding_history=_live_funding, closes=_live_closes, dvol=_live_dvol,
-                          stablecoins=_live_stables, fees=lambda: _get(MEMPOOL))
-    _cache.update(at=now_s, payload=payload)
-    return payload
+    """Cached: one refresh at a time, and a failed one is served for a minute rather than retried per view."""
+    with _refresh:
+        now_s = time.monotonic()
+        if _cache["payload"] is not None and now_s - _cache["at"] < _cache["ttl"]:
+            return _cache["payload"]
+        try:
+            payload, ttl = build_watch(ctx=_live_ctx, funding_history=_live_funding, closes=_live_closes,
+                                       dvol=_live_dvol, stablecoins=_live_stables,
+                                       fees=_shape(lambda: _get(MEMPOOL))), CACHE_SECONDS
+        except Exception:  # noqa: BLE001 -- served as unavailable for a minute; the route never 500s
+            payload, ttl = {"state": "unavailable"}, FAIL_CACHE_SECONDS
+        _cache.update(at=now_s, payload=payload, ttl=ttl)
+        return payload
