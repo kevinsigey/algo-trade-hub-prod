@@ -15,6 +15,39 @@ export const signedPct = (v: number | null | undefined) => (v == null ? "—" : 
 export const pText = (p: number | null | undefined) => (p == null ? null : p < 0.001 ? "p < 0.001" : `p = ${p.toFixed(3)}`);
 
 type SortKey = "grouped" | "value" | "p" | "newest" | "title";
+type GroupKey = "bet" | "sector" | "tag";
+
+/**
+ * The shadow ideas (standing, not trading), grouped (Kevin, 2026-11-05): by bet (ideas on the same names),
+ * by the sector most of an idea's names are in, or by Kevin's own tags -- an idea sits under each of its tags.
+ * A bet whose lead is trading says so, since the lead sits in the section above.
+ */
+export function groupShadow(standingIdeas: PublicIdea[], by: GroupKey):
+    { key: string; label: string; note?: string; ideas: PublicIdea[] }[] {
+  const tradingIds = new Set(standingIdeas.filter((i) => (i.live_books ?? []).length > 0).map((i) => i.id));
+  const shadow = standingIdeas.filter((i) => !tradingIds.has(i.id));
+  const groups = new Map<string, { key: string; label: string; note?: string; ideas: PublicIdea[] }>();
+  const add = (key: string, label: string, idea: PublicIdea, note?: string) => {
+    if (!groups.has(key)) groups.set(key, { key, label, note, ideas: [] });
+    groups.get(key)!.ideas.push(idea);
+  };
+  for (const idea of shadow) {
+    if (by === "sector") add(`s:${idea.sector ?? "Other"}`, idea.sector ?? "Other", idea);
+    else if (by === "tag") {
+      const tags = idea.tags ?? [];
+      if (!tags.length) add("t:", "No tag", idea);
+      for (const t of tags) add(`t:${t.toLowerCase()}`, t, idea);
+    } else if (idea.family && idea.family.size > 1) {
+      const leadTrading = idea.family.members.some((m) => tradingIds.has(m));
+      add(`b:${idea.family.key}`, `One bet · ${idea.family.tickers.join(" · ")}`, idea, leadTrading ? "lead trading above" : undefined);
+    } else add("b:standalone", "Standalone", idea);
+  }
+  const best = (g: { ideas: PublicIdea[] }) => Math.max(...g.ideas.map((i) => i.result_value ?? -Infinity));
+  return [...groups.values()]
+    .map((g) => ({ ...g, ideas: [...g.ideas].sort((a, b) => (b.result_value ?? -Infinity) - (a.result_value ?? -Infinity)) }))
+    .sort((a, b) => Number(a.key === "b:standalone" || a.key === "t:") - Number(b.key === "b:standalone" || b.key === "t:")
+      || best(b) - best(a));
+}
 
 const SORT_LABEL: Record<SortKey, string> = {
   grouped: "Grouped by bet",
@@ -139,27 +172,6 @@ export function betLead(group: PublicIdea[]): PublicIdea {
     || (b.result_value ?? -Infinity) - (a.result_value ?? -Infinity))[0];
 }
 
-/** One card per bet: ideas sharing names are one bet, so the rest sit one click down. */
-function BetGroup({ group }: { group: PublicIdea[] }) {
-  const lead = betLead(group);
-  const rest = group.filter((i) => i.id !== lead.id);
-  return (
-    <>
-      <ul className="mt-3 grid gap-3 sm:grid-cols-2"><IdeaCard idea={lead} /></ul>
-      {rest.length > 0 && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
-            {rest.length} more on this bet
-          </summary>
-          <ul className="mt-2 grid gap-3 sm:grid-cols-2">
-            {rest.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
-          </ul>
-        </details>
-      )}
-    </>
-  );
-}
-
 export default function Ideas() {
   const session = useAdminSession();
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
@@ -179,20 +191,20 @@ export default function Ideas() {
     else if (sort === "title") all.sort((a, b) => a.title.localeCompare(b.title));
     return all;
   }, [standingIdeas, sort]);
-  const families = useMemo(() => {
-    const byKey = new Map<number, PublicIdea[]>();
-    const singles: PublicIdea[] = [];
-    for (const idea of standingIdeas) {
-      if (idea.family && idea.family.size > 1) {
-        const arr = byKey.get(idea.family.key) ?? [];
-        arr.push(idea);
-        byKey.set(idea.family.key, arr);
-      } else singles.push(idea);
+  const [groupBy, setGroupBy] = useState<GroupKey>(() => {
+    try {
+      const v = window.localStorage.getItem("atr:ideas-group");
+      return v === "sector" || v === "tag" ? v : "bet";
+    } catch {
+      return "bet";
     }
-    const groups = [...byKey.values()].sort((a, b) =>
-      Math.max(...b.map((i) => i.result_value ?? -Infinity)) - Math.max(...a.map((i) => i.result_value ?? -Infinity)));
-    return { groups, singles };
-  }, [standingIdeas]);
+  });
+  const chooseGroup = (g: GroupKey) => {
+    setGroupBy(g);
+    try { window.localStorage.setItem("atr:ideas-group", g); } catch { /* the choice lasts this visit */ }
+  };
+  const trading = useMemo(() => standingIdeas.filter((i) => (i.live_books ?? []).length > 0), [standingIdeas]);
+  const shadowGroups = useMemo(() => groupShadow(standingIdeas, groupBy), [standingIdeas, groupBy]);
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Ideas</h1>
@@ -241,22 +253,43 @@ export default function Ideas() {
         </section>
       ) : (
         <>
-          {families.groups.map((group) => (
-            <section key={group[0].family!.key} className="mt-8">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-                One bet · {group[0].family!.tickers.join(" · ")} <span className="text-slate-600">· {group.length} ideas, one position underneath</span>
-              </h2>
-              <BetGroup group={group} />
-            </section>
-          ))}
-          {families.singles.length > 0 && (
-            <section className="mt-8">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-                Standalone <span className="text-slate-600">· {families.singles.length}</span>
+          {trading.length > 0 && (
+            <section aria-label="Trading now" className="mt-8">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
+                Trading now <span className="text-slate-600">· {trading.length} on a paper book</span>
               </h2>
               <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-                {families.singles.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
+                {trading.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
               </ul>
+            </section>
+          )}
+          {shadowGroups.length > 0 && (
+            <section aria-label="In shadow" className="mt-10">
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-sky-300">
+                  In shadow <span className="text-slate-600">· tracked or backtested, not trading</span>
+                </h2>
+                <div className="flex items-center gap-2 text-sm">
+                  <label htmlFor="ideas-group" className="text-slate-400">Group by</label>
+                  <select id="ideas-group" value={groupBy} onChange={(e) => chooseGroup(e.target.value as GroupKey)}
+                          className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100">
+                    <option value="bet">Bet</option>
+                    <option value="sector">Sector</option>
+                    <option value="tag">Tag</option>
+                  </select>
+                </div>
+              </div>
+              {shadowGroups.map((g) => (
+                <details key={g.key} open className="group/g mt-5">
+                  <summary className="cursor-pointer list-none text-sm font-semibold text-slate-300 hover:text-white">
+                    <span className="mr-1 inline-block transition-transform group-open/g:rotate-90" aria-hidden="true">›</span>
+                    {g.label} <span className="font-normal text-slate-500">· {g.ideas.length}{g.note ? ` · ${g.note}` : ""}</span>
+                  </summary>
+                  <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {g.ideas.map((idea) => <IdeaCard key={`${g.key}-${idea.id}`} idea={idea} />)}
+                  </ul>
+                </details>
+              ))}
             </section>
           )}
         </>

@@ -81,8 +81,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 56 | `20261104000001_journal_calendars_cadence_15min.sql` |
 | 57 | `20261105000001_oil_best_strike_live_feed.sql` |
 | 58 | `20261105000002_manual_moves.sql` |
+| 59 | `20261105000003_idea_tags.sql` |
 
-**Watermark: `20261105000002_manual_moves.sql`**
+**Watermark: `20261105000003_idea_tags.sql`**
 
 ## How to record a new one
 

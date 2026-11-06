@@ -35,6 +35,8 @@ SECTOR_BY_SYMBOL: dict[str, str] = {
     "AAPL": "Technology", "MSFT": "Technology", "NVDA": "Technology",
     "AVGO": "Technology", "AMD": "Technology", "INTC": "Technology",
     "TXN": "Technology", "MU": "Technology", "TSM": "Technology",
+    "MRVL": "Technology",
+    "IBIT": "Crypto", "EEM": "International",
     "TWLO": "Technology", "CRM": "Technology", "ORCL": "Technology",
     "ADBE": "Technology", "NOW": "Technology", "PLTR": "Technology",
     "ASML": "Technology",
@@ -70,3 +72,14 @@ def sector_for(symbol: str | None) -> str:
     if sym == "CASH":
         return "Cash"
     return SECTOR_BY_SYMBOL.get(sym, "Other")
+
+
+def idea_sector(symbols: list[str]) -> str:
+    """The sector an idea's bet is in: the one most of its names share (Kevin, 2026-11-05, grouping the
+    Ideas page). A broad-market core never names the bet unless it is all there is; ties go to the first
+    name, so the spec's order decides."""
+    sectors = [sector_for(s) for s in symbols]
+    named = [s for s in sectors if s not in ("Broad Market", "Other")] or sectors
+    if not named:
+        return "Other"
+    return max(dict.fromkeys(named), key=named.count)

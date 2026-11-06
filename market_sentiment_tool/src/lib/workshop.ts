@@ -228,6 +228,8 @@ export interface Idea {
   id: number;
   title: string;
   plain_words: string;
+  /** Kevin's own groupings (2026-11-05). */
+  tags?: string[];
   created_at: string;
   published_at?: string | null;
   tracked_at?: string | null;
@@ -612,6 +614,9 @@ export interface PublicIdea {
   p_ok?: boolean | null;
   /** Ideas betting on the same names are one bet, however wrapped. */
   family?: { key: number; size: number; tickers: string[]; members: number[] } | null;
+  /** The sector most of the idea's own names are in (backend map); Kevin's own tags (2026-11-05). */
+  sector?: string;
+  tags?: string[];
   origin?: "manual" | "lab" | "screen" | null;
   hindsight_selected?: boolean;
   gate_overridden?: boolean;

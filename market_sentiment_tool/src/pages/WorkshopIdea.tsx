@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { TagEditor } from "@/components/TagEditor";
 import { PlayCheckButton } from "@/components/PlayCheck";
 import TickerListInput from "@/components/TickerListInput";
 import { ctDateTime } from "@/lib/format";
@@ -1373,6 +1374,7 @@ export default function WorkshopIdea() {
       </Link>
       {data && <h1 className="mt-3 text-xl font-semibold text-white">“{data.idea.plain_words}”</h1>}
       {data && <SummaryHeader data={data} />}
+      {data && id && <div className="mt-3"><TagEditor key={id} ideaId={Number(id)} initial={data.idea.tags ?? []} /></div>}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
       {data && id && data.runs.length > 0 && !isEvent(data.runs[data.runs.length - 1].spec) && (
         <div className="mt-6">
