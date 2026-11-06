@@ -20,3 +20,19 @@ describe("Panel", () => {
     expect(screen.queryByRole("button", { name: /in full/ })).toBeNull();
   });
 });
+
+describe("Panel full view and the keyboard", () => {
+  it("keeps Tab inside the open view, wrapping from the last control to the first", () => {
+    render(<Panel title="Picks" full={<a href="#x">last link</a>}><p>summary</p></Panel>);
+    fireEvent.click(screen.getByRole("button", { name: "Open Picks in full" }));
+    const dialog = screen.getByRole("dialog", { name: "Picks" });
+    const close = screen.getByRole("button", { name: "Close" });
+    const last = screen.getByText("last link");
+    last.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    close.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+});

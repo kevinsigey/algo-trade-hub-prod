@@ -263,7 +263,7 @@ export default function SportsEdges() {
             <p className="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 text-slate-300">No pick passed review today.</p>
           )}
 
-          <div className="grid gap-2 lg:grid-cols-3">
+          <div className="grid gap-2 2xl:grid-cols-3">
             <Section title="Top picks" picks={b.topPicks} />
             <Section title="Flagged by the reviewer" picks={b.flagged} />
             <Section title="Not reviewed yet" picks={b.unreviewed} />

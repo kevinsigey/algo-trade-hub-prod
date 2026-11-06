@@ -31,7 +31,18 @@ export function Panel({ title, meta, full, fullTitle, children, className = "" }
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center" onClick={() => setOpen(false)}>
           <div role="dialog" aria-modal="true" aria-label={fullTitle ?? title}
                onClick={(e) => e.stopPropagation()}
-               onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
+               onKeyDown={(e) => {
+                 if (e.key === "Escape") { setOpen(false); return; }
+                 if (e.key !== "Tab") return;
+                 // Keep Tab inside the open view: wrap from the last control to the first, and back.
+                 const focusable = [...e.currentTarget.querySelectorAll<HTMLElement>(
+                   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                 )];
+                 if (!focusable.length) return;
+                 const first = focusable[0], last = focusable[focusable.length - 1];
+                 if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+                 else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+               }}
                className="max-h-[88vh] w-full max-w-6xl overflow-y-auto rounded-t-2xl border border-slate-700 bg-slate-900 p-5 sm:rounded-2xl">
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-base font-semibold text-white">{fullTitle ?? title}</h2>

@@ -142,6 +142,12 @@ function IdeaCard({ idea, showKind = false, compact = false }: { idea: PublicIde
             <Link to={`/ideas/${idea.id}`} className="after:absolute after:inset-0 hover:underline underline-offset-2">{idea.title}</Link>
           </h3>
           <div className="mt-1 [&_span]:!text-[11px]">{chips}</div>
+          {demoted && (
+            <p className="mt-0.5 text-[11px] text-amber-300/90">
+              Passed as run, demoted under the hub-wide standard
+              {idea.wf_ok === false ? " (walk-forward)" : idea.p_ok === false ? " (p over 0.01)" : idea.fdr_pass === false ? " (FDR over all tests)" : ""}
+            </p>
+          )}
         </div>
         <div className="min-w-0 text-sm">
           {idea.result_line && (
@@ -310,7 +316,7 @@ export default function Ideas() {
                     <span className="mr-1 inline-block transition-transform group-open/g:rotate-90" aria-hidden="true">›</span>
                     {g.label} <span className="font-normal text-slate-500">· {g.ideas.length}{g.note ? ` · ${g.note}` : ""}</span>
                     {g.ideas[0]?.result_line && (
-                      <span className="ml-2 font-normal text-slate-400">best: {g.ideas[0].title} · {g.ideas[0].result_line}</span>
+                      <span className="ml-2 font-normal text-slate-400">top result: {g.ideas[0].title} · {g.ideas[0].result_line}</span>
                     )}
                   </summary>
                   <ul className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">

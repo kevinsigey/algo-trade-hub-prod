@@ -250,7 +250,9 @@ export default function Weather() {
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <span>{error}</span>
           </div>
-        ) : (
+        ) : null}
+        {error && <DegreeDaysPanel />}
+        {loading || error ? null : (
           <>
             {/* One screen (2026-11-06): the map on the left, the record and the numbers on the right. */}
             <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
