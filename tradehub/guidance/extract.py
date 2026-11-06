@@ -161,12 +161,37 @@ def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], in
             if val is not None and not any(abs(val - n) < 1e-9 for n in evidence_numbers):
                 ok = False
                 break
-        if ok:
+        if ok and _names_metric(item, norm_evidence):
             kept.append(item)
         else:
             dropped += 1
 
     return kept, dropped
+
+
+# The quote has to say what the number is. A free model filed a dividend sentence as capex (2026-11-06); a number in
+# the right sentence under the wrong label passes the quote check, so the label is checked against the words too.
+METRIC_WORDS = {
+    "revenue": ("revenue", "sales"),
+    "eps_gaap": ("earnings per share", "eps", "per diluted share", "per share"),
+    "eps_adjusted": ("earnings per share", "eps", "per diluted share", "per share"),
+    "capex": ("capital expenditure", "capex", "capital spending", "capital investment"),
+    "operating_margin": ("margin",),
+}
+
+
+def _names_metric(item: GuidanceItem, norm_evidence: str) -> bool:
+    if "dividend" in norm_evidence:
+        return False
+    words = METRIC_WORDS.get(item.metric)
+    return words is None or any(w in norm_evidence for w in words)
+
+
+def stored_values(item: GuidanceItem) -> tuple[float | None, float | None]:
+    """Low and high in base units. Per-share and percentage figures are never scaled, whatever scale the model
+    gave: a free model labelled a $13.95 EPS guide "billions" (2026-11-06)."""
+    scale = "units" if item.unit in ("usd_per_share", "pct") else item.scale
+    return to_base(item.low, scale), to_base(item.high, scale)
 
 
 SYSTEM_PROMPT = (
@@ -342,8 +367,8 @@ def run(
                     "period": item.period,
                     "metric": item.metric,
                     "unit": item.unit,
-                    "low": to_base(item.low, item.scale),
-                    "high": to_base(item.high, item.scale),
+                    "low": stored_values(item)[0],
+                    "high": stored_values(item)[1],
                     "evidence": item.evidence,
                     "consensus": cons_value,
                     "consensus_period": cons_period,

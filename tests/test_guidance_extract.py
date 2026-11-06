@@ -102,3 +102,20 @@ def test_without_a_key_nothing_is_marked_and_the_run_says_so():
     out = gx.run(db, fetch=lambda url: RELEASE, model=None, consensus=None, key="")
     assert out == {"skipped": "no model key", "waiting": 1}
     assert db.db["guidance_filings"][0]["status"] == "new"
+
+
+def test_per_share_and_percent_values_are_never_scaled():
+    # A free model labelled AbbVie's $13.95-$13.99 EPS guide "billions" (2026-11-06): per-share values stay as written.
+    assert gx.stored_values(_item(metric="eps_adjusted", unit="usd_per_share", scale="billions", low=13.95, high=13.99)) == (13.95, 13.99)
+    assert gx.stored_values(_item(metric="operating_margin", unit="pct", scale="millions", low=30, high=32)) == (30, 32)
+    assert gx.stored_values(_item()) == (9.6e9, 10.0e9)
+
+
+def test_the_quote_must_name_the_metric_and_never_be_a_dividend():
+    text = gx.html_to_text(RELEASE + "<p>The board declared a quarterly dividend of $1.82 per share.</p>")
+    dividend_as_capex = _item(metric="capex", low=1.82, high=1.82, evidence="declared a quarterly dividend of $1.82 per share")
+    eps_named_revenue = _item(metric="eps_adjusted", unit="usd_per_share", scale="units", low=1.20, high=1.26,
+                              evidence="non-GAAP earnings per share of $1.20 to $1.26")
+    revenue_quote_as_capex = _item(metric="capex")  # the quote talks about revenue
+    kept, dropped = gx.verify([dividend_as_capex, eps_named_revenue, revenue_quote_as_capex], text)
+    assert kept == [eps_named_revenue] and dropped == 2
