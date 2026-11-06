@@ -232,17 +232,13 @@ export default function Weather() {
   const s = weatherStats(today, settled);
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-8">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
-        <header className="border-b border-slate-900 pb-6">
-          <div className="flex items-center gap-2 text-emerald-400">
-            <CloudSun className="h-5 w-5" aria-hidden="true" />
-            <span className="text-xs font-bold uppercase tracking-widest">Weather</span>
-          </div>
-          <h1 className="mt-2 text-3xl font-black uppercase italic tracking-tight text-white sm:text-4xl">
-            Weather
+    <div className="min-h-screen bg-slate-950 px-4 py-5 text-slate-100 md:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col gap-3">
+        <header>
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-white">
+            <CloudSun className="h-5 w-5 text-emerald-400" aria-hidden="true" /> Weather
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-400">{WEATHER_INTRO}</p>
+          <p className="mt-1 max-w-3xl text-sm text-slate-400">{WEATHER_INTRO}</p>
         </header>
 
         {loading ? (
@@ -256,15 +252,19 @@ export default function Weather() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-3">
-              <Stat label="Cities today" value={s.cities} sub="distinct cities" />
-              <Stat label="Contracts frozen" value={s.todayCount} sub="ensemble vs Kalshi" />
-              <Stat label="Settled" value={s.settledCount} sub="with outcome" />
+            {/* One screen (2026-11-06): the map on the left, the record and the numbers on the right. */}
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+              <WeatherMap />
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <Stat label="Cities today" value={s.cities} sub="distinct cities" />
+                  <Stat label="Contracts frozen" value={s.todayCount} sub="ensemble vs Kalshi" />
+                  <Stat label="Settled" value={s.settledCount} sub="with outcome" />
+                </div>
+                <EnsembleRecord />
+                <DegreeDaysPanel />
+              </div>
             </div>
-
-            <EnsembleRecord />
-
-            <WeatherMap />
 
             {today.length === 0 && settled.length === 0 ? (
               <p className="text-sm text-slate-500">No weather data available.</p>
@@ -342,13 +342,11 @@ export default function Weather() {
               </details>
             )}
 
-            <p className="pb-6 text-xs text-slate-600">
+            <p className="text-xs text-slate-600">
               Read from journal tables. No new forecasting.
             </p>
           </>
         )}
-
-        <DegreeDaysPanel />
       </div>
     </div>
   );
@@ -403,17 +401,22 @@ function DegreeDaysPanel() {
             <Stat label="CDD vs 10-yr normal" value={signed(panel.national.cdd_anomaly)}
               sub={`${panel.national.population_covered_pct}% of population covered`} />
           </div>
-          <div className="mt-3 flex flex-col gap-2">
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
+              By region · {Object.keys(panel.regions).length}
+            </summary>
+          <div className="mt-2 flex flex-col">
             {Object.entries(panel.regions).map(([name, r]) => (
-              <div key={name} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
-                <div className="text-sm font-semibold text-slate-200">{name}</div>
-                <div className="flex items-center gap-4 text-sm tabular-nums text-slate-300">
+              <div key={name} className="flex items-center justify-between gap-3 border-t border-slate-800 py-1.5 text-xs">
+                <div className="font-semibold text-slate-200">{name}</div>
+                <div className="flex items-center gap-4 tabular-nums text-slate-300">
                   <span>HDD {r.hdd?.toFixed(0) ?? "—"} ({signed(r.hdd_anomaly)})</span>
                   <span>CDD {r.cdd?.toFixed(0) ?? "—"} ({signed(r.cdd_anomaly)})</span>
                 </div>
               </div>
             ))}
           </div>
+          </details>
           {panel.missing_regions.length > 0 && (
             <p className="mt-2 text-xs text-slate-500">
               No read for {panel.missing_regions.join(", ")} this week -- omitted, not zero-filled.

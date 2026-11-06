@@ -291,7 +291,7 @@ describe("strike board", () => {
       strike: 90 + i * 0.1, ours: 0.9 - i * 0.02, market: null, yes_bid: 0.4, yes_ask: 0.42 }));
     render(<StrikeBoard rows={rows} best={{ strike: 90.1, side: "yes", prob: 0.88, cost: 0.42, edge_pts: 46, net_pts: 44 }} ourLevel={92} />);
     expect(screen.getByText("best")).toBeInTheDocument();
-    expect(screen.getAllByRole("row").length).toBe(16); // the header and 15 strikes
+    expect(screen.getAllByRole("row").length).toBe(10); // the header and 9 strikes (one screen, 2026-11-06)
   });
 });
 

@@ -396,10 +396,10 @@ export function StrikeBoard({ rows, best, ourLevel }: { rows: LiveRow[]; best: S
   const contested = sorted.filter((r) => r.ours >= 0.1 && r.ours <= 0.9);
   const near = quoted.filter((r) => r.ours >= 0.05 && r.ours <= 0.95);
   const base = near.length >= 3 ? near : contested.length >= 3 ? contested : sorted;
-  // 15 rows around the pick, or the model's 50% level, so the action never scrolls off.
+  // 9 rows around the pick, or the model's 50% level, so the action never scrolls off.
   const center = best?.strike ?? ourLevel ?? base[Math.floor(base.length / 2)]?.strike ?? 0;
   const shown = all ? sorted : [...base].sort((a, b) => Math.abs(a.strike - center) - Math.abs(b.strike - center))
-    .slice(0, 15).sort((a, b) => b.strike - a.strike);
+    .slice(0, 9).sort((a, b) => b.strike - a.strike);
   const levelStrike = ourLevel == null ? null
     : sorted.reduce((a, b) => (Math.abs(b.strike - ourLevel) < Math.abs(a.strike - ourLevel) ? b : a), sorted[0]).strike;
   const edge = (r: LiveRow) => {
@@ -661,13 +661,14 @@ export default function Oil() {
   const t = totals(rows);
 
   return (
-    <div className="space-y-6">
+    // One screen and a bit (2026-11-06): the 15-minute read and the record on the left, the hour on the right.
+    <div className="grid gap-3 xl:grid-cols-12">
+      <div className="flex min-w-0 flex-col gap-3 xl:col-span-5">
       <FifteenMinutePanel />
-      <LiveHero />
 
-      <section aria-label="Track record" className="space-y-3 pt-4">
-        <h2 className="text-xl font-semibold text-white">Track record</h2>
-        <section aria-label="Totals" className="grid gap-3 sm:grid-cols-2">
+      <section aria-label="Track record" className="space-y-2">
+        <h2 className="text-lg font-semibold text-white">Track record</h2>
+        <section aria-label="Totals" className="grid gap-2 sm:grid-cols-2">
           <Stat value={t.frozen} label="forecasts locked in" />
           <Stat value={t.scored} label="scored so far" />
         </section>
@@ -682,6 +683,8 @@ export default function Oil() {
           <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
         </p>
       </section>
+      </div>
+      <div className="min-w-0 xl:col-span-7"><LiveHero /></div>
     </div>
   );
 }
