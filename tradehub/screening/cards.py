@@ -84,6 +84,10 @@ _DEFS = [
      "Trailing dividend over price.", "%", ("ge", 2)),
     ("fcc", "fcc_proxy", {}, "Cash coverage of capex", "Valuation",
      "Operating cash flow over capex. Under ~1x the build-out is funded by someone other than operations.", "x", ("ge", 1)),
+    ("capex_guide_change", "capex_guide_change_pct", {}, "Capex guide change", "Guidance",
+     "Latest capex guide vs the prior one for the same period. Raised capex into a cut FCF guide is the kill-zone pair.", "%", ("gt", 0)),
+    ("fcf_guide_change", "fcf_guide_change_pct", {}, "FCF guide change", "Guidance",
+     "Latest free-cash-flow guide vs the prior one for the same period. Negative is a cut.", "%", ("lt", 0)),
 ]
 
 
