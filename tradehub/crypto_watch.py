@@ -38,7 +38,7 @@ COINS = ("BTC", "ETH")
 CACHE_SECONDS = 300.0
 FAIL_CACHE_SECONDS = 60.0  # a failed refresh is served this long, so viewers never hammer the sources
 LABELS = ((0.25, "Calm"), (0.5, "Watch"), (math.inf, "Stressed"))
-WEIGHTS = {"funding": 2, "premium": 1, "realized_vol": 2, "implied_vol": 2, "open_interest": 0, "stablecoins": 1, "fees": 0}
+WEIGHTS = {"funding": 2, "premium": 0, "realized_vol": 2, "implied_vol": 2, "open_interest": 0, "stablecoins": 1, "fees": 0}
 
 WHY = {
     "funding": "Perpetual futures never expire, so a funding payment keeps their price near spot. When funding is "
@@ -89,6 +89,13 @@ def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
+def _finite(v: float) -> float:
+    """Return v if finite; otherwise raise SourceDown so the signal is marked unavailable."""
+    if not math.isfinite(v):
+        raise SourceDown("non-finite value")
+    return v
+
+
 def label_for(stress: float | None) -> str | None:
     return None if stress is None else next(name for top, name in LABELS if stress < top)
 
@@ -119,31 +126,42 @@ def _coin(coin: str, ctx: dict | None, funding_history, closes, dvol) -> dict[st
         for key, label, unit in (("funding", "Funding rate", "% a year"), ("premium", "Perp premium", "bps")):
             signals.append(_down(key, label, unit, "Hyperliquid"))
     else:
-        price = float(ctx["markPx"])
-        prev = float(ctx.get("prevDayPx") or 0)
-        change = (price / prev - 1) * 100 if prev else None
-        rate = float(ctx["funding"])
-        annual = annualized_funding_pct(rate)
         try:
-            hist = [float(h) for h in funding_history(coin)]
+            price = _finite(float(ctx["markPx"]))
+            prev = float(ctx.get("prevDayPx") or 0)
+            change = (price / prev - 1) * 100 if prev else None
+            rate = _finite(float(ctx["funding"]))
+            oi = _finite(float(ctx["openInterest"]))
+            bps = _finite(float(ctx.get("premium") or 0)) * 1e4
         except SourceDown:
-            hist = []
-        pct = percentile(rate, hist)
-        side = "longs pay shorts" if rate >= 0 else "shorts pay longs"
-        signals.append(_signal(
-            "funding", "Funding rate", annual, "% a year",
-            f"{side.capitalize()} {abs(annual):.1f}% a year"
-            + (f", higher than {pct:.0f}% of the hours in the last three weeks." if pct is not None else "."),
-            stress=None if pct is None else _clamp(abs(pct - 50) / 50), percentile_=pct,
-            normal=None if not hist else f"median {annualized_funding_pct(statistics.median(hist)):.1f}% a year"))
-        bps = float(ctx.get("premium") or 0) * 1e4
-        signals.append(_signal(
-            "premium", "Perp premium", bps, "bps",
-            f"The perp trades {abs(bps):.1f} bps {'above' if bps >= 0 else 'below'} the spot index"
-            + (": buyers are paying up for leverage." if bps > 5 else ": sellers are leaning on it." if bps < -5 else ", close to fair."),
-            stress=_clamp(abs(bps) / 20)))
+            for key, label, unit in (("funding", "Funding rate", "% a year"), ("premium", "Perp premium", "bps"),
+                                     ("open_interest", "Open interest", "$bn")):
+                signals.append(_down(key, label, unit, "Hyperliquid"))
+            price = None
+        else:
+            annual = annualized_funding_pct(rate)
+            try:
+                hist = [float(h) for h in funding_history(coin)]
+            except SourceDown:
+                hist = []
+            pct = percentile(rate, hist)
+            side = "longs pay shorts" if rate >= 0 else "shorts pay longs"
+            signals.append(_signal(
+                "funding", "Funding rate", annual, "% a year",
+                f"{side.capitalize()} {abs(annual):.1f}% a year"
+                + (f", higher than {pct:.0f}% of the hours in the last three weeks." if pct is not None else "."),
+                stress=None if pct is None else _clamp(abs(pct - 50) / 50), percentile_=pct,
+                normal=None if not hist else f"median {annualized_funding_pct(statistics.median(hist)):.1f}% a year"))
+            signals.append(_signal(
+                "premium", "Perp premium", bps, "bps",
+                f"The perp trades {abs(bps):.1f} bps {'above' if bps >= 0 else 'below'} the spot index"
+                + (": buyers are paying up for leverage." if bps > 5 else ": sellers are leaning on it." if bps < -5 else ", close to fair."),
+                stress=None))
     try:
         c = closes(coin)
+        # 30-day value needs 25*24 = 600 closes; 24-hour value needs 25 closes
+        if len(c) < 25 * 24 or len(c) < 25:
+            raise SourceDown("history too short")
         rv24, rv30 = realized_vol_pct(c[-25:]), realized_vol_pct(c)
         if rv24 is None or not rv30:
             raise SourceDown("too few candles")
@@ -153,30 +171,42 @@ def _coin(coin: str, ctx: dict | None, funding_history, closes, dvol) -> dict[st
             f"The last 24 hours moved like {rv24:.0f}% a year, {ratio:.1f}x the 30-day pace"
             + (" -- the market has changed gear." if ratio >= 1.5 else "."),
             stress=_clamp((ratio - 1) / 2), normal=f"30-day {rv30:.0f}% a year"))
-    except SourceDown:
-        signals.append(_down("realized_vol", "Realized volatility", "% a year", "Hyperliquid's candles"))
+    except SourceDown as e:
+        msg = "Hyperliquid's candles" if str(e) == "too few candles" else "Hyperliquid's candles: history is too short"
+        signals.append(_down("realized_vol", "Realized volatility", "% a year", msg))
     try:
         d = dvol(coin)
         if not d:
             raise SourceDown("no DVOL")
-        now_v, med = d[-1], statistics.median(d[:-1] or d)
-        pct = percentile(now_v, d[:-1])
-        signals.append(_signal(
-            "implied_vol", "Implied volatility (DVOL)", now_v, "% a year",
-            f"Options price {now_v:.0f}% a year of movement, against a 30-day median of {med:.0f}%"
-            + (": traders are paying up for protection." if now_v > med * 1.15 else "."),
-            stress=_clamp((now_v / med - 1) / 0.5) if med else None, percentile_=pct, normal=f"median {med:.0f}%"))
+        # Need at least 20*24 = 480 history points (excluding current one)
+        if len(d) < 20 * 24 + 1:
+            now_v = d[-1]
+            med = statistics.median(d[:-1] or d)
+            pct = percentile(now_v, d[:-1])
+            signals.append(_signal(
+                "implied_vol", "Implied volatility (DVOL)", now_v, "% a year",
+                f"Options price {now_v:.0f}% a year of movement, against a 30-day median of {med:.0f}%"
+                + (": traders are paying up for protection." if now_v > med * 1.15 else "."),
+                stress=None, percentile_=pct, normal=None))
+        else:
+            now_v, med = d[-1], statistics.median(d[:-1] or d)
+            pct = percentile(now_v, d[:-1])
+            signals.append(_signal(
+                "implied_vol", "Implied volatility (DVOL)", now_v, "% a year",
+                f"Options price {now_v:.0f}% a year of movement, against a 30-day median of {med:.0f}%"
+                + (": traders are paying up for protection." if now_v > med * 1.15 else "."),
+                stress=_clamp((now_v / med - 1) / 0.5) if med else None, percentile_=pct, normal=f"median {med:.0f}%"))
     except SourceDown:
         signals.append(_down("implied_vol", "Implied volatility (DVOL)", "% a year", "Deribit"))
-    if ctx is not None:
-            oi_usd = float(ctx["openInterest"]) * price / 1e9
-            vol = float(ctx.get("dayNtlVlm") or 0) / 1e9
-            signals.append(_signal(
-                "open_interest", "Open interest", oi_usd, "$bn",
-                f"${oi_usd:.2f}bn of open positions on Hyperliquid"
-                + (f", {oi_usd / vol:.1f}x a day's volume." if vol else ".") + " Its history is still being built.",
-            ))
-    if ctx is None:
+    if ctx is not None and price is not None:
+        oi_usd = oi * price / 1e9
+        vol = float(ctx.get("dayNtlVlm") or 0) / 1e9
+        signals.append(_signal(
+            "open_interest", "Open interest", oi_usd, "$bn",
+            f"${oi_usd:.2f}bn of open positions on Hyperliquid"
+            + (f", {oi_usd / vol:.1f}x a day's volume." if vol else ".") + " Its history is still being built.",
+        ))
+    elif ctx is None:
         signals.append(_down("open_interest", "Open interest", "$bn", "Hyperliquid"))
     return {"price": price, "change_24h_pct": change, "signals": signals}
 
@@ -283,16 +313,37 @@ _refresh = threading.Lock()
 
 
 def watch() -> dict[str, Any]:
-    """Cached: one refresh at a time, and a failed one is served for a minute rather than retried per view."""
-    with _refresh:
-        now_s = time.monotonic()
-        if _cache["payload"] is not None and now_s - _cache["at"] < _cache["ttl"]:
+    """Cached: one refresh at a time. TTL starts after refresh finishes.
+    Stale-while-refresh: if cached payload exists but expired and lock is held, return stale immediately.
+    With no cached payload, wait for lock at most 25s; on timeout return unavailable without caching."""
+    # Fast path: fresh cache
+    now_s = time.monotonic()
+    if _cache["payload"] is not None and now_s - _cache["at"] < _cache["ttl"]:
+        return _cache["payload"]
+
+    # Try to acquire lock
+    have_cache = _cache["payload"] is not None
+    if have_cache:
+        # Cache exists but expired: try non-blocking acquire
+        if not _refresh.acquire(blocking=False):
+            # Another request is refreshing, return stale payload
             return _cache["payload"]
+    else:
+        # No cache: wait for lock up to 25 seconds
+        if not _refresh.acquire(timeout=25):
+            return {"state": "unavailable"}
+
+    try:
+        # We have the lock, do the refresh
         try:
-            payload, ttl = build_watch(ctx=_live_ctx, funding_history=_live_funding, closes=_live_closes,
-                                       dvol=_live_dvol, stablecoins=_live_stables,
-                                       fees=_shape(lambda: _get(MEMPOOL))), CACHE_SECONDS
+            payload = build_watch(ctx=_live_ctx, funding_history=_live_funding, closes=_live_closes,
+                                  dvol=_live_dvol, stablecoins=_live_stables,
+                                  fees=_shape(lambda: _get(MEMPOOL)))
+            ttl = CACHE_SECONDS
         except Exception:  # noqa: BLE001 -- served as unavailable for a minute; the route never 500s
             payload, ttl = {"state": "unavailable"}, FAIL_CACHE_SECONDS
-        _cache.update(at=now_s, payload=payload, ttl=ttl)
+        # Record TTL start AFTER build_watch returns
+        _cache.update(at=time.monotonic(), payload=payload, ttl=ttl)
         return payload
+    finally:
+        _refresh.release()

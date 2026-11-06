@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 import CryptoDesk from "@/components/CryptoDesk";
 import { Panel } from "@/components/Panel";
@@ -50,7 +50,18 @@ function StressBar({ stress }: { stress: number | null }) {
 
 /** One signal, both coins side by side; the sentence is the coin under the most stress. */
 function SignalTile({ label, rows, why }: { label: string; rows: { coin: string; signal: Signal | undefined }[]; why: string }) {
-  const lead = [...rows].filter((r) => r.signal).sort((a, b) => (b.signal!.stress ?? -1) - (a.signal!.stress ?? -1))[0];
+  const lead = [...rows]
+    .filter((r) => r.signal)
+    .sort((a, b) => {
+      const stressA = a.signal!.stress ?? -1;
+      const stressB = b.signal!.stress ?? -1;
+      if (stressB !== stressA) return stressB - stressA;
+      // Tie-break: prefer coin with a value (non-null)
+      const hasValueA = a.signal!.value != null;
+      const hasValueB = b.signal!.value != null;
+      if (hasValueA !== hasValueB) return hasValueB ? 1 : -1;
+      return 0;
+    })[0];
   return (
     <section aria-label={label} className="flex flex-col rounded-lg border border-slate-800 bg-slate-900/60 p-3">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</h3>
@@ -223,10 +234,32 @@ export default function Crypto() {
   const [failed, setFailed] = useState(false);
   const [board, setBoard] = useState<CryptoBoard | null>(null);
 
+  const fetchWatch = useCallback(async () => {
+    try {
+      const data = await getJson<Watch>("/api/crypto/watch");
+      // Only update if we got valid data (not unavailable)
+      if (data && data.coins && data.stress) {
+        setWatch(data);
+        setFailed(false);
+      } else if (!watch) {
+        // Initial load failed with unavailable
+        setFailed(true);
+      }
+      // If unavailable on refetch, keep the last good watch
+    } catch {
+      // On network error, keep last good watch if we have one
+      if (!watch) setFailed(true);
+    }
+  }, [watch]);
+
   useEffect(() => {
-    getJson<Watch>("/api/crypto/watch").then(setWatch).catch(() => setFailed(true));
+    fetchWatch();
     getJson<CryptoBoard>("/api/crypto/board").then(setBoard).catch(() => undefined);
-  }, []);
+    
+    // Refetch every 5 minutes
+    const interval = setInterval(fetchWatch, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchWatch]);
 
   const live = watch?.coins && watch.stress;
   return (
