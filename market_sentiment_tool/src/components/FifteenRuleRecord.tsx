@@ -39,8 +39,11 @@ export function FifteenRuleRecord() {
   const f = rec.forward;
   const pct = Math.min(100, (f.n / rec.ready_trades) * 100);
   return (
-    <div className="mt-5 border-t border-slate-800 pt-4">
-      <h3 className="text-sm font-semibold text-slate-200">The trade rule, on paper</h3>
+    <details className="group mt-5 border-t border-slate-800 pt-4">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-200 hover:text-white">
+        The trade rule, on paper{" "}
+        <span className="font-normal text-slate-400">· {f.n}/{rec.ready_trades} trades so far</span>
+      </summary>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-300">{rec.rule}</p>
       <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-1 tabular-nums">
         {f.n === 0 ? (
@@ -86,6 +89,6 @@ export function FifteenRuleRecord() {
         Replay before the rule was fixed: {rec.replay.n} trades, {rec.replay.net_per_contract == null ? "—" : c(rec.replay.net_per_contract)} a
         contract. Fills at the quoted price are assumed; paper only.
       </p>
-    </div>
+    </details>
   );
 }
