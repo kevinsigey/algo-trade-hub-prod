@@ -30,6 +30,25 @@ describe("sports board, paged fetch", () => {
     expect(calls).toBe(5);
   });
 
+  it("loads the pages after the first side by side, each offset once", async () => {
+    let inFlight = 0, most = 0;
+    const offsets: number[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const offset = Number(new URL(url, "http://x").searchParams.get("offset"));
+      offsets.push(offset);
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      const edges = Array.from({ length: Math.min(200, 650 - offset) }, (_, i) => ({ ...ROW, market_id: `m${offset + i}` }));
+      return { ok: true, status: 200, json: async () => ({ edges, total: 650, limit: 200, offset }) };
+    }));
+    render(<SportsEdges />);
+    await waitFor(() => expect(screen.queryByText(/Loading sports picks/)).toBeNull(), { timeout: 5000 });
+    expect(offsets.sort((x, y) => x - y)).toEqual([0, 200, 400, 600]);
+    expect(most).toBe(3);
+  });
+
   it("shows an error and Retry on failure", async () => {
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(() => {

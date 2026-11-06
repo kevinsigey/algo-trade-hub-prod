@@ -18,41 +18,49 @@ import { ctDateTime } from "@/lib/format";
 const PAGE = 200;
 const FETCH_TIMEOUT_MS = 15000;
 
+async function fetchPage(sport: string, offset: number): Promise<{ rows: SportsEdge[]; total: number | null }> {
+  const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+  if (sport) params.set("sport", sport);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(`/api/sports-edges?${params}`), { signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Request timed out after 15 seconds");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
+  const page = payload as SportsEdgesResponse;
+  return { rows: page.edges ?? [], total: typeof page.total === "number" ? page.total : null };
+}
+
+/**
+ * Every pick. The first page says how many there are, so the rest load side by side (2026-11-06: seven pages
+ * one after another took about 8 seconds). Without a total it falls back to reading page after page.
+ */
 async function fetchAll(sport: string): Promise<SportsEdge[]> {
-  const edges: SportsEdge[] = [];
-  let offset = 0;
-  let total = Infinity;
-  while (edges.length < total) {
-    const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
-    if (sport) params.set("sport", sport);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let response: Response;
-    try {
-      response = await fetch(buildApiUrl(`/api/sports-edges?${params}`), { signal: controller.signal });
-    } catch (e) {
-      clearTimeout(timer);
-      if (e instanceof DOMException && e.name === "AbortError") {
-        throw new Error("Request timed out after 15 seconds");
-      }
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
-    const page = payload as SportsEdgesResponse;
-    const rows = page.edges ?? [];
-    total = typeof page.total === "number" ? page.total : total;
-    if (rows.length === 0) break;
-    edges.push(...rows);
-    const step = rows.length > 0 ? rows.length : PAGE;
-    offset += step;
-    if (offset > 0 && rows.length < PAGE) {
-      // API returned a short page; stop unless total says more and rows kept coming.
-      if (edges.length >= total) break;
-    }
-    if (edges.length >= total) break;
+  const first = await fetchPage(sport, 0);
+  const edges = [...first.rows];
+  if (first.total != null && first.rows.length > 0) {
+    // Step by the page the server actually served: it may cap pages below what was asked.
+    const step = first.rows.length;
+    const offsets: number[] = [];
+    for (let o = step; o < first.total; o += step) offsets.push(o);
+    const pages = await Promise.all(offsets.map((o) => fetchPage(sport, o)));
+    for (const p of pages) edges.push(...p.rows);
+    return edges;
+  }
+  let last = first.rows.length;
+  while (last > 0 && (first.total == null ? last === PAGE : edges.length < first.total)) {
+    const next = await fetchPage(sport, edges.length);
+    edges.push(...next.rows);
+    last = next.rows.length;
   }
   return edges;
 }
