@@ -363,6 +363,9 @@ def _options_env(monkeypatch, mids):
                             ("sell", 105): "SPY   261204C00750000",
                         }[(leg.side, leg.strike_pct)])
     monkeypatch.setattr(opt_mod, "fetch_mid", lambda occ, book=None: mids.get(occ))
+    # For single-leg orders, fetch_touch is called at send time. For a sell, return bid (mid - spread/2).
+    # Use a small spread so the touch is close to the mid for test purposes.
+    monkeypatch.setattr(opt_mod, "fetch_touch", lambda sym, side, book=None: mids.get(sym))
 
 
 def _closes_with(**pinned):
@@ -731,3 +734,55 @@ def test_same_side_ideas_both_submitted(db, monkeypatch):
     # No manual actions
     manuals = manual_rows(db)
     assert len(manuals) == 0
+
+
+# ── Option touch price tests ──────────────────────────────────────────────────────
+
+OPTION_OCC = "NVDA  261204C00200000"
+
+
+def test_single_leg_option_close_repriced_to_touch(db, monkeypatch):
+    """An idea closing a held option contract sends its sell at the touch price."""
+    live_idea(db, 1)
+    store.set_auto(db, 1, False, "kevin")
+    store.kill(db, 1)
+    fills = [{"id": "f1", "order_id": "a", "symbol": OPTION_OCC, "side": "buy", "qty": "2", "price": "5.00",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-NVDA-open", "submitted_at": "t1"}]
+    # Mock the mid price (what the planner would use) and the touch price (what we should send at)
+    from tradehub.portfolio import options as opt_mod
+    monkeypatch.setattr(opt_mod, "fetch_mid", lambda occ, book=None: 1.00 if occ == OPTION_OCC else None)
+    # Touch price for a sell is the bid (e.g., 0.95)
+    monkeypatch.setattr(opt_mod, "fetch_touch", lambda sym, side, book=None: 0.95 if (sym == OPTION_OCC and side == "sell") else None)
+    
+    sub = Submit()
+    run(db, Alpaca(fills=fills, orders=orders, positions=[]), sub, monkeypatch)
+    
+    # The order should be sent at the touch price (0.95), not the mid (1.00)
+    option_calls = [c for c in sub.calls if c[0] == OPTION_OCC]
+    assert len(option_calls) == 1
+    assert option_calls[0][1] == "sell"
+    assert option_calls[0][4].get("limit_price") == 0.95
+
+
+def test_single_leg_option_keeps_mid_when_touch_is_none(db, monkeypatch):
+    """When fetch_touch returns None, the row keeps its mid limit price."""
+    live_idea(db, 1)
+    store.set_auto(db, 1, False, "kevin")
+    store.kill(db, 1)
+    fills = [{"id": "f1", "order_id": "a", "symbol": OPTION_OCC, "side": "buy", "qty": "2", "price": "5.00",
+              "transaction_time": "2026-11-02T14:30:00Z"}]
+    orders = [{"id": "a", "client_order_id": "idea-1-auto-20261102-NVDA-open", "submitted_at": "t1"}]
+    from tradehub.portfolio import options as opt_mod
+    monkeypatch.setattr(opt_mod, "fetch_mid", lambda occ, book=None: 1.00 if occ == OPTION_OCC else None)
+    # Touch price returns None (e.g., quote unavailable)
+    monkeypatch.setattr(opt_mod, "fetch_touch", lambda sym, side, book=None: None)
+    
+    sub = Submit()
+    run(db, Alpaca(fills=fills, orders=orders, positions=[]), sub, monkeypatch)
+    
+    # The order should be sent at the mid price (1.00) since touch is None
+    option_calls = [c for c in sub.calls if c[0] == OPTION_OCC]
+    assert len(option_calls) == 1
+    assert option_calls[0][1] == "sell"
+    assert option_calls[0][4].get("limit_price") == 1.00
