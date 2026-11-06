@@ -190,8 +190,35 @@ def _names_metric(item: GuidanceItem, norm_evidence: str) -> bool:
 def stored_values(item: GuidanceItem) -> tuple[float | None, float | None]:
     """Low and high in base units. Per-share and percentage figures are never scaled, whatever scale the model
     gave: a free model labelled a $13.95 EPS guide "billions" (2026-11-06)."""
-    scale = "units" if item.unit in ("usd_per_share", "pct") else item.scale
+    per_share = item.metric.startswith("eps") or item.unit in ("usd_per_share", "pct")
+    scale = "units" if per_share else item.scale  # BMY's EPS came back as unit "usd", scale billions
     return to_base(item.low, scale), to_base(item.high, scale)
+
+
+def cleaned(item: GuidanceItem) -> GuidanceItem:
+    """Labels fixed from the quote's own words: EPS is per share, and "non-GAAP" or "adjusted" EPS is adjusted
+    (a free model filed Arista's non-GAAP per-share guide as GAAP, 2026-11-06)."""
+    if not item.metric.startswith("eps"):
+        return item
+    words = _normalize(item.evidence)
+    metric = "eps_adjusted" if ("non-gaap" in words or "adjusted" in words) else item.metric
+    return item.model_copy(update={"metric": metric, "unit": "usd_per_share", "scale": "units"})
+
+
+def dedupe(items: list[GuidanceItem]) -> list[GuidanceItem]:
+    """One item per (period, metric, unit, low, high): the model sometimes repeats an item."""
+    seen, out = set(), []
+    for it in items:
+        key = (it.period.strip().lower(), it.metric, it.unit, it.low, it.high)
+        if key not in seen:
+            seen.add(key)
+            out.append(it)
+    return out
+
+
+def wants_consensus(item: GuidanceItem) -> bool:
+    """Street consensus is total revenue in dollars and adjusted EPS: only those are compared against it."""
+    return (item.metric == "revenue" and item.unit == "usd") or item.metric == "eps_adjusted"
 
 
 SYSTEM_PROMPT = (
@@ -351,6 +378,7 @@ def run(
 
             # Verify items against text
             kept, dropped = verify(env.items, text)
+            kept = dedupe([cleaned(it) for it in kept])
             counts["dropped"] += dropped
 
             if not kept:
@@ -360,7 +388,8 @@ def run(
 
             # Insert guidance_records for each kept item
             for item in kept:
-                cons_value, cons_period, cons_source = consensus(ticker, item.metric, item.period)
+                cons_value, cons_period, cons_source = (consensus(ticker, item.metric, item.period)
+                                                        if wants_consensus(item) else (None, None, None))
                 record = {
                     "accession": accession,
                     "ticker": ticker,
