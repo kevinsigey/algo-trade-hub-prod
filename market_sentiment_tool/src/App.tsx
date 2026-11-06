@@ -27,6 +27,7 @@ import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
+import Strategies from "@/pages/Strategies";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
@@ -57,6 +58,7 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Target,
   Trophy,
   Wallet,
   X,
@@ -74,10 +76,11 @@ type NavItem = { to: string; label: string; icon: LucideIcon; end?: boolean; sub
  * Every page keeps its URL, so the shared global nav's links still work.
  */
 const NAV: { label: string; items: NavItem[] }[] = [
-  { label: "Trade", items: [
+  { label: "Trading", items: [
     { to: "/", label: "Overview", icon: House, end: true },
     { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
     { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
+    { to: "/strategies", label: "Strategies", icon: Target },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
     { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
@@ -102,12 +105,13 @@ const NAV: { label: string; items: NavItem[] }[] = [
 ];
 
 /** A per-browser preference. Storage can be missing or blocked (private window, preview); the nav works without it. */
-function useStored<T>(key: string, initial: T, valid: (v: unknown) => v is T): [T, (v: T) => void] {
+function useStored<T>(key: string, initial: T, valid: (v: unknown) => v is T,
+                      migrate: (v: T) => T = (v) => v): [T, (v: T) => void] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = window.localStorage.getItem(key);
       const parsed: unknown = raw == null ? initial : JSON.parse(raw);
-      return valid(parsed) ? parsed : initial;  // a hand-edited or old value never breaks the nav
+      return valid(parsed) ? migrate(parsed) : initial;  // a hand-edited or old value never breaks the nav
     } catch {
       return initial;
     }
@@ -158,7 +162,8 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
   const { data, loading } = useApi<PortfolioPayload>("/api/portfolio");
   const admin = useAdminSession();
   const [closed, setClosed] = useStored<string[]>("atr:nav-closed-groups", [],
-    (v): v is string[] => Array.isArray(v) && v.every((g) => typeof g === "string"));
+    (v): v is string[] => Array.isArray(v) && v.every((g) => typeof g === "string"),
+    (v) => v.map((g) => (g === "Trade" ? "Trading" : g)));  // the group was "Trade" until 2026-11-05
   const uid = useId();
   // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
   const book = data?.scoreboard && data.state !== "not_connected" ? data : null;
@@ -369,6 +374,7 @@ function App() {
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/portfolio/closed" element={<ClosedTrades />} />
           <Route path="/ideas" element={<Ideas />} />
+          <Route path="/strategies" element={<Strategies />} />
           <Route path="/ideas/:id" element={<IdeaRecord />} />
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />

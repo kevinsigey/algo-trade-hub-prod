@@ -1,11 +1,11 @@
-import GapDesk from "@/components/GapDesk";
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import CryptoDesk from "@/components/CryptoDesk";
 import CryptoDuneSeries from "@/components/CryptoDuneSeries";
 import OnChainPulse from "@/components/OnChainPulse";
 import { getJson } from "@/lib/getJson";
-import { ctTime, pct, usd, type CryptoBoard, type SniperVerdict } from "@/lib/crypto";
+import { ctTime, pct, usd, type CryptoBoard } from "@/lib/crypto";
 
 /**
  * Crypto research (phase-3 §5). The old page graded a dead worker as if it
@@ -65,59 +65,6 @@ function CoinCard({ asset, board }: { asset: "BTC" | "ETH"; board: CryptoBoard }
   );
 }
 
-function ClosedRecord() {
-  const [verdict, setVerdict] = useState<SniperVerdict | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-
-  useEffect(() => {
-    getJson<SniperVerdict>("/api/crypto/sniper-verdict").then(setVerdict).catch(() => setUnavailable(true));
-  }, []);
-
-  if (unavailable) {
-    return <p className="text-sm text-muted-foreground">The closed record has not been graded yet.</p>;
-  }
-  if (!verdict) return null;
-  const p = verdict.population;
-  return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
-      <div className="grid gap-4 sm:grid-cols-4">
-        <div>
-          <p className="text-2xl font-semibold tabular-nums">{p.graded.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground">rows graded (of {p.grading_population.toLocaleString()} archived)</p>
-        </div>
-        <div>
-          <p className="text-2xl font-semibold tabular-nums">{pct(verdict.overall.hit_rate)}</p>
-          <p className="text-sm text-muted-foreground">hit rate on the evaluator's next-hour rule</p>
-        </div>
-        <div>
-          <p className="text-2xl font-semibold tabular-nums">{verdict.overall.brier_score?.toFixed(3) ?? "—"}</p>
-          <p className="text-sm text-muted-foreground">shadow Brier (0.250 is a coin flip)</p>
-        </div>
-        <div>
-          <p className="text-2xl font-semibold tabular-nums">{pct(p.dead_zone_share)}</p>
-          <p className="text-sm text-muted-foreground">of rows sat in the model's dead zone</p>
-        </div>
-      </div>
-      <div className="mt-4 space-y-1 text-sm">
-        {(["BTC", "ETH"] as const).map((asset) => {
-          const a = verdict.by_asset[asset];
-          return a ? (
-            <p key={asset} className="tabular-nums">
-              {asset}: {a.count.toLocaleString()} graded · hit rate {pct(a.hit_rate)} · Brier{" "}
-              {a.brier_score?.toFixed(3) ?? "—"}
-            </p>
-          ) : null;
-        })}
-      </div>
-      <p className="mt-4 text-xs text-muted-foreground">
-        The worker ran Apr 8 – Jun 2, 2026 against the Kalshi demo API; every signal's execution was skipped or
-        blocked. Graded once on {verdict.graded_on} with the hub's existing shadow evaluator ({verdict.price_source}{" "}
-        hourly closes) — a closed record, never refreshed. {verdict.method}
-      </p>
-    </div>
-  );
-}
-
 const RESEARCH = [
   {
     title: "Venue lead-lag: does Kalshi move first?",
@@ -150,8 +97,7 @@ export default function Crypto() {
         <h1 className="text-3xl font-bold">Crypto research</h1>
         <p className="mt-2 text-muted-foreground">
           The desk first — the sector read like companies, live. Below it: live chain state, the Kalshi
-          markets worth tracking, the sniper's closed record (the worker stopped June 2, 2026 — it is a
-          record, not a signal), and the research queue.
+          markets worth tracking, and the research queue.
         </p>
       </header>
 
@@ -178,11 +124,6 @@ export default function Crypto() {
         ) : null}
       </section>
 
-      <section aria-label="The sniper's closed record" className="space-y-3">
-        <h2 className="text-lg font-semibold">The sniper's closed record</h2>
-        <ClosedRecord />
-      </section>
-
       <section aria-label="Research queue" className="space-y-3">
         <h2 className="text-lg font-semibold">Research queue</h2>
         <div className="grid gap-3 md:grid-cols-3">
@@ -195,7 +136,10 @@ export default function Crypto() {
           ))}
         </div>
       </section>
-      <GapDesk category="crypto" />
+      <p className="text-sm text-muted-foreground">
+        The paper trades built on these reads, and the sniper's closed record, are on{" "}
+        <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
+      </p>
     </div>
   );
 }

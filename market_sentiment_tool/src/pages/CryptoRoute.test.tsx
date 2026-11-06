@@ -60,11 +60,14 @@ async function renderAt(path: string) {
 }
 
 describe("crypto route", () => {
-  it("renders the research desk at /crypto with the board and the closed record", async () => {
+  it("renders the research desk at /crypto with the board, and sends the closed record to Strategies", async () => {
     stubFetch();
     await renderAt("/crypto");
     await waitFor(() => expect(screen.getByRole("heading", { name: /Crypto research/i })).toBeInTheDocument());
-    expect(await screen.findByText(/18,602/)).toBeInTheDocument();
+    expect(await screen.findByText(/The book quotes a step, not a curve/)).toBeInTheDocument();
+    // The nav has a Strategies link too; the page's own pointer sits in its body text.
+    expect(screen.getByText(/The paper trades built on these reads/).querySelector("a")).toHaveAttribute("href", "/strategies");
+    expect(screen.queryByText(/18,602/)).toBeNull();
     expect(screen.getByText(/The book quotes a step, not a curve/)).toBeInTheDocument();
     expect(screen.getByText(/Venue lead-lag/)).toBeInTheDocument();
   });

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
-import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 import { LiveChip } from "@/components/LiveChip";
 import { getJson } from "@/lib/getJson";
 import { buyBelowLimit, cents } from "@/lib/oilFees";
@@ -114,11 +113,10 @@ export function FifteenMinutePanel() {
           <p className="mt-2 text-xs leading-relaxed text-slate-400">
             Each contract pays if the price closes the window at or above its open. Our read is the move so far
             against the volatility left, so it starts at 50% and firms up as the window runs. A trade needs 5+ points
-            over the cost. The graded record freezes at minute 5, and it's under Track record below.
+            over the cost. The graded record freezes at minute 5, and it's under Track record below; the trade rule built on it is on Strategies.
           </p>
         </>
       )}
-      <FifteenRuleRecord />
     </section>
   );
 }
