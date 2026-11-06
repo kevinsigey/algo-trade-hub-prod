@@ -675,3 +675,59 @@ def test_a_move_on_the_other_book_leaves_this_book_alone(db, monkeypatch):
                    positions=[{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]),
         Submit(), monkeypatch)
     assert store.labels(db) == {}
+
+
+def test_opposite_side_idea_is_skipped_and_not_manual(db, monkeypatch):
+    # Idea 1: holds 50 GLD, target 16 (size_pct=5% of 100k), needs to SELL 34
+    live_idea(db, 1)
+    db.db["ideas"][0].update({"size_pct": 5})
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    # Idea 2: holds 0 GLD, target 33 (size_pct=10% of 100k), needs to BUY 33
+    # 10% keeps the total under 25% limit (50+33=83 GLD = 24.9% of 100k)
+    live_idea(db, 2, spec={**SPEC, "title": "Hold GLD too", "hold": ["GLD"]})
+    db.db["ideas"][1].update({"size_pct": 10})
+    
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    alpaca = Alpaca(equity=100_000.0, fills=fills, orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}],
+                    positions=positions)
+    sub = Submit()
+    run(db, alpaca, sub, monkeypatch)
+    
+    # Exactly one GLD order reaches submit
+    assert len(sub.calls) == 1
+    # Let's check the statuses
+    paper_orders_list = db.db.get("paper_orders", [])
+    sent_rows = [r for r in paper_orders_list if r["status"] == "sent"]
+    skipped_rows = [r for r in paper_orders_list if r["status"] == "skipped"]
+    assert len(sent_rows) == 1
+    assert len(skipped_rows) == 1
+    # The skipped row should have the crossed reason
+    skipped = skipped_rows[0]
+    assert "crossed with idea" in skipped.get("reason", "")
+    # No manual action should be created for the crossed order
+    manuals = manual_rows(db)
+    assert len(manuals) == 0
+
+
+def test_same_side_ideas_both_submitted(db, monkeypatch):
+    # Both ideas need to BUY GLD (same side) - use 10% each so total is 20% (under 25% limit)
+    live_idea(db, 1)
+    db.db["ideas"][0].update({"size_pct": 10})
+    live_idea(db, 2, spec={**SPEC, "title": "Hold GLD too", "hold": ["GLD"]})
+    db.db["ideas"][1].update({"size_pct": 10})
+    
+    sub = Submit()
+    run(db, Alpaca(), sub, monkeypatch)
+    
+    # Both GLD orders should reach submit (same side is fine)
+    assert len(sub.calls) == 2
+    paper_orders_list = db.db.get("paper_orders", [])
+    sent_rows = [r for r in paper_orders_list if r["status"] == "sent"]
+    assert len(sent_rows) == 2
+    # No skipped rows (except maybe for 25% but we set size_pct to avoid that)
+    skipped_rows = [r for r in paper_orders_list if r["status"] == "skipped"]
+    assert len(skipped_rows) == 0
+    # No manual actions
+    manuals = manual_rows(db)
+    assert len(manuals) == 0

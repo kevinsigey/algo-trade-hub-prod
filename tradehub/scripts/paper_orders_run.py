@@ -19,15 +19,15 @@ import requests
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.portfolio import book, books, breakers, paper_orders, service
-from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio import options as opt_mod
+from tradehub.portfolio.alpaca_paper import AccountNotConnected
 from tradehub.portfolio.autotrade import close_options, close_out, plan, plan_options
+from tradehub.scripts.ideas_shadow import FRED_LEAD
+from tradehub.scripts.paper_orders_protect import _cancel
 from tradehub.workshop import data, store
 from tradehub.workshop.data import NY
 from tradehub.workshop.engine import EXIT_COOLDOWN, daily_frame, target_and_reason, tickers_for
 from tradehub.workshop.spec import IdeaSpec
-from tradehub.scripts.ideas_shadow import FRED_LEAD
-from tradehub.scripts.paper_orders_protect import _cancel
 
 
 def _send(row: dict, submit) -> dict:
@@ -163,6 +163,8 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
 
     summary: dict = {}
     failed: dict[int, str] = {}
+    # Track first order SENT this run per symbol (stock/ETF only): symbol -> (side, idea_id)
+    sent_this_run: dict[str, tuple[str, int]] = {}
     if book_name == "main":  # the main book's live state lives on the idea rows (the record)
         jobs = [(i, False) for i in store.auto_ideas(supa)] + [(i, True) for i in store.closing_ideas(supa)]
     else:  # every other book reads its own activations: different ideas, sizes, strategies
@@ -242,7 +244,24 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
             if any(c.get("filled") for c in cancels):  # the stop already sold: selling again would open a short
                 rows = [{**r, "status": "skip", "reason": "the protective stop filled first"} if r["kind"] == "close"
                         else r for r in rows]
+            # Cross-side check: before sending, skip any "send" row whose symbol already has a sent order
+            # on the opposite side from a different idea (stock/ETF only; options ignored).
+            for r in rows:
+                if r["status"] == "send" and not opt_mod.is_occ(r["symbol"]):
+                    existing = sent_this_run.get(r["symbol"])
+                    if existing:
+                        other_side, other_id = existing
+                        if other_side != r["side"] and other_id != idea["id"]:
+                            # Opposite side from a different idea: skip with specific reason
+                            rows = [
+                                {**rr, "status": "skip", "reason": f"crossed with idea {other_id}'s {other_side} of {rr['symbol']} today; retried tomorrow"}
+                                if rr is r else rr for rr in rows
+                            ]
             done = cancels + [_send(r, submit) for r in rows]
+            # Record sent orders (first one wins per symbol)
+            for r in done:
+                if r["status"] == "sent" and not opt_mod.is_occ(r["symbol"]) and r["symbol"] not in sent_this_run:
+                    sent_this_run[r["symbol"]] = (r["side"], idea["id"])
             for r in done:
                 if r["status"] == "manual":
                     store.add_manual_action(supa, book_name, idea["id"], "option", r["symbol"],
@@ -275,7 +294,7 @@ def run(now: datetime, supa, *, book_name: str = "main", submit=None, closes=dat
     """One book's morning pass. The book rides the context variable so every account read
     below (account, positions, orders, fills) resolves to that book's own Alpaca account."""
     if submit is None:
-        def submit(symbol, qty, side, client_order_id, **kw):  # noqa: F811 -- the book's dispatcher
+        def submit(symbol, qty, side, client_order_id, **kw):
             if kw.get("legs"):
                 return paper_orders.submit_mleg(kw["legs"], qty, kw.get("limit_price"),
                                                 client_order_id, book=book_name)
