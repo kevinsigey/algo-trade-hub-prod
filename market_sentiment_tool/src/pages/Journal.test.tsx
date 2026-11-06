@@ -360,3 +360,109 @@ describe("Journal tabs and empty states", () => {
     expect(screen.getByText("No forecasters waiting to be scored.")).toBeInTheDocument();
   });
 });
+
+describe("Journal model filtering", () => {
+  const baselineScore = score({
+    forecaster: "baseline_dummy",
+    forecaster_version: "v1",
+    n_settled: 100,
+    bss: 0.1,
+    calibration_ready: true,
+    gate_status: "PROMOTED",
+    gate_reasons: [],
+  });
+
+  const earlyScore = score({
+    forecaster: "early_model",
+    forecaster_version: "v1",
+    n_settled: 10,
+    bss: 0.05,
+    calibration_ready: true,
+    gate_status: "PROMOTED",
+    gate_reasons: [],
+  });
+
+  const mainScore = score({
+    forecaster: "main_model",
+    forecaster_version: "v1",
+    n_settled: 200,
+    bss: 0.15,
+    calibration_ready: true,
+    gate_status: "PROMOTED",
+    gate_reasons: [],
+  });
+
+  const journalWithFilter: JournalResponse = {
+    as_of: "2026-10-01T13:00:00+00:00",
+    forecasters: [baselineScore, earlyScore, mainScore],
+    headline: { forecasters: 3, calibrated: 3, frozen_calibrated: 310, settled_calibrated: 310, promoted: 3, market_skill: null },
+  };
+
+  const seriesWithFilter: SeriesResponse = { series: [] };
+
+  function stubFetchFilter() {
+    const fn = vi.fn((url: string) => {
+      const body = url.includes("/api/journal/series") ? seriesWithFilter : journalWithFilter;
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    });
+    vi.stubGlobal("fetch", fn);
+    return fn;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    try { localStorage.removeItem("atr:tracker-show-all"); } catch { /* storage blocked: nothing to clear */ }
+  });
+
+  it("default view hides baseline_ and early rows, shows main row", async () => {
+    stubFetchFilter();
+    render(<Journal />);
+    await screen.findByLabelText("Totals");
+    // Models tab is active by default
+    expect(screen.queryByText("Baseline dummy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Early model")).not.toBeInTheDocument();
+    expect(screen.getByText("Main model")).toBeInTheDocument();
+  });
+
+  it("clicking the button shows the early model; clicking again hides it", async () => {
+    stubFetchFilter();
+    render(<Journal />);
+    await screen.findByLabelText("Totals");
+
+    // Initially filtered - only main_model visible
+    expect(screen.queryByText("Baseline dummy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Early model")).not.toBeInTheDocument();
+    expect(screen.getByText("Main model")).toBeInTheDocument();
+
+    // Click show all button
+    const showAllBtn = screen.getByRole("button", { name: /Show all 3 models/ });
+    fireEvent.click(showAllBtn);
+
+    // Now all three should be visible
+    expect(screen.getByText("Early model")).toBeInTheDocument();
+    expect(screen.getByText("Main model")).toBeInTheDocument();
+
+    // Button text changes
+    const hideBtn = screen.getByRole("button", { name: /Show the main models only/ });
+    expect(hideBtn).toBeInTheDocument();
+
+    // Click again to hide
+    fireEvent.click(hideBtn);
+
+    // Back to filtered view
+    expect(screen.queryByText("Baseline dummy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Early model")).not.toBeInTheDocument();
+    expect(screen.getByText("Main model")).toBeInTheDocument();
+  });
+
+  it("the choice survives a remount via localStorage", async () => {
+    stubFetchFilter();
+    const first = render(<Journal />);
+    await screen.findByLabelText("Totals");
+    fireEvent.click(screen.getByRole("button", { name: /Show all 3 models/ }));
+    first.unmount();
+    render(<Journal />);
+    await screen.findByLabelText("Totals");
+    expect(screen.getByRole("button", { name: /Show the main models only/ })).toHaveAttribute("aria-pressed", "true");
+  });
+});
