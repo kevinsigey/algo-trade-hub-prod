@@ -92,18 +92,22 @@ export default function Crypto() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-10 p-6 md:p-8">
+    <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 md:px-6">
       <header>
-        <h1 className="text-3xl font-bold">Crypto research</h1>
-        <p className="mt-2 text-muted-foreground">
+        <h1 className="text-2xl font-bold">Crypto research</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           The desk first — the sector read like companies, live. Below it: live chain state, the Kalshi
           markets worth tracking, and the research queue.
         </p>
       </header>
 
+      {/* One screen and a bit (2026-11-06): the desk on the left, chain state and markets on the right. */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-4">
       <CryptoDesk />
       <CryptoDuneSeries />
-
+      </div>
+      <div className="min-w-0 space-y-4">
       <OnChainPulse />
 
       <section aria-label="Tracked Kalshi markets" className="space-y-3">
@@ -115,7 +119,7 @@ export default function Crypto() {
           <p className="text-sm text-muted-foreground">The Kalshi board could not be reached just now.</p>
         ) : board ? (
           <>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3">
               <CoinCard asset="BTC" board={board} />
               <CoinCard asset="ETH" board={board} />
             </div>
@@ -124,14 +128,17 @@ export default function Crypto() {
         ) : null}
       </section>
 
-      <section aria-label="Research queue" className="space-y-3">
+      </div>
+      </div>
+
+      <section aria-label="Research queue" className="space-y-2">
         <h2 className="text-lg font-semibold">Research queue</h2>
         <div className="grid gap-3 md:grid-cols-3">
           {RESEARCH.map((item) => (
-            <div key={item.title} className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+            <div key={item.title} className="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{item.chip}</p>
               <h3 className="mt-1 font-semibold">{item.title}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{item.body}</p>
+              <p className="mt-1 line-clamp-3 text-sm text-muted-foreground" title={item.body}>{item.body}</p>
             </div>
           ))}
         </div>

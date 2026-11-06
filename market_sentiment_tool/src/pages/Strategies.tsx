@@ -93,7 +93,7 @@ export default function Strategies() {
   ];
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 md:px-6">
+    <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
       <h1 className="text-2xl font-bold tracking-tight text-white">Strategies</h1>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-400">
         Every rule that trades or paper-trades, in one place: the rule, where it stands, and its record. The market
@@ -120,8 +120,9 @@ export default function Strategies() {
         })}
       </ul>
 
-      <div className="mt-10 space-y-10">
-        <section id="stock-ideas" aria-label="Stock ideas" className="scroll-mt-6">
+      {/* The detail, two across (2026-11-06: one screen and a bit). */}
+      <div className="mt-4 grid items-start gap-3 xl:grid-cols-2">
+        <section id="stock-ideas" aria-label="Stock ideas" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
           <h2 className="text-lg font-semibold text-white">Stock ideas</h2>
           <p className="mt-1 text-sm text-slate-400">
             The live ideas trade the paper stock accounts; their holdings, sizes and P&amp;L are on the Portfolio, and
@@ -133,12 +134,12 @@ export default function Strategies() {
           </div>
         </section>
 
-        <section id="fifteen-rule" aria-label="15-minute oil and gas rule" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+        <section id="fifteen-rule" aria-label="15-minute oil and gas rule" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4 xl:row-span-2">
           <h2 className="text-lg font-semibold text-white">15-minute oil and gas rule</h2>
           <FifteenRuleRecord />
         </section>
 
-        <section id="hourly-picks" aria-label="Hourly oil best strike" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+        <section id="hourly-picks" aria-label="Hourly oil best strike" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
           <h2 className="text-lg font-semibold text-white">Hourly oil best strike</h2>
           <p className="mt-1 text-sm text-slate-400">
             The live pick is on the <Link to="/oil" className="text-emerald-300 hover:text-emerald-200">Oil page</Link>; this is how the picks have done.
@@ -146,11 +147,11 @@ export default function Strategies() {
           <StrikeRecordLine />
         </section>
 
-        <div id="gap-tracker" className="scroll-mt-6 space-y-4">
+        <div id="gap-tracker" className="scroll-mt-6">
           <GapDesk />
         </div>
 
-        <section id="sniper" aria-label="Crypto sniper" className="scroll-mt-6 space-y-3">
+        <section id="sniper" aria-label="Crypto sniper" className="scroll-mt-6 space-y-2">
           <h2 className="text-lg font-semibold text-white">Crypto sniper, retired</h2>
           <SniperRecord />
         </section>
