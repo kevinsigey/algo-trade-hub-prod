@@ -119,3 +119,30 @@ def test_the_quote_must_name_the_metric_and_never_be_a_dividend():
     revenue_quote_as_capex = _item(metric="capex")  # the quote talks about revenue
     kept, dropped = gx.verify([dividend_as_capex, eps_named_revenue, revenue_quote_as_capex], text)
     assert kept == [eps_named_revenue] and dropped == 2
+
+
+def test_eps_is_per_share_whatever_unit_the_model_says():
+    # BMY's $6.35-$6.55 EPS guide came back as unit "usd" with scale billions (2026-11-06).
+    assert gx.stored_values(_item(metric="eps_adjusted", unit="usd", scale="billions", low=6.35, high=6.55)) == (6.35, 6.55)
+
+
+def test_non_gaap_per_share_wording_makes_it_adjusted_eps():
+    item = _item(metric="eps_gaap", unit="usd_per_share", scale="units", low=1.26, high=1.30,
+                 evidence="Non-GAAP diluted net income per share of $1.26 - $1.30.")
+    assert gx.cleaned(item).metric == "eps_adjusted"
+    gaap = _item(metric="eps_gaap", unit="usd_per_share", scale="units", low=18.34, high=19.28,
+                 evidence="On a GAAP basis, EPS in the range of $18.34 to $19.28")
+    assert gx.cleaned(gaap).metric == "eps_gaap"
+
+
+def test_repeated_items_are_kept_once():
+    a = _item()
+    assert gx.dedupe([a, _item(), _item(period="FY2027")]) == [a, _item(period="FY2027")]
+
+
+def test_consensus_is_compared_only_where_it_means_the_same_thing():
+    assert gx.wants_consensus(_item()) is True                                            # revenue in dollars
+    assert gx.wants_consensus(_item(metric="eps_adjusted", unit="usd_per_share")) is True
+    assert gx.wants_consensus(_item(metric="eps_gaap", unit="usd_per_share")) is False    # street EPS is adjusted
+    assert gx.wants_consensus(_item(unit="pct")) is False                                 # growth rates vs dollars
+    assert gx.wants_consensus(_item(metric="capex")) is False
