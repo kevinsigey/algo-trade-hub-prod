@@ -147,8 +147,7 @@ export default function Strategies() {
         </section>
 
         <div id="gap-tracker" className="scroll-mt-6 space-y-4">
-          <GapDesk category="oil" />
-          <GapDesk category="crypto" />
+          <GapDesk />
         </div>
 
         <section id="sniper" aria-label="Crypto sniper" className="scroll-mt-6 space-y-3">

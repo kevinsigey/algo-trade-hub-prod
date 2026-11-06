@@ -105,12 +105,13 @@ const NAV: { label: string; items: NavItem[] }[] = [
 ];
 
 /** A per-browser preference. Storage can be missing or blocked (private window, preview); the nav works without it. */
-function useStored<T>(key: string, initial: T, valid: (v: unknown) => v is T): [T, (v: T) => void] {
+function useStored<T>(key: string, initial: T, valid: (v: unknown) => v is T,
+                      migrate: (v: T) => T = (v) => v): [T, (v: T) => void] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = window.localStorage.getItem(key);
       const parsed: unknown = raw == null ? initial : JSON.parse(raw);
-      return valid(parsed) ? parsed : initial;  // a hand-edited or old value never breaks the nav
+      return valid(parsed) ? migrate(parsed) : initial;  // a hand-edited or old value never breaks the nav
     } catch {
       return initial;
     }
@@ -161,7 +162,8 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
   const { data, loading } = useApi<PortfolioPayload>("/api/portfolio");
   const admin = useAdminSession();
   const [closed, setClosed] = useStored<string[]>("atr:nav-closed-groups", [],
-    (v): v is string[] => Array.isArray(v) && v.every((g) => typeof g === "string"));
+    (v): v is string[] => Array.isArray(v) && v.every((g) => typeof g === "string"),
+    (v) => v.map((g) => (g === "Trade" ? "Trading" : g)));  // the group was "Trade" until 2026-11-05
   const uid = useId();
   // A payload without a scoreboard (an older server, a proxy error page) reads as not connected, never as a crash.
   const book = data?.scoreboard && data.state !== "not_connected" ? data : null;

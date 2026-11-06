@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { HOURLY_HEADLINE } from "@/lib/forecasterLabels";
 import { ChevronDown } from "lucide-react";
 
@@ -676,6 +677,10 @@ export default function Oil() {
         <RecordSection title="15-minute settlements" rows={fifteenRows} />
         <RecordSection title="Hourly settlements" rows={hourlyRows} />
         <RecordSection title="Daily settlement" rows={rows} />
+        <p className="text-sm text-slate-400">
+          The paper trades built on these forecasts, the Kalshi gap tracker among them, are on{" "}
+          <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
+        </p>
       </section>
     </div>
   );

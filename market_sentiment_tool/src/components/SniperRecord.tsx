@@ -13,7 +13,7 @@ export function SniperRecord() {
   }, []);
 
   if (unavailable) {
-    return <p className="text-sm text-muted-foreground">The closed record has not been graded yet.</p>;
+    return <p className="text-sm text-muted-foreground">The closed record is unavailable right now.</p>;
   }
   if (!verdict?.population || !verdict.overall) return null; // a partial reply hides the record rather than crash
   const p = verdict.population;
@@ -22,7 +22,7 @@ export function SniperRecord() {
       <div className="grid gap-4 sm:grid-cols-4">
         <div>
           <p className="text-2xl font-semibold tabular-nums">{p.graded.toLocaleString()}</p>
-          <p className="text-sm text-muted-foreground">rows graded (of {p.grading_population.toLocaleString()} archived)</p>
+          <p className="text-sm text-muted-foreground">rows graded (of {p.grading_population.toLocaleString()} eligible, {p.archived_rows.toLocaleString()} archived)</p>
         </div>
         <div>
           <p className="text-2xl font-semibold tabular-nums">{pct(verdict.overall.hit_rate)}</p>

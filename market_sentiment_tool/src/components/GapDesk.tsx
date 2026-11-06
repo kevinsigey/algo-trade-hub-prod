@@ -110,15 +110,21 @@ function PositionTable({ rows }: { rows: Position[] }) {
 
 /** The Kalshi gap tracker: do the model's fair values find real mispricings after executable prices?
  * A paper ledger on a $10,000 tracker bankroll. It never places or suggests an order. */
-export default function GapDesk({ category }: { category: "oil" | "crypto" }) {
+/** One desk; `category` filters its gap lists to one market, none shows both (the ledger is shared either way). */
+export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
   const { data } = useApi<GapDeskPayload>("/api/gaps/desk");
-  if (!data?.evidence || !data.grade?.all || !data.ledger) return null; // additive: no data or a partial reply, no panel
+  // Additive: no data or a partial reply, no panel.
+  if (!data?.evidence || !data.grade?.all || !data.ledger || !data.top_gaps || !data.near_misses || !data.funnel) return null;
   const { evidence, ledger } = data;
   const score = data.grade.all;
-  const mine = (rows: { category: string }[]) => rows.filter((r) => r.category === category);
+  const mine = (rows: { category: string }[]) => (category ? rows.filter((r) => r.category === category) : rows);
   const top = mine(data.top_gaps) as GapRow[];
   const open = data.open_positions;
-  const funnel = data.funnel[category] ?? {};
+  const funnel: Record<string, number> = category ? data.funnel[category] ?? {}
+    : Object.values(data.funnel).reduce<Record<string, number>>((acc, f) => {
+        for (const [k, v] of Object.entries(f)) acc[k] = (acc[k] ?? 0) + v;
+        return acc;
+      }, {});
   const enough = evidence.status !== "NOT ENOUGH EVIDENCE";
   return (
     <section aria-label="Kalshi gap tracker" className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -180,7 +186,7 @@ export default function GapDesk({ category }: { category: "oil" | "crypto" }) {
             </p>
           )}
           <div>
-            <h3 className="mb-1 text-xs font-medium text-slate-300">Gate funnel, {category}</h3>
+            <h3 className="mb-1 text-xs font-medium text-slate-300">Gate funnel{category ? `, ${category}` : ", oil and crypto"}</h3>
             <p className="text-xs text-slate-400">
               {funnel.rows ?? 0} snapshots · {funnel.flagged ?? 0} flagged
               {Object.keys(funnel).filter((k) => k in REASON).map((k) => ` · ${funnel[k]} ${REASON[k]}`).join("")}
