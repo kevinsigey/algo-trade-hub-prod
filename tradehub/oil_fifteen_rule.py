@@ -3,7 +3,8 @@
 The rule, fixed here before its forward record starts:
   At the model's freeze (about 5 minutes into each 15-minute window), if the model's chance beats
   the price of a side by 10 points or more, buy that side at its ask, one contract, and hold it to
-  the window's close. No early exit.
+  the window's close. No early exit. No trade on windows frozen between 4:45 and 6:30 PM New York
+  time, around the daily futures halt (amended 2026-11-05, before the forward record started).
 
 It is graded only on rows the journal froze before the window settled, at the quotes frozen with
 them, after Kalshi's taker fee. Rows frozen before PREREG_AT are the replay that suggested the rule
@@ -14,18 +15,31 @@ places an order. Fills at the quoted ask are assumed; the book's depth is not re
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from tradehub.journal import store
 from tradehub.oil_live import TAKER_FEE_RATE
 
+NY = ZoneInfo("America/New_York")
 MIN_EDGE = 0.10
-PREREG_AT = "2026-11-06T00:00:00+00:00"
+# Moved from 2026-11-06 00:00 UTC when the halt exclusion was added: the amended rule could not deploy
+# before the first start, so its forward record starts a day later.
+PREREG_AT = "2026-11-07T00:00:00+00:00"
+HALT_ET = (16.75, 18.5)  # 4:45 PM to 6:30 PM New York time
 READY_TRADES = 300
 SERIES = (("oil_wti_15m", "wti-15m-v2", "WTI"), ("oil_brent_15m", "brent-15m-v2", "Brent"),
           ("natgas_15m", "natgas-15m-v2", "Natural gas"))
 RULE = ("At the freeze, about 5 minutes into each 15-minute window: if the model's chance beats a "
-        "side's price by 10 points or more, buy that side at its ask and hold it to the close.")
+        "side's price by 10 points or more, buy that side at its ask and hold it to the close. "
+        "No trades from 4:45 to 6:30 PM ET, around the daily futures halt.")
+
+
+def in_halt(frozen_at: str) -> bool:
+    """CME halts oil and gas futures 5-6 PM ET while the model's tape keeps trading: no trade around it."""
+    t = datetime.fromisoformat(frozen_at).astimezone(NY)
+    return HALT_ET[0] <= t.hour + t.minute / 60 < HALT_ET[1]
 
 
 def pick(p: float, *, yes_ask: float | None, yes_bid: float | None) -> tuple[str, float] | None:
@@ -73,6 +87,8 @@ def record(supa) -> dict[str, Any]:
             first.setdefault(r["target"], r)  # the freeze the rule acts on is the first one
         picks = {}
         for target, r in first.items():
+            if in_halt(r["frozen_at"]):
+                continue
             pay = r.get("payload") or {}
             choice = pick(float(r["probability"]), yes_ask=pay.get("yes_ask"), yes_bid=pay.get("yes_bid"))
             if choice:

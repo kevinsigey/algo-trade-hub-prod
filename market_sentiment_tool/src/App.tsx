@@ -27,6 +27,7 @@ import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
+import Strategies from "@/pages/Strategies";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
@@ -57,6 +58,7 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Target,
   Trophy,
   Wallet,
   X,
@@ -74,10 +76,11 @@ type NavItem = { to: string; label: string; icon: LucideIcon; end?: boolean; sub
  * Every page keeps its URL, so the shared global nav's links still work.
  */
 const NAV: { label: string; items: NavItem[] }[] = [
-  { label: "Trade", items: [
+  { label: "Trading", items: [
     { to: "/", label: "Overview", icon: House, end: true },
     { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
     { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
+    { to: "/strategies", label: "Strategies", icon: Target },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
     { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
@@ -369,6 +372,7 @@ function App() {
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/portfolio/closed" element={<ClosedTrades />} />
           <Route path="/ideas" element={<Ideas />} />
+          <Route path="/strategies" element={<Strategies />} />
           <Route path="/ideas/:id" element={<IdeaRecord />} />
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />

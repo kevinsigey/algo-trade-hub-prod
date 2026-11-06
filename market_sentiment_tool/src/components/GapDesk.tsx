@@ -112,7 +112,7 @@ function PositionTable({ rows }: { rows: Position[] }) {
  * A paper ledger on a $10,000 tracker bankroll. It never places or suggests an order. */
 export default function GapDesk({ category }: { category: "oil" | "crypto" }) {
   const { data } = useApi<GapDeskPayload>("/api/gaps/desk");
-  if (!data?.evidence) return null; // additive to the page: no data, no panel
+  if (!data?.evidence || !data.grade?.all || !data.ledger) return null; // additive: no data or a partial reply, no panel
   const { evidence, ledger } = data;
   const score = data.grade.all;
   const mine = (rows: { category: string }[]) => rows.filter((r) => r.category === category);

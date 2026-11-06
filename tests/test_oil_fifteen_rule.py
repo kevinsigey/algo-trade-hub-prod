@@ -58,3 +58,23 @@ def test_the_route_serves_an_empty_record_when_the_journal_is_unreadable(monkeyp
     finally:
         main.app.dependency_overrides.clear()
     assert body["unavailable"] is True and body["forward"]["n"] == 0 and body["rule"] == rule.RULE
+
+
+def test_no_trade_around_the_daily_futures_halt():
+    # CME halts oil and gas futures 5-6 PM ET; the model's tape keeps trading, so its "edges" there are the gap
+    # between two clocks. Replay Nov 4-5: 14 trades in 4:45-6:30 PM ET lost 1.5c each, 42 elsewhere made 9.1c.
+    assert rule.in_halt("2026-11-05T22:05:00+00:00")       # 5:05 PM ET
+    assert rule.in_halt("2026-11-05T21:50:00+00:00")       # 4:50 PM ET
+    assert not rule.in_halt("2026-11-05T23:35:00+00:00")   # 6:35 PM ET
+    assert not rule.in_halt("2026-11-05T15:05:00+00:00")   # 10:05 AM ET
+
+
+def test_record_skips_halt_windows(monkeypatch):
+    rows = {("oil_wti_15m", "wti-15m-v2"): [
+        {"target": "h", "probability": 0.80, "payload": {"yes_ask": 0.50, "yes_bid": 0.48}, "frozen_at": "2026-11-07T22:05:00+00:00"},
+        {"target": "d", "probability": 0.80, "payload": {"yes_ask": 0.50, "yes_bid": 0.48}, "frozen_at": "2026-11-07T15:05:00+00:00"},
+    ]}
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {t: 1 for t in targets})
+    out = rule.record(FakeSupa())
+    assert [t["target"] for t in out["recent"]] == ["d"]
