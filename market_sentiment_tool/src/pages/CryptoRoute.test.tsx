@@ -60,22 +60,18 @@ async function renderAt(path: string) {
 }
 
 describe("crypto route", () => {
-  it("renders the research desk at /crypto with the board, and sends the closed record to Strategies", async () => {
+  it("renders the crypto watcher at /crypto, with the sniper's record left to Strategies", async () => {
     stubFetch();
     await renderAt("/crypto");
-    await waitFor(() => expect(screen.getByRole("heading", { name: /Crypto research/i })).toBeInTheDocument());
-    expect(await screen.findByText(/The book quotes a step, not a curve/)).toBeInTheDocument();
-    // The nav has a Strategies link too; the page's own pointer sits in its body text.
-    expect(screen.getByText(/The paper trades built on these reads/).querySelector("a")).toHaveAttribute("href", "/strategies");
+    await waitFor(() => expect(screen.getByRole("heading", { name: /^Crypto$/, level: 1 })).toBeInTheDocument());
+    expect(screen.getByText("Our hourly models vs Kalshi")).toBeInTheDocument();
     expect(screen.queryByText(/18,602/)).toBeNull();
-    expect(screen.getByText(/The book quotes a step, not a curve/)).toBeInTheDocument();
-    expect(screen.getByText(/Venue lead-lag/)).toBeInTheDocument();
   });
 
   it("redirects /shadow to the research desk", async () => {
     stubFetch();
     await renderAt("/shadow");
-    await waitFor(() => expect(screen.getByRole("heading", { name: /Crypto research/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("heading", { name: /^Crypto$/, level: 1 })).toBeInTheDocument());
     expect(window.location.pathname).toBe("/crypto");
   });
 });

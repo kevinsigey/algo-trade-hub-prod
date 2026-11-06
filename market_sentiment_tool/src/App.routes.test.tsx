@@ -112,7 +112,7 @@ function boardHeadline(): HTMLElement | null {
 /** The crypto page's h1. A separate query so the shadow describe can assert its absence without
  *  caring what the scoreboard is called. */
 function cryptoHeading(): HTMLElement | null {
-  return screen.queryByRole("heading", { name: /Crypto research/i, level: 1 });
+  return screen.queryByRole("heading", { name: /^Crypto$/, level: 1 });
 }
 
 /** The crypto desk's reads, stubbed empty-but-valid: the board with no cells filled and a
@@ -320,7 +320,7 @@ describe("the /shadow-scoreboard redirect lands on the canonical route", () => {
  * What survives from the old ruling is the substitution guard, and it is still the point:
  * `/shadow` must land on the CRYPTO successor, not on the scoreboard -- a redirect that quietly
  * replaced a crypto page with an engine scoreboard would be the same collision wearing a hat.
- * The nav says "Crypto research" and points at `/crypto`; nothing links to `/shadow` any more.
+ * The nav says "Crypto" (2026-11-06 redesign; was "Crypto research") and points at `/crypto`; nothing links to `/shadow` any more.
  */
 describe("the two pages that share the word 'shadow'", () => {
   it("resolves /shadow to the crypto research desk, not to the scoreboard", async () => {
@@ -331,13 +331,13 @@ describe("the two pages that share the word 'shadow'", () => {
     expect(boardHeadline()).toBeNull();
   });
 
-  it("labels the crypto nav entry 'Crypto research' and points it at /crypto", async () => {
+  it("labels the crypto nav entry 'Crypto' and points it at /crypto", async () => {
     // Asserted on the /crypto route rather than on "/" because the sidebar mounts on every
     // route and "/" additionally mounts Home, which opens a realtime Supabase channel this
     // file's stub is not a client for.
     await renderAppAt("/crypto");
 
-    const link = screen.getByRole("link", { name: /crypto research/i });
+    const link = screen.getByRole("link", { name: /^crypto$/i });
     expect(link).toHaveAttribute("href", "/crypto");
     // Nothing in the nav is called plain "Shadow", and nothing links to the retired route.
     expect(screen.queryByRole("link", { name: /^shadow$/i })).not.toBeInTheDocument();
@@ -356,6 +356,6 @@ describe("the two pages that share the word 'shadow'", () => {
 
     expect(cryptoHeading()).toBeNull();
     expect(boardHeadline()).toBeNull();
-    expect(screen.getByRole("link", { name: /crypto research/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^crypto$/i })).toBeInTheDocument();
   });
 });

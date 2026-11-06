@@ -87,7 +87,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
   { label: "Markets", items: [
     { to: "/oil", label: "Oil", icon: Fuel, end: true },
     { to: "/oil/hormuz", label: "Hormuz tracker", icon: Ship, sub: true },
-    { to: "/crypto", label: "Crypto research", icon: LineChart },
+    { to: "/crypto", label: "Crypto", icon: LineChart },
     { to: "/macro", label: "Macro predictions", icon: Landmark },
     { to: "/weather", label: "Weather", icon: CloudSun },
     { to: "/sports", label: "Sports", icon: Trophy },
