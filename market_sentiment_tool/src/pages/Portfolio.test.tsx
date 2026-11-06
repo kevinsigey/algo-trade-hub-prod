@@ -78,7 +78,8 @@ describe("Portfolio", () => {
     expect(screen.getByText("Net liquidation value")).toBeInTheDocument();
     expect(screen.getByText("58%")).toBeInTheDocument();
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
-    expect(screen.getAllByText("No idea yet (manual)").length).toBe(2);
+    // Manual shares read as their own row in the By-idea summary, one per symbol.
+    expect(screen.getByText("GLD (manual)")).toBeInTheDocument();
     expect(screen.getByText("Positions · 1")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=main");
   });
@@ -119,17 +120,17 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("shows the staged orders panel, signed in only", async () => {
     serveRoutes(true, []);
     page(<Portfolio />);
-    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    expect(await screen.findByText(/^Staged orders/)).toBeInTheDocument();
     expect(await screen.findByText("XOM")).toBeInTheDocument();
-    expect(screen.getByText("$175.00")).toBeInTheDocument();
-    expect(screen.getByText("gtc")).toBeInTheDocument();
+    // The summary line carries the price and the time in force together.
+    expect(screen.getByText(/\$175\.00 · gtc/)).toBeInTheDocument();
   });
 
   it("hides the staged orders panel from a signed-out visitor", async () => {
     serveRoutes(false, []);
     page(<Portfolio />);
     expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
-    expect(screen.queryByText("Staged orders")).toBeNull();
+    expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
 
   it("places a market order through the endpoint when signed in", async () => {
@@ -137,6 +138,8 @@ describe("Portfolio hand orders (signed-in only)", () => {
     serveRoutes(true, posted);
     page(<Portfolio />);
     expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    // The form opens from its panel, so the page stays one screen.
+    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
     fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
     fireEvent.change(screen.getByLabelText("Shares"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Place order" }));
@@ -162,7 +165,10 @@ describe("ClosedTrades", () => {
     page(<ClosedTrades />);
     expect((await screen.findAllByText("+$250.00")).length).toBe(2); // the row and the total
     expect(screen.getByText("+12.5%")).toBeInTheDocument();
-    expect(screen.getByText("3d")).toBeInTheDocument();
+    // The summary line carries the hold; the full table opens from the panel.
+    expect(screen.getByText(/· 3d/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Closed trades · 1 in full" }));
+    expect(within(screen.getByRole("dialog")).getByText("3d")).toBeInTheDocument();
   });
 
   it("reads the $1M book's activity when the URL names it, and the toggle keeps the book", async () => {
@@ -237,7 +243,7 @@ describe("Portfolio books (master view and the $1M book)", () => {
     expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=big");
     // The hand order form and staged orders are main-book doors; they stay off this page.
     expect(screen.queryByText("Place an order by hand")).toBeNull();
-    expect(screen.queryByText("Staged orders")).toBeNull();
+    expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
 });
 
@@ -254,9 +260,11 @@ describe("Portfolio positions", () => {
       ],
     }));
     page(<Portfolio />);
-    const table = () => screen.getByText("Positions · 3").closest("section")!;
-    const names = () => within(table()).getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
     await screen.findByText("Positions · 3");
+    // The panel shows the largest holdings; the full sortable table opens from it.
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions · 3 in full" }));
+    const table = () => screen.getByRole("dialog", { name: "Positions · 3" });
+    const names = () => within(table()).getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
     expect(names()).toEqual(["MU", "NVDA", "NVDA Dec 4 2026 $200 call"]);
     expect(screen.getByText("$300.00")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Market value" }));

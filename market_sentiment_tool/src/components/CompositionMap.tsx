@@ -248,7 +248,7 @@ export default function CompositionBox({ positions, composition, className = "" 
   const tiles = useMemo(() => positions.map(toTile), [positions]);
 
   return (
-    <section className={`rounded-xl border border-slate-800 bg-slate-900/60 p-4 ${className}`}>
+    <section aria-label="Composition" className={`rounded-lg border border-slate-800 bg-slate-900/60 p-3 ${className}`}>
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Composition</h2>
         <div className="flex items-center gap-2">
@@ -259,20 +259,9 @@ export default function CompositionBox({ positions, composition, className = "" 
           </button>
         </div>
       </div>
-      <div className="mt-3">
-        <CompositionView tiles={tiles} grouping={grouping} heightClass="h-64" rowHeight={84} />
+      <div className="mt-2">
+        <CompositionView tiles={tiles} grouping={grouping} heightClass="h-44" rowHeight={72} />
         <Legend tiles={tiles} />
-        <ul className="mt-2 max-h-44 space-y-1 overflow-auto">
-          {composition.map((c) => (
-            <li key={c.idea} className="flex items-baseline justify-between gap-3 rounded-md border border-slate-800 px-2.5 py-1.5 text-xs">
-              <span className="text-slate-200">{c.idea}</span>
-              <span className="tabular-nums text-slate-400">
-                {c.pct_of_book.toFixed(0)}% · <span className={tone(c.unrealized_pl)}>{fmtUsd(c.unrealized_pl, { signed: true })}</span>
-              </span>
-            </li>
-          ))}
-          {composition.length === 0 && <li className="text-xs text-slate-400">All cash.</li>}
-        </ul>
       </div>
 
       {open && (
