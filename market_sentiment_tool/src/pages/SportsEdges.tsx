@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { Panel } from "@/components/Panel";
 import { Chip } from "@/components/Chip";
 import { Stat } from "@/components/Stat";
 import { buildApiUrl } from "@/lib/api";
@@ -80,7 +81,7 @@ const SPORT_SITE = (sport: string) => `https://sports.40-160-91-131.sslip.io/?sp
 function PickCard({ pick }: { pick: SportsPick }) {
   return (
     <a href={SPORT_SITE(pick.sport)} target="_blank" rel="noreferrer"
-      className="block rounded-2xl border border-slate-800 bg-slate-900/40 p-4 transition hover:border-emerald-500/40">
+      className="block rounded-lg border border-slate-800 bg-slate-900/40 p-3 transition hover:border-emerald-500/40">
       <div className="flex items-center justify-between gap-2 text-xs text-slate-400">
         <span className="font-semibold uppercase tracking-wider">{pick.sport} · {WHEN.format(new Date(pick.startUtc))}</span>
         {pick.tier === "flagged" || pick.largeGap ? <Chip tone="bad">Flagged by the reviewer</Chip> : null}
@@ -88,14 +89,13 @@ function PickCard({ pick }: { pick: SportsPick }) {
       <p className="mt-2 text-sm text-slate-300">{pick.matchup}</p>
       <p className="mt-1 font-semibold text-white">{pick.call}</p>
       <div className="mt-3 flex items-end justify-between">
-        <span className="text-4xl font-black tabular-nums text-white">{Math.round(pick.model)}%</span>
+        <span className="text-3xl font-black tabular-nums text-white">{Math.round(pick.model)}%</span>
         <span className="text-xs tabular-nums text-slate-400">Kalshi {Math.round(pick.market)}% · gap {gapText(pick.gap)} pts</span>
       </div>
       <div className="relative mt-2 h-1.5 rounded bg-slate-800" aria-hidden="true">
         <div className="absolute inset-y-0 rounded bg-emerald-500/70" style={{ left: 0, width: `${Math.min(100, Math.max(0, pick.model))}%` }} />
         <div className="absolute inset-y-[-2px] w-0.5 bg-slate-200" style={{ left: `${Math.min(100, Math.max(0, pick.market))}%` }} />
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">Model bar vs Kalshi marker · open on the {pick.sport.toUpperCase()} predictor →</p>
     </a>
   );
 }
@@ -108,18 +108,12 @@ const ESTATE = [
 
 function EstateCards() {
   return (
-    <section aria-label="More predictors">
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">More predictors</h2>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {ESTATE.map((s) => (
-          <a key={s.name} href={s.href} target="_blank" rel="noreferrer"
-            className="block rounded-2xl border border-slate-800 bg-slate-900/40 p-4 transition hover:border-emerald-500/40">
-            <p className="font-semibold text-white">{s.name}</p>
-            <p className="mt-1 text-sm text-slate-400">{s.blurb}</p>
-            <p className="mt-2 text-xs font-medium text-emerald-300">Open the predictor →</p>
-          </a>
-        ))}
-      </div>
+    <section aria-label="More predictors" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">More predictors</span>
+      {ESTATE.map((s) => (
+        <a key={s.name} href={s.href} target="_blank" rel="noreferrer" title={s.blurb}
+          className="font-medium text-emerald-300 hover:text-emerald-200">{s.name} →</a>
+      ))}
     </section>
   );
 }
@@ -151,22 +145,14 @@ function PickRow({ pick }: { pick: SportsPick }) {
   );
 }
 
+/** A list of picks: the first few lines, all of them one click away (2026-11-06: one screen per page). */
 function Section({ title, picks, initial = 6 }: { title: string; picks: SportsPick[]; initial?: number }) {
-  const [all, setAll] = useState(false);
   if (picks.length === 0) return null;
-  const shown = all ? picks : picks.slice(0, initial);
+  const list = (items: SportsPick[]) => <ul>{items.map((p) => <PickRow key={p.key} pick={p} />)}</ul>;
   return (
-    <section>
-      <h2 className="mb-1 text-lg font-semibold text-slate-200">
-        {title} <span className="text-slate-500">({picks.length})</span>
-      </h2>
-      <ul>{shown.map((p) => <PickRow key={p.key} pick={p} />)}</ul>
-      {picks.length > initial && (
-        <button type="button" className="mt-2 text-sm text-sky-400 hover:underline" onClick={() => setAll(!all)}>
-          {all ? "Show fewer" : `Show all ${picks.length}`}
-        </button>
-      )}
-    </section>
+    <Panel title={`${title} (${picks.length})`} full={picks.length > initial ? list(picks) : undefined}>
+      {list(picks.slice(0, initial))}
+    </Panel>
   );
 }
 
@@ -204,11 +190,11 @@ export default function SportsEdges() {
 
   const b = board(edges);
   return (
-    <div className="mx-auto max-w-5xl space-y-10 p-6 md:p-8">
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-5 md:px-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white">Sports picks</h1>
-          <p className="mt-2 text-slate-400">Where our predictors and the market disagree.</p>
+          <h1 className="text-2xl font-bold text-white">Sports picks</h1>
+          <p className="mt-1 text-sm text-slate-400">Where our predictors and the market disagree.</p>
         </div>
         <div role="group" aria-label="Sport" className="flex gap-2">
           {([["", "All"], ["nfl", "NFL"], ["cfb", "College"]] as const).map(([value, label]) => (
@@ -247,24 +233,27 @@ export default function SportsEdges() {
           )}
           {b.topPicks.length > 0 && (
             <section aria-label="Featured predictions">
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {b.topPicks.map((p) => <PickCard key={p.key} pick={p} />)}
               </div>
             </section>
           )}
-          {(b.unreviewed.length > 0 || b.flagged.length > 0) && (
-            <section aria-label="More predictions">
-              <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">More predictions</h2>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[...b.unreviewed, ...b.flagged].map((p) => <PickCard key={p.key} pick={p} />)}
-              </div>
-            </section>
-          )}
+          {(b.unreviewed.length > 0 || b.flagged.length > 0) && (() => {
+            const more = [...b.unreviewed, ...b.flagged];
+            const grid = (items: SportsPick[]) => (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{items.map((p) => <PickCard key={p.key} pick={p} />)}</div>
+            );
+            return (
+              <Panel title={`More predictions (${more.length})`} full={more.length > 6 ? grid(more) : undefined}>
+                {grid(more.slice(0, 6))}
+              </Panel>
+            );
+          })()}
           {sport === "" && <EstateCards />}
         </>
       ) : (
         <>
-          <section aria-label="Totals" className="grid gap-3 sm:grid-cols-3">
+          <section aria-label="Totals" className="grid gap-2 sm:grid-cols-3">
             <Stat value={b.topPicks.length} label="top picks" />
             <Stat value={b.flagged.length} label="flagged by the reviewer" />
             <Stat value={b.unreviewed.length} label="not reviewed yet" />
@@ -274,9 +263,11 @@ export default function SportsEdges() {
             <p className="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 text-slate-300">No pick passed review today.</p>
           )}
 
-          <Section title="Top picks" picks={b.topPicks} />
-          <Section title="Flagged by the reviewer" picks={b.flagged} />
-          <Section title="Not reviewed yet" picks={b.unreviewed} />
+          <div className="grid gap-2 lg:grid-cols-3">
+            <Section title="Top picks" picks={b.topPicks} />
+            <Section title="Flagged by the reviewer" picks={b.flagged} />
+            <Section title="Not reviewed yet" picks={b.unreviewed} />
+          </div>
 
           {b.noEdge > 0 && <p className="text-sm text-slate-500">{b.noEdge} more games had no usable edge.</p>}
         </>
