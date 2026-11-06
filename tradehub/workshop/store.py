@@ -324,3 +324,23 @@ def resolve_manual_action(supa, action_id: int, state: str) -> None:
     supa.table("manual_actions").update(
         {"state": state, "resolved_at": datetime.now(timezone.utc).isoformat()}
     ).eq("id", action_id).execute()
+
+
+MAX_TAGS, MAX_TAG_LEN = 8, 24
+
+
+def clean_tags(tags: list[str]) -> list[str]:
+    """Trimmed, deduplicated ignoring case (the first spelling wins), empty and over-long tags dropped."""
+    out: list[str] = []
+    for t in tags:
+        t = " ".join(str(t).split())
+        if t and len(t) <= MAX_TAG_LEN and t.lower() not in {o.lower() for o in out}:
+            out.append(t)
+    return out[:MAX_TAGS]
+
+
+def set_tags(supa, idea_id: int, tags: list[str]) -> dict:
+    """Kevin's own groupings for the Ideas page (2026-11-05). Replaces the idea's tags."""
+    clean = clean_tags(tags)
+    supa.table(IDEAS).update({"tags": clean}).eq("id", idea_id).execute()
+    return {"id": idea_id, "tags": clean}

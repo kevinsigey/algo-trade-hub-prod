@@ -651,3 +651,18 @@ def test_a_rebuild_thread_that_cannot_start_frees_its_lock_and_still_answers(pas
     monkeypatch.setattr(main.threading, "Thread", NoThread)
     assert c.get("/api/ideas").json() == stale and not main._IDEAS_REBUILD.locked()
     main._bust_ideas_cache()
+
+
+def test_tags_are_cleaned_set_by_admin_and_shown_with_a_sector(passed):
+    c, db, i, _, _ = passed
+    c.post(f"/api/workshop/ideas/{i}/publish")
+    r = c.put(f"/api/workshop/ideas/{i}/tags", json={"tags": [" Defensive ", "defensive", "", "x" * 40, "Hormuz"]})
+    assert r.status_code == 200 and r.json()["tags"] == ["Defensive", "Hormuz"]
+    row = c.get("/api/ideas").json()[0]
+    assert row["tags"] == ["Defensive", "Hormuz"]
+    assert row["sector"] == "Commodities (Gold)"  # SPEC holds GLD
+    assert c.put("/api/workshop/ideas/99/tags", json={"tags": []}).status_code == 404
+
+
+def test_tags_route_needs_admin():
+    assert TestClient(main.app).put("/api/workshop/ideas/1/tags", json={"tags": []}).status_code == 401

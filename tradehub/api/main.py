@@ -48,6 +48,7 @@ from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers 
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, target_and_reason, tickers_for
 from tradehub.portfolio.autotrade import option_structure_problems
+from tradehub.portfolio.sectors import idea_sector
 from tradehub.workshop.playcheck import play_check as _play_check_math
 from tradehub.workshop.data import NY
 from tradehub.workshop.record import shadow_summary
@@ -976,6 +977,18 @@ def workshop_dune_series(supabase=Depends(get_supabase)):
     return {"series": list_dune_series(supa=supabase)}
 
 
+class _TagsIn(BaseModel):
+    tags: list[str]
+
+
+@app.put("/api/workshop/ideas/{idea_id}/tags", tags=["Workshop"])
+def workshop_tags(idea_id: int, body: _TagsIn, _admin: dict = Depends(admin.require_admin),
+                  supabase=Depends(get_supabase)):
+    _found(supabase, idea_id)
+    _bust_ideas_cache()
+    return workshop_store.set_tags(supabase, idea_id, body.tags)
+
+
 @app.post("/api/workshop/ideas/{idea_id}/publish", tags=["Workshop"])
 def workshop_publish(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     _bust_ideas_cache()
@@ -1566,6 +1579,9 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
             "wf_ok": adj["wf_ok"] if adj else None,
             "p_ok": adj.get("p_ok") if adj else None,
             "family": fam, "origin": origin,
+            "tags": idea.get("tags") or [],
+            "sector": idea_sector(list((latest["spec"].get("hold") or []) + (latest["spec"].get("short") or []))
+                                  if latest else (fam or {}).get("tickers") or []),
             "hindsight_selected": _registry.hindsight_selected(origin) if origin else False,
             "gate_overridden": bool((idea.get("gate") or {}).get("status") == "overridden")
             or idea["id"] in (view or {}).get("overridden_big", set()),

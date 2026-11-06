@@ -92,6 +92,35 @@ describe("Ideas record", () => {
     expect(screen.getByText("Energy ballast")).toBeInTheDocument();
   });
 
+  it("leads with the ideas trading now, then groups the shadow ones by bet, sector or tag", async () => {
+    const pass = { latest_verdict: "PASS", verdict_now: "PASS", status: "tracking", live_at: null, live: null, live_books: [] };
+    serve([
+      { ...ROWS[1], id: 38, title: "Utilities and health care", live_books: ["main"], sector: "Utilities", tags: ["Defensive"],
+        family: { key: 7, size: 2, tickers: ["XLU", "XLV"], members: [38, 53] } },
+      { ...ROWS[1], ...pass, id: 53, title: "Staples and utilities", sector: "Utilities", tags: ["Defensive", "Rates"],
+        family: { key: 7, size: 2, tickers: ["XLU", "XLV"], members: [38, 53] } },
+      { ...ROWS[1], ...pass, id: 54, title: "Micron sleeve", sector: "Technology", tags: [],
+        family: { key: 22, size: 1, tickers: ["MU"], members: [54] } },
+    ]);
+    render(<MemoryRouter><Ideas /></MemoryRouter>);
+    const trading = await screen.findByRole("region", { name: "Trading now" });
+    expect(trading).toHaveTextContent("Utilities and health care");
+    expect(trading).not.toHaveTextContent("Staples and utilities");
+    const shadow = screen.getByRole("region", { name: "In shadow" });
+    expect(shadow).toHaveTextContent(/One bet · XLU · XLV/);
+    expect(shadow).toHaveTextContent(/lead trading above/);
+
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "sector" } });
+    expect(screen.getByRole("region", { name: "In shadow" })).toHaveTextContent(/Utilities · 1/);
+    expect(screen.getByRole("region", { name: "In shadow" })).toHaveTextContent(/Technology · 1/);
+
+    fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "tag" } });
+    const byTag = screen.getByRole("region", { name: "In shadow" });
+    expect(byTag).toHaveTextContent(/Defensive · 1/);
+    expect(byTag).toHaveTextContent(/Rates · 1/);
+    expect(byTag).toHaveTextContent(/No tag · 1/);
+  });
+
   it("labels gate overrides, hindsight selection and the registry position", async () => {
     serve([{ ...ROWS[1], gate_overridden: true, hindsight_selected: true,
              registry: { test_number: 58, tests_total: 63 } }]);
