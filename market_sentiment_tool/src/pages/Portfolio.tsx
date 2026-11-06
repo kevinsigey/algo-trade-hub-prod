@@ -6,6 +6,7 @@ import { ArrowDown, ArrowRight, ArrowUp, Loader2, TriangleAlert } from "lucide-r
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import CompositionBox from "@/components/CompositionMap";
+import { Panel } from "@/components/Panel";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
@@ -33,23 +34,15 @@ import {
   type PositionRow,
 } from "@/lib/paperPortfolio";
 
-function Box({ title, right, children, className = "" }: {
-  title: string; right?: ReactNode; children: ReactNode; className?: string;
+function Box({ title, right, children, className = "", full }: {
+  title: string; right?: ReactNode; children: ReactNode; className?: string; full?: ReactNode;
 }) {
-  return (
-    <section className={`rounded-xl border border-slate-800 bg-slate-900/60 p-4 ${className}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
-        {right}
-      </div>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
+  return <Panel title={title} meta={right} full={full} className={className}>{children}</Panel>;
 }
 
 function RailRow({ label, value, className = "text-slate-100" }: { label: string; value: string; className?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-1 text-sm">
+    <div className="flex items-baseline justify-between gap-3 py-0.5 text-xs">
       <span className="text-slate-400">{label}</span>
       <span className={`tabular-nums font-medium ${className}`}>{value}</span>
     </div>
@@ -152,6 +145,37 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
 }
 
 /** Each paper book with its headline, as the page's tabs: no separate "both books" view to pass through. */
+/** The largest holdings at a glance; the full sortable table opens from the panel. */
+function PositionsSummary({ rows, n = 5 }: { rows: PositionRow[]; n?: number }) {
+  if (rows.length === 0) return <p className="text-sm text-slate-400">No open positions. Cash only.</p>;
+  const top = [...rows].sort((a, b) => Math.abs(b.market_value) - Math.abs(a.market_value)).slice(0, n);
+  return (
+    <>
+      <table className="w-full text-xs tabular-nums">
+        <thead><tr className="text-left text-slate-500">
+          <th scope="col" className="pb-1 pr-2 font-medium">Symbol</th>
+          <th scope="col" className="pb-1 pr-2 text-right font-medium">Value</th>
+          <th scope="col" className="pb-1 pr-2 text-right font-medium">Book</th>
+          <th scope="col" className="pb-1 pr-2 text-right font-medium">Today</th>
+          <th scope="col" className="pb-1 text-right font-medium">Open P&amp;L</th>
+        </tr></thead>
+        <tbody>
+          {top.map((r) => (
+            <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/70">
+              <td className="py-1 pr-2 font-semibold text-white">{contractLabel(r.symbol) ?? r.symbol}</td>
+              <td className="py-1 pr-2 text-right text-slate-200">{money(r.market_value)}</td>
+              <td className="py-1 pr-2 text-right text-slate-400">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}</td>
+              <td className={`py-1 pr-2 text-right ${tone(r.day_pl)}`}>{signed(r.day_pl)}</td>
+              <td className={`py-1 text-right ${tone(r.unrealized_pl)}`}>{signed(r.unrealized_pl)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > n && <p className="mt-1 text-[11px] text-slate-500">{rows.length - n} more in the full table</p>}
+    </>
+  );
+}
+
 function BookTabs({ book }: { book: string }) {
   const { data } = useApi<BooksPayload>("/api/portfolio/books");
   const books: BookHeadline[] = Array.isArray(data?.books) ? data.books : [];
@@ -248,23 +272,23 @@ function AccountRail({ data }: { data: PortfolioPayload }) {
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
   const unrealized = rows.some((p) => p.unrealized_pl != null) ? rows.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0) : null;
   return (
-    <aside className="self-start rounded-xl border border-slate-800 bg-slate-900/60 p-4 xl:sticky xl:top-4">
-      <div className="text-sm text-slate-400">Net liquidation value</div>
-      <div className="mt-0.5 text-3xl font-semibold tabular-nums tracking-tight text-white">{money(s.equity)}</div>
+    <aside aria-label="Account" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+      <div className="text-xs text-slate-400">Net liquidation value</div>
+      <div className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-white">{money(s.equity)}</div>
       <div className={`mt-1 text-sm font-medium tabular-nums ${tone(a?.day_pl)}`}>
         {a?.day_pl == null ? "Day P&L unknown" : `${signed(a.day_pl)} (${fmtPct(a.day_pl_pct)}) today`}
       </div>
-      <p className={`mt-2 text-xs ${data.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>
+      <p className={`mt-1 text-[11px] ${data.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>
         {stateLabel(data.state, data.as_of)}
       </p>
-      <div className="mt-3 border-t border-slate-800 pt-2">
+      <div className="mt-2 border-t border-slate-800 pt-1.5">
         <RailRow label="Cash" value={money(a?.cash ?? cashRow?.market_value)} />
         <RailRow label="Buying power" value={money(a?.buying_power)} />
         <RailRow label="Invested" value={investedPct == null ? "—" : `${investedPct.toFixed(0)}%`} />
         <RailRow label="Long value" value={money(a?.long_value)} />
         <RailRow label="Short value" value={money(a?.short_value)} />
       </div>
-      <div className="mt-2 border-t border-slate-800 pt-2">
+      <div className="mt-1.5 border-t border-slate-800 pt-1.5">
         <RailRow label="Unrealized P&L" value={signed(unrealized)} className={tone(unrealized)} />
         <RailRow label="Realized P&L" value={signed(a?.realized_pl)} className={tone(a?.realized_pl)} />
         <RailRow label="Maintenance margin" value={money(a?.maintenance_margin)} />
@@ -274,7 +298,7 @@ function AccountRail({ data }: { data: PortfolioPayload }) {
                    className={data.breaker.tripped ? "text-rose-400" : "text-slate-100"} />
         )}
       </div>
-      <div className="mt-2 border-t border-slate-800 pt-2">
+      <div className="mt-1.5 border-t border-slate-800 pt-1.5">
         <RailRow label="Since start" value={fmtPct(s.return_pct)} className={tone(s.return_pct)} />
         <RailRow label="SPY same period" value={fmtPct(s.spy_return_pct)} />
         <RailRow label="Ahead of SPY" value={fmtPts(s.ahead_pts)} className={tone(s.ahead_pts)} />
@@ -294,7 +318,7 @@ function Performance({ data }: { data: PortfolioPayload }) {
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
     { label: "Max drawdown", value: fmtPct(s.max_drawdown_pct) },
     { label: "Sharpe", value: s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
-    { label: "Closed-trade win rate", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
+    { label: "Closed-trade wins", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
   ];
   return (
     <Box title="Performance vs SPY"
@@ -309,7 +333,7 @@ function Performance({ data }: { data: PortfolioPayload }) {
            </div>
          )}>
       {view.length > 1 ? (
-        <div className="h-56" aria-label={`Portfolio vs SPY, ${range}`}>
+        <div className="h-32" aria-label={`Portfolio vs SPY, ${range}`}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={view} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
               <XAxis dataKey="t" hide />
@@ -327,11 +351,11 @@ function Performance({ data }: { data: PortfolioPayload }) {
       ) : (
         <p className="text-sm text-slate-400">Not enough snapshots in this range for a curve.</p>
       )}
-      <dl className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2 border-t border-slate-800 pt-3 sm:grid-cols-6">
+      <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1 border-t border-slate-800 pt-2">
         {stats.map((st) => (
           <div key={st.label}>
-            <dt className="text-xs text-slate-400">{st.label}</dt>
-            <dd className={`mt-0.5 text-base font-semibold tabular-nums ${st.className ?? "text-white"}`}>{st.value}</dd>
+            <dt className="truncate text-[11px] text-slate-400">{st.label}</dt>
+            <dd className={`mt-0.5 text-sm font-semibold tabular-nums ${st.className ?? "text-white"}`}>{st.value}</dd>
           </div>
         ))}
       </dl>
@@ -346,36 +370,41 @@ function Body({ data, liveIdeas, book }: {
 }) {
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
   const heavy = concentration(rows);
+  // One screen at 1440x900 (Kevin, 2026-11-06): every panel is a summary that opens in full, in a tight grid.
   return (
-    <div className="mt-4 grid gap-3 xl:grid-cols-[19rem_minmax(0,1fr)]">
-      <AccountRail data={data} />
-      <div className="grid min-w-0 content-start gap-3 2xl:grid-cols-3">
-        {data.breaker?.tripped && (
-          <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-200 2xl:col-span-3">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            Circuit breaker tripped: {data.breaker.reasons.join("; ")}. New opening orders are refused; closing and protective orders still pass.
-          </p>
-        )}
-        {heavy.map((h) => (
-          <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200 2xl:col-span-3">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            {h.sector} is {h.pct.toFixed(0)}% of what&apos;s invested. These positions tend to move together.
-          </p>
-        ))}
-        <div className="min-w-0 2xl:col-span-2"><Performance data={data} /></div>
-        <CompositionBox positions={data.positions} composition={data.composition} />
-        {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
-        <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
-        <MoversBox rows={rows} />
-        <Box title={`Positions · ${rows.length}`} className="2xl:col-span-3">
-          <PositionsTable rows={rows} />
-        </Box>
-        <div className="min-w-0 2xl:col-span-2"><OrdersBox book={book} /></div>
-        <div className="flex min-w-0 flex-col gap-3">
-          <RecentTrades book={book} />
-          <StagedOrders book={book} />
+    <div className="mt-3 space-y-2">
+      {data.breaker?.tripped && (
+        <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-1.5 text-sm text-rose-200">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          Circuit breaker tripped: {data.breaker.reasons.join("; ")}. New opening orders are refused; closing and protective orders still pass.
+        </p>
+      )}
+      {heavy.map((h) => (
+        <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-200">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {h.sector} is {h.pct.toFixed(0)}% of what&apos;s invested. These positions tend to move together.
+        </p>
+      ))}
+      <div className="grid gap-2 xl:grid-cols-12">
+        <div className="flex min-w-0 flex-col gap-2 xl:col-span-3">
+          <AccountRail data={data} />
+          <MoversBox rows={rows} />
+          <OrderForm book={book} />
         </div>
-        <OrderForm book={book} />
+        <div className="grid min-w-0 content-start gap-2 lg:grid-cols-2 xl:col-span-9">
+          <Performance data={data} />
+          <CompositionBox positions={data.positions} composition={data.composition} />
+          <Box title={`Positions · ${rows.length}`} full={<PositionsTable rows={rows} />}>
+            <PositionsSummary rows={rows} />
+          </Box>
+          {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
+          <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
+          <OrdersBox book={book} />
+          <div className="flex min-w-0 flex-col gap-2">
+            <RecentTrades book={book} />
+            <StagedOrders book={book} />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -392,36 +421,33 @@ function IdeasBox({ rows, equity, liveIdeas }: {
   const cards = useMemo(() => ideaScorecard(rows, equity, liveIdeas), [rows, equity, liveIdeas]);
   const scale = Math.max(10, ...cards.map((c) => Math.max(c.pct, c.target_pct ?? 0)));
   const known = cards.some((c) => c.target_pct != null);
-  return (
-    <Box title={`By idea · ${cards.filter((c) => c.id != null || !c.idea.endsWith("(manual)")).length} ideas`}
-         className="2xl:col-span-2"
-         right={<span className="text-xs text-slate-500">{known ? "bar: held · tick: set size" : "bar: % of book"}</span>}>
+  const table = (list: typeof cards) => (
       <div className="overflow-x-auto">
-        <table className="w-full text-sm tabular-nums">
+        <table className="w-full text-xs tabular-nums">
           <thead>
             <tr className="text-left text-xs text-slate-500">
-              <th className="pb-2 pr-3 font-medium">Idea</th>
-              <th className="pb-2 pr-3 font-medium">Size</th>
-              <th className="pb-2 pr-3 text-right font-medium">Value</th>
-              <th className="pb-2 pr-3 text-right font-medium">Today</th>
-              <th className="pb-2 text-right font-medium">Open P&amp;L</th>
+              <th className="pb-1 pr-3 font-medium">Idea</th>
+              <th className="pb-1 pr-3 font-medium">Size</th>
+              <th className="pb-1 pr-3 text-right font-medium">Value</th>
+              <th className="pb-1 pr-3 text-right font-medium">Today</th>
+              <th className="pb-1 text-right font-medium">Open P&amp;L</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/70">
-            {cards.map((c) => {
+            {list.map((c) => {
               const manual = c.id == null && c.idea.endsWith("(manual)");
               const off = c.target_pct != null ? c.pct - c.target_pct : null;
               return (
                 <tr key={c.idea} className={manual ? "text-slate-400" : "text-slate-200"}>
-                  <td className="max-w-[22rem] py-2 pr-3">
+                  <td className="max-w-[22rem] py-1 pr-3">
                     {c.id != null ? (
-                      <Link to={`/workshop/${c.id}`} className="line-clamp-2 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
-                    ) : <span className="line-clamp-2">{c.idea}</span>}
+                      <Link to={`/workshop/${c.id}`} className="line-clamp-1 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
+                    ) : <span className="line-clamp-1">{c.idea}</span>}
                     <div className="text-[11px] text-slate-500">
                       {c.positions === 0 ? "nothing held yet" : `${c.positions} position${c.positions === 1 ? "" : "s"}`}
                     </div>
                   </td>
-                  <td className="w-44 py-2 pr-3">
+                  <td className="w-44 py-1 pr-3">
                     <div className="relative h-1.5 rounded-full bg-slate-800" role="img"
                          aria-label={`${c.pct.toFixed(1)}% of the book${c.target_pct != null ? `, set size ${c.target_pct}%` : ""}`}>
                       <div className={`absolute inset-y-0 left-0 rounded-full ${manual ? "bg-slate-500" : "bg-emerald-400/80"}`}
@@ -437,9 +463,9 @@ function IdeasBox({ rows, equity, liveIdeas }: {
                       )}
                     </div>
                   </td>
-                  <td className="py-2 pr-3 text-right">{fmtUsd(c.value, { whole: true })}</td>
-                  <td className={`py-2 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
-                  <td className={`py-2 text-right ${tone(c.unrealized)}`}>
+                  <td className="py-1 pr-3 text-right">{fmtUsd(c.value, { whole: true })}</td>
+                  <td className={`py-1 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
+                  <td className={`py-1 text-right ${tone(c.unrealized)}`}>
                     {c.positions && c.unrealized != null ? fmtUsd(c.unrealized, { signed: true, whole: true }) : "—"}
                     {c.return_pct != null && <div className="text-[11px]">{fmtPct(c.return_pct)}</div>}
                   </td>
@@ -449,6 +475,13 @@ function IdeasBox({ rows, equity, liveIdeas }: {
           </tbody>
         </table>
       </div>
+    );
+  return (
+    <Box title={`By idea · ${cards.filter((c) => c.id != null || !c.idea.endsWith("(manual)")).length} ideas`}
+         full={table(cards)}
+         right={<span className="text-xs text-slate-500">{known ? "bar: held · tick: set size" : "bar: % of book"}</span>}>
+      {table(cards.slice(0, 4))}
+      {cards.length > 4 && <p className="mt-1 text-[11px] text-slate-500">{cards.length - 4} more ideas in the full view</p>}
     </Box>
   );
 }
@@ -486,17 +519,9 @@ const STATUS_TONE: Record<string, string> = {
 /** What the broker did with recent orders: an order the hub sent can still expire unfilled. */
 function OrdersBox({ book }: { book: string }) {
   const { data } = useApi<ActivityPayload>(`/api/portfolio/activity?book=${book}`);
-  const recent: ActivityOrder[] = Array.isArray(data?.recent) ? data.recent.slice(0, 14) : [];
-  return (
-    <Box title="Recent orders"
-         right={(
-           <Link to={`/portfolio/closed?book=${book}`} className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
-             All orders and trades <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-           </Link>
-         )}>
-      {recent.length === 0 ? (
-        <p className="text-sm text-slate-400">No orders yet.</p>
-      ) : (
+  const all: ActivityOrder[] = Array.isArray(data?.recent) ? data.recent : [];
+  const recent = all.slice(0, 4);
+  const table = (list: ActivityOrder[]) => (
         <div className="-mx-4 overflow-x-auto px-4">
           <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">
             <thead className="text-slate-400">
@@ -510,7 +535,7 @@ function OrdersBox({ book }: { book: string }) {
               </tr>
             </thead>
             <tbody>
-              {recent.map((o, i) => (
+              {list.map((o, i) => (
                 <tr key={`${o.symbol}-${o.submitted_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
                   <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</td>
                   <td className="whitespace-nowrap py-1.5 pr-3">{o.side} <span className="font-semibold text-white">{contractLabel(o.symbol) ?? o.symbol}</span> <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
@@ -523,6 +548,28 @@ function OrdersBox({ book }: { book: string }) {
             </tbody>
           </table>
         </div>
+  );
+  return (
+    <Box title="Recent orders" full={all.length ? table(all) : undefined}
+         right={(
+           <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+             All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+           </Link>
+         )}>
+      {recent.length === 0 ? (
+        <p className="text-sm text-slate-400">No orders yet.</p>
+      ) : (
+        <ul className="space-y-0.5 text-xs tabular-nums">
+          {recent.map((o, i) => (
+            <li key={`${o.symbol}-${o.submitted_at}-${i}`} className="flex items-baseline justify-between gap-2 border-t border-slate-800/70 pt-1">
+              <span className="truncate text-slate-300">
+                <span className="text-slate-500">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</span>{" "}
+                {o.side} <span className="font-semibold text-white">{contractLabel(o.symbol) ?? o.symbol}</span> {o.filled_qty ?? 0}/{o.qty ?? "—"}
+              </span>
+              <span className={`shrink-0 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </Box>
   );
@@ -534,28 +581,29 @@ function RecentTrades({ book }: { book: string | null }) {
   const { data } = useApi<ClosedPayload>(book ? `/api/portfolio/closed?book=${book}` : "/api/portfolio/closed");
   if (!data || data.state === "not_connected" || !Array.isArray(data.trades)) return null;
   const total = data.trades.reduce((sum, t) => sum + t.pnl, 0);
-  const recent = [...data.trades].slice(-6).reverse();
+  const recent = [...data.trades].slice(-3).reverse();
+  const list = (items: typeof recent) => (
+    <ul className="space-y-1">
+      {items.map((t, i) => (
+        <li key={`${t.symbol}-${t.exited_at}-${i}`} className="flex items-baseline justify-between gap-3 text-xs">
+          <span className="text-slate-200">
+            <span className="font-semibold text-white">{t.symbol}</span>
+            {t.qty < 0 && <span className="ml-1 text-slate-400">short</span>}
+            <span className="ml-2 text-slate-500">{t.exited_at.slice(0, 10)} · {t.held_days}d</span>
+          </span>
+          <span className={`tabular-nums ${tone(t.pnl)}`}>
+            {fmtUsd(t.pnl, { signed: true })} <span className="text-slate-500">({fmtPct(t.return_pct)})</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
   return (
-    <Box title="Recent closed trades"
+    <Box title="Recent closed trades" full={data.trades.length > 3 ? list([...data.trades].slice(-30).reverse()) : undefined}
          right={<span className={`text-xs tabular-nums ${tone(total)}`}>{data.trades.length} closed · {fmtUsd(total, { signed: true })}</span>}>
       {recent.length === 0 ? (
         <p className="text-xs text-slate-400">No closed trades yet.</p>
-      ) : (
-        <ul className="space-y-1">
-          {recent.map((t, i) => (
-            <li key={`${t.symbol}-${t.exited_at}-${i}`} className="flex items-baseline justify-between gap-3 text-xs">
-              <span className="text-slate-200">
-                <span className="font-semibold text-white">{t.symbol}</span>
-                {t.qty < 0 && <span className="ml-1 text-slate-400">short</span>}
-                <span className="ml-2 text-slate-500">{t.exited_at.slice(0, 10)} · {t.held_days}d</span>
-              </span>
-              <span className={`tabular-nums ${tone(t.pnl)}`}>
-                {fmtUsd(t.pnl, { signed: true })} <span className="text-slate-500">({fmtPct(t.return_pct)})</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      ) : list(recent)}
     </Box>
   );
 }
@@ -646,12 +694,8 @@ function StagedOrders({ book }: { book: string }) {
 
   if (orders === null) return null;
   const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
-  return (
-    <Box title="Staged orders">
-      {orders.length === 0 ? (
-        <p className="text-xs text-slate-500">Nothing resting right now.</p>
-      ) : (
-        <div className="max-h-56 overflow-auto">
+  const table = (
+        <div>
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="text-[11px] uppercase tracking-wide text-slate-500">
@@ -676,6 +720,20 @@ function StagedOrders({ book }: { book: string }) {
             </tbody>
           </table>
         </div>
+  );
+  return (
+    <Box title={`Staged orders · ${orders.length}`} full={orders.length > 3 ? table : undefined}>
+      {orders.length === 0 ? (
+        <p className="text-xs text-slate-500">Nothing resting right now.</p>
+      ) : (
+        <ul className="space-y-0.5 text-xs tabular-nums text-slate-300">
+          {orders.slice(0, 3).map((o) => (
+            <li key={o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${o.submitted_at}`} className="flex justify-between gap-2">
+              <span><span className="font-semibold text-white">{o.symbol}</span> {o.side} {o.type} {o.qty}</span>
+              <span className="text-slate-500">{price(o) != null ? `$${price(o)!.toFixed(2)} · ` : ""}{o.time_in_force}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </Box>
   );
@@ -740,7 +798,8 @@ function OrderForm({ book }: { book: string }) {
   }
 
   return (
-    <Box title="Place an order by hand" className="2xl:col-span-3">
+    <Box title="Place an order by hand" full={(
+      <>
       <p className="text-xs text-slate-400">
         Paper account, market or limit. Tag it with an idea and it lands in that idea&apos;s order log.
       </p>
@@ -788,6 +847,9 @@ function OrderForm({ book }: { book: string }) {
       </div>
       {note && <p className="mt-3 text-sm text-emerald-300">{note}</p>}
       {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
+      </>
+    )}>
+      <p className="text-xs text-slate-400">Paper account, market or limit, tagged to an idea if you like. Open it to place one.</p>
     </Box>
   );
 }

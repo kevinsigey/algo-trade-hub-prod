@@ -1,10 +1,11 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
+import { Panel } from "@/components/Panel";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   fmtPct, fmtUsd, stateLabel, tone,
-  type ActivityOrder, type ActivityPayload,
+  type ActivityOrder, type ActivityPayload, type ClosedTrade,
 } from "@/lib/paperPortfolio";
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -21,7 +22,7 @@ const statusTone = (s: string) =>
 
 function OrderTable({ rows, showStatus }: { rows: ActivityOrder[]; showStatus: boolean }) {
   return (
-    <div className="mt-3 overflow-x-auto">
+    <div className="overflow-x-auto">
       <table className="w-full min-w-[44rem] text-sm tabular-nums">
         <thead className="text-left text-slate-400">
           <tr>
@@ -57,6 +58,68 @@ function OrderTable({ rows, showStatus }: { rows: ActivityOrder[]; showStatus: b
   );
 }
 
+function TradesTable({ rows }: { rows: ClosedTrade[] }) {
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[40rem] text-sm tabular-nums">
+        <thead className="text-left text-slate-400">
+          <tr>
+            <th className="py-2 pr-4 font-medium">Holding</th>
+            <th className="py-2 pr-4 text-right font-medium">Shares</th>
+            <th className="py-2 pr-4 text-right font-medium">Entry</th>
+            <th className="py-2 pr-4 text-right font-medium">Exit</th>
+            <th className="py-2 pr-4 text-right font-medium">Result</th>
+            <th className="py-2 pr-4 text-right font-medium">Held</th>
+            <th className="py-2 font-medium">Idea</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t, i) => (
+            <tr key={`${t.symbol}-${t.exited_at}-${i}`} className="border-t border-slate-800/80">
+              <td className="py-2 pr-4 font-semibold text-white">
+                {t.symbol}
+                {t.qty < 0 && <span className="ml-1.5 text-xs font-normal text-slate-400">short</span>}
+              </td>
+              <td className="py-2 pr-4 text-right text-slate-300">{Math.abs(t.qty)}</td>
+              <td className="py-2 pr-4 text-right text-slate-300">
+                {fmtUsd(t.entry_price)} <span className="block text-xs text-slate-500">{day(t.entered_at)}</span>
+              </td>
+              <td className="py-2 pr-4 text-right text-slate-300">
+                {fmtUsd(t.exit_price)} <span className="block text-xs text-slate-500">{day(t.exited_at)}</span>
+              </td>
+              <td className={`py-2 pr-4 text-right ${tone(t.pnl)}`}>
+                {fmtUsd(t.pnl, { signed: true })} <span className="block text-xs">{fmtPct(t.return_pct)}</span>
+              </td>
+              <td className="py-2 pr-4 text-right text-slate-300">{t.held_days}d</td>
+              <td className="whitespace-nowrap py-2 text-slate-300">{t.idea}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A short line per order, newest first; the full table opens from the panel. */
+function OrderLines({ rows }: { rows: ActivityOrder[] }) {
+  return (
+    <ul className="space-y-0.5 text-xs tabular-nums">
+      {rows.map((o, i) => (
+        <li key={`${o.symbol}-${o.submitted_at}-${i}`} className="flex items-baseline justify-between gap-2 border-t border-slate-800/70 pt-1">
+          <span className="truncate text-slate-300">
+            <span className={o.side === "buy" ? "text-emerald-300" : "text-rose-300"}>{o.side}</span>{" "}
+            <span className="font-semibold text-white">{o.symbol}</span> {qtyText(o)}
+            <span className="text-slate-500"> · {when(o.filled_at ?? o.submitted_at)}</span>
+          </span>
+          <span className={`shrink-0 ${statusTone(o.status)}`}>{o.status.replace(/_/g, " ")}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const SHOWN = 15;
+
 export default function ClosedTrades() {
   const [searchParams] = useSearchParams();
   const param = searchParams.get("book");
@@ -65,7 +128,7 @@ export default function ClosedTrades() {
   const total = data?.trades.reduce((sum, t) => sum + t.pnl, 0) ?? null;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
+    <div className="mx-auto max-w-[100rem] px-4 py-5 md:px-6">
       <Link to={param ? `/portfolio?book=${book}` : "/"} className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Portfolio
       </Link>
@@ -91,70 +154,41 @@ export default function ClosedTrades() {
         <>
           <p className="mt-1 text-xs text-slate-400">{stateLabel(data.state, data.as_of)}</p>
 
-          <h2 className="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-300">
-            Open orders · {data.open.length}
-          </h2>
-          {data.open.length === 0
-            ? <p className="mt-2 text-sm text-slate-400">No working orders right now.</p>
-            : <OrderTable rows={data.open} showStatus />}
-
-          <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide text-slate-300">
-            Recent orders · {data.recent.length}
-          </h2>
-          {data.recent.length === 0
-            ? <p className="mt-2 text-sm text-slate-400">No orders yet.</p>
-            : <OrderTable rows={data.recent} showStatus />}
-
-          <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide text-slate-300">
-            Closed trades · {data.trades.length}
-          </h2>
-          {data.trades.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-400">No closed trades yet.</p>
-          ) : (
-            <>
-              <div className="mt-2 text-sm text-slate-400">
-                total{" "}
-                <span className={`font-semibold tabular-nums ${tone(total)}`}>{fmtUsd(total, { signed: true })}</span>
-              </div>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[40rem] text-sm tabular-nums">
-                  <thead className="text-left text-slate-400">
-                    <tr>
-                      <th className="py-2 pr-4 font-medium">Holding</th>
-                      <th className="py-2 pr-4 text-right font-medium">Shares</th>
-                      <th className="py-2 pr-4 text-right font-medium">Entry</th>
-                      <th className="py-2 pr-4 text-right font-medium">Exit</th>
-                      <th className="py-2 pr-4 text-right font-medium">Result</th>
-                      <th className="py-2 pr-4 text-right font-medium">Held</th>
-                      <th className="py-2 font-medium">Idea</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.trades.map((t, i) => (
-                      <tr key={`${t.symbol}-${t.exited_at}-${i}`} className="border-t border-slate-800/80">
-                        <td className="py-2 pr-4 font-semibold text-white">
-                          {t.symbol}
-                          {t.qty < 0 && <span className="ml-1.5 text-xs font-normal text-slate-400">short</span>}
-                        </td>
-                        <td className="py-2 pr-4 text-right text-slate-300">{Math.abs(t.qty)}</td>
-                        <td className="py-2 pr-4 text-right text-slate-300">
-                          {fmtUsd(t.entry_price)} <span className="block text-xs text-slate-500">{day(t.entered_at)}</span>
-                        </td>
-                        <td className="py-2 pr-4 text-right text-slate-300">
-                          {fmtUsd(t.exit_price)} <span className="block text-xs text-slate-500">{day(t.exited_at)}</span>
-                        </td>
-                        <td className={`py-2 pr-4 text-right ${tone(t.pnl)}`}>
-                          {fmtUsd(t.pnl, { signed: true })} <span className="block text-xs">{fmtPct(t.return_pct)}</span>
-                        </td>
-                        <td className="py-2 pr-4 text-right text-slate-300">{t.held_days}d</td>
-                        <td className="whitespace-nowrap py-2 text-slate-300">{t.idea}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+          {/* One screen (Kevin, 2026-11-06): each list shows its latest rows and opens in full. */}
+          <div className="mt-4 grid gap-2 lg:grid-cols-3">
+            <Panel title={`Open orders · ${data.open.length}`}
+                   full={data.open.length > SHOWN ? <OrderTable rows={data.open} showStatus /> : undefined}>
+              {data.open.length === 0
+                ? <p className="text-sm text-slate-400">No working orders right now.</p>
+                : <OrderLines rows={data.open.slice(0, SHOWN)} />}
+            </Panel>
+            <Panel title={`Recent orders · ${data.recent.length}`}
+                   full={data.recent.length ? <OrderTable rows={data.recent} showStatus /> : undefined}>
+              {data.recent.length === 0
+                ? <p className="text-sm text-slate-400">No orders yet.</p>
+                : <OrderLines rows={data.recent.slice(0, SHOWN)} />}
+            </Panel>
+            <Panel title={`Closed trades · ${data.trades.length}`}
+                   meta={data.trades.length ? <span className={`text-xs tabular-nums ${tone(total)}`}>{fmtUsd(total, { signed: true })}</span> : undefined}
+                   full={data.trades.length ? <TradesTable rows={data.trades} /> : undefined}>
+              {data.trades.length === 0 ? (
+                <p className="text-sm text-slate-400">No closed trades yet.</p>
+              ) : (
+                <ul className="space-y-0.5 text-xs tabular-nums">
+                  {[...data.trades].reverse().slice(0, SHOWN).map((t, i) => (
+                    <li key={`${t.symbol}-${t.exited_at}-${i}`} className="flex items-baseline justify-between gap-2 border-t border-slate-800/70 pt-1">
+                      <span className="truncate text-slate-300">
+                        <span className="font-semibold text-white">{t.symbol}</span>
+                        {t.qty < 0 && <span className="ml-1 text-slate-400">short</span>}
+                        <span className="text-slate-500"> · {day(t.exited_at)} · {t.held_days}d</span>
+                      </span>
+                      <span className={`shrink-0 ${tone(t.pnl)}`}>{fmtUsd(t.pnl, { signed: true })} <span className="text-slate-500">{fmtPct(t.return_pct)}</span></span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          </div>
         </>
       )}
     </div>
