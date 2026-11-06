@@ -43,7 +43,7 @@ def parse_occ(symbol: str) -> dict[str, Any]:
 
 def build_occ(underlying: str, expiry: date, kind: str, strike: float) -> str:
     return (f"{underlying:<6}{expiry:%y%m%d}{'C' if kind == 'call' else 'P'}"
-            f"{int(round(strike * 1000)):08d}")
+            f"{round(strike * 1000):08d}")
 
 
 def fetch_contracts(underlying: str, kind: str, target: date, *, book: str | None = None,
@@ -84,9 +84,9 @@ def select_contract(contracts: list[dict], leg, spot: float, today: date) -> str
     return min(contracts, key=key)["symbol"]
 
 
-def fetch_mid(symbol: str, *, book: str | None = None, session=requests) -> float | None:
-    """The latest quote's mid, or None when the quote is missing, crossed, or wider
-    than MAX_SPREAD_PCT of the mid -- the planner's cue to hand the leg to Kevin."""
+def _fetch_quote(symbol: str, *, book: str | None = None, session=requests) -> tuple[float, float] | None:
+    """Fetch and validate the quote for an option symbol. Returns (bid, ask) or None
+    when the quote is missing, crossed, or wider than MAX_SPREAD_PCT of the mid."""
     response = session.get(alpaca_paper.DATA_BASE + "/v1beta1/options/quotes/latest",
                            headers=alpaca_paper._headers(book), params={"symbols": symbol}, timeout=10)
     if response.status_code == 401:
@@ -100,4 +100,24 @@ def fetch_mid(symbol: str, *, book: str | None = None, session=requests) -> floa
     mid = (bid + ask) / 2
     if mid <= 0 or (ask - bid) / mid * 100 > MAX_SPREAD_PCT:
         return None
-    return round(mid, 2)
+    return bid, ask
+
+
+def fetch_mid(symbol: str, *, book: str | None = None, session=requests) -> float | None:
+    """The latest quote's mid, or None when the quote is missing, crossed, or wider
+    than MAX_SPREAD_PCT of the mid -- the planner's cue to hand the leg to Kevin."""
+    ba = _fetch_quote(symbol, book=book, session=session)
+    if ba is None:
+        return None
+    bid, ask = ba
+    return round((bid + ask) / 2, 2)
+
+
+def fetch_touch(symbol: str, side: str, *, book: str | None = None, session=requests) -> float | None:
+    """The touch price (bid for sell, ask for buy) for a single-leg option order,
+    or None when the quote is missing, crossed, or wider than MAX_SPREAD_PCT of the mid."""
+    ba = _fetch_quote(symbol, book=book, session=session)
+    if ba is None:
+        return None
+    bid, ask = ba
+    return round(bid, 2) if side == "sell" else round(ask, 2)

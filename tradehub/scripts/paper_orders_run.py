@@ -157,6 +157,9 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
     def _mid(occ: str):
         return opt_mod.fetch_mid(occ, book=book_name)
 
+    def _touch(sym: str, side: str):
+        return opt_mod.fetch_touch(sym, side, book=book_name)
+
     breaker = breakers.check(supa, book_name)
     if breaker["tripped"]:
         breakers.notify(supa, book_name, breaker)
@@ -257,6 +260,13 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                                 {**rr, "status": "skip", "reason": f"crossed with idea {other_id}'s {other_side} of {rr['symbol']} today; retried tomorrow"}
                                 if rr is r else rr for rr in rows
                             ]
+            # Re-price single-leg option orders at the touch (bid for sell, ask for buy).
+            for r in rows:
+                if r["status"] == "send" and opt_mod.is_occ(r["symbol"]) and not r.get("mleg"):
+                    touch = _touch(r["symbol"], r["side"])
+                    if touch is not None:
+                        r["limit_price"] = touch
+                        r["price"] = touch
             done = cancels + [_send(r, submit) for r in rows]
             # Record sent orders (first one wins per symbol)
             for r in done:

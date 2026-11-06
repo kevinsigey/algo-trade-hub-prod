@@ -202,3 +202,36 @@ def test_a_killed_idea_closes_its_spread_as_one_order():
 def test_a_leg_left_on_its_own_still_closes_singly():
     rows = close_options(50, {B_OCC: 1}, DAY, fake_mid({B_OCC: 5.0}))
     assert len(rows) == 1 and "mleg" not in rows[0] and rows[0]["side"] == "sell"
+
+
+# ── fetch_touch tests ──────────────────────────────────────────────────────────────
+
+
+def test_fetch_touch_returns_bid_for_sell_and_ask_for_buy(monkeypatch):
+    from tradehub.portfolio import options as opt
+    # Mock the internal _fetch_quote to return a valid bid/ask
+    monkeypatch.setattr(opt, "_fetch_quote", lambda symbol, book=None, session=None: (1.00, 1.10))
+    assert opt.fetch_touch("NVDA  261204C00200000", "sell") == 1.00
+    assert opt.fetch_touch("NVDA  261204C00200000", "buy") == 1.10
+
+
+def test_fetch_touch_returns_none_on_crossed_quote(monkeypatch):
+    from tradehub.portfolio import options as opt
+    # Crossed quote: bid > ask
+    monkeypatch.setattr(opt, "_fetch_quote", lambda symbol, book=None, session=None: None)
+    assert opt.fetch_touch("NVDA  261204C00200000", "sell") is None
+    assert opt.fetch_touch("NVDA  261204C00200000", "buy") is None
+
+
+def test_fetch_touch_returns_none_on_too_wide_spread(monkeypatch):
+    from tradehub.portfolio import options as opt
+    # Too wide spread returns None from _fetch_quote
+    monkeypatch.setattr(opt, "_fetch_quote", lambda symbol, book=None, session=None: None)
+    assert opt.fetch_touch("NVDA  261204C00200000", "sell") is None
+    assert opt.fetch_touch("NVDA  261204C00200000", "buy") is None
+
+
+def test_fetch_mid_still_works_for_same_quote(monkeypatch):
+    from tradehub.portfolio import options as opt
+    monkeypatch.setattr(opt, "_fetch_quote", lambda symbol, book=None, session=None: (1.00, 1.10))
+    assert opt.fetch_mid("NVDA  261204C00200000") == 1.05
