@@ -359,6 +359,79 @@ def fcc_proxy(store, tickers):
     return _series(tickers, out)
 
 
+def _guidance_rows(tickers, metric):
+    """Guidance-recorder rows for these tickers + one metric. Empty on any
+    failure -- the caller turns 'no comparable pair' into NaN + a note."""
+    try:
+        from tradehub.core.supabase_client import get_client
+        return (get_client().table("guidance_records")
+                .select("ticker,period,metric,low,high,evidence,created_at")
+                .in_("ticker", list(tickers)).eq("metric", metric)
+                .execute().data) or []
+    except Exception:  # noqa: BLE001 -- a screen field must degrade, not crash
+        return []
+
+
+def _latest_guide_change(records):
+    """% change between a period's two most recent guide midpoints, for the
+    period whose latest guide is newest. None when no period has a pair --
+    a single guide is a level, not a change."""
+    by_period = {}
+    for r in records:
+        if r.get("low") is None or r.get("high") is None or not r.get("period"):
+            continue
+        by_period.setdefault(r["period"], []).append(r)
+    best = None
+    for rs in by_period.values():
+        rs = sorted(rs, key=lambda r: r["created_at"])
+        if len(rs) < 2:
+            continue
+        prev_mid = (rs[-2]["low"] + rs[-2]["high"]) / 2
+        last_mid = (rs[-1]["low"] + rs[-1]["high"]) / 2
+        if not prev_mid:
+            continue
+        change = (last_mid - prev_mid) / abs(prev_mid) * 100
+        if best is None or rs[-1]["created_at"] > best[0]:
+            best = (rs[-1]["created_at"], change)
+    return None if best is None else best[1]
+
+
+def _guide_change(store, tickers, metric, field, evidence_needle=None):
+    rows = _guidance_rows(tickers, metric)
+    if evidence_needle:
+        rows = [r for r in rows if evidence_needle in (r.get("evidence") or "").lower()]
+    out = {}
+    for t in tickers:
+        change = _latest_guide_change([r for r in rows if r["ticker"] == t])
+        if change is None:
+            store.note_missing(t, field, "fewer than two comparable guidance records")
+            out[t] = np.nan
+        else:
+            out[t] = change
+    return _series(tickers, out)
+
+
+@register("capex_guide_change_pct", "fundamentals", {}, "pct",
+          "Change between the company's two most recent capex guides for the same period, % "
+          "(latest guide midpoint vs the prior one). Positive = the capex guide was RAISED. "
+          "Reads the guidance recorder (live since 2026-11-05); NaN until a name has two "
+          "comparable capex guides on record.",
+          "guidance recorder (EDGAR filings)")
+def capex_guide_change_pct(store, tickers):
+    return _guide_change(store, tickers, "capex", "capex_guide_change_pct")
+
+
+@register("fcf_guide_change_pct", "fundamentals", {}, "pct",
+          "Change between the company's two most recent free-cash-flow guides for the same "
+          "period, % (recorder rows whose evidence names free cash flow). Negative = the FCF "
+          "guide was CUT. Reads the guidance recorder (live since 2026-11-05); NaN until a "
+          "name has two comparable FCF guides on record.",
+          "guidance recorder (EDGAR filings)")
+def fcf_guide_change_pct(store, tickers):
+    return _guide_change(store, tickers, "other", "fcf_guide_change_pct",
+                         evidence_needle="free cash flow")
+
+
 # --------------------------------------------------------------------------
 # price-derived transforms
 # --------------------------------------------------------------------------
