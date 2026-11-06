@@ -94,12 +94,11 @@ export function PaperLine({ live, mode = "paper" }: { live: ShadowSummary; mode?
   );
 }
 
-function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boolean }) {
+function IdeaCard({ idea, showKind = false, compact = false }: { idea: PublicIdea; showKind?: boolean; compact?: boolean }) {
   const verdict = idea.verdict_now ?? idea.latest_verdict;
   const demoted = idea.verdict_now != null && idea.latest_verdict != null && idea.verdict_now !== idea.latest_verdict;
-  return (
-    <li className="relative h-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 hover:border-slate-600">
-      <div className="flex flex-wrap items-center gap-2">
+  const chips = (
+      <div className="flex flex-wrap items-center gap-1.5">
         <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${toneClass[verdictTone(verdict)]}`}>{verdict ?? "Not run"}</span>
         <span className="text-xs text-slate-500">{STATUS_LABEL[idea.status]}</span>
         {idea.gate_overridden && (
@@ -133,6 +132,32 @@ function IdeaCard({ idea, showKind = false }: { idea: PublicIdea; showKind?: boo
         )}
         {showKind && <span className="text-xs text-slate-500">· {KIND_LABEL[idea.kind]}</span>}
       </div>
+  );
+  if (compact) {
+    // One line per idea for the trading list (2026-11-06: one screen per page); the full card is on its page.
+    return (
+      <li className="relative grid gap-x-4 gap-y-1 border-t border-slate-800 py-2 first:border-t-0 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-center">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-white">
+            <Link to={`/ideas/${idea.id}`} className="after:absolute after:inset-0 hover:underline underline-offset-2">{idea.title}</Link>
+          </h3>
+          <div className="mt-1 [&_span]:!text-[11px]">{chips}</div>
+        </div>
+        <div className="min-w-0 text-sm">
+          {idea.result_line && (
+            <p className="truncate font-semibold tabular-nums text-white">
+              {idea.result_line}
+              {pText(idea.result_p) && <span className="ml-2 text-xs font-normal text-slate-500">{pText(idea.result_p)}</span>}
+            </p>
+          )}
+          {idea.live && <div className="[&_.text-lg]:!text-sm"><PaperLine live={idea.live} mode={idea.status === "live" ? "paper" : "forward"} /></div>}
+        </div>
+      </li>
+    );
+  }
+  return (
+    <li className="relative h-full rounded-lg border border-slate-800 bg-slate-900/60 p-3 hover:border-slate-600">
+      {chips}
       {demoted && (
         <p className="mt-1 text-xs text-amber-300/90">
           Passed as run — demoted under the hub-wide standard
@@ -206,7 +231,7 @@ export default function Ideas() {
   const trading = useMemo(() => standingIdeas.filter((i) => (i.live_books ?? []).length > 0), [standingIdeas]);
   const shadowGroups = useMemo(() => groupShadow(standingIdeas, groupBy), [standingIdeas, groupBy]);
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 md:px-8">
+    <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
       <h1 className="text-2xl font-bold tracking-tight text-white">Ideas</h1>
       <p className="mt-1 text-sm text-slate-400">What still passes leads. Everything removed stays on the record, one click down.</p>
       {summary && (
@@ -247,24 +272,24 @@ export default function Ideas() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
             Standing ideas <span className="text-slate-600">· {sortedStanding.length} · {SORT_LABEL[sort].toLowerCase()}</span>
           </h2>
-          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {sortedStanding.map((idea) => <IdeaCard key={idea.id} idea={idea} showKind />)}
           </ul>
         </section>
       ) : (
         <>
           {trading.length > 0 && (
-            <section aria-label="Trading now" className="mt-8">
+            <section aria-label="Trading now" className="mt-5">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
                 Trading now <span className="text-slate-600">· {trading.length} on a paper book</span>
               </h2>
-              <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-                {trading.map((idea) => <IdeaCard key={idea.id} idea={idea} />)}
+              <ul className="mt-2 rounded-lg border border-slate-800 bg-slate-900/50 px-3">
+                {trading.map((idea) => <IdeaCard key={idea.id} idea={idea} compact />)}
               </ul>
             </section>
           )}
           {shadowGroups.length > 0 && (
-            <section aria-label="In shadow" className="mt-10">
+            <section aria-label="In shadow" className="mt-6">
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-sky-300">
                   In shadow <span className="text-slate-600">· tracked or backtested, not trading</span>
@@ -280,12 +305,15 @@ export default function Ideas() {
                 </div>
               </div>
               {shadowGroups.map((g) => (
-                <details key={g.key} open className="group/g mt-5">
+                <details key={g.key} className="group/g mt-3 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
                   <summary className="cursor-pointer list-none text-sm font-semibold text-slate-300 hover:text-white">
                     <span className="mr-1 inline-block transition-transform group-open/g:rotate-90" aria-hidden="true">›</span>
                     {g.label} <span className="font-normal text-slate-500">· {g.ideas.length}{g.note ? ` · ${g.note}` : ""}</span>
+                    {g.ideas[0]?.result_line && (
+                      <span className="ml-2 font-normal text-slate-400">best: {g.ideas[0].title} · {g.ideas[0].result_line}</span>
+                    )}
                   </summary>
-                  <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <ul className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                     {g.ideas.map((idea) => <IdeaCard key={`${g.key}-${idea.id}`} idea={idea} />)}
                   </ul>
                 </details>
@@ -299,7 +327,7 @@ export default function Ideas() {
           <summary className="cursor-pointer text-sm font-semibold uppercase tracking-wide text-slate-500">
             Removed under the current standard <span className="text-slate-600">· {removed.length} · kept on the record</span>
           </summary>
-          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {removed.map((idea) => <IdeaCard key={idea.id} idea={idea} showKind />)}
           </ul>
         </details>
