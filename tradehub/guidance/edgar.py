@@ -6,6 +6,7 @@ import os
 import time
 from collections.abc import Callable
 from datetime import date
+from html.parser import HTMLParser
 
 import httpx
 
@@ -24,7 +25,7 @@ def _check(resp) -> None:
     resp.raise_for_status()
 
 
-def http_get(url: str) -> dict:
+def _fetch(url: str):
     global _last
     wait = _last + _MIN_GAP - time.monotonic()
     if wait > 0:
@@ -32,7 +33,15 @@ def http_get(url: str) -> dict:
     _last = time.monotonic()
     resp = httpx.get(url, headers={"User-Agent": SEC_UA}, timeout=20)
     _check(resp)
-    return resp.json()
+    return resp
+
+
+def http_get(url: str) -> dict:
+    return _fetch(url).json()
+
+
+def get_text(url: str) -> str:
+    return _fetch(url).text
 
 
 def earnings_filings(cik: str, *, since: date, get: Callable[[str], dict] = http_get) -> list[dict]:
@@ -48,9 +57,47 @@ def earnings_filings(cik: str, *, since: date, get: Callable[[str], dict] = http
     return out
 
 
-def exhibit_url(cik: str, accession: str, *, get: Callable[[str], dict] = http_get) -> str | None:
-    base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}"
-    docs = get(f"{base}/index.json")["directory"]["item"]
-    ex = [d for d in docs if d["name"].lower().endswith(".htm") and d.get("type", "").upper().startswith("EX-99")]
-    ex.sort(key=lambda d: d["type"].upper() != "EX-99.1")  # stable: EX-99.1 first, else first EX-99.x
-    return f"{base}/{ex[0]['name']}" if ex else None
+class _DocTable(HTMLParser):
+    """Rows (type, href) of the 'Document Format Files' table on a filing index page."""
+
+    def __init__(self):
+        super().__init__()
+        self.rows: list[tuple[str, str]] = []
+        self._in = False
+        self._cells: list[str] = []
+        self._href = ""
+        self._td = False
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "table":
+            self._in = a.get("summary") == "Document Format Files"
+        elif self._in and tag == "tr":
+            self._cells, self._href = [], ""
+        elif self._in and tag == "td":
+            self._td = True
+            self._cells.append("")
+        elif self._in and tag == "a" and not self._href:
+            self._href = a.get("href") or ""
+
+    def handle_data(self, data):
+        if self._td:
+            self._cells[-1] += data
+
+    def handle_endtag(self, tag):
+        if tag == "td":
+            self._td = False
+        elif tag == "table":
+            self._in = False
+        elif tag == "tr" and self._in and len(self._cells) >= 4 and self._href:
+            self.rows.append((self._cells[3].strip().upper(), self._href))
+
+
+def exhibit_url(cik: str, accession: str, *, get: Callable[[str], str] = get_text) -> str | None:
+    """EX-99.1 from the filing index page (index.json only carries icon names, not exhibit types)."""
+    nodash = accession.replace("-", "")
+    p = _DocTable()
+    p.feed(get(f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{nodash}/{accession}-index.html"))
+    ex = [h for t, h in p.rows if t.startswith("EX-99") and h.lower().endswith(".htm")]
+    ex.sort(key=lambda h: next(t for t, x in p.rows if x == h) != "EX-99.1")
+    return f"https://www.sec.gov{ex[0]}" if ex else None

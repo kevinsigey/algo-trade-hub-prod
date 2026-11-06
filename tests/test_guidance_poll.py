@@ -12,7 +12,7 @@ from tradehub.scripts.guidance_poll import run
 
 FX = Path(__file__).parent / "fixtures" / "guidance"
 SUBS = json.loads((FX / "submissions.json").read_text())
-INDEX = json.loads((FX / "index.json").read_text())
+INDEX = (FX / "index.html").read_text()
 
 
 def test_universe():
@@ -32,8 +32,10 @@ def test_earnings_filings_skips_non_202_and_old():
 
 
 def test_exhibit_url_picks_ex991():
-    url = exhibit_url("0000320193", "0000320193-26-000099", get=lambda u: INDEX)
-    assert url == "https://www.sec.gov/Archives/edgar/data/320193/000032019326000099/a8-kex991_2026.htm"
+    seen = []
+    url = exhibit_url("0000320193", "0000320193-26-000024", get=lambda u: seen.append(u) or INDEX)
+    assert seen == ["https://www.sec.gov/Archives/edgar/data/320193/000032019326000024/0000320193-26-000024-index.html"]
+    assert url == "https://www.sec.gov/Archives/edgar/data/320193/000032019326000024/a8-kex991q4202609262026.htm"
 
 
 def test_refused_raises():
@@ -60,7 +62,7 @@ def test_run_adds_once():
     first = run(supa, now, filings=_fake_filings, exhibit=_exhibit)
     assert first["added"] == 1
     row = supa.db["guidance_filings"][0]
-    assert row["status"] == "new" and row["ticker"] == "AAPL" and row["doc_url"].endswith("a8-kex991_2026.htm")
+    assert row["status"] == "new" and row["ticker"] == "AAPL" and row["doc_url"].endswith("a8-kex991q4202609262026.htm")
     assert run(supa, now, filings=_fake_filings, exhibit=_exhibit)["added"] == 0
     assert len(supa.db["guidance_filings"]) == 1
 
