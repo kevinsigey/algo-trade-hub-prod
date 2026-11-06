@@ -334,7 +334,9 @@ def watch() -> dict[str, Any]:
             return {"state": "unavailable"}
 
     try:
-        # We have the lock, do the refresh
+        # Whoever held the lock may have just refreshed: serve that rather than fetch again.
+        if _cache["payload"] is not None and time.monotonic() - _cache["at"] < _cache["ttl"]:
+            return _cache["payload"]
         try:
             payload = build_watch(ctx=_live_ctx, funding_history=_live_funding, closes=_live_closes,
                                   dvol=_live_dvol, stablecoins=_live_stables,
