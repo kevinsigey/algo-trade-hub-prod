@@ -13,6 +13,24 @@ import type { JournalResponse, SeriesResponse } from "@/lib/journal";
 import { viewRows } from "@/lib/journalView";
 import { beatingCount, league } from "@/lib/league";
 
+const STORAGE_KEY = "atr:tracker-show-all";
+
+function readShowAll(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeShowAll(value: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, value ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * /journal: the Model Tracker (renamed from "Journal" in Kevin's 2026-11-01 redesign; the route
  * stays /journal so bookmarks keep working). Every predictor's locked-in, scored record, measured
@@ -45,6 +63,7 @@ export default function Journal() {
   const [tab, setTab] = useState<Tab>(() =>
     new URLSearchParams(window.location.search).get("view") === "backtests" ? "backtests" : "models",
   );
+  const [showAll, setShowAll] = useState(readShowAll);
 
   useEffect(() => {
     Promise.all([
@@ -68,13 +87,26 @@ export default function Journal() {
   }
   if (!data || !series) return <div className="p-8 text-muted-foreground">Loading journal…</div>;
 
-  const rows = viewRows(data.forecasters);
-  const table = league(rows);
-  const waiting = table.filter((r) => r.status === "waiting");
+  const allRows = viewRows(data.forecasters);
+  const fullCount = allRows.length;
+
+  // Filter only for Models and Journal tabs; Waiting, Over time, Weather, Sports, Backtests
+  // and header numbers use all rows.
+  const filteredRows = showAll
+    ? allRows
+    : allRows.filter((r) => !r.forecaster.startsWith("baseline_") && r.scored >= 50);
+
+  // Fallback: if filtering hides everything, show all scored rows (preserves old behavior for
+  // test fixtures and edge cases where no model has 50+ settled).
+  const displayRows = filteredRows.length > 0 ? filteredRows : allRows.filter((r) => r.scored > 0);
+
+  const table = league(displayRows);
+  const allTable = league(allRows);
+  const waiting = allTable.filter((r) => r.status === "waiting");
   // The server's numbers, never a sum over the rows (spec §3 step 4, §10: headline stats aggregate only
   // post-calibration forecasters, which `scoring.headline()` enforces).
   const h = data.headline;
-  const { beating, measured } = beatingCount(table);
+  const { beating, measured } = beatingCount(allTable);
 
   const handleTabKeyDown = (e: React.KeyboardEvent<HTMLElement>, tabs: Tab[]) => {
     const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
@@ -94,6 +126,8 @@ export default function Journal() {
     ["waiting", `Waiting (${waiting.length})`],
     ["backtests", "Backtests"],
   ];
+
+  const showFilterButton = tab === "models" || tab === "league";
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-4 md:p-8">
@@ -130,6 +164,21 @@ export default function Journal() {
           </button>
         ))}
       </div>
+
+      {showFilterButton && (
+        <button
+          type="button"
+          aria-pressed={showAll}
+          onClick={() => {
+            const next = !showAll;
+            setShowAll(next);
+            writeShowAll(next);
+          }}
+          className="mb-4 text-sm text-muted-foreground hover:text-foreground underline"
+        >
+          {showAll ? `Show the main models only` : `Show all ${fullCount} models (baselines and early ones)`}
+        </button>
+      )}
 
       <div className={tab === "models" ? "" : "hidden"}>
         <ModelCards rows={table} series={series?.series ?? []} />
