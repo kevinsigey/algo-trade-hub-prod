@@ -2861,6 +2861,21 @@ def get_crypto_desk():
     return desk()
 
 
+@app.get("/api/crypto/watch", tags=["Crypto"])
+def get_crypto_watch():
+    """The crypto watcher (Kevin, 2026-11-06): live BTC/ETH market-structure signals -- funding, perp
+    premium, realized and implied volatility, open interest, stablecoin supply, Bitcoin fees -- each with
+    a plain reading and an explainer, and a stress read from the signals that can speak. Free keyless
+    sources, server-cached 5 minutes (tradehub/crypto_watch.py). Public; never a 500."""
+    from tradehub import crypto_watch
+
+    try:
+        return crypto_watch.watch()
+    except Exception:  # noqa: BLE001 -- the page says unavailable rather than breaking
+        log.exception("api: crypto watch unavailable")
+        return {"state": "unavailable"}
+
+
 @app.get("/api/crypto/board", tags=["Crypto"])
 def get_crypto_board():
     """Tracked Kalshi crypto markets (phase-3 §5): the hourly ladder's

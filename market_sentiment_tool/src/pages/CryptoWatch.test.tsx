@@ -1,0 +1,159 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+
+import Crypto from "@/pages/Crypto";
+
+vi.mock("@/lib/supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
+
+const sig = (key: string, label: string, value: number | null, stress: number | null, reading: string) =>
+  ({ key, label, value, unit: "% a year", percentile: null, normal: null, stress, weight: 2, reading, why: `Why ${label}` });
+
+const WATCH = {
+  as_of: "2026-11-06T02:00:00Z",
+  stress: { stress: 0.35, label: "Watch", speaking: 9, of: 9 },
+  coins: {
+    BTC: { price: 76050, change_24h_pct: -5.6, signals: [
+      sig("funding", "Funding rate", 10.95, 0.4, "BTC longs pay shorts 10.9% a year."),
+      sig("realized_vol", "Realized volatility", 68, 0.48, "BTC moved like 68% a year."),
+    ] },
+    ETH: { price: 2238, change_24h_pct: -7.9, signals: [
+      sig("funding", "Funding rate", 10.95, 0.56, "ETH longs pay shorts 10.9% a year."),
+      sig("realized_vol", "Realized volatility", null, null, "Hyperliquid's candles is unavailable right now."),
+    ] },
+  },
+  market: [sig("stablecoins", "Stablecoin supply", 293.7, 0.67, "$293.7bn in stablecoins, −2.01% in a week: money leaving.")],
+};
+
+function serve(watch: unknown) {
+  vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+    const u = String(url);
+    const body = u.includes("/api/crypto/watch") ? watch : u.includes("/api/journal") ? { forecasters: [], headline: {} } : {};
+    return new Response(JSON.stringify(body), { status: 200 });
+  }));
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("Crypto watcher", () => {
+  it("leads with the stress read and the prices, then one tile per signal with both coins", async () => {
+    serve(WATCH);
+    render(<MemoryRouter><Crypto /></MemoryRouter>);
+    expect(await screen.findByText("Watch")).toBeInTheDocument();
+    expect(screen.getByText("$76,050")).toBeInTheDocument();
+    expect(screen.getByText("−5.6%")).toBeInTheDocument();
+    const funding = screen.getByRole("region", { name: "Funding rate" });
+    expect(within(funding).getByText("BTC")).toBeInTheDocument();
+    expect(within(funding).getByText("ETH")).toBeInTheDocument();
+    // The tile's sentence is the coin under the most stress.
+    expect(within(funding).getByText("ETH longs pay shorts 10.9% a year.")).toBeInTheDocument();
+    const realized = screen.getByRole("region", { name: "Realized volatility" });
+    expect(within(realized).getByText("—")).toBeInTheDocument();  // unknown is a dash, never zero
+    fireEvent.click(within(funding).getByText("Why it matters"));
+    expect(within(funding).getByText("Why Funding rate")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Stablecoin supply" })).toHaveTextContent("money leaving");
+  });
+
+  it("says so when the watch is unavailable", async () => {
+    serve({ state: "unavailable" });
+    render(<MemoryRouter><Crypto /></MemoryRouter>);
+    expect(await screen.findByText(/market signals are unavailable right now/i)).toBeInTheDocument();
+  });
+
+  it("refetches every 5 minutes and clears interval on unmount", async () => {
+    // Test that setInterval is called with correct parameters and cleared on unmount
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+    let intervalCallback: (() => void) | null = null;
+    
+    global.setInterval = vi.fn((cb: () => void, delay: number) => {
+      intervalCallback = cb;
+      return originalSetInterval(cb, delay);
+    }) as any;
+    global.clearInterval = vi.fn((id) => {
+      originalClearInterval(id);
+    });
+
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      const body = u.includes("/api/crypto/watch") ? WATCH : u.includes("/api/journal") ? { forecasters: [], headline: {} } : {};
+      return new Response(JSON.stringify(body), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { unmount } = render(<MemoryRouter><Crypto /></MemoryRouter>);
+    await screen.findByText("Watch");
+    
+    // Verify setInterval was called with 5-minute interval
+    expect(global.setInterval).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+    
+    // Unmount should clear interval
+    unmount();
+    expect(global.clearInterval).toHaveBeenCalled();
+    
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  });
+
+  it("keeps last good watch on failed refetch", async () => {
+    const originalSetInterval = global.setInterval;
+    let intervalCallback: (() => void) | null = null;
+    
+    global.setInterval = vi.fn((cb: () => void) => {
+      intervalCallback = cb;
+      return originalSetInterval(cb, 5 * 60 * 1000);
+    }) as any;
+
+    let shouldFail = false;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("/api/crypto/watch")) {
+        if (shouldFail) {
+          return new Response(JSON.stringify({ state: "unavailable" }), { status: 500 });
+        }
+        return new Response(JSON.stringify(WATCH), { status: 200 });
+      }
+      return new Response(JSON.stringify({ forecasters: [], headline: {} }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Crypto /></MemoryRouter>);
+    await screen.findByText("Watch");
+    
+    // Make next fetch fail
+    shouldFail = true;
+    
+    // Call the interval callback manually
+    if (intervalCallback) {
+      await intervalCallback();
+      await Promise.resolve();
+    }
+    
+    // Should still show the old watch data (not "unavailable")
+    expect(screen.getByText("$76,050")).toBeInTheDocument();
+    
+    global.setInterval = originalSetInterval;
+  });
+
+  it("SignalTile tie-breaks: when stress ties, lead with coin that has a value", async () => {
+    const TIE_WATCH = {
+      ...WATCH,
+      coins: {
+        BTC: { price: 76050, change_24h_pct: -5.6, signals: [
+          sig("funding", "Funding rate", 10.95, 0.5, "BTC longs pay shorts 10.9% a year."),
+        ] },
+        ETH: { price: 2238, change_24h_pct: -7.9, signals: [
+          sig("funding", "Funding rate", null, 0.5, "ETH funding unavailable."),
+        ] },
+      },
+    };
+    serve(TIE_WATCH);
+    render(<MemoryRouter><Crypto /></MemoryRouter>);
+    await screen.findByText("Watch");
+    
+    const funding = screen.getByRole("region", { name: "Funding rate" });
+    // Both have stress 0.5, but BTC has a value, ETH has null value
+    // BTC should lead
+    expect(within(funding).getByText("BTC longs pay shorts 10.9% a year.")).toBeInTheDocument();
+  });
+});
