@@ -265,7 +265,7 @@ def test_extended_hours_on_day_limit_adds_flag(keys, monkeypatch):
 def test_extended_hours_on_gtc_limit_adds_flag(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     s = Session(Resp(200, {"id": "o-eh2"}))
-    paper_orders.submit("GLD", 1, "buy", "c", order_type="limit", time_in_force="gtc",
+    paper_orders.submit("GLD", 1, "sell", "idea-1-stop-x", order_type="limit", time_in_force="gtc",
                         limit_price=100.0, extended_hours=True, session=s)
     body = s.calls[0]["json"]
     assert body["extended_hours"] is True
@@ -357,3 +357,10 @@ def test_can_short_true_only_when_shortable_and_easy_to_borrow(keys, monkeypatch
         def get(self, url, headers=None, timeout=None):
             return Resp(404, {})
     assert paper_orders.can_short("GLD", session=S4()) is False
+
+
+def test_extended_hours_gtc_still_needs_a_sanctioned_tag(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    with pytest.raises(ValueError, match="sanctioned protective orders"):
+        paper_orders.submit("GLD", 1, "buy", "c", order_type="limit", time_in_force="gtc",
+                            limit_price=100.0, extended_hours=True, session=Session(Resp(200)))

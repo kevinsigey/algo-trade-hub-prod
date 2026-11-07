@@ -62,11 +62,11 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
            book: str | None = None, session=requests) -> dict[str, Any]:
     if order_type not in ORDER_TYPES or time_in_force not in TIMES_IN_FORCE or side not in ("buy", "sell"):
         raise ValueError(f"unsupported order: {order_type}/{time_in_force}/{side}")
-    # extended-hours validation first: allowed on limit day/gtc; these are NOT protective
+    # extended hours: Alpaca takes it on day or gtc limits only (a gtc one still needs a sanctioned tag below)
     if extended_hours:
         if order_type != "limit" or time_in_force not in ("day", "gtc"):
             raise ValueError("extended-hours orders must be day or gtc limit orders")
-    protective = order_type in ("stop", "trailing_stop") or (time_in_force == "gtc" and not extended_hours) or order_class is not None
+    protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
     sanctioned = STOP_TAG.match(client_order_id) or MACHINE_STOP_TAG.match(client_order_id)
     if protective and not (sanctioned and time_in_force == "gtc"
                            and order_type in ("stop", "trailing_stop", "limit")):
