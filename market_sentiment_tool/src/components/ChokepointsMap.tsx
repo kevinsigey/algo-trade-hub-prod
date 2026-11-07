@@ -264,8 +264,7 @@ export default function ChokepointsMap() {
         <p className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
           {view.flow && view.flow.tanker_year_ago_delta_pct != null && view.flow.tanker_year_ago_delta_pct <= -50
             ? `The free live feed sees ${coverage.seen} ships and none in the strait. Satellite counts say traffic really has collapsed: ${view.flow.n_tanker_7d ?? "—"} tankers a day against ${view.flow.tanker_year_ago ?? "—"} a year ago.`
-            : `Ship coverage is thin: ${coverage.seen} ships seen, ${coverage.inGate} in the transit gate, ${coverage.typed} with a
-          known type. Zero tankers here means the free feed can&apos;t see them, not that traffic stopped.`}
+            : `Ship coverage is thin: ${coverage.seen} ships seen, ${coverage.inGate} in the transit gate, ${coverage.typed} with a known type. Zero tankers here means the free feed can't see them, not that traffic stopped.`}
         </p>
       )}
 
