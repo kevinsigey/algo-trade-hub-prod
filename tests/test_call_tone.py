@@ -64,11 +64,15 @@ def test_count_words():
 def test_management_text():
     # List of dicts with speaker
     transcript = [
+        {"speaker": "Executives", "text": "Jane Roe - CEO John Doe - CFO"},
         {"speaker": "Operator", "text": "Welcome to the call"},
-        {"speaker": "CEO", "text": "We had a great quarter"},
-        {"speaker": "Analyst", "text": "What about margins?"},
-        {"speaker": "CFO", "text": "Margins improved"},
-    ]
+        {"speaker": "Jane Roe", "text": "We had a great quarter"},
+        {"speaker": "Operator", "text": "First question"},
+        {"speaker": "Sam Lee - Big Bank", "text": "What about margins?"},
+        {"speaker": "John Doe", "text": "Margins improved"},
+    ]  # the dataset's real shape: header turns, prepared remarks, the operator opens Q&A
+    # John Doe speaks in the prepared remarks too, so his Q&A answer counts as management
+    transcript.insert(3, {"speaker": "John Doe", "text": "Costs fell"})
     mgmt = management_text(transcript)
     assert "great quarter" in mgmt
     assert "Margins improved" in mgmt

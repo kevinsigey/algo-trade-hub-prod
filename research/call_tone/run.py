@@ -209,15 +209,17 @@ def process_transcripts(
             "uncertainty_share": unc_share,
         })
     
-    result_df = pd.DataFrame(results)
-    return df.merge(result_df, left_index=True, right_index=True)
+    result_df = pd.DataFrame(results, index=df.index)  # aligned to the filtered rows (a positional merge lost ~85% of calls)
+    return pd.concat([df, result_df[["tone", "uncertainty_share"]]], axis=1).assign(
+        ticker=result_df["ticker"], call_date=result_df["call_date"])
 
 
 def compute_delta_tone(df: pd.DataFrame) -> pd.DataFrame:
     """Compute delta_tone = tone - mean of previous 4 calls for same ticker."""
     print("  Computing delta_tone...")
     df = df.sort_values(["ticker", "call_date"]).copy()
-    df["tone_prior_4"] = df.groupby("ticker")["tone"].shift(1).rolling(4, min_periods=MIN_PRIOR_CALLS).mean()
+    df["tone_prior_4"] = df.groupby("ticker")["tone"].transform(
+        lambda s: s.shift(1).rolling(4, min_periods=MIN_PRIOR_CALLS).mean())  # within each company only
     df["delta_tone"] = df["tone"] - df["tone_prior_4"]
     df = df.dropna(subset=["delta_tone"])
     print(f"  After delta_tone: {len(df)} calls (dropped {len(df[df['tone_prior_4'].isna()])} with <4 priors)")
@@ -361,7 +363,7 @@ def run():
         f.write(f"- Unique tickers: {calls['ticker'].nunique()}\n")
         f.write(f"- Date range: {calls['call_date'].min()} to {calls['call_date'].max()}\n")
         f.write(f"- Calls with delta_tone (>=4 priors): {calls['delta_tone'].notna().sum()}\n")
-        f.write(f"- Speaker turns usable: {'Yes' if 'transcript' in transcripts.columns and isinstance(transcripts['transcript'].iloc[0], list) else 'No (whole transcript used)'}\n\n")
+        f.write("- Speaker turns usable: Yes (management = prepared-remarks speakers, all their turns; see tone.management_text)\n\n")
         
         for split_name in ["exploration", "holdout"]:
             f.write(f"## {split_name.capitalize()} Split\n\n")

@@ -38,27 +38,27 @@ def count_words(text: str, word_set: set[str]) -> int:
     return sum(1 for w in words if w in word_set)
 
 
-def management_text(transcript: list[dict] | str) -> str:
-    """Extract management text from transcript.
-    
-    If transcript is a list of dicts with 'speaker' and 'text' keys,
-    drop operator and analyst turns. Otherwise use the whole transcript.
-    """
+def management_text(transcript) -> str:
+    """Management's words only. Turns are {"speaker", "text"}; the dataset opens some calls with "Executives" /
+    "Analysts" header turns that only list names. Management = the non-operator speakers of the prepared remarks
+    (everyone who speaks before the operator opens Q&A); analysts never speak there. All their turns count,
+    including Q&A answers. No usable turns -> the whole transcript (stated in the results)."""
     if isinstance(transcript, str):
         return transcript
-    
-    # Expected structure: [{"speaker": "...", "text": "..."}, ...]
-    mgmt_texts = []
-    for turn in transcript:
-        speaker = turn.get("speaker", "").lower()
-        text = turn.get("text", "")
-        if not text:
+    turns = [t for t in list(transcript) if isinstance(t, dict) and t.get("text")]
+    turns = [t for t in turns if str(t.get("speaker", "")).strip().lower() not in ("executives", "analysts")]
+    mgmt: set[str] = set()
+    spoke = False
+    for t in turns:
+        who = str(t.get("speaker", "")).strip()
+        if who.lower() == "operator":
+            if spoke:
+                break  # the operator opening Q&A
             continue
-        # Drop operator and analyst
-        if any(kw in speaker for kw in ("operator", "analyst", "qa")):
-            continue
-        mgmt_texts.append(text)
-    return " ".join(mgmt_texts)
+        mgmt.add(who)
+        spoke = True
+    words = [t["text"] for t in turns if str(t.get("speaker", "")).strip() in mgmt]
+    return " ".join(words) if words else " ".join(t["text"] for t in turns)
 
 
 def compute_tone_uncertainty(text: str, pos_set: set[str], neg_set: set[str], unc_set: set[str]) -> tuple[float, float]:

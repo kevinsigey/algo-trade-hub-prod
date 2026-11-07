@@ -1,51 +1,51 @@
 # Call Tone Backtest Results
 
-Generated: 2026-11-07T14:18:23.714140
+Generated: 2026-11-07T14:26:20.539022
 
 ## Data Summary
 
-- Total calls processed: 567
-- Unique tickers: 43
-- Date range: 2016-01-21 00:00:00 to 2025-05-15 00:00:00
-- Calls with delta_tone (>=4 priors): 567
-- Speaker turns usable: No (whole transcript used)
+- Total calls processed: 3445
+- Unique tickers: 97
+- Date range: 2015-12-22 00:00:00 to 2025-05-15 00:00:00
+- Calls with delta_tone (>=4 priors): 3445
+- Speaker turns usable: Yes (management = prepared-remarks speakers, all their turns; see tone.management_text)
 
 ## Exploration Split
 
-- Calls: 294
-- Date range: 2016-01-21 00:00:00 to 2021-12-20 00:00:00
-- Unique tickers: 39
+- Calls: 2119
+- Date range: 2015-12-22 00:00:00 to 2021-12-20 00:00:00
+- Unique tickers: 95
 
 | Signal | Horizon | Mean IC | t-stat | Tercile Spread | Quarters |
 |--------|---------|---------|--------|----------------|----------|
-| delta_tone_ret_60d |  | 0.0309 | 0.23 | 0.0178 | 5 |
-| delta_tone_ret_20d |  | 0.1553 | 1.26 | 0.0174 | 5 |
-| tone_level_ret_60d |  | 0.0120 | 0.12 | 0.0094 | 5 |
-| tone_level_ret_20d |  | -0.0363 | -0.41 | 0.0034 | 5 |
-| delta_uncertainty_ret_60d |  | 0.0000 | 0.00 | 0.0000 | 0 |
-| delta_uncertainty_ret_20d |  | 0.0000 | 0.00 | 0.0000 | 0 |
+| delta_tone_ret_60d |  | 0.0221 | 0.83 | -0.0011 | 24 |
+| delta_tone_ret_20d |  | 0.0077 | 0.35 | -0.0011 | 24 |
+| tone_level_ret_60d |  | 0.0349 | 1.00 | 0.0011 | 24 |
+| tone_level_ret_20d |  | -0.0369 | -1.27 | -0.0100 | 24 |
+| delta_uncertainty_ret_60d |  | -0.0070 | -0.25 | 0.0023 | 20 |
+| delta_uncertainty_ret_20d |  | -0.0138 | -0.58 | -0.0019 | 20 |
 
 ## Holdout Split
 
-- Calls: 273
+- Calls: 1326
 - Date range: 2022-01-14 00:00:00 to 2025-05-15 00:00:00
-- Unique tickers: 27
+- Unique tickers: 97
 
 | Signal | Horizon | Mean IC | t-stat | Tercile Spread | Quarters |
 |--------|---------|---------|--------|----------------|----------|
-| delta_tone_ret_60d |  | -0.0453 | -0.52 | -0.0013 | 13 |
-| delta_tone_ret_20d |  | -0.0670 | -0.97 | -0.0138 | 13 |
-| tone_level_ret_60d |  | -0.1919 | -2.21 | -0.0476 | 13 |
-| tone_level_ret_20d |  | -0.2084 | -3.41 | -0.0321 | 13 |
-| delta_uncertainty_ret_60d |  | 0.0698 | 0.66 | -0.0273 | 7 |
-| delta_uncertainty_ret_20d |  | -0.1796 | -2.63 | -0.0306 | 7 |
+| delta_tone_ret_60d |  | 0.0048 | 0.14 | -0.0021 | 14 |
+| delta_tone_ret_20d |  | 0.0172 | 0.55 | -0.0010 | 14 |
+| tone_level_ret_60d |  | -0.0126 | -0.43 | -0.0086 | 14 |
+| tone_level_ret_20d |  | -0.0192 | -0.76 | -0.0040 | 14 |
+| delta_uncertainty_ret_60d |  | -0.0379 | -1.16 | -0.0113 | 10 |
+| delta_uncertainty_ret_20d |  | -0.0264 | -0.78 | -0.0052 | 10 |
 
 ## Preregistered Rule (Holdout, 60d, delta_tone)
 
-- Mean IC: -0.0453
-- t-statistic: -0.52
-- Tercile spread (after 20 bps): -0.0013
+- Mean IC: 0.0048
+- t-statistic: 0.14
+- Tercile spread (after 20 bps): -0.0021
 
 **FAIL**
 
-*All three conditions: Mean IC > 0 (False), t >= 2.0 (False), Spread > 0 (False)*
+*All three conditions: Mean IC > 0 (True), t >= 2.0 (False), Spread > 0 (False)*
