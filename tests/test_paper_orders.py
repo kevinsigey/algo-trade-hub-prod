@@ -214,3 +214,146 @@ def test_submit_mleg_rejection_carries_alpacas_reason(keys, monkeypatch):
     s = Session(Resp(403, {"message": "account not eligible to trade uncovered option contracts"}))
     with pytest.raises(paper_orders.OrderRejected, match="uncovered"):
         paper_orders.submit_mleg(MLEG_LEGS, 1, 2.0, "x", session=s)
+
+
+# ── stop-limit orders ──
+
+
+def test_stop_limit_needs_both_prices(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200))
+    with pytest.raises(ValueError, match="a stop-limit order needs a stop price and a limit price"):
+        paper_orders.submit("GLD", 1, "buy", "c", order_type="stop_limit", time_in_force="day", stop_price=100.0, session=s)
+    with pytest.raises(ValueError, match="a stop-limit order needs a stop price and a limit price"):
+        paper_orders.submit("GLD", 1, "buy", "c", order_type="stop_limit", time_in_force="day", limit_price=101.0, session=s)
+    s = Session(Resp(200, {"id": "o-sl"}))
+    paper_orders.submit("GLD", 1, "buy", "c", order_type="stop_limit", time_in_force="day", stop_price=100.0, limit_price=101.0, session=s)
+    body = s.calls[0]["json"]
+    assert body["type"] == "stop_limit"
+    assert body["stop_price"] == "100.00"
+    assert body["limit_price"] == "101.00"
+
+
+def test_stop_limit_day_allowed_with_plain_tag(keys, monkeypatch):
+    """stop_limit with day tif is not protective; plain idea-N-auto tag is fine."""
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-sl2"}))
+    paper_orders.submit("GLD", 1, "buy", "idea-5-auto-20261103-GLD-open", order_type="stop_limit",
+                        time_in_force="day", stop_price=100.0, limit_price=101.0, session=s)
+    assert s.calls[0]["json"]["type"] == "stop_limit"
+    # gtc stop_limit follows protective rule
+    s2 = Session(Resp(200))
+    with pytest.raises(ValueError):
+        paper_orders.submit("GLD", 1, "buy", "idea-5-auto-20261103-GLD-open", order_type="stop_limit",
+                            time_in_force="gtc", stop_price=100.0, limit_price=101.0, session=s2)
+
+
+# ── extended-hours ──
+
+
+def test_extended_hours_on_day_limit_adds_flag(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-eh"}))
+    paper_orders.submit("GLD", 1, "buy", "c", order_type="limit", time_in_force="day",
+                        limit_price=100.0, extended_hours=True, session=s)
+    body = s.calls[0]["json"]
+    assert body["extended_hours"] is True
+    assert body["type"] == "limit"
+    assert body["time_in_force"] == "day"
+
+
+def test_extended_hours_on_gtc_limit_adds_flag(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-eh2"}))
+    paper_orders.submit("GLD", 1, "buy", "c", order_type="limit", time_in_force="gtc",
+                        limit_price=100.0, extended_hours=True, session=s)
+    body = s.calls[0]["json"]
+    assert body["extended_hours"] is True
+    assert body["time_in_force"] == "gtc"
+
+
+def test_extended_hours_on_market_raises(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200))
+    with pytest.raises(ValueError, match="extended-hours orders must be day or gtc limit orders"):
+        paper_orders.submit("GLD", 1, "buy", "c", order_type="market", time_in_force="day",
+                            extended_hours=True, session=s)
+
+
+def test_extended_hours_on_stop_raises(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200))
+    with pytest.raises(ValueError, match="extended-hours orders must be day or gtc limit orders"):
+        paper_orders.submit("GLD", 1, "buy", "c", order_type="stop", time_in_force="gtc",
+                            stop_price=100.0, extended_hours=True, session=s)
+
+
+def test_normal_market_order_has_no_extended_hours_key(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-normal"}))
+    paper_orders.submit("GLD", 1, "buy", "c", order_type="market", time_in_force="opg", session=s)
+    body = s.calls[0]["json"]
+    assert "extended_hours" not in body
+
+
+# ── asset_flags / can_short ──
+
+
+class AssetSession:
+    def __init__(self, status, body=None):
+        self.resp = Resp(status, body)
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers})
+        return self.resp
+
+
+def test_asset_flags_maps_json(keys, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    from tradehub.portfolio.alpaca_paper import asset_flags
+    s = AssetSession(200, {"tradable": True, "shortable": True, "easy_to_borrow": True, "fractionable": False})
+    flags = asset_flags("GLD", session=s)
+    assert flags == {"tradable": True, "shortable": True, "easy_to_borrow": True, "fractionable": False}
+
+
+def test_asset_flags_404_returns_false(keys, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    from tradehub.portfolio.alpaca_paper import asset_flags
+    s = AssetSession(404, {})
+    flags = asset_flags("XYZ", session=s)
+    assert flags == {"tradable": False, "shortable": False, "easy_to_borrow": False, "fractionable": False}
+
+
+def test_can_short_true_only_when_shortable_and_easy_to_borrow(keys, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    from tradehub.portfolio.alpaca_paper import asset_flags
+    from tradehub.portfolio import paper_orders
+
+    # Both true
+    class S1:
+        def get(self, url, headers=None, timeout=None):
+            return Resp(200, {"shortable": True, "easy_to_borrow": True})
+    assert paper_orders.can_short("GLD", session=S1()) is True
+
+    # shortable false
+    class S2:
+        def get(self, url, headers=None, timeout=None):
+            return Resp(200, {"shortable": False, "easy_to_borrow": True})
+    assert paper_orders.can_short("GLD", session=S2()) is False
+
+    # easy_to_borrow false
+    class S3:
+        def get(self, url, headers=None, timeout=None):
+            return Resp(200, {"shortable": True, "easy_to_borrow": False})
+    assert paper_orders.can_short("GLD", session=S3()) is False
+
+    # 404
+    class S4:
+        def get(self, url, headers=None, timeout=None):
+            return Resp(404, {})
+    assert paper_orders.can_short("GLD", session=S4()) is False
