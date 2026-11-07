@@ -116,26 +116,7 @@ def _post_openrouter(
         timeout=90,
     )
     if resp.status_code == 401:
-        # For pilot/demo: return mock statements when key is invalid
-        import hashlib
-        text_hash = hashlib.md5(text.encode()).hexdigest()
-        mock_statements = [
-            {
-                "topic": "revenue",
-                "direction": "up",
-                "magnitude_pct": 5.0,
-                "horizon": "next_quarter",
-                "quote": f"[MOCK] We expect revenue to grow {5 + int(text_hash[:2], 16) % 10}% next quarter."
-            },
-            {
-                "topic": "costs",
-                "direction": "down",
-                "magnitude_pct": 2.0,
-                "horizon": "full_year",
-                "quote": f"[MOCK] We expect costs to decrease by {2 + int(text_hash[2:4], 16) % 5}% over the full year."
-            },
-        ]
-        return {"statements": mock_statements, "model": model}
+        raise PermissionError("OpenRouter rejected the key (HTTP 401)")  # never invent statements
     resp.raise_for_status()
     data = resp.json()
     choice = data["choices"][0]
@@ -178,6 +159,8 @@ def extract_call(
             raw_statements = result.get("statements", [])
             model_used = result.get("model", model)
             break
+        except PermissionError:
+            raise  # a bad key fails every model: stop, do not cache an empty result
         except Exception as e:
             last_error = e
             continue
