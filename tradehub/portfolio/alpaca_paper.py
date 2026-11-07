@@ -50,3 +50,23 @@ def latest_price(symbol: str, *, session=requests, book: str | None = None) -> f
 
 def latest_spy_price(*, session=requests, book: str | None = None) -> float:
     return latest_price("SPY", session=session, book=book)
+
+
+def asset_flags(symbol: str, *, book: str | None = None, session=requests) -> dict:
+    """Return tradable/shortable/easy_to_borrow/fractionable flags for a symbol."""
+    url = PAPER_BASE + f"/v2/assets/{symbol}"
+    try:
+        response = session.get(url, headers=_headers(book), timeout=10)
+        if response.status_code == 401:
+            raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
+        if response.status_code >= 400:
+            return {"tradable": False, "shortable": False, "easy_to_borrow": False, "fractionable": False}
+        data = response.json() or {}
+        return {
+            "tradable": bool(data.get("tradable", False)),
+            "shortable": bool(data.get("shortable", False)),
+            "easy_to_borrow": bool(data.get("easy_to_borrow", False)),
+            "fractionable": bool(data.get("fractionable", False)),
+        }
+    except requests.RequestException:
+        return {"tradable": False, "shortable": False, "easy_to_borrow": False, "fractionable": False}

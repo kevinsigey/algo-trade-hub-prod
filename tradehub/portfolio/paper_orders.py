@@ -21,7 +21,7 @@ import requests
 
 from tradehub.portfolio.alpaca_paper import PAPER_BASE, AccountNotConnected, _headers
 
-ORDER_TYPES = ("market", "limit", "stop", "trailing_stop")
+ORDER_TYPES = ("market", "limit", "stop", "trailing_stop", "stop_limit")
 TIMES_IN_FORCE = ("opg", "cls", "day", "gtc")
 STOP_TAG = re.compile(r"^idea-\d+-stop-")
 MACHINE_STOP_TAG = re.compile(r"^ext-\d+-stop-")
@@ -58,9 +58,14 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
            order_type: str = "market", time_in_force: str = "opg", limit_price: float | None = None,
            stop_price: float | None = None, trail_percent: float | None = None,
            order_class: str | None = None, take_profit_price: float | None = None,
+           extended_hours: bool = False,
            book: str | None = None, session=requests) -> dict[str, Any]:
     if order_type not in ORDER_TYPES or time_in_force not in TIMES_IN_FORCE or side not in ("buy", "sell"):
         raise ValueError(f"unsupported order: {order_type}/{time_in_force}/{side}")
+    # extended hours: Alpaca takes it on day or gtc limits only (a gtc one still needs a sanctioned tag below)
+    if extended_hours:
+        if order_type != "limit" or time_in_force not in ("day", "gtc"):
+            raise ValueError("extended-hours orders must be day or gtc limit orders")
     protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
     sanctioned = STOP_TAG.match(client_order_id) or MACHINE_STOP_TAG.match(client_order_id)
     if protective and not (sanctioned and time_in_force == "gtc"
@@ -77,6 +82,8 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         raise ValueError("a stop order needs a stop price")
     if order_type == "trailing_stop" and not trail_percent:
         raise ValueError("a trailing stop needs a trail percent")
+    if order_type == "stop_limit" and (stop_price is None or limit_price is None):
+        raise ValueError("a stop-limit order needs a stop price and a limit price")
     if int(qty) != qty or qty < 1:
         raise ValueError(f"qty must be a whole number of shares, got {qty}")
     if not orders_enabled(book):
@@ -90,8 +97,13 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         body["limit_price"] = _price(limit_price)
     if order_type == "stop":
         body["stop_price"] = _price(stop_price)
+    if order_type == "stop_limit":
+        body["stop_price"] = _price(stop_price)
+        body["limit_price"] = _price(limit_price)
     if order_type == "trailing_stop":
         body["trail_percent"] = f"{trail_percent:g}"
+    if extended_hours:
+        body["extended_hours"] = True
     return _post_order(body, client_order_id, book, session)
 
 
@@ -176,3 +188,10 @@ def cancel(order_id: str, client_order_id: str, *, book: str | None = None, sess
     if not orders_enabled(book):
         raise OrdersDisabled("the book's order switch is off")
     _delete_order(order_id, book=book, session=session)
+
+
+def can_short(symbol: str, *, book: str | None = None, session=requests) -> bool:
+    """Return True if the asset is shortable and easy to borrow."""
+    from tradehub.portfolio.alpaca_paper import asset_flags
+    flags = asset_flags(symbol, book=book, session=session)
+    return flags.get("shortable", False) and flags.get("easy_to_borrow", False)
