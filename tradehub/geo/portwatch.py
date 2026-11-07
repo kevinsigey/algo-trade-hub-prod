@@ -193,6 +193,19 @@ def flow_summary(rows: list[dict], *, today: date) -> dict | None:
     tanker_7d = mean7("n_tanker")
     delta = (round((tanker_7d / baseline - 1) * 100, 1)
              if baseline not in (None, 0) and tanker_7d is not None else None)
+
+    # Year-ago baseline: mean of n_tanker over [as_of - 365 - 29, as_of - 365] inclusive
+    year_ago_start = (as_of - timedelta(days=365 + 29)).isoformat()
+    year_ago_end = (as_of - timedelta(days=365)).isoformat()
+    year_ago_rows = [r for r in clean if year_ago_start <= r["date"] <= year_ago_end]
+    year_ago_vals = [float(r["n_tanker"]) for r in year_ago_rows if r.get("n_tanker") is not None]
+    tanker_year_ago = round(sum(year_ago_vals) / len(year_ago_vals), 1) if len(year_ago_vals) >= 7 else None
+    tanker_year_ago_delta_pct = (
+        round((tanker_7d / tanker_year_ago - 1) * 100, 1)
+        if tanker_year_ago not in (None, 0) and tanker_7d is not None
+        else None
+    )
+
     return {"source": "IMF PortWatch", "as_of": latest["date"],
             "lag_days": (today - as_of).days,
             "n_tanker_latest": latest.get("n_tanker"), "n_total_latest": latest.get("n_total"),
@@ -201,6 +214,8 @@ def flow_summary(rows: list[dict], *, today: date) -> dict | None:
             "capacity_tanker_7d": mean7("capacity_tanker"),
             "tanker_baseline_30d": baseline, "tanker_delta_pct": delta,
             "baseline_n": len(prior_vals),
+            "tanker_year_ago": tanker_year_ago,
+            "tanker_year_ago_delta_pct": tanker_year_ago_delta_pct,
             "recent": [{"date": r["date"], "n_tanker": r.get("n_tanker"),
                         "n_total": r.get("n_total")} for r in clean[-14:]]}
 

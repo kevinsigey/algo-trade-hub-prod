@@ -33,6 +33,7 @@ interface GeoFlow {
   capacity_tanker_latest: number | null;
   n_tanker_7d: number | null; n_total_7d: number | null; capacity_tanker_7d: number | null;
   tanker_baseline_30d: number | null; tanker_delta_pct: number | null; baseline_n: number;
+  tanker_year_ago: number | null; tanker_year_ago_delta_pct: number | null;
   recent: { date: string; n_tanker: number | null; n_total: number | null }[];
 }
 
@@ -261,8 +262,10 @@ export default function ChokepointsMap() {
 
       {coverage.gap && (
         <p className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
-          Ship coverage is thin: {coverage.seen} ships seen, {coverage.inGate} in the transit gate, {coverage.typed} with a
-          known type. Zero tankers here means the free feed can&apos;t see them, not that traffic stopped.
+          {view.flow && view.flow.tanker_year_ago_delta_pct != null && view.flow.tanker_year_ago_delta_pct <= -50
+            ? `The free live feed sees ${coverage.seen} ships and none in the strait. Satellite counts say traffic really has collapsed: ${view.flow.n_tanker_7d ?? "—"} tankers a day against ${view.flow.tanker_year_ago ?? "—"} a year ago.`
+            : `Ship coverage is thin: ${coverage.seen} ships seen, ${coverage.inGate} in the transit gate, ${coverage.typed} with a
+          known type. Zero tankers here means the free feed can&apos;t see them, not that traffic stopped.`}
         </p>
       )}
 
@@ -277,9 +280,17 @@ export default function ChokepointsMap() {
               {view.flow.tanker_baseline_30d != null && (
                 <span className="text-slate-400"> vs {view.flow.tanker_baseline_30d} baseline</span>
               )}
+              {view.flow.tanker_year_ago != null && (
+                <span className="text-slate-400"> · {view.flow.tanker_year_ago}/day a year ago</span>
+              )}
               {view.flow.tanker_delta_pct != null && (
                 <span className={view.flow.tanker_delta_pct >= 0 ? "text-emerald-300" : "text-amber-300"}>
                   {" "}{view.flow.tanker_delta_pct >= 0 ? "▲" : "▼"} {Math.abs(view.flow.tanker_delta_pct)}%
+                </span>
+              )}
+              {view.flow.tanker_year_ago_delta_pct != null && (
+                <span className={view.flow.tanker_year_ago_delta_pct >= 0 ? "text-emerald-300" : "text-amber-300"}>
+                  {" "}{view.flow.tanker_year_ago_delta_pct >= 0 ? "▲" : "▼"} {Math.abs(view.flow.tanker_year_ago_delta_pct)}%
                 </span>
               )}
             </span>
@@ -322,7 +333,12 @@ export default function ChokepointsMap() {
                       {METRIC_LABEL[m.metric] ?? m.metric}
                     </div>
                     {blind ? (
-                      <div className="mt-1 text-xl font-semibold text-amber-200">No coverage</div>
+                      <>
+                        <div className="mt-1 text-xl font-semibold text-slate-300">Not visible live</div>
+                        {view.flow && (
+                          <div className="mt-1 text-[12px] text-slate-400">See the satellite count below</div>
+                        )}
+                      </>
                     ) : (
                       <>
                         <div className="mt-1 flex items-baseline gap-2">

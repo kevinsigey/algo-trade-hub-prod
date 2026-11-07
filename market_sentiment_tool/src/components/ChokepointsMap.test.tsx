@@ -83,7 +83,7 @@ describe("ChokepointsMap", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("explains each metric and says no coverage instead of a false 0", async () => {
+  it("explains each metric and says not visible live instead of a false 0", async () => {
     const blind = { ...VIEW, vessels: [
       { mmsi: "1", name: null, ship_type: null, tanker: false, lat: 25, lon: 55, sog: 0, in_gate: false, last_seen: "2026-11-03T10:00:00Z" },
     ], metrics: [
@@ -93,10 +93,38 @@ describe("ChokepointsMap", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(blind), { status: 200 })));
     render(<ChokepointsMap />);
     expect(await screen.findByText("Barrels moving")).toBeInTheDocument();
-    expect(screen.getByText("No coverage")).toBeInTheDocument();
-    expect(screen.getByText(/Zero tankers here means the free feed can.t see them/)).toBeInTheDocument();
+    expect(screen.getByText("Not visible live")).toBeInTheDocument();
+    expect(screen.queryByText("See the satellite count below")).not.toBeInTheDocument();
     expect(screen.getByText(/Above normal\./)).toBeInTheDocument();
     expect(screen.getByText(/Oil's range widens/)).toBeInTheDocument();
     expect(screen.getByText("In the oil model's test")).toBeInTheDocument();
+  });
+
+  it("shows collapsed traffic banner when year-ago delta <= -50", async () => {
+    const collapsed = {
+      ...VIEW,
+      vessels: [
+        { mmsi: "1", name: null, ship_type: null, tanker: false, lat: 25, lon: 55, sog: 0, in_gate: false, last_seen: "2026-11-03T10:00:00Z" },
+      ],
+      flow: {
+        source: "IMF PortWatch", name: "Strait of Hormuz", as_of: "2026-10-26", lag_days: 8,
+        n_tanker_latest: 1, n_total_latest: 5, capacity_tanker_latest: 900000,
+        n_tanker_7d: 1.0, n_total_7d: 5, capacity_tanker_7d: 850000,
+        tanker_baseline_30d: 26, tanker_delta_pct: -96.0, baseline_n: 30,
+        tanker_year_ago: 40.0, tanker_year_ago_delta_pct: -97.5,
+        recent: Array.from({ length: 14 }, (_, i) => ({
+          date: `2026-10-${13 + i}`, n_tanker: 15 + i, n_total: 40 + i })),
+      },
+      metrics: [
+        { feed: "ais", metric: "tankers_in_gate", value: 0, baseline: null, delta_pct: null, health: "live" },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(collapsed), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText(/The free live feed sees/)).toBeInTheDocument();
+    expect(screen.getByText(/collapsed/)).toBeInTheDocument();
+    expect(screen.getByText(/1 tankers a day against 40 a year ago/)).toBeInTheDocument();
+    // Should NOT show the old "Zero tankers here means..." text
+    expect(screen.queryByText(/Zero tankers here means/)).not.toBeInTheDocument();
   });
 });
