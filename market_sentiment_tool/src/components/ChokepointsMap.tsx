@@ -279,13 +279,13 @@ export default function ChokepointsMap() {
               {view.flow.tanker_baseline_30d != null && (
                 <span className="text-slate-400"> vs {view.flow.tanker_baseline_30d} baseline</span>
               )}
-              {view.flow.tanker_year_ago != null && (
-                <span className="text-slate-400"> · {view.flow.tanker_year_ago}/day a year ago</span>
-              )}
               {view.flow.tanker_delta_pct != null && (
                 <span className={view.flow.tanker_delta_pct >= 0 ? "text-emerald-300" : "text-amber-300"}>
                   {" "}{view.flow.tanker_delta_pct >= 0 ? "▲" : "▼"} {Math.abs(view.flow.tanker_delta_pct)}%
                 </span>
+              )}
+              {view.flow.tanker_year_ago != null && (
+                <span className="text-slate-400"> · {view.flow.tanker_year_ago}/day a year ago</span>
               )}
               {view.flow.tanker_year_ago_delta_pct != null && (
                 <span className={view.flow.tanker_year_ago_delta_pct >= 0 ? "text-emerald-300" : "text-amber-300"}>
