@@ -83,6 +83,29 @@ def test_flow_summary_against_its_own_baseline():
     assert len(out["recent"]) == 14
 
 
+def test_flow_summary_year_ago_baseline():
+    # 400-day series: first ~365 days at 40/day, last 60 at 1/day
+    # as_of = 2026-08-10 + 399 = 2027-09-13 (but we use today=2027-09-20)
+    # Year-ago window: [as_of - 394, as_of - 365] -> [2026-08-11, 2026-09-09] -> 30 days of 40/day
+    start = date(2026, 8, 10)
+    tanker_vals = [40] * 335 + [1] * 65  # 400 days total
+    rows = _series(tanker_vals, start)
+    # as_of = 2026-08-10 + 399 = 2027-09-13
+    out = flow_summary(rows, today=date(2027, 9, 20))
+    # Year-ago window: 2026-08-11 to 2026-09-09 (30 days, all 40)
+    assert out["tanker_year_ago"] == 40.0
+    # 7-day avg is 1, year-ago is 40 -> delta = (1/40 - 1) * 100 = -97.5
+    assert out["tanker_year_ago_delta_pct"] == -97.5
+
+
+def test_flow_summary_insufficient_data_for_year_ago():
+    # Only 30 days of data - not enough for year-ago (need 394 days)
+    rows = _series([5] * 30)
+    out = flow_summary(rows, today=date(2026, 8, 30))
+    assert out["tanker_year_ago"] is None
+    assert out["tanker_year_ago_delta_pct"] is None
+
+
 def test_flow_summary_names_a_missing_baseline():
     out = flow_summary(_series([5] * 10), today=date(2026, 8, 20))
     assert out["tanker_baseline_30d"] is None and out["tanker_delta_pct"] is None
