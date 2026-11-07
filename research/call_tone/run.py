@@ -142,12 +142,35 @@ def load_prices(tickers: list[str]) -> dict[str, pd.Series]:
         except Exception as e:
             print(f"  Failed {t}: {e}")
     
-    if prices:
-        prices_df = pd.DataFrame(prices)
-        prices_df.to_parquet(PRICES_CACHE)
-        print(f"  Saved prices cache: {PRICES_CACHE}")
+    # Only save and return tickers that have valid price data
+    valid_prices = {}
+    for t, s in prices.items():
+        if not s.empty:
+            # Ensure it's a Series (not DataFrame)
+            if isinstance(s, pd.DataFrame):
+                s = s.iloc[:, 0]  # take first column
+            valid_prices[t] = s
     
-    return prices
+    if not valid_prices:
+        return {}
+    
+    # Align all series to a common index (union of all dates)
+    all_dates = set()
+    for s in valid_prices.values():
+        all_dates.update(s.index)
+    common_index = pd.DatetimeIndex(sorted(all_dates))
+    aligned = {t: s.reindex(common_index) for t, s in valid_prices.items()}
+    
+    # Filter out any series that are all NaN after reindexing
+    aligned = {t: s for t, s in aligned.items() if not s.isna().all()}
+    
+    if not aligned:
+        return {}
+    
+    prices_df = pd.DataFrame(aligned)
+    prices_df.to_parquet(PRICES_CACHE)
+    print(f"  Saved prices cache: {PRICES_CACHE}")
+    return aligned
 
 
 def build_trading_calendar(prices: dict[str, pd.Series]) -> pd.DatetimeIndex:
@@ -166,7 +189,8 @@ def process_transcripts(
 ) -> pd.DataFrame:
     """Compute tone and uncertainty for each transcript."""
     print("  Filtering to universe and date >= 2015-01-01...")
-    df = df[df["ticker"].isin(UNIVERSE_TICKERS)].copy()
+    # Use the 'symbol' column which contains ticker symbols
+    df = df[df["symbol"].isin(UNIVERSE_TICKERS)].copy()
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df[df["date"] >= date(2015, 1, 1)]
     print(f"  After filtering: {len(df)} calls")
@@ -176,10 +200,10 @@ def process_transcripts(
     for idx, row in df.iterrows():
         if idx % 1000 == 0:
             print(f"    {idx}/{len(df)}")
-        text = management_text(row["transcript"])
+        text = management_text(row["structured_content"])
         tone, unc_share = compute_tone_uncertainty(text, pos_set, neg_set, unc_set)
         results.append({
-            "ticker": row["ticker"],
+            "ticker": row["symbol"],
             "call_date": pd.Timestamp(row["date"]),
             "tone": tone,
             "uncertainty_share": unc_share,
@@ -304,19 +328,20 @@ def run():
         for signal_name, signal_col in signals.items():
             for outcome_name, outcome_col in outcomes.items():
                 key = f"{signal_name}_{outcome_name}"
-                df = split_df.dropna(subset=[signal_col, outcome_col]).copy()
+                current_signal_col = signal_col
+                df = split_df.dropna(subset=[current_signal_col, outcome_col]).copy()
                 
                 # For delta_uncertainty, flip sign (more uncertainty -> lower return)
                 if signal_name == "delta_uncertainty":
                     # We need prior uncertainty to compute delta
-                    prior_unc = df.groupby("ticker")[signal_col].shift(1).rolling(4, min_periods=4).mean()
-                    df["delta_unc"] = df[signal_col] - prior_unc
+                    prior_unc = df.groupby("ticker")[current_signal_col].shift(1).rolling(4, min_periods=4).mean()
+                    df["delta_unc"] = df[current_signal_col] - prior_unc
                     df = df.dropna(subset=["delta_unc"])
-                    signal_col = "delta_unc"
-                    if signal_col not in df.columns or df[signal_col].isna().all():
+                    current_signal_col = "delta_unc"
+                    if current_signal_col not in df.columns or df[current_signal_col].isna().all():
                         continue
                 
-                stats = compute_stats(df, signal_col, outcome_col, key)
+                stats = compute_stats(df, current_signal_col, outcome_col, key)
                 split_results[key] = stats
                 print(f"    {key}: IC={stats['mean_ic']:.4f}, t={stats['t']:.2f}, spread={stats['spread']:.4f}, Q={stats['quarters']}")
         
