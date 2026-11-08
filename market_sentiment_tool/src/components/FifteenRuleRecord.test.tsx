@@ -41,3 +41,38 @@ describe("FifteenRuleRecord on a malformed reply", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("FifteenRuleRecord with by_session and windows", () => {
+  it("shows windows line and the trading hours vs closed hours table", async () => {
+    serve({
+      rule: "Buy the side the model beats by 10 points.",
+      prereg_at: "2026-11-06T00:00:00+00:00",
+      ready_trades: 300,
+      replay: { n: 49, net_per_contract: 0.097, total: 4.75, win_rate: 0.5, low95: 0.05, ready: false, windows: 0 },
+      forward: { n: 12, net_per_contract: 0.05, total: 0.6, win_rate: 0.55, low95: 0.01, ready: false, windows: 8 },
+      by_session: {
+        open: { n: 8, net_per_contract: 0.06, total: 0.48, win_rate: 0.625, low95: 0.02, ready: false, windows: 5 },
+        closed: { n: 4, net_per_contract: 0.03, total: 0.12, win_rate: 0.4, low95: -0.01, ready: false, windows: 3 }
+      },
+      pending: 2,
+      recent: [{ series: "WTI", target: "t", frozen_at: "2026-11-06T14:05:00+00:00", side: "yes", cost: 0.48, model: 0.62, outcome: 1, pnl: 0.5 }]
+    });
+    render(<FifteenRuleRecord />);
+    // windows line
+    expect(await screen.findByText(/12 of 300 forward trades in 8 separate 15-minute windows/)).toBeInTheDocument();
+    // table labels
+    expect(screen.getByText("Trading hours vs closed hours")).toBeInTheDocument();
+    expect(screen.getByText("When futures were trading")).toBeInTheDocument();
+    expect(screen.getByText("When futures were closed")).toBeInTheDocument();
+    // open row
+    expect(screen.getByText("8")).toBeInTheDocument();
+    expect(screen.getByText("+6.0¢")).toBeInTheDocument();
+    expect(screen.getByText("63%")).toBeInTheDocument();
+    // closed row
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("+3.0¢")).toBeInTheDocument();
+    expect(screen.getByText("40%")).toBeInTheDocument();
+    // explanatory sentence
+    expect(screen.getByText(/A real edge should hold while futures trade/)).toBeInTheDocument();
+  });
+});

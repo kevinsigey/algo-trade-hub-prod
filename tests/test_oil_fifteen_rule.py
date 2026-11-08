@@ -78,3 +78,49 @@ def test_record_skips_halt_windows(monkeypatch):
     monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {t: 1 for t in targets})
     out = rule.record(FakeSupa())
     assert [t["target"] for t in out["recent"]] == ["d"]
+
+
+def test_futures_open_matches_cme_hours():
+    # November uses EST (UTC-5). Use UTC times that convert to the target ET times.
+    assert rule.futures_open("2026-11-06T21:59:00+00:00") is True   # Fri 16:59 ET (21:59 UTC)
+    assert rule.futures_open("2026-11-06T22:00:00+00:00") is False  # Fri 17:00 ET (22:00 UTC)
+    assert rule.futures_open("2026-11-07T22:00:00+00:00") is False  # Sat noon ET (22:00 UTC)
+    assert rule.futures_open("2026-11-08T22:59:00+00:00") is False  # Sun 17:59 ET (22:59 UTC)
+    assert rule.futures_open("2026-11-08T23:00:00+00:00") is True   # Sun 18:00 ET (23:00 UTC)
+    assert rule.futures_open("2026-11-04T22:30:00+00:00") is False  # Wed 17:30 ET (22:30 UTC)
+    assert rule.futures_open("2026-11-04T23:00:00+00:00") is True   # Wed 18:00 ET (23:00 UTC)
+
+
+def test_stats_counts_windows():
+    trades = [
+        {"pnl": 0.5, "frozen_at": "2026-11-07T10:05:00+00:00"},
+        {"pnl": -0.4, "frozen_at": "2026-11-07T10:05:00+00:00"},  # same window
+        {"pnl": 0.3, "frozen_at": "2026-11-07T10:20:00+00:00"},
+    ]
+    out = rule._stats(trades)
+    assert out["windows"] == 2  # two distinct frozen_at values
+
+    out_empty = rule._stats([])
+    assert out_empty["windows"] == 0
+
+
+def test_record_returns_by_session_split(monkeypatch):
+    # forward trades: one open (Fri 16:30), one closed (Sat 12:00), one open (Wed 18:30)
+    # Use dates after PREREG_AT (2026-11-07T00:00:00+00:00)
+    # Closed but not in halt: Saturday 12:00 ET (17:00 UTC) - futures_open=False, in_halt=False (12:00 < 16:45)
+    # Open before halt: Friday 16:30 ET (21:30 UTC) - futures_open=True, in_halt=False
+    # Open after halt: Wednesday 18:30 ET (23:30 UTC) - futures_open=True, in_halt=False
+    rows = {("oil_wti_15m", "wti-15m-v2"): [
+        {"target": "a", "probability": 0.62, "payload": {"yes_ask": 0.50, "yes_bid": 0.48}, "frozen_at": "2026-11-13T21:30:00+00:00"},  # Fri 16:30 ET (open, before halt)
+        {"target": "b", "probability": 0.62, "payload": {"yes_ask": 0.50, "yes_bid": 0.48}, "frozen_at": "2026-11-14T17:00:00+00:00"},  # Sat 12:00 ET (closed, not in halt)
+        {"target": "c", "probability": 0.62, "payload": {"yes_ask": 0.50, "yes_bid": 0.48}, "frozen_at": "2026-11-11T23:30:00+00:00"},  # Wed 18:30 ET (open, after halt)
+    ]}
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {t: 1 for t in targets})
+    out = rule.record(FakeSupa())
+    assert "by_session" in out
+    assert out["by_session"]["open"]["n"] == 2
+    assert out["by_session"]["closed"]["n"] == 1
+    # windows in by_session
+    assert out["by_session"]["open"]["windows"] == 2  # two distinct open windows
+    assert out["by_session"]["closed"]["windows"] == 1

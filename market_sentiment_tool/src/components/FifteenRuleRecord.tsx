@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 
 import { getJson } from "@/lib/getJson";
 
-interface Stats { n: number; net_per_contract: number | null; total: number; win_rate: number | null; low95: number | null; ready: boolean }
+interface Stats { n: number; net_per_contract: number | null; total: number; win_rate: number | null; low95: number | null; ready: boolean; windows?: number }
 interface Trade { series: string; target: string; frozen_at: string; side: "yes" | "no"; cost: number; model: number; outcome: number; pnl: number }
 interface RuleRecord {
   rule: string; prereg_at: string; ready_trades: number; replay: Stats; forward: Stats;
   pending: number; recent: Trade[]; unavailable?: boolean;
+  by_session?: { open: Stats; closed: Stats };
 }
 
 const c = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
@@ -62,11 +63,39 @@ export function FifteenRuleRecord() {
           <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${pct}%` }} />
         </div>
         <p className="mt-1 text-xs text-slate-400">
-          {f.n} of {rec.ready_trades} forward trades. Copyable once it has {rec.ready_trades} and is still ahead at the
+          {f.n} of {rec.ready_trades} forward trades{f.windows != null ? ` in ${f.windows} separate 15-minute windows` : ""}. Copyable once it has {rec.ready_trades} and is still ahead at the
           low end of its 95% range{f.low95 != null ? ` (now ${c(f.low95)})` : ""}.{f.ready ? " It has cleared that bar." : ""}
           {rec.pending ? ` ${rec.pending} waiting to settle.` : ""}
         </p>
       </div>
+      {rec.by_session && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold text-slate-300">Trading hours vs closed hours</p>
+          <table className="mt-1 w-full max-w-md text-xs tabular-nums">
+            <thead><tr className="text-left text-slate-500">
+              <th className="pb-1 pr-3 font-medium"></th>
+              <th className="pb-1 pr-3 font-medium text-right">Trades</th>
+              <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
+              <th className="pb-1 text-right font-medium">Win rate</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-800/70 text-slate-300">
+              <tr>
+                <td className="py-1 pr-3 text-slate-200">When futures were trading</td>
+                <td className="py-1 text-right">{rec.by_session.open.n}</td>
+                <td className="py-1 text-right">{rec.by_session.open.net_per_contract == null ? "—" : c(rec.by_session.open.net_per_contract)}</td>
+                <td className="py-1 text-right">{rec.by_session.open.win_rate == null ? "—" : Math.round(rec.by_session.open.win_rate * 100)}%</td>
+              </tr>
+              <tr>
+                <td className="py-1 pr-3 text-slate-200">When futures were closed</td>
+                <td className="py-1 text-right">{rec.by_session.closed.n}</td>
+                <td className="py-1 text-right">{rec.by_session.closed.net_per_contract == null ? "—" : c(rec.by_session.closed.net_per_contract)}</td>
+                <td className="py-1 text-right">{rec.by_session.closed.win_rate == null ? "—" : Math.round(rec.by_session.closed.win_rate * 100)}%</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-slate-400">A real edge should hold while futures trade; wins only in closed hours can come from stale prices.</p>
+        </div>
+      )}
       {rec.recent.length > 0 && (
         <table className="mt-3 w-full max-w-xl text-xs tabular-nums">
           <thead><tr className="text-left text-slate-500">
