@@ -83,13 +83,13 @@ export function FifteenRuleRecord() {
                 <td className="py-1 pr-3 text-slate-200">When futures were trading</td>
                 <td className="py-1 text-right">{rec.by_session.open.n}</td>
                 <td className="py-1 text-right">{rec.by_session.open.net_per_contract == null ? "—" : c(rec.by_session.open.net_per_contract)}</td>
-                <td className="py-1 text-right">{rec.by_session.open.win_rate == null ? "—" : Math.round(rec.by_session.open.win_rate * 100)}%</td>
+                <td className="py-1 text-right">{rec.by_session.open.win_rate == null ? "—" : `${Math.round(rec.by_session.open.win_rate * 100)}%`}</td>
               </tr>
               <tr>
                 <td className="py-1 pr-3 text-slate-200">When futures were closed</td>
                 <td className="py-1 text-right">{rec.by_session.closed.n}</td>
                 <td className="py-1 text-right">{rec.by_session.closed.net_per_contract == null ? "—" : c(rec.by_session.closed.net_per_contract)}</td>
-                <td className="py-1 text-right">{rec.by_session.closed.win_rate == null ? "—" : Math.round(rec.by_session.closed.win_rate * 100)}%</td>
+                <td className="py-1 text-right">{rec.by_session.closed.win_rate == null ? "—" : `${Math.round(rec.by_session.closed.win_rate * 100)}%`}</td>
               </tr>
             </tbody>
           </table>
