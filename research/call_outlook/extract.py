@@ -94,11 +94,10 @@ def _models() -> list[str]:
 
 # Kevin (2026-11-07): run the free models through the opencode CLI, which holds its own OpenRouter connection, so no
 # key lives in this process. OpenRouter and opencode-gateway models alternate, so one pool's daily limit costs one retry.
-OPENCODE_MODELS = [
-    "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/deepseek-v4.1-flash-free",
-    "openrouter/nvidia/nemotron-3.5-super-vl:free", "opencode/glm-5.3-flash-free",
-    "openrouter/google/gemma-4-31b-it:free", "opencode/mimo-v2.6-flash-free",
-    "openrouter/openrouter/free", "opencode/nemotron-3-ultra-free",
+OPENCODE_MODELS = [  # 2026-11-08: opencode-gateway models fail fast when their daily pool is spent; OpenRouter lead
+    "openrouter/nvidia/nemotron-3.5-super-vl:free", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "opencode/deepseek-v4.1-flash-free", "openrouter/google/gemma-4-31b-it:free",
+    "opencode/glm-5.3-flash-free", "openrouter/openrouter/free", "opencode/mimo-v2.6-flash-free",
 ]
 
 
@@ -114,7 +113,7 @@ def _post_opencode(text: str, *, model: str, run=subprocess.run) -> dict:
                        "external_directory": "deny"},
         "tools": {"*": False}}))
     out = run(["opencode", "run", "-m", model, "--title", "call-outlook", prompt],
-              capture_output=True, text=True, timeout=300, cwd=work)
+              capture_output=True, text=True, timeout=180, cwd=work)
     shutil.rmtree(work, ignore_errors=True)
     reply = out.stdout or ""
     if out.returncode != 0 or "Error:" in reply[-400:] or "{" not in reply:
