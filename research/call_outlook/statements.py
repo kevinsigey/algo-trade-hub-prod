@@ -86,6 +86,8 @@ class Topic(str, Enum):
     EPS = "eps"
     COSTS = "costs"
     TARIFFS = "tariffs"
+    GUIDANCE = "guidance"  # the company's own guide vs its prior guide: raised up, cut or withdrawn down, kept flat
+    CAPEX = "capex"  # recorded for the forward file; not scored (its sign depends on the name's FCF file)
     OTHER = "other"
 
 
@@ -216,9 +218,12 @@ SIGNS = {
     ("costs", "down"): +1,
     ("tariffs", "up"): -1,
     ("tariffs", "down"): +1,
+    ("guidance", "up"): +1,
+    ("guidance", "down"): -1,
     # flat is 0 for all
     # other is not in the table -> excluded
 }
+SCORED_TOPICS = {topic for topic, _ in SIGNS}
 
 
 def score(statements: list[dict]) -> float | None:
@@ -242,6 +247,8 @@ def score(statements: list[dict]) -> float | None:
         topic_str = str(topic).lower()
         direction_str = str(direction).lower()
         
+        if topic_str not in SCORED_TOPICS:
+            continue  # other and capex never count, flat or not
         if direction_str == "flat":
             signed.append(0)
             continue

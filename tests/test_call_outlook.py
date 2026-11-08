@@ -225,3 +225,12 @@ def test_extraction_cache_skips_cached_call():
     finally:
         extract_mod.EXTRACTIONS_CACHE = original_cache
         os.unlink(cache_file)
+
+def test_flat_other_and_capex_do_not_dilute_the_score():
+    from research.call_outlook.statements import score
+    sts = [{"topic": "revenue", "direction": "up", "horizon": "next_quarter"},
+           {"topic": "other", "direction": "flat", "horizon": "next_quarter"},
+           {"topic": "capex", "direction": "up", "horizon": "full_year"},
+           {"topic": "guidance", "direction": "down", "horizon": "full_year"},
+           {"topic": "guidance", "direction": "flat", "horizon": "full_year"}]
+    assert score(sts) == 0.0  # (+1 - 1 + 0) / 3

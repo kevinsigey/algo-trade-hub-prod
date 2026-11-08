@@ -38,7 +38,7 @@ SYSTEM_PROMPT = (
     "made by MANAGEMENT (not analysts) from the provided earnings call transcript. "
     "Each statement must be a specific, verifiable claim about future financial performance. "
     "Return ONLY valid JSON with a 'statements' array. Each statement object must have exactly these fields:\n"
-    "- topic: one of [revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, other]\n"
+    "- topic: one of [revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, guidance, capex, other]\n"
     "- direction: one of [up, down, flat]\n"
     "- magnitude_pct: number or null (if the statement includes a specific percentage, e.g., '5%', '10-15%')\n"
     "- horizon: one of [next_quarter, full_year, longer, unspecified]\n"
@@ -49,14 +49,17 @@ SYSTEM_PROMPT = (
     "3. The 'quote' must be an EXACT verbatim substring of the provided text.\n"
     "4. If magnitude_pct is given, the percentage must appear in the quote.\n"
     "5. Horizon: next_quarter, full_year, longer, or unspecified.\n"
-    "6. Topic must be one of: revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, other.\n"
+    "6. Topic must be one of: revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, guidance, capex, other.\n"
     "7. Direction: up, down, or flat.\n"
     "8. Return ONLY valid JSON with a 'statements' array. No prose, no markdown.\n"
     "9. If no forward-looking statements by management, return {'statements': []}.\n"
     "10. Direction must come from a comparison the speaker states (grow, decline, increase, improve, higher or lower "
     "than a named period, a headwind or tailwind). A bare range or level with no comparison stated, such as "
     "'we expect gross margin between 38.5% and 39.5%', is direction flat. Never infer a direction yourself.\n"
-    "11. Routine opex or tax-rate ranges with no stated comparison are topic other."
+    "11. Routine opex or tax-rate ranges with no stated comparison are topic other.\n"
+    "12. topic guidance = the company changing its OWN outlook versus its previous outlook: raised = up, lowered, "
+    "cut or withdrawn = down, reaffirmed or maintained = flat. Say which metric in the quote. topic capex = planned "
+    "capital spending, up or down versus a stated prior level."
 )
 
 

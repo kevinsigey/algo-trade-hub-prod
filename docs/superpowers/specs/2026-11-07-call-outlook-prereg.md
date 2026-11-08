@@ -14,7 +14,7 @@ management speakers = tone.management_text.
    forecast, will, should, plan, project, believe, headwind, tailwind, next quarter, next year, second half, full year,
    fiscal 20xx). Cap 6,000 words per call, keeping sentence order.
 2. One free OpenRouter model call per call (tradehub.workshop.draft._models(), rotating on errors) returns a list of
-   statements: topic (revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, other), direction
+   statements: topic (revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, guidance, capex, other), direction
    (up, down, flat), magnitude_pct (number or null), horizon (next_quarter, full_year, longer, unspecified), quote.
 3. Verification: the quote must appear in the call text (normalized whitespace and case); a percent given must appear in
    the quote. Failing statements are dropped and counted. Extractions are cached per call (resumable).
@@ -22,6 +22,9 @@ management speakers = tone.management_text.
 ## Signal (fixed)
 - Sign for the stock: revenue, demand, pricing, gross_margin, operating_margin, eps: up +1, down -1. costs, tariffs:
   up -1, down +1. flat 0. other: excluded.
+- guidance (the company's own outlook vs its prior outlook): raised +1, cut or withdrawn -1, kept 0. capex: recorded,
+  not scored. (Amended 2026-11-08 after the pilot and before the full run: no results had been computed.)
+- Direction counts only when the speaker states a comparison; a bare range is flat (pilot finding, same amendment).
 - Only horizons next_quarter and full_year.
 - score = (sum of signs) / (number of signed statements); a call with no signed statements has no score.
 - Primary signal: score (what management said). Comparison (reported, never used to pass): score minus the company's
