@@ -161,10 +161,7 @@ def extract_mode(limit: int | None = None) -> None:
     print("=" * 60)
     
     # Check for API key
-    key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not key:
-        print("ERROR: OPENROUTER_API_KEY not set")
-        sys.exit(1)
+    key = ""  # models run through the opencode CLI (extract.OPENCODE_MODELS); no key in this process
     
     # Load transcripts
     print("\n1. Loading transcripts...")

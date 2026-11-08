@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -82,6 +84,34 @@ def _models() -> list[str]:
     return _models()
 
 
+# Kevin (2026-11-07): run the free models through the opencode CLI, which holds its own OpenRouter connection, so no
+# key lives in this process. OpenRouter and opencode-gateway models alternate, so one pool's daily limit costs one retry.
+OPENCODE_MODELS = [
+    "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "opencode/deepseek-v4.1-flash-free",
+    "openrouter/nvidia/nemotron-3.5-super-vl:free", "opencode/glm-5.3-flash-free",
+    "openrouter/google/gemma-4-31b-it:free", "opencode/mimo-v2.6-flash-free",
+    "openrouter/openrouter/free", "opencode/nemotron-3-ultra-free",
+]
+
+
+def _post_opencode(text: str, *, model: str, run=subprocess.run) -> dict:
+    """One extraction through `opencode run`. The reply must hold the JSON object; anything else raises."""
+    prompt = SYSTEM_PROMPT + "\n\nUse no tools. Reply with the JSON object only.\n\nCALL TEXT:\n" + text[:MAX_TEXT_CHARS]
+    # Transcripts are untrusted text. Tools are denied by an opencode.json in an empty temp folder (opencode reads
+    # config per folder), not by the prompt. Tested 2026-11-08: a planted "run touch" did nothing; only `skill` remains.
+    work = tempfile.mkdtemp(prefix="call-outlook-")
+    (Path(work) / "opencode.json").write_text(json.dumps({
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {"edit": "deny", "bash": "deny", "webfetch": "deny", "external_directory": "deny"},
+        "tools": {"*": False}}))
+    out = run(["opencode", "run", "-m", model, "--title", "call-outlook", prompt],
+              capture_output=True, text=True, timeout=300, cwd=work)
+    reply = out.stdout or ""
+    if out.returncode != 0 or "Error:" in reply[-400:] or "{" not in reply:
+        raise RuntimeError(f"{model}: {(out.stderr or reply)[-200:]}")
+    return {"statements": _parse_openrouter_response(reply).get("statements", []), "model": model}
+
+
 def _parse_openrouter_response(content: str) -> dict:
     """Parse OpenRouter response content which may have prose around JSON."""
     try:
@@ -150,12 +180,12 @@ def extract_call(
         _save_cache_entry(entry)
         return []
 
-    models = _models()
+    models = OPENCODE_MODELS
     last_error = None
     
     for model in models:
         try:
-            result = _post_openrouter(prefiltered, key=key, model=model)
+            result = _post_opencode(prefiltered, model=model)
             raw_statements = result.get("statements", [])
             model_used = result.get("model", model)
             break
