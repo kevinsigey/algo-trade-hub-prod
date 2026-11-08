@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -102,10 +103,12 @@ def _post_opencode(text: str, *, model: str, run=subprocess.run) -> dict:
     work = tempfile.mkdtemp(prefix="call-outlook-")
     (Path(work) / "opencode.json").write_text(json.dumps({
         "$schema": "https://opencode.ai/config.json",
-        "permission": {"edit": "deny", "bash": "deny", "webfetch": "deny", "external_directory": "deny"},
+        "permission": {"*": "deny", "edit": "deny", "bash": "deny", "webfetch": "deny",
+                       "external_directory": "deny"},
         "tools": {"*": False}}))
     out = run(["opencode", "run", "-m", model, "--title", "call-outlook", prompt],
               capture_output=True, text=True, timeout=300, cwd=work)
+    shutil.rmtree(work, ignore_errors=True)
     reply = out.stdout or ""
     if out.returncode != 0 or "Error:" in reply[-400:] or "{" not in reply:
         raise RuntimeError(f"{model}: {(out.stderr or reply)[-200:]}")
