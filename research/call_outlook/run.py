@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 import time
+import zlib
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -178,6 +179,8 @@ def extract_mode(limit: int | None = None) -> None:
     cache = _load_cache()
     print(f"  Cache has {len(cache)} entries")
     
+    spec = os.environ.get("OUTLOOK_SHARD", "")  # "i/n": this process takes calls whose crc32 % n == i
+    shard = tuple(int(x) for x in spec.split("/")) if spec else None
     # Process calls in date order
     df = df.sort_values(["symbol", "date"])
     calls_processed = 0
@@ -195,11 +198,10 @@ def extract_mode(limit: int | None = None) -> None:
             calls_skipped += 1
             continue
         
-        text = row.get("structured_content", "")
-        if isinstance(text, list):
-            text = " ".join(t.get("text", "") for t in text if isinstance(t, dict) and t.get("text"))
-        elif not isinstance(text, str):
-            text = str(text) if text is not None else ""
+        if shard and zlib.crc32(call_id.encode()) % shard[1] != shard[0]:
+            continue
+        raw = row.get("structured_content")
+        text = management_text(raw) if raw is not None else ""  # management's words only, per the spec
         if not text:
             continue
         
@@ -231,7 +233,7 @@ def evaluate_mode() -> None:
     for call_id, entry in cache.items():
         if not entry.get("statements"):
             continue
-        symbol, date_str = call_id.rsplit("-", 1)
+        symbol, date_str = call_id.split("-", 1)  # "AAPL-2015-01-27": the date has dashes too
         call_date = pd.Timestamp(date_str).date()
         for stmt in entry["statements"]:
             calls_list.append({

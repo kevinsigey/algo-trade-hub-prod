@@ -20,7 +20,8 @@ from research.call_outlook.statements import Statement, verify, prefilter
 CACHE_DIR = Path("research/call_outlook/cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-EXTRACTIONS_CACHE = CACHE_DIR / "extractions.jsonl"
+_SHARD = os.environ.get("OUTLOOK_SHARD", "").replace("/", "of")  # parallel runs write their own file
+EXTRACTIONS_CACHE = CACHE_DIR / (f"extractions-{_SHARD}.jsonl" if _SHARD else "extractions.jsonl")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_TEXT_CHARS = 60_000
 
@@ -66,8 +67,8 @@ SYSTEM_PROMPT = (
 def _load_cache() -> dict[str, dict]:
     """Load the extraction cache from JSONL file."""
     cache = {}
-    if EXTRACTIONS_CACHE.exists():
-        with open(EXTRACTIONS_CACHE, "r") as f:
+    for path in sorted(CACHE_DIR.glob("extractions*.jsonl")):  # every shard's file
+        with open(path, "r") as f:
             for line in f:
                 line = line.strip()
                 if not line:
