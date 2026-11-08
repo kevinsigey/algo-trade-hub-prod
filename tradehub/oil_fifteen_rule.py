@@ -42,6 +42,24 @@ def in_halt(frozen_at: str) -> bool:
     return HALT_ET[0] <= t.hour + t.minute / 60 < HALT_ET[1]
 
 
+def futures_open(frozen_at: str) -> bool:
+    """CME energy futures trade Sunday 6:00 PM ET to Friday 5:00 PM ET, closed daily 5:00-6:00 PM ET.
+    Closed: Saturday all day; Friday at/after 17:00; Sunday before 18:00; any day 17:00-17:59.
+    """
+    t = datetime.fromisoformat(frozen_at).astimezone(NY)
+    wd = t.weekday()  # Monday=0, Sunday=6
+    hour_min = t.hour + t.minute / 60
+    if wd == 5:  # Saturday
+        return False
+    if wd == 4 and hour_min >= 17.0:  # Friday at/after 17:00
+        return False
+    if wd == 6 and hour_min < 18.0:  # Sunday before 18:00
+        return False
+    if 17.0 <= hour_min < 18.0:  # daily 17:00-17:59 halt
+        return False
+    return True
+
+
 def pick(p: float, *, yes_ask: float | None, yes_bid: float | None) -> tuple[str, float] | None:
     """The side to buy and its cost, or None. The NO side costs 1 - the YES bid."""
     if yes_ask is None or yes_bid is None or not 0.02 < yes_bid <= yes_ask < 0.98:
@@ -61,15 +79,17 @@ def pnl(side: str, cost: float, outcome: int) -> float:
 def _stats(trades: list[dict]) -> dict[str, Any]:
     n = len(trades)
     if not n:
-        return {"n": 0, "net_per_contract": None, "total": 0.0, "win_rate": None, "low95": None, "ready": False}
+        return {"n": 0, "net_per_contract": None, "total": 0.0, "win_rate": None, "low95": None, "ready": False, "windows": 0}
     xs = [t["pnl"] for t in trades]
     mean = sum(xs) / n
     sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / (n - 1)) if n > 1 else None
     low = mean - 1.96 * sd / math.sqrt(n) if sd is not None else None
+    windows = len({t["frozen_at"] for t in trades})
     return {"n": n, "net_per_contract": round(mean, 4), "total": round(sum(xs), 2),
             "win_rate": round(sum(x > 0 for x in xs) / n, 3),
             "low95": round(low, 4) if low is not None else None,
-            "ready": n >= READY_TRADES and low is not None and low > 0}
+            "ready": n >= READY_TRADES and low is not None and low > 0,
+            "windows": windows}
 
 
 def summarize(trades: list[dict]) -> dict[str, Any]:
@@ -104,5 +124,9 @@ def record(supa) -> dict[str, Any]:
     trades.sort(key=lambda t: t["frozen_at"], reverse=True)
     by_series = {label: _stats([t for t in trades if t["series"] == label and t["frozen_at"] >= PREREG_AT])
                  for _, _, label in SERIES}
+    # by_session split for forward trades only (frozen_at >= PREREG_AT)
+    forward = [t for t in trades if t["frozen_at"] >= PREREG_AT]
+    by_session = {"open": _stats([t for t in forward if futures_open(t["frozen_at"])]),
+                  "closed": _stats([t for t in forward if not futures_open(t["frozen_at"])])}
     return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize(trades),
-            "by_series": by_series, "pending": pending, "recent": trades[:12]}
+            "by_series": by_series, "by_session": by_session, "pending": pending, "recent": trades[:12]}
