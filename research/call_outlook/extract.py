@@ -52,7 +52,11 @@ SYSTEM_PROMPT = (
     "6. Topic must be one of: revenue, demand, pricing, gross_margin, operating_margin, eps, costs, tariffs, other.\n"
     "7. Direction: up, down, or flat.\n"
     "8. Return ONLY valid JSON with a 'statements' array. No prose, no markdown.\n"
-    "8. If no forward-looking statements by management, return {'statements': []}."
+    "9. If no forward-looking statements by management, return {'statements': []}.\n"
+    "10. Direction must come from a comparison the speaker states (grow, decline, increase, improve, higher or lower "
+    "than a named period, a headwind or tailwind). A bare range or level with no comparison stated, such as "
+    "'we expect gross margin between 38.5% and 39.5%', is direction flat. Never infer a direction yourself.\n"
+    "11. Routine opex or tax-rate ranges with no stated comparison are topic other."
 )
 
 
