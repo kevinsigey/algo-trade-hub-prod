@@ -1,0 +1,6 @@
+cache/
+*.parquet
+*.csv
+*.jsonl
+*.pkl
+__pycache__/
