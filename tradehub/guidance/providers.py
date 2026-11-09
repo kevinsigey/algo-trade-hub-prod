@@ -192,11 +192,14 @@ class CyclingAsker:
 
     def __call__(self, text: str, *, key: str | None = None) -> gx.Envelope:
         attempted: list[str] = []
+        skipped: list[str] = []
         errors: list[tuple[str, ProviderError]] = []
         for name, fn in self._pools:
             if name == "openrouter" and not key:
-                continue  # no key: this pool cannot be attempted at all
+                skipped.append(name)  # no key: this pool cannot be attempted
+                continue
             if not self._available(name):
+                skipped.append(name)
                 continue
             attempted.append(name)
             try:
@@ -205,10 +208,18 @@ class CyclingAsker:
                 err = classify(exc)
                 errors.append((name, err))
                 self._cool(name, err)
-        if attempted:
+        # A filing fails ONLY on a genuine both-pools refusal: every pool was
+        # attempted in this call and every attempt was a refusal. A rate
+        # limit, an outage, or a pool skipped for cooling means that pool
+        # never judged the filing -- the run pauses instead (spec rule,
+        # learned in production 2026-11-09 when a 429 + a gateway timeout
+        # wrongly failed MU's filing).
+        if (attempted and not skipped
+                and all(isinstance(err, ProviderRefused) for _, err in errors)):
             raise AllProvidersRefused(
                 "; ".join(f"{name}: {err}" for name, err in errors))
-        state = "; ".join(
-            f"{name} cooling until {self._cool_until.get(name, 0.0):.0f}"
-            for name, _ in self._pools)
-        raise PoolsUnavailable(f"no provider pool can be attempted ({state})")
+        detail = "; ".join(
+            [f"{name}: {err}" for name, err in errors]
+            + [f"{name} not attempted (cooling until "
+               f"{self._cool_until.get(name, 0.0):.0f})" for name in skipped])
+        raise PoolsUnavailable(f"no genuine both-pool refusal ({detail})")
