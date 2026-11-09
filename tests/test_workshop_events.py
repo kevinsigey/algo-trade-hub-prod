@@ -72,7 +72,8 @@ def test_a_planted_drift_passes():
     closes = market(3, drift_after=0.006, events=days)
     out = run_event_test(spec(), closes, _events(closes), variations=1, seed=1, permutations=500)
     assert out["verdict"] == "PASS", out["headline"]
-    assert out["claim"]["unseen"]["holds"] and out["shuffle"]["p"] < 0.05 and out["n_events"] == len(days)
+    assert out["claim"]["unseen"]["holds"] and out["n_events"] == len(days)
+    assert out["legacy_event_gate"]["shuffle"]["p"] < 0.05  # the control's read, under its own name
     assert out["per_ticker"][0]["ticker"] == "AAA" and len(out["events"]) == len(days)
 
 
@@ -131,9 +132,9 @@ def test_release_dates_from_fred():
 
     def get_text(url, params, **kw):
         seen.update(params, url=url)
-        return '{"release_dates": [{"release_id": 101, "date": "2026-09-17"}, {"release_id": 101, "date": "2026-10-29"}]}'
-    got = release_dates(101, get_text=get_text, api_key="k")
-    assert seen["release_id"] == 101 and seen["url"].endswith("/fred/release/dates")
+        return '{"release_dates": [{"release_id": 10, "date": "2026-09-17"}, {"release_id": 10, "date": "2026-10-29"}]}'
+    got = release_dates(10, get_text=get_text, api_key="k")
+    assert seen["release_id"] == 10 and seen["url"].endswith("/fred/release/dates")
     assert list(got["time"]) == [pd.Timestamp("2026-09-17"), pd.Timestamp("2026-10-29")]
 
 
@@ -175,15 +176,17 @@ def test_shared_event_days_are_drawn_together_in_the_random_dates():
     five = run_event_test(spec(event="fomc", when="all", tickers=["AAA", "B1", "B2", "B3", "B4"]), closes, ev,
                           variations=1, seed=5, permutations=400)
     assert five["claim"]["unseen"]["value"] == pytest.approx(one["claim"]["unseen"]["value"])
-    assert five["shuffle"]["p"] == pytest.approx(one["shuffle"]["p"])
+    assert five["legacy_event_gate"]["shuffle"]["p"] == pytest.approx(one["legacy_event_gate"]["shuffle"]["p"])
 
 
 def test_result_carries_the_pass_marks():
     days = IDX[30:-30:63]
     closes = market(3, drift_after=0.006, events=days)
     out = run_event_test(spec(), closes, _events(closes), variations=1, seed=1, permutations=300)
-    assert out["shuffle"]["holds"] is True and out["t_test"]["holds"] in (True, False)
-    assert out["periods"]["holds"] in (True, False, None)
+    legacy = out["legacy_event_gate"]  # since Amendment 2 the marks are the control's, under its name
+    assert legacy["shuffle"]["holds"] is True and legacy["t_test"]["holds"] in (True, False)
+    assert legacy["periods"]["holds"] in (True, False, None)
+    assert out["shuffle"] is None and out["t_test"] is None and out["periods"] is None
 
 
 def test_earnings_without_a_surprise_column_still_loads():
@@ -200,5 +203,5 @@ def test_a_fred_outage_is_a_readable_error_not_a_crash():
     def down(url, params, **kw):
         raise RuntimeError("FRED 503 with api_key=secret")
     with pytest.raises(UnknownSymbol) as exc:
-        release_dates(101, get_text=down, api_key="secret")
+        release_dates(10, get_text=down, api_key="secret")
     assert "secret" not in str(exc.value) and "FRED" in str(exc.value)

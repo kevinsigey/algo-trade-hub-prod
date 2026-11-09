@@ -235,3 +235,115 @@ only: idea 65 (Post-FOMC drift — a PASS under the existing event gate) re-run 
 the event path so its new run carries the event battery's read beside the gate's;
 and idea 61 (W18, a `smoother_ride` frozen basket — the support sleeve) re-run
 with `claim_type="overlay"`. Neither idea's state changes.
+
+---
+
+## Amendment 2 (2026-11-08, 23:35 CT): the event battery takes over, and the FOMC event source is corrected
+
+Kevin's ruling, same night: *"things should measure with their best measure so
+if battery is accurate it should take over and fix the quirk."* Two changes,
+both preregistered here before the code. This amendment supersedes, for event
+runs only: the taxonomy table's event row ("the run's headline verdict remains
+the existing event gate's"), core §5's event paragraph, the Event battery's
+"Grandfathering, applied literally" paragraph, and the Grandfathering section's
+registry sentence as it applies to event runs. Everything else stands.
+
+### 1. Promotion: the battery's verdict IS the event verdict
+
+- For every new event run, the run's headline `verdict` (and the stored
+  `idea_runs.verdict`) is the **event battery's verdict** (`battery.verdict`).
+  The battery was the accurate instrument for the claim all along: it judges
+  the signed per-event excess directly (cross-event t, hit rate, both spans),
+  where the old gate judged a mean against random dates — a timing question
+  wearing an event study's clothes.
+- The headline follows the battery: PASS → the house pass headline; FAIL with
+  the built-span direction leg holding → the overfit headline; FAIL without it
+  → the fail headline; NOT ENOUGH DATA → the nodata headline and the engine's
+  reason, exactly as today.
+- **The old gate is preserved as a named control, never deleted.** Its complete
+  verdict record — `verdict`, `headline`, `claim`, `shuffle`, `t_test`,
+  `periods` — is computed exactly as before and stored in the result as
+  **`legacy_event_gate`**, so old-vs-new stays comparable on every future run.
+  On the NOT ENOUGH DATA early return the old gate never ran, and
+  `legacy_event_gate` is null — the record says so rather than implying it did.
+- Top-level result discipline (the basket/overlay rule): `shuffle`, `t_test`
+  and `periods` at top level become **null** — the judging instrument is the
+  battery, and the record must not present the control's numbers as the
+  judge's. The descriptive `claim` block (built/unseen mean moves) stays at
+  top level, as it does for basket runs, and the battery's legs and spans are
+  the verdict's evidence. `per_ticker`, `events`, `n_events`, `context`,
+  `curve` are unchanged.
+- **Grandfathering is unchanged in kind:** stored runs keep their recorded
+  verdicts; no idea's lifecycle state changes; promotion applies to new runs.
+
+### 2. Multiple-testing accounting under promotion
+
+- The registry's BH family p for an event run is now **the battery's p**
+  (`result.battery.p`, the one-sided cross-event t p on the unseen span) when
+  the run carries an event battery — the p of the instrument that rendered the
+  verdict is the p that answers for it in the family. A run whose battery is
+  NOT ENOUGH DATA carries `p = null` and stays out of the family, exactly as a
+  null shuffle p did.
+- Pre-promotion stored event runs carry no battery block; they keep their
+  legacy shuffle p in the family — their verdict *was* the shuffle's, so its p
+  is still the honest accounting for them.
+- Nothing else in `registry.adjusted` changes. In particular the walk-forward
+  leg still reads `walk_forward`, which event results have never carried, so a
+  saved event PASS's `verdict_now` continues to be demoted on that leg — the
+  same treatment the legacy gate's PASSes received; promotion changes the
+  verdict and the family p, not the standing rule. Making the battery's own
+  durability legs (built direction, unseen hit rate) the event standing rule
+  is a cross-battery standing treatment: **an open item for Kevin's
+  preregistration, deliberately not improvised here.** A battery PASS
+  therefore still cannot feed a go-live decision, as before.
+
+### 3. The FOMC quirk, diagnosed and fixed
+
+**Diagnosis.** Idea 65's study counted 3,145 "events" because its source was
+FRED release 101's *release-date list*. Release 101 is indeed named "FOMC
+Press Release", but the only series it contains are the **daily** federal
+funds target-range series (DFEDTARU / DFEDTARL, and the discontinued
+DFEDTAR) — and a FRED release-date list holds, in ALFRED's own words, "the
+dates when any series from this release was revised". A daily series is
+revised every business day, so the "FOMC calendar" the engine consumed was
+**every business day** (~250/year from 2019 on; verified in run 91's stored
+events: every weekday of Jan–Feb 2024 is present). The study was measuring
+drift after arbitrary days, and both the old gate's PASS and the battery's
+t 6.23 were computed on that non-event set. CPI (release 10) and jobs
+(release 50) do not share the defect: their releases contain monthly series
+and their date lists are the monthly publication dates (verified against the
+live API in the same pass: 12/year each). Earnings dates are per-ticker
+reported prints (~4/year by construction) and gap/custom events derive from
+prices or the user's own rows — no other event type carries a calendar of
+the wrong frequency.
+
+**The corrected source.** FOMC events are the **statement dates of FOMC
+meetings**, frozen in `tradehub/workshop/fomc_calendar.py`, transcribed from
+the Federal Reserve's published meeting calendars (the current calendars
+page for 2021–2027, the Historical Materials year pages for 2010–2020) on
+2026-11-08:
+
+- The statement date is the meeting's last day (statements issue at 14:00
+  New York; each date is timestamped 14:00 and the engine's standing noon
+  rule assigns the reaction day — the next trading day — uniformly, as it
+  does for every afternoon release). One documented exception: the
+  2020-03-03 emergency cut was released at 10:00 and is timestamped so.
+- **Included:** all scheduled meetings, plus unscheduled meetings and
+  statement-bearing conference calls (2010-05-09 swap-lines call,
+  2019-10-11 statement of the Oct 4 meeting, 2020-03-03 and 2020-03-15).
+- **Excluded, by the same rule:** gatherings with no statement (the
+  2010-10-15, 2011-08-01, 2011-11-28, 2013-10-16 and 2014-03-04 calls), the
+  cancelled 2020-03-17/18 meeting, and **notation-vote statements**
+  (2020-03-23, 2020-08-27, 2025-08-22) — announcements without a meeting are
+  a different event class; adding them is a new preregistration, not a fix.
+- The table runs 2010–2027 (2027 as scheduled at transcription). A test pins
+  its shape: 8 statement dates in a normal year, 9 in 2010, 2019 and 2020 —
+  139 over 2010–2026 — so a future edit that breaks the frequency fails CI.
+  Maintenance is extending the table from the Fed's calendar as new years
+  are published; the FRED release list is never used for FOMC again.
+  `RELEASES` keeps only `cpi` and `jobs`.
+- **Idea 65 is re-run** on the corrected list, as a new run (an unsaved
+  preview, like tonight's other demonstrations — evidence, not a state
+  change), and the old-vs-new record is reported: 3,145 pseudo-events vs the
+  true meetings, the promoted battery's verdict and numbers on the corrected
+  set. Whatever it says is the report.

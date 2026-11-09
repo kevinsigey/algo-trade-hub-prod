@@ -44,6 +44,7 @@ from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes 
     with_rule_bars
 from tradehub.workshop.draft import DraftUnavailable, draft_spec
 from tradehub.workshop.events import RELEASES, EventSpec, run_event_test
+from tradehub.workshop.fomc_calendar import statement_times as workshop_fomc_times
 from tradehub.workshop.playbook import draft as playbook_draft, dropped_tickers as playbook_dropped
 from tradehub.workshop.engine import analysis as workshop_analysis, daily_frame as workshop_daily_frame, gate_check, \
     run_test, target_and_reason, tickers_for
@@ -1276,6 +1277,10 @@ def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(a
         closes = workshop_closes(list(dict.fromkeys(spec.tickers + [spec.benchmark])), spec.start - timedelta(days=30))
         if spec.event == "earnings":
             events = {t: workshop_earnings(t) for t in spec.tickers}
+        elif spec.event == "fomc":
+            # The frozen statement table, never a FRED release list: release
+            # 101's dates were every business day (spec 2026-11-08, Amendment 2).
+            events = {"*": workshop_fomc_times()}
         elif spec.event in RELEASES:
             events = {"*": workshop_release_dates(RELEASES[spec.event])}
         else:
@@ -1309,9 +1314,9 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     spec = body.spec
     if spec.claim_type == "event":
         # Event studies are declared with an EventSpec and run on the event-study
-        # endpoint, where the event battery rides in the result (spec 2026-11-08).
-        # An IdeaSpec has no event windows; grading it here would use the wrong
-        # instrument. Overlay runs through this path like basket does.
+        # endpoint, where the event battery renders the verdict (spec 2026-11-08,
+        # Amendment 2). An IdeaSpec has no event windows; grading it here would
+        # use the wrong instrument. Overlay runs through this path like basket does.
         raise HTTPException(status_code=422,
                             detail="claim_type 'event' runs through the event-study endpoint "
                                    "(POST /api/workshop/ideas/{idea_id}/event-runs): an IdeaSpec "

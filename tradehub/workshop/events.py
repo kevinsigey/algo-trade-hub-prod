@@ -1,6 +1,8 @@
 """Event studies (Kevin, 2026-10-31): the IB Python Models method in the Workshop.
 
-An event is an earnings print, an FOMC statement, a CPI or jobs release (FRED's release calendar), or a price gap.
+An event is an earnings print, an FOMC statement (the frozen meeting calendar in fomc_calendar.py -- never a
+FRED release list: release 101's dates were every business day), a CPI or jobs release (FRED's release
+calendar), or a price gap.
 Each event is measured the way earnings_event_study.py does it:
 - the reaction day is the first trading day whose close reflects it (released before noon New York -> that day,
   later -> the next trading day);
@@ -27,7 +29,8 @@ from tradehub.workshop import event_gate
 from tradehub.workshop.engine import HEADLINES, _clean, p_value, verdict_of
 from tradehub.workshop.spec import _ticker
 
-RELEASES = {"fomc": 101, "cpi": 10, "jobs": 50}  # FRED release ids: FOMC Press Release, CPI, Employment Situation
+RELEASES = {"cpi": 10, "jobs": 50}  # FRED release ids: CPI, Employment Situation. FOMC is NOT here: its
+# statement dates are the frozen table in fomc_calendar.py (Amendment 2 -- release 101's list was daily).
 WINDOWS = {"reaction": ("ar0", "the reaction day"), "drift_1_3": ("car_1_3", "days +1 to +3"),
            "drift_1_5": ("car_1_5", "days +1 to +5"), "drift_1_10": ("car_1_10", "days +1 to +10")}
 MIN_EVENTS, MIN_UNSEEN_EVENTS = 20, 10
@@ -93,7 +96,7 @@ class EventSpec(BaseModel):
                 raise ValueError("a gap is its own reaction day: judge the drift after it")
         elif self.event == "earnings" and self.when not in ("all", "beat", "miss"):
             raise ValueError("earnings events take when = all, beat or miss")
-        elif self.event in RELEASES and self.when != "all":
+        elif (self.event in RELEASES or self.event == "fomc") and self.when != "all":
             raise ValueError(f"{self.event} days take when = all")
         return self
 
@@ -223,9 +226,10 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
             "events": [{"date": str(d.date()), "ticker": t, "surprise": s, **{c: v[c] for c in COLUMNS}}
                        for d, t, s, v in zip(rows["day"], rows["ticker"], rows["surprise"],
                                              rows[list(COLUMNS)].to_dict("records"))][-2000:]}
-    # The claim-typed event battery (spec 2026-11-08): a reported read riding in the
-    # result — cross-event t and hit rate on the signed index excess, the in-study peer
-    # median as control. The verdict below stays this gate's own (grandfathering).
+    # The claim-typed event battery (spec 2026-11-08): cross-event t and hit rate on
+    # the signed index excess, the in-study peer median as control. Since Amendment 2
+    # (Kevin, 2026-11-08 23:35 CT) the battery's verdict IS the run's verdict; the
+    # random-dates gate below is still computed, as the `legacy_event_gate` control.
     signed = sign * rows[col].to_numpy(dtype=float)
     bat = event_gate.battery(signed, _peer_excess(spec, closes, rows, col, sign), split=k)
     if n < MIN_EVENTS or n - k < MIN_UNSEEN_EVENTS:
@@ -233,7 +237,7 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
                   f"needed")
         return _clean({**base, "verdict": "NOT ENOUGH DATA", "headline": HEADLINES["nodata"], "reason": reason,
                        "claim": None, "shuffle": None, "t_test": None, "periods": None, "per_ticker": [],
-                       "context": [], "curve": [], "battery": bat})
+                       "context": [], "curve": [], "legacy_event_gate": None, "battery": bat})
 
     def claim(x: np.ndarray) -> tuple[bool, float, str]:
         v = float(np.mean(x))
@@ -257,21 +261,38 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
     picks = rng.choice(pool, size=(permutations, len(day_codes)), replace=True)
     perm = np.nanmean(W[t_of_row[None, :], picks[:, day_of_row]], axis=1)
     p, beats = p_value(on_u[1], perm)
-    verdict = verdict_of(on_u[0], p, bar)
-    headline = (HEADLINES["pass"] if verdict == "PASS" else HEADLINES["chance"] if on_u[0]
-                else HEADLINES["overfit"] if on_b[0] else HEADLINES["fail"])
+    legacy_verdict = verdict_of(on_u[0], p, bar)
+    legacy_headline = (HEADLINES["pass"] if legacy_verdict == "PASS" else HEADLINES["chance"] if on_u[0]
+                       else HEADLINES["overfit"] if on_b[0] else HEADLINES["fail"])
     t = stats.ttest_1samp(signed[k:], 0.0, alternative="greater")
     chunks = np.array_split(signed, 5)
     held = int(sum(float(np.mean(c)) > 0 for c in chunks if len(c)))
     per = shrink(rows.assign(x=rows[col]), "x").sort_values("n", ascending=False)
+    claim_block = {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
+                   "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}}
+    # The old gate's complete record, preserved as the named control (Amendment 2):
+    # computed exactly as it always was, so old-vs-new stays comparable on every run.
+    legacy = {"verdict": legacy_verdict, "headline": legacy_headline, "claim": claim_block,
+              "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
+                          "method": "random dates", "holds": bool(p < bar)},
+              "t_test": {"mean_daily_diff": float(np.mean(signed[k:])), "t": float(t.statistic),
+                         "p": float(t.pvalue), "holds": bool(t.pvalue < 0.05)},
+              "periods": {"held": held, "of": 5, "holds": True if held >= 4 else False if held <= 1 else None}}
+    # The promotion: the battery judges. The headline follows it -- a FAIL whose
+    # built span still points the claimed way is the overfit story; one whose
+    # built span also fails is the plain fail.
+    verdict = bat["verdict"]
+    if verdict == "PASS":
+        headline = HEADLINES["pass"]
+    elif verdict == "NOT ENOUGH DATA":
+        headline = HEADLINES["nodata"]
+    else:
+        built_holds = next((leg["holds"] for leg in bat["legs"] if leg["name"] == "built_direction"), False)
+        headline = HEADLINES["overfit"] if built_holds else HEADLINES["fail"]
     return _clean({
         **base, "verdict": verdict, "headline": headline, "reason": None,
-        "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
-                  "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
-        "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
-                    "method": "random dates", "holds": bool(p < bar)},
-        "t_test": {"mean_daily_diff": float(np.mean(signed[k:])), "t": float(t.statistic), "p": float(t.pvalue),
-                   "holds": bool(t.pvalue < 0.05)},
-        "periods": {"held": held, "of": 5, "holds": True if held >= 4 else False if held <= 1 else None},
-        "per_ticker": per.to_dict("records"), "context": [], "curve": [], "battery": bat,
+        "claim": claim_block,
+        "shuffle": None, "t_test": None, "periods": None,
+        "per_ticker": per.to_dict("records"), "context": [], "curve": [],
+        "legacy_event_gate": legacy, "battery": bat,
     })

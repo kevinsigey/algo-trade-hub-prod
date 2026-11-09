@@ -52,7 +52,15 @@ def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
     PASS is demoted when its p fails the FDR bar or P_MAX, or its walk-forward
     falls short; every other verdict stands as stored."""
     def _p(run: dict):
-        return ((run.get("result") or {}).get("shuffle") or {}).get("p")
+        result = run.get("result") or {}
+        bat = result.get("battery") or {}
+        if bat.get("type") == "event" and bat.get("p") is not None:
+            # Amendment 2 (spec 2026-11-08): the event battery renders the
+            # verdict now, so its p is the run's family p. Pre-promotion event
+            # runs carry no battery block and keep their shuffle p below --
+            # their verdict WAS the shuffle's, so it still answers for them.
+            return bat["p"]
+        return ((result.get("shuffle") or {}).get("p"))
 
     fam_ids = [iid for iid, r in latest_by_idea.items() if _p(r) is not None]
     rejected = bh_rejected([float(_p(latest_by_idea[i])) for i in fam_ids])
@@ -65,9 +73,9 @@ def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
             # over timing shuffle p-values, so a basket/overlay verdict stands as stored —
             # reported, never demoted here — until a cross-battery FDR treatment is
             # preregistered. The run still counts in store.insert_run's family log.
-            # Event runs are deliberately NOT exempt: their verdict comes from the
-            # timing-family event gate (a real shuffle p, in the family above) and the
-            # battery block in their result is a reported read, inert here.
+            # Event runs are deliberately NOT exempt: since Amendment 2 their verdict
+            # comes from the event battery, and the battery's p is their family p
+            # (see _p above) — they flow through the adjustment as before.
             out[iid] = {"verdict_now": run.get("verdict"), "fdr_pass": None, "p_ok": None,
                         "wf_ok": None, "p": None, "battery": result["battery"].get("type")}
             continue

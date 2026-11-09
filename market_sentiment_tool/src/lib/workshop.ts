@@ -209,6 +209,22 @@ export interface RunResult {
   n_events?: number;
   per_ticker?: { ticker: string; n: number; mean: number; shrunk: number; weight: number; t: number }[];
   events?: EventRow[];
+  /** The claim-typed battery (spec 2026-11-08). On event runs, since Amendment 2
+   * (2026-11-08) the battery's verdict is the run's verdict. */
+  battery?: {
+    type: string;
+    verdict?: Verdict;
+    p?: number | null;
+    legs?: { name: string; holds: boolean; detail: string }[];
+    spans?: { unseen?: { peer?: { n: number; mean: number; t: number; hit: number } | null } };
+  } | null;
+  /** The old random-dates event gate, preserved as a named control on event
+   * runs made since Amendment 2. Null when the run predates it (the gate's
+   * numbers then sit at top level, where they were the verdict's own). */
+  legacy_event_gate?: {
+    verdict: Verdict;
+    shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string; holds?: boolean };
+  } | null;
 }
 
 export interface Run {
