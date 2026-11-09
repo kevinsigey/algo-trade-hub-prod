@@ -126,7 +126,7 @@ export default function Strategies() {
     },
     {
       id: "hourly-picks", name: "WTI hourly best strike", stage: "Paper record", detail: "#hourly-picks",
-      rule: "Thirty minutes before each hourly WTI settlement on Kalshi, buy the single strike the model beats by the most after fees; hold to the settle.",
+      rule: "Before each hourly WTI settlement on Kalshi, record the strike the model beats by the most, but only when its calibrated chance clears the price you can actually pay by 15 or more points; snapshots land thirty and ten minutes out. The model's raw chances have run about 13 points hot, so they are corrected against its own settled history first. Recorded, never traded.",
       record: strike?.settled == null ? null
         : `${strike.hits} of ${strike.settled} hit${strike.net_per_contract == null ? "" : ` · ${cents(strike.net_per_contract)}`}`,
       tone: toneOf(strike?.net_per_contract),
