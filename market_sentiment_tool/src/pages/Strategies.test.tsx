@@ -50,46 +50,123 @@ function serve(overrides: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Strategies", () => {
-  it("lists every strategy with its stage and its record, each linked to its detail", async () => {
+  it("shows every strategy as a tile with its stage and its record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Strategies", level: 1 })).toBeInTheDocument();
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
-    expect(await within(list).findByText(/\+1\.4 pts vs SPY/)).toBeInTheDocument();
+    expect(await within(list).findByText((_, el) => el?.tagName === "P" && /\+1\.4 pts vs SPY since start/.test(el.textContent ?? ""))).toBeInTheDocument();
     expect(within(list).getByText(/1 idea trading/)).toBeInTheDocument();
     expect(await within(list).findByText(/9 of 24 hit/)).toBeInTheDocument();
     expect(await within(list).findByText(/18,602 graded/)).toBeInTheDocument();
     for (const stage of ["Live paper account", "Paper record", "Picks only", "Retired"]) {
       expect(within(list).getAllByText(stage).length).toBeGreaterThan(0);
     }
+    for (const name of ["Stock ideas", "15-minute rules — oil & gas", "WTI hourly best strike",
+                        "Kalshi gap tracker", "Sports picks", "Crypto sniper"]) {
+      expect(within(list).getByText(name)).toBeInTheDocument();
+    }
   });
 
-  it("splits the 15-minute rule into one row per market, each with its gated record", async () => {
+  it("keeps the explanations under the tile expansions, collapsed except the live tile", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
-    for (const name of [/WTI 15-minute rule/i, /Brent 15-minute rule/i, /Natural gas 15-minute rule/i]) {
-      expect(await within(list).findByRole("link", { name })).toHaveAttribute("href", "#fifteen-rule");
+    const rule = await within(list).findByText(/Five minutes into each 15-minute WTI window/);
+    const fifteenDetails = rule.closest("details");
+    expect(fifteenDetails).not.toBeNull();
+    expect(fifteenDetails!.open).toBe(false);
+    const stockDetails = within(list).getByText(/Workshop ideas that cleared their gates/).closest("details");
+    expect(stockDetails).not.toBeNull();
+    expect(stockDetails!.open).toBe(true);
+  });
+
+  it("splits the 15-minute tile into one market block per market, each with its gated record", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    expect(tile).not.toBeNull();
+    expect(tile!.id).toBe("fifteen-rule");
+    for (const label of ["WTI", "Brent", "Natural gas"]) {
+      // Once in the tile's summary bars, once in the trade record's by-market table below.
+      expect(within(tile!).getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(await within(list).findByText(/2 gated trades · \+5\.0¢ a contract · 50% win/)).toBeInTheDocument();
     expect(within(list).getByText(/5 gated trades · \+20\.0¢ a contract · 60% win/)).toBeInTheDocument();
-    // Brent has no gated trades yet: its row falls back to the raw record and says so.
+    // Brent has no gated trades yet: its block falls back to the raw record and says so.
     expect(within(list).getByText(/0 gated trades · raw 1 trade · −2\.0¢ a contract/)).toBeInTheDocument();
     expect(within(list).queryByText(/15-minute oil and gas rule/)).not.toBeInTheDocument();
+    // The tile headline is the family gated record with the raw record beside it as the control.
+    expect(within(list).getByText(/7 gated trades · \+14\.0¢ a contract · 57% win · raw control 10 · \+5\.0¢ a contract/)).toBeInTheDocument();
+  });
+
+  it("adds a metals tile in the same visual form when the fifteen payload carries the metals block", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    serve({ "/api/oil/fifteen-rule": { ...base,
+      metals: { prereg_at: "2026-11-09T19:55:00+00:00", ready_trades: 300,
+                by_series: { Gold: { n: 4, net_per_contract: 0.11, win_rate: 0.75 },
+                             Silver: { n: 2, net_per_contract: -0.05, win_rate: 0.5 },
+                             Copper: { n: 0, net_per_contract: null, win_rate: null } },
+                gate: { forward: { n: 4, net_per_contract: 0.1025, win_rate: 0.75 },
+                        by_series: { Gold: { n: 3, net_per_contract: 0.13, win_rate: 0.67 },
+                                     Silver: { n: 0, net_per_contract: null, win_rate: null },
+                                     Copper: { n: 1, net_per_contract: 0.02, win_rate: 1 } } } } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute metals rule")).closest("li");
+    expect(tile).not.toBeNull();
+    expect(tile!.id).toBe("fifteen-metals");
+    for (const label of ["Gold", "Silver", "Copper"]) {
+      expect(within(tile!).getByText(label)).toBeInTheDocument();
+    }
+    expect(within(tile!).getByText(/3 gated trades · \+13\.0¢ a contract · 67% win/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/0 gated trades · raw 2 trades · −5\.0¢ a contract/)).toBeInTheDocument();
+    // The tile headline is the metals block's own served aggregate.
+    expect(within(tile!).getByText(/4 gated trades · \+10\.3¢ a contract · 75% win/)).toBeInTheDocument();
+  });
+
+  it("shows the metals tile accruing, with no borrowed numbers, before its first settled trades", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    serve({ "/api/oil/fifteen-rule": { ...base,
+      metals: { prereg_at: "2026-11-09T19:55:00+00:00", ready_trades: 300,
+                by_series: { Gold: { n: 0, net_per_contract: null, win_rate: null },
+                             Silver: { n: 0, net_per_contract: null, win_rate: null },
+                             Copper: { n: 0, net_per_contract: null, win_rate: null } },
+                gate: { forward: { n: 0, net_per_contract: null, win_rate: null },
+                        by_series: { Gold: { n: 0, net_per_contract: null, win_rate: null },
+                                     Silver: { n: 0, net_per_contract: null, win_rate: null },
+                                     Copper: { n: 0, net_per_contract: null, win_rate: null } } } } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute metals rule")).closest("li");
+    expect(tile).not.toBeNull();
+    // One per metal, plus the tile headline itself.
+    expect(within(tile!).getAllByText(/Accruing — no settled gated trades yet/)).toHaveLength(4);
+  });
+
+  it("draws the stock ideas curve when the portfolio payload carries one", async () => {
+    serve({ "/api/portfolio": { ...(BODIES["/api/portfolio"] as Record<string, unknown>),
+      curve: [{ t: "2026-09-01", portfolio_pct: 0, spy_pct: 0 },
+              { t: "2026-10-01", portfolio_pct: 2.1, spy_pct: 1.2 },
+              { t: "2026-11-01", portfolio_pct: 1.4, spy_pct: 0 }] } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    expect(await within(list).findByRole("img", { name: "Portfolio curve against SPY" })).toBeInTheDocument();
   });
 
   it("splits the gap tracker into an oil desk and a crypto desk, each with its own record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
-    expect(await within(list).findByRole("link", { name: /Oil gap tracker/i })).toHaveAttribute("href", "#gap-oil");
-    expect(within(list).getByRole("link", { name: /Crypto gap tracker/i })).toHaveAttribute("href", "#gap-crypto");
     expect(await within(list).findByText(/2 closed · \+\$80\.50 realized · 50% won/)).toBeInTheDocument();
     expect(within(list).getByText(/1 closed · −\$260\.00 realized · 0% won/)).toBeInTheDocument();
     expect(within(list).queryByText(/oil and crypto/)).not.toBeInTheDocument();
-    // Both desks render below, each with its own heading.
+    // Both desks render in the tile's expansion, each with its own heading.
     expect(await screen.findByText("Oil gap tracker", { selector: "h2" })).toBeInTheDocument();
     expect(screen.getByText("Crypto gap tracker", { selector: "h2" })).toBeInTheDocument();
+    // The tile headline is the combined realized record across both desks.
+    expect(within(list).getByText(/−\$179\.50/)).toBeInTheDocument();
   });
 
   it("states the gap rule with the fee outside the entry test and the one-hour exit", async () => {
