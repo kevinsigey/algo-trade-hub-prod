@@ -1,0 +1,3209 @@
+{
+ "prereg_at": "2026-11-07T00:00:00+00:00",
+ "min_edge_live_bar": 0.1,
+ "cohort_windows": 288,
+ "cohort_by_series": {
+  "WTI": 96,
+  "Brent": 96,
+  "Oil (WTI+Brent)": 192,
+  "Natural gas": 96
+ },
+ "validation": {
+  "v1_replay_record": {
+   "n": 41,
+   "net_per_contract": 0.196,
+   "total": 8.04,
+   "win_rate": 0.659,
+   "low95": 0.0736,
+   "ready": false,
+   "windows": 41
+  },
+  "v1_replay_by_series": {
+   "WTI": {
+    "n": 7,
+    "net_per_contract": 0.1637,
+    "total": 1.15,
+    "win_rate": 0.714,
+    "low95": -0.0884,
+    "ready": false,
+    "windows": 7
+   },
+   "Brent": {
+    "n": 11,
+    "net_per_contract": 0.1164,
+    "total": 1.28,
+    "win_rate": 0.545,
+    "low95": -0.1172,
+    "ready": false,
+    "windows": 11
+   },
+   "Oil (WTI+Brent)": {
+    "n": 18,
+    "net_per_contract": 0.1348,
+    "total": 2.43,
+    "win_rate": 0.611,
+    "low95": -0.0339,
+    "ready": false,
+    "windows": 18
+   },
+   "Natural gas": {
+    "n": 23,
+    "net_per_contract": 0.2439,
+    "total": 5.61,
+    "win_rate": 0.696,
+    "low95": 0.0694,
+    "ready": false,
+    "windows": 23
+   }
+  },
+  "decisions_buy_record": {
+   "n": 41,
+   "net_per_contract": 0.196,
+   "total": 8.04,
+   "win_rate": 0.659,
+   "low95": 0.0736,
+   "ready": false,
+   "windows": 41
+  },
+  "decisions_buy_by_series": {
+   "WTI": {
+    "n": 7,
+    "net_per_contract": 0.1637,
+    "total": 1.15,
+    "win_rate": 0.714,
+    "low95": -0.0884,
+    "ready": false,
+    "windows": 7
+   },
+   "Brent": {
+    "n": 11,
+    "net_per_contract": 0.1164,
+    "total": 1.28,
+    "win_rate": 0.545,
+    "low95": -0.1172,
+    "ready": false,
+    "windows": 11
+   },
+   "Oil (WTI+Brent)": {
+    "n": 18,
+    "net_per_contract": 0.1348,
+    "total": 2.43,
+    "win_rate": 0.611,
+    "low95": -0.0339,
+    "ready": false,
+    "windows": 18
+   },
+   "Natural gas": {
+    "n": 23,
+    "net_per_contract": 0.2439,
+    "total": 5.61,
+    "win_rate": 0.696,
+    "low95": 0.0694,
+    "ready": false,
+    "windows": 23
+   }
+  },
+  "v2_offsets5_record": {
+   "n": 35,
+   "net_per_contract": 0.2234,
+   "total": 7.82,
+   "win_rate": 0.714,
+   "low95": 0.1018,
+   "ready": false,
+   "windows": 35
+  },
+  "v2_offsets5_by_series": {
+   "WTI": {
+    "n": 7,
+    "net_per_contract": 0.1637,
+    "total": 1.15,
+    "win_rate": 0.714,
+    "low95": -0.0884,
+    "ready": false,
+    "windows": 7
+   },
+   "Brent": {
+    "n": 10,
+    "net_per_contract": 0.1492,
+    "total": 1.49,
+    "win_rate": 0.6,
+    "low95": -0.0992,
+    "ready": false,
+    "windows": 10
+   },
+   "Oil (WTI+Brent)": {
+    "n": 17,
+    "net_per_contract": 0.1551,
+    "total": 2.64,
+    "win_rate": 0.647,
+    "low95": -0.0187,
+    "ready": false,
+    "windows": 17
+   },
+   "Natural gas": {
+    "n": 18,
+    "net_per_contract": 0.2879,
+    "total": 5.18,
+    "win_rate": 0.778,
+    "low95": 0.1186,
+    "ready": false,
+    "windows": 18
+   }
+  },
+  "v2_decision_buy_not_priced_at_5": [
+   [
+    "Brent",
+    "kalshi:KXBRENT15M-26NOV090730-30"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV062315-15"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV062330-30"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV081930-30"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV090000-00"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV090100-00"
+   ],
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV091015-15"
+   ]
+  ],
+  "v2_priced_at_5_not_decision_buy": [
+   [
+    "Natural gas",
+    "kalshi:KXNATGAS15M-26NOV091230-30"
+   ]
+  ],
+  "v3_edge5_vs_decisions": {
+   "matched_within_rounding": 255,
+   "beyond": 20,
+   "worst_abs_diff": 0.31046
+  },
+  "v3_outcome_mismatches": {
+   "offsets_vs_decisions": 0,
+   "settlements_vs_decisions": 0
+  }
+ },
+ "coverage_and_records_by_offset": {
+  "0": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 0,
+    "tape_rows": 96,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 0,
+    "tape_rows": 96,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 0,
+    "tape_rows": 192,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 5,
+    "tape_rows": 91,
+    "tick_share": 0.052,
+    "priced": 5,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": -0.0155
+   }
+  },
+  "1": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 12,
+     "net_per_contract": 0.2624,
+     "total": 3.15,
+     "win_rate": 0.75,
+     "low95": 0.0299,
+     "ready": false,
+     "windows": 12
+    },
+    "mean_edge_on_offer": 0.0316
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 9,
+     "net_per_contract": 0.3195,
+     "total": 2.88,
+     "win_rate": 0.889,
+     "low95": 0.0888,
+     "ready": false,
+     "windows": 9
+    },
+    "mean_edge_on_offer": 0.018
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 192,
+    "record": {
+     "n": 21,
+     "net_per_contract": 0.2868,
+     "total": 6.02,
+     "win_rate": 0.81,
+     "low95": 0.1248,
+     "ready": false,
+     "windows": 21
+    },
+    "mean_edge_on_offer": 0.0248
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 86,
+    "tape_rows": 10,
+    "tick_share": 0.896,
+    "priced": 86,
+    "record": {
+     "n": 11,
+     "net_per_contract": 0.1515,
+     "total": 1.67,
+     "win_rate": 0.636,
+     "low95": -0.1429,
+     "ready": false,
+     "windows": 11
+    },
+    "mean_edge_on_offer": 0.0339
+   }
+  },
+  "2": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 12,
+     "net_per_contract": 0.1981,
+     "total": 2.38,
+     "win_rate": 0.75,
+     "low95": -0.0334,
+     "ready": false,
+     "windows": 12
+    },
+    "mean_edge_on_offer": 0.0413
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 8,
+     "net_per_contract": 0.2352,
+     "total": 1.88,
+     "win_rate": 0.75,
+     "low95": -0.0796,
+     "ready": false,
+     "windows": 8
+    },
+    "mean_edge_on_offer": 0.0256
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 192,
+    "record": {
+     "n": 20,
+     "net_per_contract": 0.213,
+     "total": 4.26,
+     "win_rate": 0.75,
+     "low95": 0.0305,
+     "ready": false,
+     "windows": 20
+    },
+    "mean_edge_on_offer": 0.0335
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 88,
+    "tape_rows": 8,
+    "tick_share": 0.917,
+    "priced": 88,
+    "record": {
+     "n": 15,
+     "net_per_contract": 0.3192,
+     "total": 4.79,
+     "win_rate": 0.8,
+     "low95": 0.1141,
+     "ready": false,
+     "windows": 15
+    },
+    "mean_edge_on_offer": 0.0461
+   }
+  },
+  "3": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 7,
+     "net_per_contract": -0.107,
+     "total": -0.75,
+     "win_rate": 0.429,
+     "low95": -0.4247,
+     "ready": false,
+     "windows": 7
+    },
+    "mean_edge_on_offer": 0.0309
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 95,
+    "record": {
+     "n": 7,
+     "net_per_contract": 0.2553,
+     "total": 1.79,
+     "win_rate": 0.857,
+     "low95": -0.0295,
+     "ready": false,
+     "windows": 7
+    },
+    "mean_edge_on_offer": 0.0216
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 191,
+    "record": {
+     "n": 14,
+     "net_per_contract": 0.0741,
+     "total": 1.04,
+     "win_rate": 0.643,
+     "low95": -0.1533,
+     "ready": false,
+     "windows": 14
+    },
+    "mean_edge_on_offer": 0.0263
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 90,
+    "tape_rows": 6,
+    "tick_share": 0.938,
+    "priced": 90,
+    "record": {
+     "n": 19,
+     "net_per_contract": 0.2002,
+     "total": 3.8,
+     "win_rate": 0.632,
+     "low95": -0.0189,
+     "ready": false,
+     "windows": 19
+    },
+    "mean_edge_on_offer": 0.0597
+   }
+  },
+  "4": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 96,
+    "record": {
+     "n": 11,
+     "net_per_contract": 0.1128,
+     "total": 1.24,
+     "win_rate": 0.636,
+     "low95": -0.135,
+     "ready": false,
+     "windows": 11
+    },
+    "mean_edge_on_offer": 0.0425
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 95,
+    "record": {
+     "n": 9,
+     "net_per_contract": 0.2449,
+     "total": 2.2,
+     "win_rate": 0.778,
+     "low95": -0.0116,
+     "ready": false,
+     "windows": 9
+    },
+    "mean_edge_on_offer": 0.0294
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 191,
+    "record": {
+     "n": 20,
+     "net_per_contract": 0.1723,
+     "total": 3.45,
+     "win_rate": 0.7,
+     "low95": -0.0041,
+     "ready": false,
+     "windows": 20
+    },
+    "mean_edge_on_offer": 0.036
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 90,
+    "tape_rows": 6,
+    "tick_share": 0.938,
+    "priced": 90,
+    "record": {
+     "n": 18,
+     "net_per_contract": 0.2307,
+     "total": 4.15,
+     "win_rate": 0.667,
+     "low95": 0.0597,
+     "ready": false,
+     "windows": 18
+    },
+    "mean_edge_on_offer": 0.0578
+   }
+  },
+  "5": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 93,
+    "tape_rows": 3,
+    "tick_share": 0.969,
+    "priced": 92,
+    "record": {
+     "n": 7,
+     "net_per_contract": 0.1637,
+     "total": 1.15,
+     "win_rate": 0.714,
+     "low95": -0.0884,
+     "ready": false,
+     "windows": 7
+    },
+    "mean_edge_on_offer": 0.037
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 94,
+    "record": {
+     "n": 10,
+     "net_per_contract": 0.1492,
+     "total": 1.49,
+     "win_rate": 0.6,
+     "low95": -0.0992,
+     "ready": false,
+     "windows": 10
+    },
+    "mean_edge_on_offer": 0.0317
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 189,
+    "tape_rows": 3,
+    "tick_share": 0.984,
+    "priced": 186,
+    "record": {
+     "n": 17,
+     "net_per_contract": 0.1551,
+     "total": 2.64,
+     "win_rate": 0.647,
+     "low95": -0.0187,
+     "ready": false,
+     "windows": 17
+    },
+    "mean_edge_on_offer": 0.0344
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 89,
+    "tape_rows": 7,
+    "tick_share": 0.927,
+    "priced": 89,
+    "record": {
+     "n": 18,
+     "net_per_contract": 0.2879,
+     "total": 5.18,
+     "win_rate": 0.778,
+     "low95": 0.1186,
+     "ready": false,
+     "windows": 18
+    },
+    "mean_edge_on_offer": 0.0618
+   }
+  },
+  "6": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 94,
+    "tape_rows": 2,
+    "tick_share": 0.979,
+    "priced": 92,
+    "record": {
+     "n": 14,
+     "net_per_contract": 0.0835,
+     "total": 1.17,
+     "win_rate": 0.571,
+     "low95": -0.1086,
+     "ready": false,
+     "windows": 14
+    },
+    "mean_edge_on_offer": 0.0484
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 93,
+    "record": {
+     "n": 13,
+     "net_per_contract": 0.2564,
+     "total": 3.33,
+     "win_rate": 0.692,
+     "low95": 0.0351,
+     "ready": false,
+     "windows": 13
+    },
+    "mean_edge_on_offer": 0.0353
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 190,
+    "tape_rows": 2,
+    "tick_share": 0.99,
+    "priced": 185,
+    "record": {
+     "n": 27,
+     "net_per_contract": 0.1667,
+     "total": 4.5,
+     "win_rate": 0.63,
+     "low95": 0.0199,
+     "ready": false,
+     "windows": 27
+    },
+    "mean_edge_on_offer": 0.0418
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 90,
+    "tape_rows": 6,
+    "tick_share": 0.938,
+    "priced": 89,
+    "record": {
+     "n": 26,
+     "net_per_contract": 0.2774,
+     "total": 7.21,
+     "win_rate": 0.692,
+     "low95": 0.1171,
+     "ready": false,
+     "windows": 26
+    },
+    "mean_edge_on_offer": 0.0887
+   }
+  },
+  "7": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 94,
+    "tape_rows": 2,
+    "tick_share": 0.979,
+    "priced": 91,
+    "record": {
+     "n": 10,
+     "net_per_contract": 0.0716,
+     "total": 0.72,
+     "win_rate": 0.5,
+     "low95": -0.1793,
+     "ready": false,
+     "windows": 10
+    },
+    "mean_edge_on_offer": 0.0474
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 91,
+    "record": {
+     "n": 11,
+     "net_per_contract": 0.2752,
+     "total": 3.03,
+     "win_rate": 0.636,
+     "low95": 0.011,
+     "ready": false,
+     "windows": 11
+    },
+    "mean_edge_on_offer": 0.0419
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 190,
+    "tape_rows": 2,
+    "tick_share": 0.99,
+    "priced": 182,
+    "record": {
+     "n": 21,
+     "net_per_contract": 0.1783,
+     "total": 3.74,
+     "win_rate": 0.571,
+     "low95": -0.0054,
+     "ready": false,
+     "windows": 21
+    },
+    "mean_edge_on_offer": 0.0446
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 89,
+    "tape_rows": 7,
+    "tick_share": 0.927,
+    "priced": 88,
+    "record": {
+     "n": 22,
+     "net_per_contract": 0.2234,
+     "total": 4.91,
+     "win_rate": 0.682,
+     "low95": 0.0546,
+     "ready": false,
+     "windows": 22
+    },
+    "mean_edge_on_offer": 0.0813
+   }
+  },
+  "8": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 91,
+    "record": {
+     "n": 20,
+     "net_per_contract": 0.0823,
+     "total": 1.65,
+     "win_rate": 0.45,
+     "low95": -0.1015,
+     "ready": false,
+     "windows": 20
+    },
+    "mean_edge_on_offer": 0.0531
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 89,
+    "record": {
+     "n": 14,
+     "net_per_contract": 0.0767,
+     "total": 1.07,
+     "win_rate": 0.357,
+     "low95": -0.1187,
+     "ready": false,
+     "windows": 14
+    },
+    "mean_edge_on_offer": 0.0441
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 180,
+    "record": {
+     "n": 34,
+     "net_per_contract": 0.08,
+     "total": 2.72,
+     "win_rate": 0.412,
+     "low95": -0.0528,
+     "ready": false,
+     "windows": 34
+    },
+    "mean_edge_on_offer": 0.0487
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 87,
+    "tape_rows": 9,
+    "tick_share": 0.906,
+    "priced": 85,
+    "record": {
+     "n": 20,
+     "net_per_contract": 0.1742,
+     "total": 3.48,
+     "win_rate": 0.65,
+     "low95": 0.0145,
+     "ready": false,
+     "windows": 20
+    },
+    "mean_edge_on_offer": 0.0746
+   }
+  },
+  "9": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 90,
+    "record": {
+     "n": 12,
+     "net_per_contract": -0.0431,
+     "total": -0.52,
+     "win_rate": 0.333,
+     "low95": -0.255,
+     "ready": false,
+     "windows": 12
+    },
+    "mean_edge_on_offer": 0.0544
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 86,
+    "record": {
+     "n": 13,
+     "net_per_contract": -0.0071,
+     "total": -0.09,
+     "win_rate": 0.308,
+     "low95": -0.1844,
+     "ready": false,
+     "windows": 13
+    },
+    "mean_edge_on_offer": 0.0486
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 176,
+    "record": {
+     "n": 25,
+     "net_per_contract": -0.0244,
+     "total": -0.61,
+     "win_rate": 0.32,
+     "low95": -0.159,
+     "ready": false,
+     "windows": 25
+    },
+    "mean_edge_on_offer": 0.0516
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 91,
+    "tape_rows": 5,
+    "tick_share": 0.948,
+    "priced": 87,
+    "record": {
+     "n": 22,
+     "net_per_contract": 0.1291,
+     "total": 2.84,
+     "win_rate": 0.5,
+     "low95": -0.0676,
+     "ready": false,
+     "windows": 22
+    },
+    "mean_edge_on_offer": 0.0813
+   }
+  },
+  "10": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 85,
+    "record": {
+     "n": 16,
+     "net_per_contract": 0.0075,
+     "total": 0.12,
+     "win_rate": 0.375,
+     "low95": -0.159,
+     "ready": false,
+     "windows": 16
+    },
+    "mean_edge_on_offer": 0.0548
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 75,
+    "record": {
+     "n": 15,
+     "net_per_contract": 0.0891,
+     "total": 1.34,
+     "win_rate": 0.4,
+     "low95": -0.0963,
+     "ready": false,
+     "windows": 15
+    },
+    "mean_edge_on_offer": 0.0486
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 160,
+    "record": {
+     "n": 31,
+     "net_per_contract": 0.047,
+     "total": 1.46,
+     "win_rate": 0.387,
+     "low95": -0.076,
+     "ready": false,
+     "windows": 31
+    },
+    "mean_edge_on_offer": 0.0519
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 89,
+    "tape_rows": 7,
+    "tick_share": 0.927,
+    "priced": 81,
+    "record": {
+     "n": 18,
+     "net_per_contract": 0.189,
+     "total": 3.4,
+     "win_rate": 0.611,
+     "low95": -0.0197,
+     "ready": false,
+     "windows": 18
+    },
+    "mean_edge_on_offer": 0.0696
+   }
+  },
+  "11": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 95,
+    "tape_rows": 1,
+    "tick_share": 0.99,
+    "priced": 79,
+    "record": {
+     "n": 12,
+     "net_per_contract": -0.018,
+     "total": -0.22,
+     "win_rate": 0.333,
+     "low95": -0.125,
+     "ready": false,
+     "windows": 12
+    },
+    "mean_edge_on_offer": 0.0581
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 75,
+    "record": {
+     "n": 11,
+     "net_per_contract": 0.0348,
+     "total": 0.38,
+     "win_rate": 0.364,
+     "low95": -0.149,
+     "ready": false,
+     "windows": 11
+    },
+    "mean_edge_on_offer": 0.0495
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 191,
+    "tape_rows": 1,
+    "tick_share": 0.995,
+    "priced": 154,
+    "record": {
+     "n": 23,
+     "net_per_contract": 0.0073,
+     "total": 0.17,
+     "win_rate": 0.348,
+     "low95": -0.095,
+     "ready": false,
+     "windows": 23
+    },
+    "mean_edge_on_offer": 0.0539
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 87,
+    "tape_rows": 9,
+    "tick_share": 0.906,
+    "priced": 73,
+    "record": {
+     "n": 18,
+     "net_per_contract": 0.0944,
+     "total": 1.7,
+     "win_rate": 0.5,
+     "low95": -0.0936,
+     "ready": false,
+     "windows": 18
+    },
+    "mean_edge_on_offer": 0.0749
+   }
+  },
+  "12": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 74,
+    "record": {
+     "n": 17,
+     "net_per_contract": 0.0586,
+     "total": 1.0,
+     "win_rate": 0.294,
+     "low95": -0.1075,
+     "ready": false,
+     "windows": 17
+    },
+    "mean_edge_on_offer": 0.0735
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 66,
+    "record": {
+     "n": 12,
+     "net_per_contract": -0.0287,
+     "total": -0.34,
+     "win_rate": 0.25,
+     "low95": -0.1575,
+     "ready": false,
+     "windows": 12
+    },
+    "mean_edge_on_offer": 0.0581
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 140,
+    "record": {
+     "n": 29,
+     "net_per_contract": 0.0225,
+     "total": 0.65,
+     "win_rate": 0.276,
+     "low95": -0.0879,
+     "ready": false,
+     "windows": 29
+    },
+    "mean_edge_on_offer": 0.0663
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 91,
+    "tape_rows": 5,
+    "tick_share": 0.948,
+    "priced": 68,
+    "record": {
+     "n": 22,
+     "net_per_contract": 0.1356,
+     "total": 2.98,
+     "win_rate": 0.455,
+     "low95": -0.046,
+     "ready": false,
+     "windows": 22
+    },
+    "mean_edge_on_offer": 0.0981
+   }
+  },
+  "13": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 67,
+    "record": {
+     "n": 20,
+     "net_per_contract": 0.125,
+     "total": 2.5,
+     "win_rate": 0.35,
+     "low95": -0.0395,
+     "ready": false,
+     "windows": 20
+    },
+    "mean_edge_on_offer": 0.081
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 56,
+    "record": {
+     "n": 17,
+     "net_per_contract": 0.127,
+     "total": 2.16,
+     "win_rate": 0.471,
+     "low95": -0.0472,
+     "ready": false,
+     "windows": 17
+    },
+    "mean_edge_on_offer": 0.0709
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 192,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 123,
+    "record": {
+     "n": 37,
+     "net_per_contract": 0.1259,
+     "total": 4.66,
+     "win_rate": 0.405,
+     "low95": 0.0079,
+     "ready": false,
+     "windows": 37
+    },
+    "mean_edge_on_offer": 0.0764
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 86,
+    "tape_rows": 10,
+    "tick_share": 0.896,
+    "priced": 54,
+    "record": {
+     "n": 24,
+     "net_per_contract": 0.2124,
+     "total": 5.1,
+     "win_rate": 0.542,
+     "low95": 0.0335,
+     "ready": false,
+     "windows": 24
+    },
+    "mean_edge_on_offer": 0.1275
+   }
+  },
+  "14": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 95,
+    "tape_rows": 1,
+    "tick_share": 0.99,
+    "priced": 38,
+    "record": {
+     "n": 19,
+     "net_per_contract": 0.039,
+     "total": 0.74,
+     "win_rate": 0.316,
+     "low95": -0.1044,
+     "ready": false,
+     "windows": 19
+    },
+    "mean_edge_on_offer": 0.1271
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 96,
+    "tape_rows": 0,
+    "tick_share": 1.0,
+    "priced": 40,
+    "record": {
+     "n": 11,
+     "net_per_contract": 0.0553,
+     "total": 0.61,
+     "win_rate": 0.273,
+     "low95": -0.2189,
+     "ready": false,
+     "windows": 11
+    },
+    "mean_edge_on_offer": 0.0763
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 191,
+    "tape_rows": 1,
+    "tick_share": 0.995,
+    "priced": 78,
+    "record": {
+     "n": 30,
+     "net_per_contract": 0.045,
+     "total": 1.35,
+     "win_rate": 0.3,
+     "low95": -0.0877,
+     "ready": false,
+     "windows": 30
+    },
+    "mean_edge_on_offer": 0.101
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 87,
+    "tape_rows": 9,
+    "tick_share": 0.906,
+    "priced": 35,
+    "record": {
+     "n": 18,
+     "net_per_contract": 0.1608,
+     "total": 2.89,
+     "win_rate": 0.444,
+     "low95": -0.0554,
+     "ready": false,
+     "windows": 18
+    },
+    "mean_edge_on_offer": 0.1663
+   }
+  },
+  "15": {
+   "cohort_windows": {
+    "WTI": 96,
+    "Brent": 96,
+    "Oil (WTI+Brent)": 192,
+    "Natural gas": 96
+   },
+   "WTI": {
+    "windows_with_row": 96,
+    "tick_rows": 0,
+    "tape_rows": 96,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Brent": {
+    "windows_with_row": 96,
+    "tick_rows": 0,
+    "tape_rows": 96,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Oil (WTI+Brent)": {
+    "windows_with_row": 192,
+    "tick_rows": 0,
+    "tape_rows": 192,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   },
+   "Natural gas": {
+    "windows_with_row": 96,
+    "tick_rows": 0,
+    "tape_rows": 96,
+    "tick_share": 0.0,
+    "priced": 0,
+    "record": {
+     "n": 0,
+     "net_per_contract": null,
+     "total": 0.0,
+     "win_rate": null,
+     "low95": null,
+     "ready": false,
+     "windows": 0
+    },
+    "mean_edge_on_offer": null
+   }
+  }
+ },
+ "paired_vs_freeze": {
+  "0": {
+   "WTI": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 4,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": 0.0,
+     "low95": 0.0,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "1": {
+   "WTI": {
+    "intersection_windows": 92,
+    "trades_at_k": 12,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": 0.0218,
+     "low95": -0.016,
+     "total": 2.0
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.4128,
+    "both_pass_mean_at_freeze": 0.5025,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 94,
+    "trades_at_k": 8,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0095,
+     "low95": -0.0284,
+     "total": 0.89
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": 0.0795,
+    "both_pass_mean_at_freeze": 0.2532,
+    "side_flips_within_both_pass": 1
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 186,
+    "trades_at_k": 20,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0156,
+     "low95": -0.0111,
+     "total": 2.89
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.1628,
+    "both_pass_mean_at_freeze": 0.3155,
+    "side_flips_within_both_pass": 1
+   },
+   "Natural gas": {
+    "intersection_windows": 82,
+    "trades_at_k": 11,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0429,
+     "low95": -0.0923,
+     "total": -3.52
+    },
+    "both_pass_n": 6,
+    "both_pass_mean_at_k": 0.0151,
+    "both_pass_mean_at_freeze": 0.0208,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "2": {
+   "WTI": {
+    "intersection_windows": 92,
+    "trades_at_k": 11,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": 0.0084,
+     "low95": -0.0221,
+     "total": 0.77
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.2446,
+    "both_pass_mean_at_freeze": 0.1755,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 94,
+    "trades_at_k": 7,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": -0.0014,
+     "low95": -0.0374,
+     "total": -0.13
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": 0.0459,
+    "both_pass_mean_at_freeze": 0.0105,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 186,
+    "trades_at_k": 18,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0034,
+     "low95": -0.0201,
+     "total": 0.64
+    },
+    "both_pass_n": 6,
+    "both_pass_mean_at_k": 0.1784,
+    "both_pass_mean_at_freeze": 0.1205,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 84,
+    "trades_at_k": 13,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0071,
+     "low95": -0.0507,
+     "total": -0.6
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.2408,
+    "both_pass_mean_at_freeze": 0.2136,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "3": {
+   "WTI": {
+    "intersection_windows": 92,
+    "trades_at_k": 7,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": -0.0206,
+     "low95": -0.0483,
+     "total": -1.89
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": 0.3099,
+    "both_pass_mean_at_freeze": 0.2902,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 94,
+    "trades_at_k": 7,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0031,
+     "low95": -0.0319,
+     "total": 0.3
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.3537,
+    "both_pass_mean_at_freeze": 0.3048,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 186,
+    "trades_at_k": 14,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": -0.0086,
+     "low95": -0.031,
+     "total": -1.6
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": 0.3245,
+    "both_pass_mean_at_freeze": 0.2951,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 85,
+    "trades_at_k": 17,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0103,
+     "low95": -0.0628,
+     "total": -0.87
+    },
+    "both_pass_n": 8,
+    "both_pass_mean_at_k": 0.2794,
+    "both_pass_mean_at_freeze": 0.2055,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "4": {
+   "WTI": {
+    "intersection_windows": 92,
+    "trades_at_k": 11,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": 0.001,
+     "low95": -0.0308,
+     "total": 0.1
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.1584,
+    "both_pass_mean_at_freeze": 0.1164,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 94,
+    "trades_at_k": 9,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0076,
+     "low95": -0.0301,
+     "total": 0.71
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.3341,
+    "both_pass_mean_at_freeze": 0.3048,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 186,
+    "trades_at_k": 20,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0043,
+     "low95": -0.0203,
+     "total": 0.81
+    },
+    "both_pass_n": 5,
+    "both_pass_mean_at_k": 0.1935,
+    "both_pass_mean_at_freeze": 0.1541,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 87,
+    "trades_at_k": 18,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0118,
+     "low95": -0.0568,
+     "total": -1.03
+    },
+    "both_pass_n": 9,
+    "both_pass_mean_at_k": 0.3225,
+    "both_pass_mean_at_freeze": 0.3223,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "6": {
+   "WTI": {
+    "intersection_windows": 91,
+    "trades_at_k": 14,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": 0.0003,
+     "low95": -0.0324,
+     "total": 0.02
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.1011,
+    "both_pass_mean_at_freeze": 0.1164,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 93,
+    "trades_at_k": 13,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0198,
+     "low95": -0.0226,
+     "total": 1.84
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": -0.0934,
+    "both_pass_mean_at_freeze": -0.0979,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 184,
+    "trades_at_k": 27,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0101,
+     "low95": -0.0166,
+     "total": 1.86
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.0178,
+    "both_pass_mean_at_freeze": 0.0245,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 85,
+    "trades_at_k": 24,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": 0.0212,
+     "low95": -0.0361,
+     "total": 1.8
+    },
+    "both_pass_n": 11,
+    "both_pass_mean_at_k": 0.2704,
+    "both_pass_mean_at_freeze": 0.3588,
+    "side_flips_within_both_pass": 1
+   }
+  },
+  "7": {
+   "WTI": {
+    "intersection_windows": 90,
+    "trades_at_k": 10,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": -0.0048,
+     "low95": -0.0368,
+     "total": -0.43
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": -0.022,
+    "both_pass_mean_at_freeze": 0.0102,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 91,
+    "trades_at_k": 11,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0169,
+     "low95": -0.0282,
+     "total": 1.54
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.2176,
+    "both_pass_mean_at_freeze": 0.3048,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 181,
+    "trades_at_k": 21,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0061,
+     "low95": -0.0216,
+     "total": 1.11
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": 0.0579,
+    "both_pass_mean_at_freeze": 0.1084,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 85,
+    "trades_at_k": 21,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0057,
+     "low95": -0.0565,
+     "total": -0.49
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.4235,
+    "both_pass_mean_at_freeze": 0.3949,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "8": {
+   "WTI": {
+    "intersection_windows": 88,
+    "trades_at_k": 20,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": 0.0057,
+     "low95": -0.0435,
+     "total": 0.5
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": -0.1947,
+    "both_pass_mean_at_freeze": 0.1674,
+    "side_flips_within_both_pass": 1
+   },
+   "Brent": {
+    "intersection_windows": 88,
+    "trades_at_k": 14,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": -0.0047,
+     "low95": -0.0396,
+     "total": -0.42
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": 0.4536,
+    "both_pass_mean_at_freeze": 0.5002,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 176,
+    "trades_at_k": 34,
+    "trades_at_freeze": 17,
+    "paired_delta": {
+     "mean": 0.0005,
+     "low95": -0.0296,
+     "total": 0.08
+    },
+    "both_pass_n": 5,
+    "both_pass_mean_at_k": 0.0646,
+    "both_pass_mean_at_freeze": 0.3005,
+    "side_flips_within_both_pass": 1
+   },
+   "Natural gas": {
+    "intersection_windows": 82,
+    "trades_at_k": 19,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0254,
+     "low95": -0.0704,
+     "total": -2.08
+    },
+    "both_pass_n": 8,
+    "both_pass_mean_at_k": 0.2856,
+    "both_pass_mean_at_freeze": 0.3309,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "9": {
+   "WTI": {
+    "intersection_windows": 87,
+    "trades_at_k": 12,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": -0.0191,
+     "low95": -0.051,
+     "total": -1.66
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": -0.1385,
+    "both_pass_mean_at_freeze": -0.0981,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 85,
+    "trades_at_k": 13,
+    "trades_at_freeze": 9,
+    "paired_delta": {
+     "mean": -0.0165,
+     "low95": -0.0462,
+     "total": -1.4
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.1441,
+    "both_pass_mean_at_freeze": 0.1005,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 172,
+    "trades_at_k": 25,
+    "trades_at_freeze": 16,
+    "paired_delta": {
+     "mean": -0.0178,
+     "low95": -0.0396,
+     "total": -3.07
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.023,
+    "both_pass_mean_at_freeze": 0.0154,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 82,
+    "trades_at_k": 22,
+    "trades_at_freeze": 18,
+    "paired_delta": {
+     "mean": -0.0286,
+     "low95": -0.0914,
+     "total": -2.34
+    },
+    "both_pass_n": 9,
+    "both_pass_mean_at_k": 0.2875,
+    "both_pass_mean_at_freeze": 0.1931,
+    "side_flips_within_both_pass": 2
+   }
+  },
+  "10": {
+   "WTI": {
+    "intersection_windows": 81,
+    "trades_at_k": 16,
+    "trades_at_freeze": 6,
+    "paired_delta": {
+     "mean": -0.0105,
+     "low95": -0.0482,
+     "total": -0.85
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": -0.0384,
+    "both_pass_mean_at_freeze": -0.0244,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 75,
+    "trades_at_k": 15,
+    "trades_at_freeze": 8,
+    "paired_delta": {
+     "mean": 0.004,
+     "low95": -0.0272,
+     "total": 0.3
+    },
+    "both_pass_n": 5,
+    "both_pass_mean_at_k": 0.249,
+    "both_pass_mean_at_freeze": 0.2423,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 156,
+    "trades_at_k": 31,
+    "trades_at_freeze": 14,
+    "paired_delta": {
+     "mean": -0.0035,
+     "low95": -0.0281,
+     "total": -0.55
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.1669,
+    "both_pass_mean_at_freeze": 0.1661,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 76,
+    "trades_at_k": 16,
+    "trades_at_freeze": 16,
+    "paired_delta": {
+     "mean": -0.0159,
+     "low95": -0.0737,
+     "total": -1.21
+    },
+    "both_pass_n": 6,
+    "both_pass_mean_at_k": 0.3497,
+    "both_pass_mean_at_freeze": 0.4292,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "11": {
+   "WTI": {
+    "intersection_windows": 75,
+    "trades_at_k": 12,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": -0.0182,
+     "low95": -0.0463,
+     "total": -1.36
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": -0.1694,
+    "both_pass_mean_at_freeze": -0.3147,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 75,
+    "trades_at_k": 11,
+    "trades_at_freeze": 8,
+    "paired_delta": {
+     "mean": -0.0087,
+     "low95": -0.0533,
+     "total": -0.65
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.5933,
+    "both_pass_mean_at_freeze": -0.2838,
+    "side_flips_within_both_pass": 1
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 150,
+    "trades_at_k": 23,
+    "trades_at_freeze": 15,
+    "paired_delta": {
+     "mean": -0.0134,
+     "low95": -0.0397,
+     "total": -2.02
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": 0.212,
+    "both_pass_mean_at_freeze": -0.2993,
+    "side_flips_within_both_pass": 1
+   },
+   "Natural gas": {
+    "intersection_windows": 68,
+    "trades_at_k": 15,
+    "trades_at_freeze": 16,
+    "paired_delta": {
+     "mean": -0.0325,
+     "low95": -0.0838,
+     "total": -2.21
+    },
+    "both_pass_n": 6,
+    "both_pass_mean_at_k": 0.3338,
+    "both_pass_mean_at_freeze": 0.4292,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "12": {
+   "WTI": {
+    "intersection_windows": 71,
+    "trades_at_k": 17,
+    "trades_at_freeze": 6,
+    "paired_delta": {
+     "mean": 0.0016,
+     "low95": -0.043,
+     "total": 0.12
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": -0.1981,
+    "both_pass_mean_at_freeze": -0.3044,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 66,
+    "trades_at_k": 12,
+    "trades_at_freeze": 7,
+    "paired_delta": {
+     "mean": -0.015,
+     "low95": -0.0557,
+     "total": -0.99
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": -0.2008,
+    "both_pass_mean_at_freeze": -0.2838,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 137,
+    "trades_at_k": 29,
+    "trades_at_freeze": 13,
+    "paired_delta": {
+     "mean": -0.0064,
+     "low95": -0.0366,
+     "total": -0.87
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": -0.199,
+    "both_pass_mean_at_freeze": -0.2975,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 63,
+    "trades_at_k": 19,
+    "trades_at_freeze": 16,
+    "paired_delta": {
+     "mean": -0.0213,
+     "low95": -0.0838,
+     "total": -1.34
+    },
+    "both_pass_n": 7,
+    "both_pass_mean_at_k": 0.3569,
+    "both_pass_mean_at_freeze": 0.4702,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "13": {
+   "WTI": {
+    "intersection_windows": 64,
+    "trades_at_k": 19,
+    "trades_at_freeze": 6,
+    "paired_delta": {
+     "mean": 0.0284,
+     "low95": -0.024,
+     "total": 1.82
+    },
+    "both_pass_n": 2,
+    "both_pass_mean_at_k": 0.3262,
+    "both_pass_mean_at_freeze": 0.1042,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 56,
+    "trades_at_k": 17,
+    "trades_at_freeze": 4,
+    "paired_delta": {
+     "mean": 0.0218,
+     "low95": -0.027,
+     "total": 1.22
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": 0.303,
+    "both_pass_mean_at_freeze": 0.3794,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 120,
+    "trades_at_k": 36,
+    "trades_at_freeze": 10,
+    "paired_delta": {
+     "mean": 0.0253,
+     "low95": -0.0106,
+     "total": 3.04
+    },
+    "both_pass_n": 5,
+    "both_pass_mean_at_k": 0.3123,
+    "both_pass_mean_at_freeze": 0.2693,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 50,
+    "trades_at_k": 22,
+    "trades_at_freeze": 12,
+    "paired_delta": {
+     "mean": 0.0278,
+     "low95": -0.0691,
+     "total": 1.39
+    },
+    "both_pass_n": 6,
+    "both_pass_mean_at_k": 0.4914,
+    "both_pass_mean_at_freeze": 0.3502,
+    "side_flips_within_both_pass": 1
+   }
+  },
+  "14": {
+   "WTI": {
+    "intersection_windows": 35,
+    "trades_at_k": 16,
+    "trades_at_freeze": 3,
+    "paired_delta": {
+     "mean": 0.0142,
+     "low95": -0.0645,
+     "total": 0.5
+    },
+    "both_pass_n": 3,
+    "both_pass_mean_at_k": 0.0816,
+    "both_pass_mean_at_freeze": 0.2268,
+    "side_flips_within_both_pass": 1
+   },
+   "Brent": {
+    "intersection_windows": 40,
+    "trades_at_k": 11,
+    "trades_at_freeze": 3,
+    "paired_delta": {
+     "mean": -0.0133,
+     "low95": -0.0857,
+     "total": -0.53
+    },
+    "both_pass_n": 1,
+    "both_pass_mean_at_k": 0.8201,
+    "both_pass_mean_at_freeze": 0.6956,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 75,
+    "trades_at_k": 27,
+    "trades_at_freeze": 6,
+    "paired_delta": {
+     "mean": -0.0005,
+     "low95": -0.0535,
+     "total": -0.03
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.2663,
+    "both_pass_mean_at_freeze": 0.344,
+    "side_flips_within_both_pass": 1
+   },
+   "Natural gas": {
+    "intersection_windows": 33,
+    "trades_at_k": 16,
+    "trades_at_freeze": 9,
+    "paired_delta": {
+     "mean": 0.0234,
+     "low95": -0.1064,
+     "total": 0.77
+    },
+    "both_pass_n": 4,
+    "both_pass_mean_at_k": 0.217,
+    "both_pass_mean_at_freeze": 0.2493,
+    "side_flips_within_both_pass": 0
+   }
+  },
+  "15": {
+   "WTI": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Brent": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Oil (WTI+Brent)": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   },
+   "Natural gas": {
+    "intersection_windows": 0,
+    "trades_at_k": 0,
+    "trades_at_freeze": 0,
+    "paired_delta": {
+     "mean": null,
+     "low95": null,
+     "total": 0.0
+    },
+    "both_pass_n": 0,
+    "both_pass_mean_at_k": null,
+    "both_pass_mean_at_freeze": null,
+    "side_flips_within_both_pass": 0
+   }
+  }
+ },
+ "paired_by_session": {
+  "1": {
+   "WTI": {
+    "open": {
+     "intersection_windows": 75,
+     "paired_delta_mean": 0.0025,
+     "paired_delta_low95": -0.0295
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 17
+    }
+   },
+   "Brent": {
+    "open": {
+     "intersection_windows": 74,
+     "paired_delta_mean": -0.0025,
+     "paired_delta_low95": -0.0482
+    },
+    "closed": {
+     "intersection_windows": 20,
+     "paired_delta_mean": 0.054,
+     "paired_delta_low95": 0.0011
+    }
+   },
+   "Oil (WTI+Brent)": {
+    "open": {
+     "intersection_windows": 149,
+     "paired_delta_mean": -0.0,
+     "paired_delta_low95": -0.0278
+    },
+    "closed": {
+     "intersection_windows": 37,
+     "paired_delta_mean": 0.0783,
+     "paired_delta_low95": 0.0066
+    }
+   },
+   "Natural gas": {
+    "open": {
+     "intersection_windows": 71,
+     "paired_delta_mean": -0.0464,
+     "paired_delta_low95": -0.1033
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 11
+    }
+   }
+  },
+  "2": {
+   "WTI": {
+    "open": {
+     "intersection_windows": 75,
+     "paired_delta_mean": -0.0018,
+     "paired_delta_low95": -0.0333
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 17
+    }
+   },
+   "Brent": {
+    "open": {
+     "intersection_windows": 74,
+     "paired_delta_mean": -0.0036,
+     "paired_delta_low95": -0.0407
+    },
+    "closed": {
+     "intersection_windows": 20,
+     "paired_delta_mean": 0.0067,
+     "paired_delta_low95": -0.094
+    }
+   },
+   "Oil (WTI+Brent)": {
+    "open": {
+     "intersection_windows": 149,
+     "paired_delta_mean": -0.0027,
+     "paired_delta_low95": -0.0269
+    },
+    "closed": {
+     "intersection_windows": 37,
+     "paired_delta_mean": 0.028,
+     "paired_delta_low95": -0.0391
+    }
+   },
+   "Natural gas": {
+    "open": {
+     "intersection_windows": 72,
+     "paired_delta_mean": -0.0053,
+     "paired_delta_low95": -0.0559
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 12
+    }
+   }
+  },
+  "3": {
+   "WTI": {
+    "open": {
+     "intersection_windows": 75,
+     "paired_delta_mean": -0.0064,
+     "paired_delta_low95": -0.0269
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 17
+    }
+   },
+   "Brent": {
+    "open": {
+     "intersection_windows": 74,
+     "paired_delta_mean": 0.0005,
+     "paired_delta_low95": -0.0383
+    },
+    "closed": {
+     "intersection_windows": 20,
+     "paired_delta_mean": 0.0128,
+     "paired_delta_low95": -0.0698
+    }
+   },
+   "Oil (WTI+Brent)": {
+    "open": {
+     "intersection_windows": 149,
+     "paired_delta_mean": -0.003,
+     "paired_delta_low95": -0.0248
+    },
+    "closed": {
+     "intersection_windows": 37,
+     "paired_delta_mean": -0.0313,
+     "paired_delta_low95": -0.1022
+    }
+   },
+   "Natural gas": {
+    "open": {
+     "intersection_windows": 71,
+     "paired_delta_mean": -0.0255,
+     "paired_delta_low95": -0.0842
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 14
+    }
+   }
+  },
+  "4": {
+   "WTI": {
+    "open": {
+     "intersection_windows": 75,
+     "paired_delta_mean": 0.0086,
+     "paired_delta_low95": -0.0247
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 17
+    }
+   },
+   "Brent": {
+    "open": {
+     "intersection_windows": 74,
+     "paired_delta_mean": -0.0048,
+     "paired_delta_low95": -0.0474
+    },
+    "closed": {
+     "intersection_windows": 20,
+     "paired_delta_mean": 0.0535,
+     "paired_delta_low95": -0.0266
+    }
+   },
+   "Oil (WTI+Brent)": {
+    "open": {
+     "intersection_windows": 149,
+     "paired_delta_mean": 0.0019,
+     "paired_delta_low95": -0.025
+    },
+    "closed": {
+     "intersection_windows": 37,
+     "paired_delta_mean": 0.0141,
+     "paired_delta_low95": -0.0467
+    }
+   },
+   "Natural gas": {
+    "open": {
+     "intersection_windows": 73,
+     "paired_delta_mean": -0.0198,
+     "paired_delta_low95": -0.0694
+    },
+    "closed": {
+     "suppressed": true,
+     "intersection_windows": 14
+    }
+   }
+  }
+ },
+ "band_5_10_by_offset": {
+  "0": {
+   "WTI": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Brent": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Oil (WTI+Brent)": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Natural gas": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   }
+  },
+  "1": {
+   "WTI": {
+    "n": 14,
+    "net_per_contract": 0.3636,
+    "total": 5.09,
+    "win_rate": 0.857,
+    "low95": 0.1877,
+    "ready": false,
+    "windows": 14,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 9,
+    "net_per_contract": 0.2095,
+    "total": 1.89,
+    "win_rate": 0.667,
+    "low95": -0.1116,
+    "ready": false,
+    "windows": 9,
+    "reportable": false
+   },
+   "Oil (WTI+Brent)": {
+    "n": 23,
+    "net_per_contract": 0.3033,
+    "total": 6.98,
+    "win_rate": 0.783,
+    "low95": 0.1396,
+    "ready": false,
+    "windows": 23,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 13,
+    "net_per_contract": 0.0523,
+    "total": 0.68,
+    "win_rate": 0.538,
+    "low95": -0.2332,
+    "ready": false,
+    "windows": 13,
+    "reportable": true
+   }
+  },
+  "2": {
+   "WTI": {
+    "n": 11,
+    "net_per_contract": 0.0754,
+    "total": 0.83,
+    "win_rate": 0.545,
+    "low95": -0.2077,
+    "ready": false,
+    "windows": 11,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 16,
+    "net_per_contract": 0.0588,
+    "total": 0.94,
+    "win_rate": 0.562,
+    "low95": -0.1709,
+    "ready": false,
+    "windows": 16,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 27,
+    "net_per_contract": 0.0656,
+    "total": 1.77,
+    "win_rate": 0.556,
+    "low95": -0.1094,
+    "ready": false,
+    "windows": 27,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 12,
+    "net_per_contract": -0.0248,
+    "total": -0.3,
+    "win_rate": 0.5,
+    "low95": -0.3019,
+    "ready": false,
+    "windows": 12,
+    "reportable": true
+   }
+  },
+  "3": {
+   "WTI": {
+    "n": 16,
+    "net_per_contract": 0.0296,
+    "total": 0.47,
+    "win_rate": 0.5,
+    "low95": -0.1767,
+    "ready": false,
+    "windows": 16,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 14,
+    "net_per_contract": 0.1619,
+    "total": 2.27,
+    "win_rate": 0.571,
+    "low95": -0.0796,
+    "ready": false,
+    "windows": 14,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 30,
+    "net_per_contract": 0.0914,
+    "total": 2.74,
+    "win_rate": 0.533,
+    "low95": -0.0653,
+    "ready": false,
+    "windows": 30,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 19,
+    "net_per_contract": 0.1931,
+    "total": 3.67,
+    "win_rate": 0.737,
+    "low95": 0.0274,
+    "ready": false,
+    "windows": 19,
+    "reportable": true
+   }
+  },
+  "4": {
+   "WTI": {
+    "n": 18,
+    "net_per_contract": 0.0648,
+    "total": 1.17,
+    "win_rate": 0.556,
+    "low95": -0.1165,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 14,
+    "net_per_contract": 0.1198,
+    "total": 1.68,
+    "win_rate": 0.571,
+    "low95": -0.0791,
+    "ready": false,
+    "windows": 14,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 32,
+    "net_per_contract": 0.0889,
+    "total": 2.84,
+    "win_rate": 0.562,
+    "low95": -0.0434,
+    "ready": false,
+    "windows": 32,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 18,
+    "net_per_contract": 0.2234,
+    "total": 4.02,
+    "win_rate": 0.778,
+    "low95": 0.0446,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   }
+  },
+  "5": {
+   "WTI": {
+    "n": 18,
+    "net_per_contract": -0.1039,
+    "total": -1.87,
+    "win_rate": 0.389,
+    "low95": -0.2591,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 18,
+    "net_per_contract": 0.0425,
+    "total": 0.76,
+    "win_rate": 0.389,
+    "low95": -0.1473,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 36,
+    "net_per_contract": -0.0307,
+    "total": -1.1,
+    "win_rate": 0.389,
+    "low95": -0.1539,
+    "ready": false,
+    "windows": 36,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 17,
+    "net_per_contract": 0.0443,
+    "total": 0.75,
+    "win_rate": 0.647,
+    "low95": -0.1496,
+    "ready": false,
+    "windows": 17,
+    "reportable": true
+   }
+  },
+  "6": {
+   "WTI": {
+    "n": 16,
+    "net_per_contract": -0.0964,
+    "total": -1.54,
+    "win_rate": 0.312,
+    "low95": -0.3247,
+    "ready": false,
+    "windows": 16,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 16,
+    "net_per_contract": -0.1251,
+    "total": -2.0,
+    "win_rate": 0.25,
+    "low95": -0.2337,
+    "ready": false,
+    "windows": 16,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 32,
+    "net_per_contract": -0.1107,
+    "total": -3.54,
+    "win_rate": 0.281,
+    "low95": -0.2352,
+    "ready": false,
+    "windows": 32,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 20,
+    "net_per_contract": 0.0212,
+    "total": 0.42,
+    "win_rate": 0.6,
+    "low95": -0.1397,
+    "ready": false,
+    "windows": 20,
+    "reportable": true
+   }
+  },
+  "7": {
+   "WTI": {
+    "n": 23,
+    "net_per_contract": 0.1029,
+    "total": 2.37,
+    "win_rate": 0.609,
+    "low95": -0.043,
+    "ready": false,
+    "windows": 23,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 20,
+    "net_per_contract": -0.0716,
+    "total": -1.43,
+    "win_rate": 0.4,
+    "low95": -0.2028,
+    "ready": false,
+    "windows": 20,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 43,
+    "net_per_contract": 0.0217,
+    "total": 0.93,
+    "win_rate": 0.512,
+    "low95": -0.0797,
+    "ready": false,
+    "windows": 43,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 28,
+    "net_per_contract": 0.1716,
+    "total": 4.8,
+    "win_rate": 0.714,
+    "low95": 0.032,
+    "ready": false,
+    "windows": 28,
+    "reportable": true
+   }
+  },
+  "8": {
+   "WTI": {
+    "n": 12,
+    "net_per_contract": -0.0707,
+    "total": -0.85,
+    "win_rate": 0.5,
+    "low95": -0.2609,
+    "ready": false,
+    "windows": 12,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 18,
+    "net_per_contract": 0.0006,
+    "total": 0.01,
+    "win_rate": 0.389,
+    "low95": -0.1854,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 30,
+    "net_per_contract": -0.028,
+    "total": -0.84,
+    "win_rate": 0.433,
+    "low95": -0.1614,
+    "ready": false,
+    "windows": 30,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 15,
+    "net_per_contract": 0.1848,
+    "total": 2.77,
+    "win_rate": 0.733,
+    "low95": -0.0385,
+    "ready": false,
+    "windows": 15,
+    "reportable": true
+   }
+  },
+  "9": {
+   "WTI": {
+    "n": 23,
+    "net_per_contract": -0.0374,
+    "total": -0.86,
+    "win_rate": 0.391,
+    "low95": -0.1892,
+    "ready": false,
+    "windows": 23,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 17,
+    "net_per_contract": -0.0015,
+    "total": -0.03,
+    "win_rate": 0.353,
+    "low95": -0.15,
+    "ready": false,
+    "windows": 17,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 40,
+    "net_per_contract": -0.0221,
+    "total": -0.88,
+    "win_rate": 0.375,
+    "low95": -0.1286,
+    "ready": false,
+    "windows": 40,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 21,
+    "net_per_contract": 0.0465,
+    "total": 0.98,
+    "win_rate": 0.524,
+    "low95": -0.1252,
+    "ready": false,
+    "windows": 21,
+    "reportable": true
+   }
+  },
+  "10": {
+   "WTI": {
+    "n": 13,
+    "net_per_contract": -0.0801,
+    "total": -1.04,
+    "win_rate": 0.308,
+    "low95": -0.2882,
+    "ready": false,
+    "windows": 13,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 14,
+    "net_per_contract": 0.1613,
+    "total": 2.26,
+    "win_rate": 0.5,
+    "low95": -0.0394,
+    "ready": false,
+    "windows": 14,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 27,
+    "net_per_contract": 0.0451,
+    "total": 1.22,
+    "win_rate": 0.407,
+    "low95": -0.104,
+    "ready": false,
+    "windows": 27,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 13,
+    "net_per_contract": -0.0368,
+    "total": -0.48,
+    "win_rate": 0.385,
+    "low95": -0.2875,
+    "ready": false,
+    "windows": 13,
+    "reportable": true
+   }
+  },
+  "11": {
+   "WTI": {
+    "n": 27,
+    "net_per_contract": -0.0005,
+    "total": -0.01,
+    "win_rate": 0.407,
+    "low95": -0.1341,
+    "ready": false,
+    "windows": 27,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 18,
+    "net_per_contract": 0.0779,
+    "total": 1.4,
+    "win_rate": 0.389,
+    "low95": -0.0989,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 45,
+    "net_per_contract": 0.0309,
+    "total": 1.39,
+    "win_rate": 0.4,
+    "low95": -0.0754,
+    "ready": false,
+    "windows": 45,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 16,
+    "net_per_contract": -0.0318,
+    "total": -0.51,
+    "win_rate": 0.625,
+    "low95": -0.1923,
+    "ready": false,
+    "windows": 16,
+    "reportable": true
+   }
+  },
+  "12": {
+   "WTI": {
+    "n": 19,
+    "net_per_contract": 0.1672,
+    "total": 3.18,
+    "win_rate": 0.526,
+    "low95": -0.0243,
+    "ready": false,
+    "windows": 19,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 19,
+    "net_per_contract": -0.0296,
+    "total": -0.56,
+    "win_rate": 0.316,
+    "low95": -0.1523,
+    "ready": false,
+    "windows": 19,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 38,
+    "net_per_contract": 0.0688,
+    "total": 2.62,
+    "win_rate": 0.421,
+    "low95": -0.0478,
+    "ready": false,
+    "windows": 38,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 14,
+    "net_per_contract": -0.0037,
+    "total": -0.05,
+    "win_rate": 0.357,
+    "low95": -0.1505,
+    "ready": false,
+    "windows": 14,
+    "reportable": true
+   }
+  },
+  "13": {
+   "WTI": {
+    "n": 18,
+    "net_per_contract": 0.0652,
+    "total": 1.17,
+    "win_rate": 0.444,
+    "low95": -0.065,
+    "ready": false,
+    "windows": 18,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 10,
+    "net_per_contract": 0.0117,
+    "total": 0.12,
+    "win_rate": 0.3,
+    "low95": -0.188,
+    "ready": false,
+    "windows": 10,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 28,
+    "net_per_contract": 0.0461,
+    "total": 1.29,
+    "win_rate": 0.393,
+    "low95": -0.0621,
+    "ready": false,
+    "windows": 28,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 8,
+    "net_per_contract": -0.0922,
+    "total": -0.74,
+    "win_rate": 0.5,
+    "low95": -0.3491,
+    "ready": false,
+    "windows": 8,
+    "reportable": false
+   }
+  },
+  "14": {
+   "WTI": {
+    "n": 10,
+    "net_per_contract": 0.1323,
+    "total": 1.32,
+    "win_rate": 0.6,
+    "low95": -0.0308,
+    "ready": false,
+    "windows": 10,
+    "reportable": true
+   },
+   "Brent": {
+    "n": 10,
+    "net_per_contract": 0.052,
+    "total": 0.52,
+    "win_rate": 0.6,
+    "low95": -0.1484,
+    "ready": false,
+    "windows": 10,
+    "reportable": true
+   },
+   "Oil (WTI+Brent)": {
+    "n": 20,
+    "net_per_contract": 0.0921,
+    "total": 1.84,
+    "win_rate": 0.6,
+    "low95": -0.0349,
+    "ready": false,
+    "windows": 20,
+    "reportable": true
+   },
+   "Natural gas": {
+    "n": 5,
+    "net_per_contract": -0.2687,
+    "total": -1.34,
+    "win_rate": 0.4,
+    "low95": -0.6438,
+    "ready": false,
+    "windows": 5,
+    "reportable": false
+   }
+  },
+  "15": {
+   "WTI": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Brent": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Oil (WTI+Brent)": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   },
+   "Natural gas": {
+    "n": 0,
+    "net_per_contract": null,
+    "total": 0.0,
+    "win_rate": null,
+    "low95": null,
+    "ready": false,
+    "windows": 0,
+    "reportable": false
+   }
+  }
+ },
+ "variant_minute1_bar005": {
+  "WTI": {
+   "record": {
+    "n": 26,
+    "net_per_contract": 0.3169,
+    "total": 8.24,
+    "win_rate": 0.808,
+    "low95": 0.1754,
+    "ready": false,
+    "windows": 26
+   }
+  },
+  "Brent": {
+   "record": {
+    "n": 18,
+    "net_per_contract": 0.2645,
+    "total": 4.76,
+    "win_rate": 0.778,
+    "low95": 0.0709,
+    "ready": false,
+    "windows": 18
+   }
+  },
+  "Oil (WTI+Brent)": {
+   "record": {
+    "n": 44,
+    "net_per_contract": 0.2955,
+    "total": 13.0,
+    "win_rate": 0.795,
+    "low95": 0.1814,
+    "ready": false,
+    "windows": 44
+   }
+  },
+  "Natural gas": {
+   "record": {
+    "n": 24,
+    "net_per_contract": 0.0977,
+    "total": 2.35,
+    "win_rate": 0.583,
+    "low95": -0.104,
+    "ready": false,
+    "windows": 24
+   }
+  },
+  "oil_policy_paired_vs_live": {
+   "windows": 192,
+   "delta_mean": 0.0551,
+   "delta_low95": 0.0195,
+   "delta_total": 10.57
+  }
+ }
+}
