@@ -291,7 +291,10 @@ describe("Strategies", () => {
     const tile = (await within(list).findByText("Kalshi gap tracker")).closest("li");
     expect(tile).not.toBeNull();
     // Why it was paused, in the grade's own numbers: both desks worse than Kalshi's price.
-    expect(within(tile!).getByText(/each desk's fair values graded worse than Kalshi's/)).toBeInTheDocument();
+    // findByText, not getByText: the tile headline renders before the desk payload lands,
+    // and the post-mortem copy renders from that payload — asserting synchronously races
+    // it on CI (the PR #449 race class).
+    expect(await within(tile!).findByText(/each desk's fair values graded worse than Kalshi's/)).toBeInTheDocument();
     expect(within(tile!).getByText(/Brier worse by \+0\.023 on oil and \+0\.002 on crypto/)).toBeInTheDocument();
     // The two desk stories, computed from how their trades ended.
     expect(within(tile!).getByText(/Crypto's exits churned: 1 of its 1 trade ended because the model/)).toBeInTheDocument();
