@@ -359,3 +359,19 @@ describe("the two pages that share the word 'shadow'", () => {
     expect(screen.getByRole("link", { name: /^crypto$/i })).toBeInTheDocument();
   });
 });
+
+/**
+ * Kevin, 2026-11-09: the /oil page is titled Commodities now (it carries gas,
+ * metals and the Hormuz tracker, not just oil). The nav entry takes the new
+ * name; the route stays /oil, like every earlier rename (Guidance kept
+ * /valuation).
+ */
+describe("the commodities page name", () => {
+  it("labels the nav entry 'Commodities' and points it at /oil", async () => {
+    await renderAppAt("/crypto");
+
+    const link = screen.getByRole("link", { name: /^commodities$/i });
+    expect(link).toHaveAttribute("href", "/oil");
+    expect(screen.queryByRole("link", { name: /^oil$/i })).not.toBeInTheDocument();
+  });
+});

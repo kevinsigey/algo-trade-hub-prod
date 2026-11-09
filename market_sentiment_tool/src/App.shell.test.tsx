@@ -185,9 +185,9 @@ describe("the rail's own controls", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(rail).queryByRole("link", { name: /^oil$/i })).toBeNull();
+    expect(within(rail).queryByRole("link", { name: /^commodities$/i })).toBeNull();
     fireEvent.click(toggle);
-    expect(within(rail).getByRole("link", { name: /^oil$/i })).toHaveAttribute("href", "/oil");
+    expect(within(rail).getByRole("link", { name: /^commodities$/i })).toHaveAttribute("href", "/oil");
   });
 });
 
