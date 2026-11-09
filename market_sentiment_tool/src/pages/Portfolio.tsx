@@ -55,6 +55,11 @@ const price = (v: number | null | undefined) => fmtUsd(v);
 
 type SortKey = "symbol" | "last" | "change" | "avg" | "cost" | "value" | "weight" | "day" | "unrealized";
 
+// Directional columns sort by signed value (+x on top, 0 in the middle, -x at the
+// bottom); size columns (prices, cost, value, weight) sort by magnitude, so a large
+// short sits with the large longs it offsets.
+const SIGNED_SORT: ReadonlySet<SortKey> = new Set(["change", "day", "unrealized"]);
+
 const COLUMNS: { key: SortKey; label: string; read: (r: PositionRow) => number | string | null | undefined }[] = [
   { key: "last", label: "Last", read: (r) => r.last_price },
   { key: "change", label: "Chg %", read: (r) => r.change_pct },
@@ -73,7 +78,8 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
     const sorted = [...rows].sort((a, b) => {
       const x = read(a), y = read(b);
       if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1; // unknowns always last
-      const order = typeof x === "string" ? x.localeCompare(String(y)) : Math.abs(x) - Math.abs(Number(y));
+      const order = typeof x === "string" ? x.localeCompare(String(y))
+        : SIGNED_SORT.has(sort.key) ? x - Number(y) : Math.abs(x) - Math.abs(Number(y));
       return sort.desc ? -order : order;
     });
     return withOptionsUnderStock(sorted);
