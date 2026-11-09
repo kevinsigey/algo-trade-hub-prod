@@ -13,7 +13,10 @@ import httpx
 
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
-from tradehub.guidance.extract import ask_model, consensus, run
+from tradehub.guidance.extract import consensus, run
+from tradehub.guidance.providers import CyclingAsker
+
+ASKER = CyclingAsker()
 
 
 def _fetch_html(url: str) -> str:
@@ -31,7 +34,7 @@ def main() -> int:
     summary = run(
         get_client(),
         fetch=_fetch_html,
-        model=ask_model,
+        model=ASKER,
         consensus=consensus,
         key=key,
     )

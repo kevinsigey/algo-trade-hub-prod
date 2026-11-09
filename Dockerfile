@@ -18,8 +18,15 @@ WORKDIR /app
 # git: the TradingAgents setup (tradehub/agents/setup_agents) clones its
 # framework inside the running container; without git in the image that
 # setup dies on every rebuild and has to be redone by hand (2026-11-02).
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# opencode CLI (pinned v1.19.5): the guidance extractor's second provider
+# pool -- its gateway free models are the failover when the direct OpenRouter
+# free route saturates (spec docs/superpowers/specs/2026-11-09-guidance-provider-cycling.md).
+RUN curl -fsSL https://github.com/anomalyco/opencode/releases/download/v1.19.5/opencode-linux-x64.tar.gz \
+    | tar -xz -C /usr/local/bin opencode \
+    && opencode --version
+ENV OPENCODE_DISABLE_AUTOUPDATE=1
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml ./
 RUN uv pip install --system --no-cache -r pyproject.toml

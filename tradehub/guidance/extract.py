@@ -427,8 +427,16 @@ def run(
             html = fetch(doc_url)
             text = html_to_text(html)
 
-            # Ask model for guidance
-            env = model(text, key=key)
+            # Ask model for guidance. A PoolsUnavailable from a cycling model
+            # (spec 2026-11-09) pauses the run: this filing and the rest stay
+            # "new" and nothing is failed -- the pools are down, not the data.
+            try:
+                env = model(text, key=key)
+            except Exception as exc:  # noqa: BLE001 -- duck-typed pause check
+                if getattr(exc, "pools_unavailable", False):
+                    counts["paused"] = str(exc)[:300]
+                    return counts
+                raise
 
             if env.no_guidance or not env.items:
                 supa.table("guidance_filings").update({"status": "no_guidance"}).eq("accession", accession).execute()
