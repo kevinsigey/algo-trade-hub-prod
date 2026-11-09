@@ -182,6 +182,7 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         "curve": book.curve(snaps),
         "composition": book.composition(rows),
         "positions": rows,
+        "positions_aggregate": book.positions_aggregate(rows, float(account["equity"])),
         "account": book.account_view(account, trades),
         "breaker": breakers.check(supa, name, read_account=lambda: account, read_snapshots=lambda *_: snaps),
     }

@@ -380,6 +380,24 @@ def test_position_rows_and_rail_carry_what_a_broker_page_shows():
     assert book.account_view({"equity": "1"}, None)["day_pl"] is None
 
 
+def test_portfolio_payload_carries_positions_aggregate(client_with, monkeypatch):
+    """Item 2 (2026-11-08): alongside the per-idea lots, one folded line per symbol,
+    so a machine reader cannot mistake two lots of GLD for half the true weight."""
+    positions = [
+        {"symbol": "GLD", "qty": "60", "side": "long", "market_value": "21900",
+         "unrealized_pl": "640", "avg_entry_price": "355", "cost_basis": "21300"},
+        {"symbol": "SPY261218C00600000", "qty": "1", "side": "long", "market_value": "250",
+         "unrealized_pl": "-30", "avg_entry_price": "280", "cost_basis": "280"},
+    ]
+    monkeypatch.setattr(service, "paper_get", alpaca(positions=positions))
+    body = client_with(FakeSupabase()).get("/api/portfolio").json()
+    agg = {a["symbol"]: a for a in body["positions_aggregate"]}
+    assert agg["GLD"]["qty"] == 60 and agg["GLD"]["market_value"] == 21900
+    assert agg["GLD"]["pct_of_equity"] == pytest.approx(21900 / 104820 * 100)
+    assert agg["GLD"]["avg_entry"] == pytest.approx(355.0)
+    assert agg["SPY261218C00600000"]["asset"] == "option"
+
+
 def test_public_portfolio_hides_the_account_number(client_with, monkeypatch):
     client = client_with({"portfolio_snapshots": []})
     monkeypatch.setattr("tradehub.portfolio.service.portfolio", lambda *a, **k: {"state": "live", "account_number": "PA2"})

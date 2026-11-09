@@ -108,6 +108,50 @@ def test_win_rate():
     assert win_rate([{"pnl": 5}, {"pnl": -1}, {"pnl": 2}, {"pnl": 0}]) == pytest.approx(50.0)
 
 
+def _agg_row(symbol, qty, mv, upl, idea, cb=None, avg=None):
+    return {"symbol": symbol, "qty": qty, "market_value": mv, "unrealized_pl": upl,
+            "idea": idea, "cost_basis": cb, "avg_price": avg, "pct_of_book": None}
+
+
+def test_positions_aggregate_folds_the_idea_lots_back_into_one_line_per_symbol():
+    """The machine reader's view (2026-11-08): the positions list repeats a symbol
+    once per idea lot -- GLD arrived as two 259-share lots and read as 10% when the
+    aggregated truth was 518 shares = 20%. One line per symbol, totals honest."""
+    from tradehub.portfolio.book import positions_aggregate
+
+    rows = [
+        _agg_row("GLD", 259, 10000, 500, "Gold", cb=9500),
+        _agg_row("GLD", 259, 10000, 300, "Rates hedge", cb=9700),
+        _agg_row("SPY", 40, 4000, -50, "Core", cb=4100),
+        {"symbol": "Cash", "qty": None, "market_value": 76000, "unrealized_pl": None, "idea": None},
+    ]
+    agg = {a["symbol"]: a for a in positions_aggregate(rows, 100000)}
+    assert set(agg) == {"GLD", "SPY"}  # cash is not a position
+    gld = agg["GLD"]
+    assert gld["qty"] == 518 and gld["market_value"] == 20000
+    assert gld["pct_of_equity"] == pytest.approx(20.0)
+    assert gld["avg_entry"] == pytest.approx(19200 / 518)  # cost-basis weighted blend
+    assert gld["unrealized_pl"] == 800 and gld["asset"] == "stock"
+
+
+def test_positions_aggregate_keeps_options_and_shorts_distinct():
+    from tradehub.portfolio.book import positions_aggregate
+
+    rows = [
+        _agg_row("GLD", 100, 5000, 100, "Gold", cb=4800),
+        _agg_row("GLD261218C00400000", 2, 300, -40, "Gold", cb=340),
+        _agg_row("XLE", -20, -2000, 50, "Short book", cb=-2100),
+    ]
+    agg = positions_aggregate(rows, 10000)
+    by_symbol = {a["symbol"]: a for a in agg}
+    assert by_symbol["GLD261218C00400000"]["asset"] == "option"
+    assert by_symbol["GLD"]["qty"] == 100  # the option never folds into the shares
+    assert by_symbol["XLE"]["pct_of_equity"] == pytest.approx(-20.0)  # signed: a short reads negative
+    assert by_symbol["XLE"]["avg_entry"] == pytest.approx(105.0)
+    # Biggest line first, by absolute market value.
+    assert [a["symbol"] for a in agg] == ["GLD", "XLE", "GLD261218C00400000"]
+
+
 def tfill(symbol, side, qty, price, day, order_id):
     return {**fill(symbol, side, qty, price, day), "order_id": order_id}
 
