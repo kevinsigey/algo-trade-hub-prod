@@ -28,6 +28,27 @@ EDGAR_CONCEPTS = {
 }
 
 
+_REVENUE_CONCEPTS = ("RevenueFromContractWithCustomerExcludingAssessedTax",
+                     "Revenues")
+
+
+def _fy_revenue(ds: DataStore, ticker: str) -> tuple[float, str] | None:
+    """(value, as_of) of the filer's TOTAL latest FY revenue. Among the
+    revenue concepts on record the total is the largest value: a sub-stream
+    never exceeds the whole (the ASC 606 concept is only a sub-stream on
+    lease-heavy filers -- tower REITs served ~1/11th of revenue through it).
+    Phase B annex rule; used for peer multiples and subject fundamentals."""
+    best: tuple[float, str] | None = None
+    for concept in _REVENUE_CONCEPTS:
+        try:
+            hit = ds.edgar_concept(ticker, concept)
+        except Exception:
+            hit = None
+        if hit is not None and (best is None or hit[0] > best[0]):
+            best = hit
+    return best
+
+
 def _peer_sales_multiple(ds: DataStore, ticker: str,
                          now: datetime) -> tuple[float | None, int, str,
                                                  str | None]:
@@ -69,12 +90,7 @@ def _peer_sales_multiple(ds: DataStore, ticker: str,
                 price = float(series.iloc[-1])
                 shares = ds.edgar_concept(
                     m, "WeightedAverageNumberOfDilutedSharesOutstanding")
-                rev = None
-                for rc in ("RevenueFromContractWithCustomerExcludingAssessedTax",
-                           "Revenues"):
-                    rev = ds.edgar_concept(m, rc)
-                    if rev:
-                        break
+                rev = _fy_revenue(ds, m)
                 if not shares or not rev:
                     continue
                 (sv, _s_asof), (rv, r_asof) = shares, rev
@@ -115,15 +131,9 @@ def _fundamentals(ds: DataStore, ticker: str) -> dict:
         else:
             value, as_of = hit
             out[key] = {"value": value, "as_of": as_of}
-    for rev_concept in ("RevenueFromContractWithCustomerExcludingAssessedTax",
-                        "Revenues"):
-        try:
-            hit = ds.edgar_concept(ticker, rev_concept)
-        except Exception:
-            hit = None
-        if hit is not None:
-            out["revenue"] = {"value": hit[0], "as_of": hit[1]}
-            break
+    hit = _fy_revenue(ds, ticker)
+    if hit is not None:
+        out["revenue"] = {"value": hit[0], "as_of": hit[1]}
     else:
         out["missing"].append("revenue")
     return out
