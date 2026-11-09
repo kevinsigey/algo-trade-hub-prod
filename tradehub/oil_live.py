@@ -61,7 +61,11 @@ BEST_MAX_SPREAD = 0.08
 TAKER_FEE_RATE = 0.07
 _cache: dict[str, Any] = {"at": 0.0, "payload": None}
 FIFTEEN_CACHE_SECONDS = 10.0
-FIFTEEN_LABELS = {"KXWTI15M": "WTI", "KXBRENT15M": "Brent", "KXNATGAS15M": "Natural gas"}
+FIFTEEN_LABELS = {"KXWTI15M": "WTI", "KXBRENT15M": "Brent", "KXNATGAS15M": "Natural gas",
+                  # The metals family (2026-11-09): the live read and the
+                  # per-minute tick tape cover them from their first day, so
+                  # their offsets grid accrues on live reads like oil's.
+                  "KXGOLD15M": "Gold", "KXSILVER15M": "Silver", "KXCOPPER15M": "Copper"}
 _fifteen_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 
@@ -317,7 +321,10 @@ def _fifteen_market(series: str, live, inputs: FifteenMinInputs, now: datetime) 
 
 def fifteen_live(now: datetime | None = None, *, live=None, inputs: FifteenMinInputs | None = None) -> dict[str, Any]:
     """The live 15-minute read for the Oil page: the same math the journal freezes, on every open window, with
-    Kalshi's current prices. Display only. One unreadable market says why and leaves the others up."""
+    Kalshi's current prices. Display only. One unreadable market says why and leaves the others up.
+    Since 2026-11-09 the read covers the metals series too -- the per-minute tick tape
+    (scripts/fifteen_min_tape.py) records through here, and the metals offsets grid
+    accrues from the same live reads as the oil family's."""
     now = now or datetime.now(UTC)
     live = live or KalshiLive()
     inputs = inputs or FifteenMinInputs()

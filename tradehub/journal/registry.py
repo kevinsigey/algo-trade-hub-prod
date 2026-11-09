@@ -123,7 +123,9 @@ FORECASTERS: list[Forecaster] = [
     # 15-minute direction (2026-11-04, Kevin's queue): KXWTI15M / KXBRENT15M /
     # KXNATGAS15M shadows on the Hyperliquid tape -- the drift-scaled walk in
     # engines/fifteen_min.py, preregistered; the journal's hourly phase samples
-    # the :15 window each hour (see the forecaster's docstring).
+    # the :15 window each hour (see the forecaster's docstring). The metals
+    # family (KXGOLD15M / KXSILVER15M / KXCOPPER15M, 2026-11-09, its own
+    # preregistration) rides the same build.
     *build_fifteen_min(_LIVE),
     # Crypto hourly (2026-11-02, Kevin's crypto program step 1): the oil-hourly clone
     # with realized-vol sigma (preregistered variant 2 passed its replay gate on both

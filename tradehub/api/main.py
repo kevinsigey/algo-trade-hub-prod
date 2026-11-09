@@ -1526,9 +1526,9 @@ def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
         payload = record(supabase)
     except Exception:  # noqa: BLE001
         empty = summarize([])["forward"]
-        return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
-                "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
-                "bar": go_live_bar(empty, empty)}
+        payload = {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
+                   "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
+                   "bar": go_live_bar(empty, empty)}
     # The oil minute-1 shadow variant (preregistration 2026-11-09): one
     # additive block -- its fresh record, the grid, and the promotion flag.
     # Fail-soft like the rest of this endpoint: no shadow, no block.
@@ -1536,6 +1536,16 @@ def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
         from tradehub import fifteen_shadow
 
         payload["shadow"] = fifteen_shadow.summary(supabase)
+    except Exception:  # noqa: BLE001
+        pass
+    # The metals family (preregistration 2026-11-09): one additive block --
+    # its own record in this payload's shape (gated by_series leading, the
+    # raw reconstruction beside it), labeled as its own family and counted
+    # entirely apart from the oil record above. Fail-soft the same way.
+    try:
+        from tradehub import metals_fifteen_rule
+
+        payload["metals"] = metals_fifteen_rule.record(supabase)
     except Exception:  # noqa: BLE001
         pass
     return payload

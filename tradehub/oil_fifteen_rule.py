@@ -52,6 +52,11 @@ GATE_RULE = ("The live gate since the 2026-11-08 amendment: the same 10-point ba
              "points after the fee it would pay.")
 DECISIONS_TABLE = "fifteen_rule_decisions"
 OFFSETS_TABLE = "fifteen_window_offsets"
+# The tracking tables are shared with the metals family (2026-11-09). This
+# family's summaries exclude the metals series' rows, so the second family
+# can never inflate this record; every other row is this family's, exactly
+# as before the tables were shared.
+METALS_KALSHI_SERIES = ("KXGOLD15M", "KXSILVER15M", "KXCOPPER15M")
 
 
 def in_halt(frozen_at: str) -> bool:
@@ -202,12 +207,13 @@ def _session_split(trades: list[dict]) -> dict[str, Any]:
 
 
 def _read_rows(supa, table: str) -> list[dict]:
-    """A tracking table's rows, or [] while the table is not there yet (code reaches production
-    before its migration does; an absent table reads as an empty record, never an error)."""
+    """This family's rows of a tracking table, or [] while the table is not there yet (code reaches
+    production before its migration does; an absent table reads as an empty record, never an error)."""
     try:
-        return store.select_all(supa, table, lambda q: q, ("id",))
+        rows = store.select_all(supa, table, lambda q: q, ("id",))
     except Exception:  # noqa: BLE001
         return []
+    return [r for r in rows if r.get("series") not in METALS_KALSHI_SERIES]
 
 
 def _decisions_summary(supa) -> dict[str, Any]:

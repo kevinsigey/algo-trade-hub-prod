@@ -1,4 +1,5 @@
-"""Kalshi 15-minute direction markets (KXWTI15M / KXBRENT15M / KXNATGAS15M), as journal shadows.
+"""Kalshi 15-minute direction markets (KXWTI15M / KXBRENT15M / KXNATGAS15M, and
+since 2026-11-09 the metals KXGOLD15M / KXSILVER15M / KXCOPPER15M), as journal shadows.
 
 One contract per 15-minute window: YES iff the settlement source's 1-minute
 candle closes the window at or above its open (Pyth PYTHOIL / BRENT / NATGAS;
@@ -49,6 +50,15 @@ SERIES = (
     {"series": "KXWTI15M", "family": "oil_wti_15m", "name": "oil_wti_15m", "version": "wti-15m-v2"},
     {"series": "KXBRENT15M", "family": "oil_brent_15m", "name": "oil_brent_15m", "version": "brent-15m-v2"},
     {"series": "KXNATGAS15M", "family": "natgas_15m", "name": "natgas_15m", "version": "natgas-15m-v2"},
+    # The metals family (Kevin, 2026-11-09; preregistration
+    # docs/superpowers/specs/2026-11-09-metals-fifteen-prereg.md): the same
+    # model class, freeze band and strictness, starting directly at the v2
+    # every-window cadence. Its record is its own -- see
+    # tradehub/metals_fifteen_rule.py. Platinum/palladium are NOT here:
+    # Kevin chose the three, and a thin tape is a gap, never an approximation.
+    {"series": "KXGOLD15M", "family": "gold_15m", "name": "gold_15m", "version": "gold-15m-v1"},
+    {"series": "KXSILVER15M", "family": "silver_15m", "name": "silver_15m", "version": "silver-15m-v1"},
+    {"series": "KXCOPPER15M", "family": "copper_15m", "name": "copper_15m", "version": "copper-15m-v1"},
 )
 
 
