@@ -7,6 +7,7 @@ import { Chip, type Tone } from "@/components/Chip";
 import { JournalDetail } from "@/components/JournalDetail";
 import { getJson } from "@/lib/getJson";
 import { FifteenMinutePanel } from "@/components/FifteenMinutePanel";
+import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
 import { LiveChip } from "@/components/LiveChip";
 import { NextRelease } from "@/components/NextRelease";
@@ -682,10 +683,19 @@ export default function Oil() {
         <NextRelease family="oil" title="Next settlement" />
         <FrozenRecord ours={ours} market={market} />
         <RecordSection title="15-minute settlements" rows={fifteenRows} />
+        <section aria-label="15-minute trade rule" className="border border-slate-800">
+          <h3 className="px-4 pt-3 text-base font-semibold text-white">15-minute trade rule</h3>
+          <p className="px-4 text-xs text-slate-500">
+            the paper record of trading the forecasts above
+          </p>
+          <div className="px-4 pb-2">
+            <FifteenRuleRecord />
+          </div>
+        </section>
         <RecordSection title="Hourly settlements" rows={hourlyRows} />
         <RecordSection title="Daily settlement" rows={rows} />
         <p className="text-sm text-slate-400">
-          The paper trades built on these forecasts, the Kalshi gap tracker among them, are on{" "}
+          The other paper trades built on these forecasts — the oil and crypto gap desks among them — are on{" "}
           <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
         </p>
       </section>

@@ -275,7 +275,12 @@ def record(supa) -> dict[str, Any]:
     # by_session split for forward trades only (frozen_at >= PREREG_AT)
     raw = summarize(trades)
     gate = {"rule": GATE_RULE, "min_edge": MIN_EDGE, **summarize(gated),
-            "by_session": _session_split(gated)}
+            "by_session": _session_split(gated),
+            # The gated split by market, same forward-only shape as by_series above:
+            # the Strategies page lists one entry per market, each with its gated record.
+            "by_series": {label: _stats([t for t in gated if t["series"] == label
+                                         and t["frozen_at"] >= PREREG_AT])
+                          for _, _, label in SERIES}}
     return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **raw,
             "by_series": by_series, "by_session": _session_split(trades), "pending": pending,
             "recent": trades[:12], "gate": gate,

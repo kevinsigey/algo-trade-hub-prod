@@ -10,7 +10,9 @@ interface RuleRecord {
   rule: string; prereg_at: string; ready_trades: number; replay: Stats; forward: Stats;
   pending: number; recent: Trade[]; unavailable?: boolean;
   by_session?: { open: Stats; closed: Stats };
-  gate?: { rule: string; forward: Stats; by_session?: { open: Stats; closed: Stats } };
+  by_series?: Record<string, Stats>;
+  gate?: { rule: string; forward: Stats; by_session?: { open: Stats; closed: Stats };
+           by_series?: Record<string, Stats> };
   bar?: Bar;
   decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
   offsets?: { by_offset: OffsetStat[] };
@@ -22,6 +24,11 @@ const REASON_LABELS: [string, string][] = [
 ];
 
 const c = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
+const pts = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)} pts`;
+const winPct = (s?: Stats) => (s?.win_rate == null ? "—" : `${Math.round(s.win_rate * 100)}%`);
+const centsOf = (s?: Stats) => (s?.net_per_contract == null ? "—" : c(s.net_per_contract));
+
+const SERIES_LABELS = ["WTI", "Brent", "Natural gas"];
 
 function etShort(iso: string): string {
   return new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -54,6 +61,10 @@ export function FifteenRuleRecord() {
   const bar = rec.bar;
   const gf = rec.gate?.forward;
   const pct = Math.min(100, ((bar?.trades ?? f.n) / rec.ready_trades) * 100);
+  const bestOffset = (rec.offsets?.by_offset ?? [])
+    .filter((o) => o.n >= 10 && o.net_per_contract != null)
+    .sort((a, b) => (b.net_per_contract ?? 0) - (a.net_per_contract ?? 0))[0];
+  const pricedOffsets = (rec.offsets?.by_offset ?? []).filter((o) => o.priced > 0);
   return (
     <details className="group mt-5 border-t border-slate-800 pt-4">
       <summary className="cursor-pointer text-sm font-semibold text-slate-200 hover:text-white">
@@ -135,24 +146,94 @@ export function FifteenRuleRecord() {
             : `${rec.gate.forward.n} trades, ${c(rec.gate.forward.net_per_contract ?? 0)} a contract, win rate ${Math.round((rec.gate.forward.win_rate ?? 0) * 100)}%.`}
         </p>
       )}
-      {rec.decisions && rec.decisions.recorded > 0 && (
-        <p className="mt-1 text-xs text-slate-400">
-          {rec.decisions.recorded} windows on record: {rec.decisions.buy} buys, {rec.decisions.skip} skipped
-          {REASON_LABELS.some(([k]) => rec.decisions!.by_reason[k]) &&
-            ` (${REASON_LABELS.filter(([k]) => rec.decisions!.by_reason[k]).map(([k, label]) => `${label} ${rec.decisions!.by_reason[k]}`).join(", ")})`}
-          .
-        </p>
-      )}
-      {(() => {
-        const best = (rec.offsets?.by_offset ?? [])
-          .filter((o) => o.n >= 10 && o.net_per_contract != null)
-          .sort((a, b) => (b.net_per_contract ?? 0) - (a.net_per_contract ?? 0))[0];
-        return best ? (
+      {(rec.by_series || rec.gate?.by_series) && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold text-slate-300">By market — forward trades</p>
+          <table aria-label="Record by market" className="mt-1 w-full max-w-xl text-xs tabular-nums">
+            <thead><tr className="text-left text-slate-500">
+              <th className="pb-1 pr-3 font-medium">Market</th>
+              <th className="pb-1 pr-3 font-medium text-right">Gated trades</th>
+              <th className="pb-1 pr-3 font-medium text-right">Gated ¢</th>
+              <th className="pb-1 pr-3 font-medium text-right">Gated win</th>
+              <th className="pb-1 pr-3 font-medium text-right">Raw trades</th>
+              <th className="pb-1 pr-3 font-medium text-right">Raw ¢</th>
+              <th className="pb-1 font-medium text-right">Raw win</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-800/70 text-slate-300">
+              {SERIES_LABELS.filter((label) => rec.by_series?.[label] || rec.gate?.by_series?.[label]).map((label) => {
+                const g = rec.gate?.by_series?.[label];
+                const r = rec.by_series?.[label];
+                return (
+                  <tr key={label}>
+                    <td className="py-1 pr-3 text-slate-200">{label}</td>
+                    <td className="py-1 pr-3 text-right">{g ? g.n : "—"}</td>
+                    <td className="py-1 pr-3 text-right">{centsOf(g)}</td>
+                    <td className="py-1 pr-3 text-right">{winPct(g)}</td>
+                    <td className="py-1 pr-3 text-right">{r ? r.n : "—"}</td>
+                    <td className="py-1 pr-3 text-right">{centsOf(r)}</td>
+                    <td className="py-1 text-right">{winPct(r)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
           <p className="mt-1 text-xs text-slate-400">
-            Best entry minute so far: minute {best.offset_min} of the window ({best.n} priced entries, {c(best.net_per_contract ?? 0)} a contract after fees).
+            Gated is the live rule: the 10-point edge measured after Kalshi's fee. Raw is the same windows
+            without the fee in the test, kept as the control.
           </p>
-        ) : null;
-      })()}
+        </div>
+      )}
+      {rec.decisions && rec.decisions.recorded > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold text-slate-300">Decisions — every window gets one</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {rec.decisions.recorded} windows on record: {rec.decisions.buy} buys, {rec.decisions.skip} skipped
+            {REASON_LABELS.some(([k]) => rec.decisions!.by_reason[k]) &&
+              ` (${REASON_LABELS.filter(([k]) => rec.decisions!.by_reason[k]).map(([k, label]) => `${label} ${rec.decisions!.by_reason[k]}`).join(", ")})`}
+            .
+          </p>
+        </div>
+      )}
+      {pricedOffsets.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold text-slate-300">Entry timing — what entering at each minute has paid</p>
+          <table aria-label="Entry timing by minute" className="mt-1 w-full max-w-xl text-xs tabular-nums">
+            <thead><tr className="text-left text-slate-500">
+              <th className="pb-1 pr-3 font-medium">Minute</th>
+              <th className="pb-1 pr-3 font-medium text-right">Windows priced</th>
+              <th className="pb-1 pr-3 font-medium text-right">Entries</th>
+              <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
+              <th className="pb-1 pr-3 font-medium text-right">Win rate</th>
+              <th className="pb-1 font-medium text-right">Edge on offer</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-800/70 text-slate-300">
+              {pricedOffsets.map((o) => (
+                <tr key={o.offset_min} className={bestOffset && o.offset_min === bestOffset.offset_min ? "text-slate-100" : undefined}>
+                  <td className="py-1 pr-3 text-slate-200">
+                    {o.offset_min}
+                    {bestOffset && o.offset_min === bestOffset.offset_min ? <span className="text-emerald-300"> · best so far</span> : null}
+                  </td>
+                  <td className="py-1 pr-3 text-right">{o.priced}</td>
+                  <td className="py-1 pr-3 text-right">{o.n}</td>
+                  <td className="py-1 pr-3 text-right">{o.net_per_contract == null ? "—" : c(o.net_per_contract)}</td>
+                  <td className="py-1 pr-3 text-right">{o.win_rate == null ? "—" : `${Math.round(o.win_rate * 100)}%`}</td>
+                  <td className="py-1 text-right">{o.mean_edge_net == null ? "—" : pts(o.mean_edge_net)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-slate-400">
+            Each row replays the gate at that minute of the window on settled windows — the same window can
+            appear in several rows, so read it as "what this minute has paid", not as separate trades.
+            Minutes 0 and 15 have almost no priced rows: the tape recorder starts and stops at the window's edges.
+          </p>
+        </div>
+      )}
+      {bestOffset ? (
+        <p className="mt-1 text-xs text-slate-400">
+          Best entry minute so far: minute {bestOffset.offset_min} of the window ({bestOffset.n} priced entries, {c(bestOffset.net_per_contract ?? 0)} a contract after fees).
+        </p>
+      ) : null}
       {rec.recent.length > 0 && (
         <table className="mt-3 w-full max-w-xl text-xs tabular-nums">
           <thead><tr className="text-left text-slate-500">

@@ -116,10 +116,21 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
   // Additive: no data or a partial reply, no panel.
   if (!data?.evidence || !data.grade?.all || !data.ledger || !data.top_gaps || !data.near_misses || !data.funnel) return null;
   const { evidence, ledger } = data;
-  const score = data.grade.all;
+  const score = category ? data.grade[category] : data.grade.all;
   const mine = (rows: { category: string }[]) => (category ? rows.filter((r) => r.category === category) : rows);
   const top = mine(data.top_gaps) as GapRow[];
-  const open = data.open_positions;
+  const open = mine(data.open_positions) as Position[];
+  const closed = mine(data.closed_positions) as Position[];
+  // This desk's own settled record, from its closed positions: the two desks share one
+  // $10k pot (the ledger above is the pot, never split), but every closed trade carries
+  // its category and its P&L, so the desks' trade records split exactly.
+  const pnls = closed.map((p) => p.pnl).filter((v): v is number => v != null);
+  const realized = pnls.reduce((a, b) => a + b, 0);
+  const wins = pnls.filter((v) => v > 0).length;
+  const byPnl = [...pnls].sort((a, b) => a - b);
+  const median = byPnl.length === 0 ? null
+    : byPnl.length % 2 === 1 ? byPnl[(byPnl.length - 1) / 2]
+    : (byPnl[byPnl.length / 2 - 1] + byPnl[byPnl.length / 2]) / 2;
   const funnel: Record<string, number> = category ? data.funnel[category] ?? {}
     : Object.values(data.funnel).reduce<Record<string, number>>((acc, f) => {
         for (const [k, v] of Object.entries(f)) acc[k] = (acc[k] ?? 0) + v;
@@ -129,7 +140,9 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
   return (
     <section aria-label="Kalshi gap tracker" className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-200">Kalshi gap tracker</h2>
+        <h2 className="text-sm font-semibold text-slate-200">
+          {category ? `${category === "oil" ? "Oil" : "Crypto"} gap tracker` : "Kalshi gap tracker"}
+        </h2>
         <p className="text-xs text-slate-400">
           Paper ledger, no orders · hourly snapshot, delayed{data.as_of ? ` · as of ${ctDateTime(data.as_of)}` : " · no snapshot yet"}
         </p>
@@ -145,6 +158,17 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
         <Stat label="Open positions (max 2 per event)" value={`${ledger.open} of 5`} />
         <Stat label="Win rate" value={ledger.win_rate == null ? "—" : `${(ledger.win_rate * 100).toFixed(0)}%`} />
       </dl>
+      {category && (
+        <p className="mt-3 text-sm text-slate-300">
+          This desk's own record:{" "}
+          <span className="font-medium tabular-nums text-white">
+            {pnls.length} closed trades · {fmtUsd(realized, { signed: true })} realized · {wins} of {pnls.length} won
+            {median != null ? ` · typical trade ${fmtUsd(median, { signed: true })}` : ""}
+          </span>
+          . The return and drawdown above are the shared $10k pot both desks trade from — the pot is
+          not split; the trades are.
+        </p>
+      )}
       {open.length > 0 && <div className="mt-4"><h3 className="mb-1 text-xs font-medium text-slate-300">Open paper positions</h3><PositionTable rows={open} /></div>}
       {top.length > 0 && <div className="mt-4"><h3 className="mb-1 text-xs font-medium text-slate-300">Largest passing gaps</h3><GapTable rows={top} /></div>}
       <details className="mt-4 text-sm">
@@ -195,8 +219,8 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
           {mine(data.near_misses).length > 0 && (
             <div><h3 className="mb-1 text-xs font-medium text-slate-300">Near misses</h3><GapTable rows={mine(data.near_misses) as GapRow[]} showFailed /></div>
           )}
-          {data.closed_positions.length > 0 && (
-            <div><h3 className="mb-1 text-xs font-medium text-slate-300">Closed paper trades</h3><PositionTable rows={data.closed_positions} /></div>
+          {closed.length > 0 && (
+            <div><h3 className="mb-1 text-xs font-medium text-slate-300">Closed paper trades</h3><PositionTable rows={closed} /></div>
           )}
         </div>
       </details>
