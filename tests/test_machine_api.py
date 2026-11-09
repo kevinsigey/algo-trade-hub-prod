@@ -870,6 +870,61 @@ def test_the_place_response_carries_the_session_fields(api):
     assert r.json()["effective_session"] and r.json()["session_state"] in ("held_for_open", "active")
 
 
+# ── combo read-back (2026-11-08): a multi-leg order never reads as plain filled ──
+
+def _leg(symbol, side, intent, filled, price=None, ratio="1", status=None):
+    return {"symbol": symbol, "side": side, "ratio_qty": ratio, "position_intent": intent,
+            "qty": "1", "filled_qty": str(filled), "filled_avg_price": price,
+            "status": status or ("filled" if filled else "new")}
+
+
+def _mleg(status="filled", filled="1", leg_fills=("1", "1")):
+    return {"id": "alpaca-mleg-1", "client_order_id": "idea-50-spread-abc", "symbol": None,
+            "qty": "1", "filled_qty": filled, "side": None, "type": "limit",
+            "order_class": "mleg", "time_in_force": "day", "status": status,
+            "limit_price": "2.50", "stop_price": None,
+            "submitted_at": "2026-11-08T15:00:00+00:00", "filled_avg_price": "2.50",
+            "legs": [_leg("NVDA261204C00200000", "buy", "buy_to_open", leg_fills[0], "4.00"),
+                     _leg("NVDA261204C00220000", "sell", "sell_to_open", leg_fills[1], "1.50")]}
+
+
+def test_a_combo_view_carries_legs_expected_fills_and_a_leg_state():
+    view = machine_api.broker_order_view(_mleg())
+    assert view["leg_state"] == "complete" and "status_warning" not in view
+    assert view["expected_leg_fills"] == [
+        {"symbol": "NVDA261204C00200000", "side": "buy", "ratio_qty": 1.0, "qty": 1.0},
+        {"symbol": "NVDA261204C00220000", "side": "sell", "ratio_qty": 1.0, "qty": 1.0}]
+    assert [leg["filled_qty"] for leg in view["legs"]] == [1.0, 1.0]
+    assert view["legs"][0]["position_intent"] == "buy_to_open"
+
+
+def test_a_partially_filled_leg_is_a_warning_never_a_plain_fill():
+    """The Idea 50 / combo-quantity lesson: the parent can claim a fill while a leg
+    is short. That state gets its own warning status on the read-back."""
+    view = machine_api.broker_order_view(_mleg(leg_fills=("1", "0")))
+    assert view["status"] == "filled"  # the broker's word, preserved
+    assert view["leg_state"] == "partial_leg_fill"
+    assert view["status_warning"] == "partial_leg_fill"
+
+
+def test_an_unfilled_combo_reads_pending_and_a_plain_order_has_no_leg_keys():
+    view = machine_api.broker_order_view(_mleg(status="accepted", filled="0", leg_fills=("0", "0")))
+    assert view["leg_state"] == "pending"
+    plain = machine_api.broker_order_view(BROKER_ORDER)
+    assert "legs" not in plain and "leg_state" not in plain
+
+
+def test_the_combo_shape_reaches_the_open_orders_read(api4, monkeypatch):
+    client, db, _, _ = api4
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: [_mleg(leg_fills=("1", "0"))]
+                        if path == "/v2/orders" else {})
+    body = client.get("/api/v1/orders/open", headers=_key(db)).json()
+    view = body["orders"][0]
+    assert view["leg_state"] == "partial_leg_fill" and view["status_warning"] == "partial_leg_fill"
+    assert view["source"] == "hub" and view["idea_id"] == 50
+
+
 # ── thesis tags (2026-11-08): a manual play keeps its label end to end ───────
 
 def test_a_tag_is_stored_echoed_and_shown_on_reads(api4):
