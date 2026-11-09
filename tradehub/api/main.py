@@ -1960,14 +1960,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             refused("rejected", 422, str(exc))
         machine_keys.record_event(supabase, key["id"], route, "placed",
                                   detail=label(order["id"]), client_order_id=client_order_id)
-        from datetime import datetime, timezone
-
-        session = machine_api.session_fields(
-            {**order, "time_in_force": body.time_in_force,
-             "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
-             "status": order.get("status", "accepted")})
-        return {"order": order, "client_order_id": client_order_id,
-                "placed_by": f"api:{key['label']}", **session}
+        return {"order": order, "client_order_id": client_order_id, "placed_by": f"api:{key['label']}"}
 
     # A parent order: the server chunks the total under the key's caps and places
     # the children as one logical order. A child the broker already has (a retry of
@@ -2219,21 +2212,13 @@ def list_open_orders(book: str | None = None, authorization: str | None = Header
         raise HTTPException(status_code=503, detail="database unavailable")
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
-    # The staged book is a portfolio read as much as an order read (2026-11-08):
-    # a key holding portfolio:read sees every resting order on its book, each
-    # labelled with who placed it, so two readers never collide blind.
-    if "orders:read" not in key.get("scopes", []) and "portfolio:read" not in key.get("scopes", []):
-        machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/open",
-                                  "refused:scope", detail="needs orders:read or portfolio:read")
-        raise HTTPException(status_code=403,
-                            detail="this key lacks the orders:read or portfolio:read scope")
+    machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/open")
     book = machine_api.resolve_book(supabase, key, book, "GET /api/v1/orders/open")
     try:
         orders = machine_api.open_broker_orders(book=book)
         reachable = True
     except AccountNotConnected:
         orders, reachable = [], False
-    orders = machine_api.attribute_orders(supabase, orders)
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/open", "read")
     return {"orders": orders, "broker_reachable": reachable}
 
