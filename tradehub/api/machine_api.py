@@ -654,22 +654,26 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     else:
         signed = qty if side == "buy" else -qty
         _portfolio_gate(supa, out, gate, book, {symbol: signed * price},
-                        symbol=symbol, spec=spec, dry_run=dry_run)
+                        symbol=symbol, spec=spec, dry_run=dry_run, is_exit=is_exit)
     return out
 
 
 def _portfolio_gate(supa, out: dict, gate, book: str, deltas: dict, *, symbol: str,
-                    spec: dict, dry_run: bool) -> None:
+                    spec: dict, dry_run: bool, is_exit: bool = False) -> None:
     """Run the portfolio check and fold it into the validation walk. A block is a
     refusal like any other gate's (422, outcome `portfolio_check`, naming the cap
     and the post-trade weight); a pass or a warning joins `checks` as a
     non-blocking entry; an unreadable book is stated in out["portfolio_check"]
-    itself and never silently passes (check_order's contract)."""
+    itself and never silently passes (check_order's contract). `is_exit` is this
+    door's own classification (the #440 book math, computed by the caller): it
+    lets an exit cross a member floor with a named warning instead of a block
+    (Kevin's ruling, 2026-11-09) and changes nothing else."""
     from tradehub.portfolio import portfolio_check
 
     block = portfolio_check.check_order(
         supa, book, deltas, source="machine_preflight" if dry_run else "machine_order",
-        symbol=symbol, tag=spec.get("tag"), idea_id=spec.get("idea_id"))
+        symbol=symbol, tag=spec.get("tag"), idea_id=spec.get("idea_id"),
+        is_exit=is_exit)
     out["portfolio_check"] = block
     if block["outcome"] == "block":
         detail = block["blocks"][0]["detail"]
@@ -924,7 +928,8 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
         signed = leg["qty"] * prices[leg["symbol"]] * 100
         deltas[underlying] = deltas.get(underlying, 0.0) + (signed if leg["side"] == "buy" else -signed)
     _portfolio_gate(supa, out, gate, book, deltas,
-                    symbol=legs[0]["parsed"]["underlying"], spec=spec, dry_run=dry_run)
+                    symbol=legs[0]["parsed"]["underlying"], spec=spec, dry_run=dry_run,
+                    is_exit=is_exit)
     return out
 
 

@@ -168,6 +168,51 @@ def test_a_stored_targets_edit_changes_the_preflight_verdict(api):
     assert r.json()["portfolio_check"]["outcome"] != "block"
 
 
+# ── Kevin's ruling (2026-11-09): exits win over the member floor ──────────────
+
+def _dbc_at_the_floor_edge(state):
+    """Rest the fixture book so DBC (a T4 ballast member) sits just over its 2%
+    floor with enough shares held for a classified exit: DBC $20k of $843k
+    invested = 2.4%, 100 shares held; GLD rested under its gold flag so the
+    floor warning is the check's headline."""
+    _gold_under_its_flag(state)
+    state["positions"] = [
+        {**row, "qty": "100", "market_value": "20000"} if row["symbol"] == "DBC" else row
+        for row in state["positions"]]
+
+
+def test_preflight_an_exit_trim_below_the_floor_passes_with_a_named_warning(api):
+    client, db, _, state = api
+    _dbc_at_the_floor_edge(state)
+    r = _preflight(client, _key(db), symbol="DBC", qty=50, side="sell",
+                   client_order_id="floor-exit-1")   # -$5k -> 15k/838k = 1.8%
+    body = r.json()
+    assert body["ok"] is True
+    assert body["exit"]["is_exit"] is True           # the #440 book math, not a claim
+    block = body["portfolio_check"]
+    assert block["outcome"] == "warn" and block["blocks"] == []
+    warn = next(w for w in block["warnings"] if "DBC" in w["detail"])
+    assert warn["rule"] == "member_floor_exit"
+    assert "floor" in warn["detail"] and "exit" in warn["detail"]
+    assert "floor" in block["detail"]                # the card feed's headline names it
+    rows = db.db["portfolio_check_events"]
+    assert rows[-1]["outcome"] == "warn" and "floor" in rows[-1]["detail"]
+
+
+def test_preflight_the_same_trim_oversold_is_not_an_exit_and_still_blocks(api):
+    client, db, _, state = api
+    _dbc_at_the_floor_edge(state)
+    r = _preflight(client, _key(db, max_qty=1000), symbol="DBC", qty=150, side="sell",
+                   client_order_id="floor-over-1")   # 150 > the 100 held: no exit
+    body = r.json()
+    assert body["ok"] is False
+    assert body["exit"]["is_exit"] is False
+    block = body["portfolio_check"]
+    assert block["outcome"] == "block"
+    assert any(b["rule"] == "member_floor" and "DBC" in b["detail"]
+               for b in block["blocks"])
+
+
 # ── options through the same gate ──────────────────────────────────────────────
 
 def test_a_spy_spread_preflight_carries_the_portfolio_block(api):
