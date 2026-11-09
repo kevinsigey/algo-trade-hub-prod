@@ -116,6 +116,55 @@ def account_view(account: dict, trades: list[dict] | None) -> dict:
             "realized_pl": sum(t["pnl"] for t in trades) if trades is not None else None}
 
 
+_OCC = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
+
+def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
+    """The per-symbol fold of the position rows (2026-11-08): `positions` repeats a
+    symbol once per idea lot, which a machine reader summing nothing misreads --
+    GLD held as two 259-share lots read as ~10% of the book when the aggregated
+    truth was 518 shares, 20%. One line per symbol: total signed qty, market value,
+    signed % of equity, the cost-basis-weighted blended entry, total unrealized P&L.
+    Options keep their OCC symbol (their own line, asset="option"); cash is not a
+    position and never appears. Biggest line first, by absolute market value."""
+    groups: dict[str, dict] = {}
+    for r in rows:
+        symbol = r.get("symbol")
+        if not symbol or symbol == "Cash" or r.get("qty") is None:
+            continue
+        g = groups.setdefault(symbol, {"symbol": symbol,
+                                       "asset": "option" if _OCC.match(symbol) else "stock",
+                                       "qty": 0.0, "market_value": 0.0, "unrealized_pl": 0.0,
+                                       "_pl_seen": False, "_cost": 0.0, "_cost_qty": 0.0,
+                                       "_avg_num": 0.0, "_avg_den": 0.0})
+        qty = float(r["qty"])
+        g["qty"] += qty
+        g["market_value"] += float(r.get("market_value") or 0)
+        if r.get("unrealized_pl") is not None:
+            g["unrealized_pl"] += float(r["unrealized_pl"])
+            g["_pl_seen"] = True
+        if r.get("cost_basis") is not None:
+            g["_cost"] += float(r["cost_basis"])
+            g["_cost_qty"] += qty
+        if r.get("avg_price") is not None and qty:
+            g["_avg_num"] += float(r["avg_price"]) * qty
+            g["_avg_den"] += qty
+    out = []
+    for g in groups.values():
+        if g["_cost_qty"]:
+            avg = g["_cost"] / g["_cost_qty"]
+        elif g["_avg_den"]:
+            avg = g["_avg_num"] / g["_avg_den"]
+        else:
+            avg = None
+        out.append({"symbol": g["symbol"], "asset": g["asset"], "qty": g["qty"],
+                    "market_value": g["market_value"],
+                    "pct_of_equity": g["market_value"] / equity * 100 if equity else None,
+                    "avg_entry": avg,
+                    "unrealized_pl": g["unrealized_pl"] if g["_pl_seen"] else None})
+    return sorted(out, key=lambda a: -abs(a["market_value"]))
+
+
 def composition(rows: list[dict]) -> list[dict]:
     groups: dict[str, dict] = {}
     for r in rows:
