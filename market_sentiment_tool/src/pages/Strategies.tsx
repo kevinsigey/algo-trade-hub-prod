@@ -35,6 +35,7 @@ const cents = (v: number) => `${signed(v * 100)}¢ a contract`;
 const usd = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
 const toneOf = (v: number | null | undefined) => (v == null ? undefined : v >= 0 ? "text-emerald-300" : "text-rose-300");
 
+interface GapCategoryLedger { closed: number; realized: number; win_rate: number | null; median_pnl: number | null }
 interface SeriesStats { n: number; net_per_contract: number | null; win_rate: number | null }
 interface FifteenPayload {
   forward?: SeriesStats; replay?: SeriesStats; ready_trades?: number;
@@ -55,7 +56,8 @@ export default function Strategies() {
   const ideas = useJson<{ live_books?: string[] }[]>("/api/ideas");
   const fifteen = useJson<FifteenPayload>("/api/oil/fifteen-rule");
   const strike = useJson<{ settled?: number; hits?: number; net_per_contract?: number | null }>("/api/oil/itm-record");
-  const gaps = useJson<{ closed_positions?: { category: string; pnl: number | null }[] }>("/api/gaps/desk");
+  const gaps = useJson<{ closed_positions?: { category: string; pnl: number | null }[];
+                         ledger_by_category?: Record<string, GapCategoryLedger> }>("/api/gaps/desk");
   const sniper = useJson<{ overall?: { count: number; hit_rate: number } }>("/api/crypto/sniper-verdict");
 
   // Trading on at least one book; `live` on this payload is the shadow record's state, not trading.
@@ -81,14 +83,25 @@ export default function Strategies() {
   const fifteenRule = (market: string) =>
     `Five minutes into each 15-minute ${market} window, buy the side the model beats by 10+ points after Kalshi's fee; hold to the close. Nothing trades around the 4:45–6:30 PM ET futures halt.`;
 
-  // One desk's line for the gap tracker: its own closed trades (the $10k pot is shared and
-  // stays combined in the desk below; the trades carry their market and split exactly).
+  // One desk's line for the gap tracker: the server's per-desk ledger leads — it is computed
+  // over every closed position, while the payload's closed-positions page is capped, so the
+  // page is only a fallback for a payload that predates the ledger. (The $10k pot is shared
+  // and stays combined in the desk below; the trades carry their market and split exactly.)
   const gapRecord = (category: string): Pick<Row, "record" | "tone"> => {
-    const mine = (gaps?.closed_positions ?? []).filter((p) => p.category === category && p.pnl != null);
-    if (!gaps || mine.length === 0) return { record: null };
-    const sum = mine.reduce((a, p) => a + (p.pnl ?? 0), 0);
-    const won = mine.filter((p) => (p.pnl ?? 0) > 0).length;
-    return { record: `${mine.length} closed · ${usd(sum)} realized · ${Math.round((won / mine.length) * 100)}% won`,
+    if (!gaps) return { record: null };
+    const led = gaps.ledger_by_category?.[category];
+    if (led && led.closed > 0 && led.win_rate != null && led.median_pnl != null) {
+      return { record: `${led.closed} closed · ${usd(led.realized)} realized · ${Math.round(led.win_rate * 100)}% won · typical trade ${usd(led.median_pnl)}`,
+               tone: toneOf(led.realized) };
+    }
+    const pnls = (gaps.closed_positions ?? []).filter((p) => p.category === category && p.pnl != null)
+      .map((p) => p.pnl ?? 0).sort((a, b) => a - b);
+    if (pnls.length === 0) return { record: null };
+    const sum = pnls.reduce((a, v) => a + v, 0);
+    const won = pnls.filter((v) => v > 0).length;
+    const median = pnls.length % 2 === 1 ? pnls[(pnls.length - 1) / 2]
+      : (pnls[pnls.length / 2 - 1] + pnls[pnls.length / 2]) / 2;
+    return { record: `${pnls.length} closed · ${usd(sum)} realized · ${Math.round((won / pnls.length) * 100)}% won · typical trade ${usd(median)}`,
              tone: toneOf(sum) };
   };
 
@@ -120,12 +133,12 @@ export default function Strategies() {
     },
     {
       id: "gap-oil", name: "Oil gap tracker", stage: "Paper record", detail: "#gap-oil",
-      rule: "Brent and WTI hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points after the fee — one trade per event — and exit when the gap narrows to 2 points, the model moves 5+ points against the trade, or 2 hours before settlement.",
+      rule: "Brent and WTI hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points (fees come out of the trade's P&L, not the test) — only with 2+ hours to settlement and a book deep enough to exit — one trade per event; exit when the gap narrows to 2 points, the model moves more than 5 points from entry, or under an hour is left.",
       ...gapRecord("oil"),
     },
     {
       id: "gap-crypto", name: "Crypto gap tracker", stage: "Paper record", detail: "#gap-crypto",
-      rule: "Bitcoin and Ethereum hourly and daily contracts on Kalshi: the same gap rule as the oil desk — buy an 8+ point gap after fees, one trade per event; exit at a 2-point gap, a 5+ point model move against the trade, or 2 hours before settlement.",
+      rule: "Bitcoin and Ethereum hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points (fees come out of the trade's P&L, not the test) — only with 2+ hours to settlement and a book deep enough to exit — one trade per event; exit when the gap narrows to 2 points, the model moves more than 5 points from entry, or under an hour is left.",
       ...gapRecord("crypto"),
     },
     {

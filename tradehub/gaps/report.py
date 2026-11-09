@@ -24,6 +24,26 @@ def _all_pairs(supa) -> list[dict]:
         after = page[-1]["ticker"]
 
 
+def ledger_by_category(positions: list[dict]) -> dict[str, dict]:
+    """Each desk's own closed record over ALL its closed positions — never the capped page of
+    trades the payload also carries, so the per-desk lines stay exact as the ledger grows past
+    it. The desks reconcile to the shared ledger: their closed counts sum to its resolved count
+    and their realized sums to its P&L. A desk with no closed trades reads zeroes and nulls."""
+    out: dict[str, dict] = {}
+    for category in sorted({p.get("category") for p in positions if p.get("category")}):
+        pnls = sorted(float(p["pnl"]) for p in positions
+                      if p.get("category") == category and p["status"] == "closed"
+                      and p.get("pnl") is not None)
+        if not pnls:
+            out[category] = {"closed": 0, "realized": 0.0, "win_rate": None, "median_pnl": None}
+            continue
+        n = len(pnls)
+        median = pnls[n // 2] if n % 2 else (pnls[n // 2 - 1] + pnls[n // 2]) / 2
+        out[category] = {"closed": n, "realized": round(sum(pnls), 2),
+                         "win_rate": sum(v > 0 for v in pnls) / n, "median_pnl": median}
+    return out
+
+
 def _fee_basis(positions: list[dict]) -> str:
     """Whether the paper return is after fees: net, gross, or a mix of the two. Nothing closed reads net."""
     gross = ["gross" in (p.get("pnl_basis") or "") for p in positions if p.get("pnl_basis")]
@@ -55,6 +75,7 @@ def desk(supa, now: datetime) -> dict:
     return {"as_of": latest, "started_at": started,
             "evidence": logic.evidence_status(days=days, pairs=len(pairs)), "grade": logic.grade(pairs),
             "ledger": logic.summarize_ledger(positions),
+            "ledger_by_category": ledger_by_category(positions),
             "fee_basis": _fee_basis(positions),
             "open_positions": [p for p in positions if p["status"] == "open"],
             "closed_positions": [p for p in positions if p["status"] == "closed"][-50:],

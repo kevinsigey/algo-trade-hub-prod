@@ -13,12 +13,14 @@ interface Position {
 interface Score { n: number; model_brier: number | null; market_brier: number | null; brier_delta: number | null;
   model_log_loss: number | null; market_log_loss: number | null;
   calibration: { bucket: string; n: number; mean_model: number; hit_rate: number }[] }
+export interface GapCategoryLedger { closed: number; realized: number; win_rate: number | null; median_pnl: number | null }
 export interface GapDeskPayload {
   as_of: string | null; started_at: string | null;
   evidence: { status: string; days: number; pairs: number; min_days: number; min_pairs: number };
   grade: { all: Score; crypto: Score; oil: Score };
   ledger: { bankroll: number; return_pct: number; max_drawdown_pct: number; resolved: number; open: number;
             win_rate: number | null; avg_entry_gap_pts: number | null };
+  ledger_by_category?: Record<string, GapCategoryLedger>;
   fee_basis: "net" | "gross" | "mixed";
   open_positions: Position[]; closed_positions: Position[]; top_gaps: GapRow[]; near_misses: GapRow[];
   funnel: Record<string, Record<string, number>>;
@@ -121,9 +123,11 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
   const top = mine(data.top_gaps) as GapRow[];
   const open = mine(data.open_positions) as Position[];
   const closed = mine(data.closed_positions) as Position[];
-  // This desk's own settled record, from its closed positions: the two desks share one
-  // $10k pot (the ledger above is the pot, never split), but every closed trade carries
-  // its category and its P&L, so the desks' trade records split exactly.
+  // This desk's own settled record: the two desks share one $10k pot (the ledger above is
+  // the pot, never split), but every closed trade carries its category and its P&L, so the
+  // desks' trade records split exactly. The server's per-desk ledger is computed over every
+  // closed position and leads; the closed-positions page below is capped, so it is only a
+  // fallback for a payload that predates the ledger.
   const pnls = closed.map((p) => p.pnl).filter((v): v is number => v != null);
   const realized = pnls.reduce((a, b) => a + b, 0);
   const wins = pnls.filter((v) => v > 0).length;
@@ -131,6 +135,11 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
   const median = byPnl.length === 0 ? null
     : byPnl.length % 2 === 1 ? byPnl[(byPnl.length - 1) / 2]
     : (byPnl[byPnl.length / 2 - 1] + byPnl[byPnl.length / 2]) / 2;
+  const catLedger = category ? data.ledger_by_category?.[category] : undefined;
+  const deskRecord = catLedger && catLedger.closed > 0 && catLedger.win_rate != null && catLedger.median_pnl != null
+    ? { closed: catLedger.closed, realized: catLedger.realized,
+        wins: Math.round(catLedger.win_rate * catLedger.closed), median: catLedger.median_pnl }
+    : { closed: pnls.length, realized, wins, median };
   const funnel: Record<string, number> = category ? data.funnel[category] ?? {}
     : Object.values(data.funnel).reduce<Record<string, number>>((acc, f) => {
         for (const [k, v] of Object.entries(f)) acc[k] = (acc[k] ?? 0) + v;
@@ -162,8 +171,8 @@ export default function GapDesk({ category }: { category?: "oil" | "crypto" }) {
         <p className="mt-3 text-sm text-slate-300">
           This desk's own record:{" "}
           <span className="font-medium tabular-nums text-white">
-            {pnls.length} closed trades · {fmtUsd(realized, { signed: true })} realized · {wins} of {pnls.length} won
-            {median != null ? ` · typical trade ${fmtUsd(median, { signed: true })}` : ""}
+            {deskRecord.closed} closed trades · {fmtUsd(deskRecord.realized, { signed: true })} realized · {deskRecord.wins} of {deskRecord.closed} won
+            {deskRecord.median != null ? ` · typical trade ${fmtUsd(deskRecord.median, { signed: true })}` : ""}
           </span>
           . The return and drawdown above are the shared $10k pot both desks trade from — the pot is
           not split; the trades are.
