@@ -172,8 +172,10 @@ class IdeaSpec(BaseModel):
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
     # Which gate battery judges the claim (spec 2026-11-08, claim-typed gates). `timing`
     # is the original gate and the default for every existing idea; `basket` grades an
-    # always-in allocation relatively; `event`/`overlay` are declared types whose
-    # batteries are design-only in this pass (the run path refuses them).
+    # always-in allocation relatively; `overlay` grades a ballast/smoother_ride sleeve
+    # on the combined portfolio. `event` is refused on this path: event studies are
+    # declared with an EventSpec and run on the event-study endpoint, where the event
+    # battery rides in the result.
     claim_type: Literal["timing", "basket", "event", "overlay"] = "timing"
     benchmark: str = "SPY"
     cost_bps: float = Field(10, ge=0, le=200)  # commission per switch
@@ -263,6 +265,11 @@ class IdeaSpec(BaseModel):
             if self.options:
                 raise ValueError("a basket idea holds no option legs in this pass: legs are model-priced "
                                  "timing claims, judged by the timing gate")
+        if self.claim_type == "overlay" and self.claim not in ("ballast", "smoother_ride"):
+            # The overlay battery judges the combined portfolio, never standalone return
+            # (spec 2026-11-08): only the two host-relative claims belong to it.
+            raise ValueError("an overlay idea's claim is ballast or smoother_ride: the sleeve is judged "
+                             "on the combined portfolio, never on standalone return")
         if self.benchmark == CASH:
             raise ValueError("the benchmark must be a ticker")
         return self

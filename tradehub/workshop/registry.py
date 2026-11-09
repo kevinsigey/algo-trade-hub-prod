@@ -60,11 +60,14 @@ def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for iid, run in latest_by_idea.items():
         result = run.get("result") or {}
-        if result.get("battery"):
+        if (result.get("battery") or {}).get("type") in ("basket", "overlay"):
             # A claim-typed battery run (spec 2026-11-08): the BH family above is defined
-            # over timing shuffle p-values, so a battery verdict stands as stored —
+            # over timing shuffle p-values, so a basket/overlay verdict stands as stored —
             # reported, never demoted here — until a cross-battery FDR treatment is
             # preregistered. The run still counts in store.insert_run's family log.
+            # Event runs are deliberately NOT exempt: their verdict comes from the
+            # timing-family event gate (a real shuffle p, in the family above) and the
+            # battery block in their result is a reported read, inert here.
             out[iid] = {"verdict_now": run.get("verdict"), "fdr_pass": None, "p_ok": None,
                         "wf_ok": None, "p": None, "battery": result["battery"].get("type")}
             continue

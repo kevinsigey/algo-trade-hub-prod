@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from tradehub.workshop import basket_gate, signals
+from tradehub.workshop import basket_gate, overlay_gate, signals
 from tradehub.workshop.spec import CASH, Condition, Exits, Group, IdeaSpec
 
 DAYS = 252
@@ -692,11 +692,12 @@ def _context_curve_periods(spec: IdeaSpec, idx, r: np.ndarray, b: np.ndarray, s:
 
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
              permutations: int = 1000, div_yields: dict[str, float] | None = None) -> dict:
-    if spec.claim_type in ("event", "overlay"):
-        # Design-only in this pass (spec 2026-11-08): declared on the spec, but their
-        # batteries are not built — refusing beats grading them with the wrong instrument.
-        raise ValueError(f"claim_type {spec.claim_type!r} is design-only in this pass (spec 2026-11-08): "
-                         "its battery is not built yet")
+    if spec.claim_type == "event":
+        # Event studies are declared with an EventSpec and run on the event-study path,
+        # where the event battery rides in the result (spec 2026-11-08). An IdeaSpec has
+        # no event windows, so the rule engine refuses rather than mistaking it for a rule.
+        raise ValueError("claim_type 'event' runs on the event-study path (EventSpec), not the rule "
+                         "engine: an IdeaSpec has no event windows (spec 2026-11-08)")
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred, div_yields)
     cost = _switch_cost(spec)
 
@@ -787,6 +788,36 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
             "notes": notes + ["Graded with the basket battery (spec 2026-11-08): relative-Sharpe "
                               "block-bootstrap intervals and the drawdown bound on both spans — "
                               "not the timing shuffle. This verdict is reported, never applied "
+                              "to the idea's standing."],
+            "walk_forward": walk_forward, "options": options_info,
+        })
+
+    if spec.claim_type == "overlay":
+        # The overlay battery (spec 2026-11-08): the sleeve graded only in combination —
+        # the benchmark blended with the sleeve at a frozen weight, judged on drawdown
+        # margin, the Sharpe guard and the return budget, per span. The sleeve's own
+        # claim reads ride in the shared blocks as context; shuffle/t_test stay null.
+        on_b = _claim(spec.claim, r[built], b[built], s[built], mask[built])
+        on_u = _claim(spec.claim, r[unseen], b[unseen], s[unseen], mask[unseen])
+        bat = overlay_gate.battery(r, b, split=k)
+        context, curve, held_periods = _context_curve_periods(spec, idx, r, b, s, mask, rets, built, unseen)
+        if bat["verdict"] == "PASS":
+            headline = "On its benchmark, the sleeve cut the worst fall and stayed inside the return budget."
+        elif all(leg["holds"] for leg in bat["legs"] if leg["name"].startswith("dd")):
+            headline = "The fall shrank, but the protection cost more than the budget allows."
+        else:
+            headline = "No measurable protection: the combined portfolio fell about as far as its benchmark."
+        return _clean({
+            **base, "verdict": bat["verdict"], "headline": headline, "reason": None,
+            "claim_type": "overlay",
+            "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
+                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
+            "shuffle": None, "t_test": None, "battery": bat,
+            "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
+            "notes": notes + ["Graded with the overlay battery (spec 2026-11-08): the benchmark "
+                              "blended with the sleeve at a frozen 20% weight, judged on drawdown "
+                              "margin, Sharpe guard and return budget on both spans — never on the "
+                              "sleeve's standalone return. This verdict is reported, never applied "
                               "to the idea's standing."],
             "walk_forward": walk_forward, "options": options_info,
         })
