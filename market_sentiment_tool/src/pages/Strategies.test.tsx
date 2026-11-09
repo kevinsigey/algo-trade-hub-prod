@@ -15,14 +15,26 @@ const BODIES: Record<string, unknown> = {
                       positions: [], curve: [], composition: [] },
   "/api/ideas": [{ id: 17, live: { state: "live" }, live_books: ["main"] }, { id: 36, live: { state: "live" }, live_books: [] }],
   "/api/oil/fifteen-rule": { rule: "Buy the side the model beats by 10.", prereg_at: "2026-11-06T00:00:00+00:00", ready_trades: 300,
-                             replay: { n: 51, net_per_contract: 0.0967 }, forward: { n: 10, net_per_contract: 0.05 }, pending: 0, recent: [],
+                             replay: { n: 51, net_per_contract: 0.0967 },
+                             forward: { n: 10, net_per_contract: 0.05, total: 0.5, win_rate: 0.5, low95: -0.04, windows: 9 },
+                             pending: 1,
+                             recent: [{ series: "WTI", target: "2026-11-08T15:15:00Z", frozen_at: "2026-11-08T15:05:00Z",
+                                        side: "yes", cost: 0.4, model: 0.62, outcome: 1, pnl: 0.55 }],
                              by_series: { WTI: { n: 3, net_per_contract: 0.03, win_rate: 0.5 },
                                           Brent: { n: 1, net_per_contract: -0.02, win_rate: 0 },
                                           "Natural gas": { n: 6, net_per_contract: 0.19, win_rate: 0.67 } },
-                             gate: { rule: "gated", forward: { n: 7, net_per_contract: 0.14, win_rate: 0.57 },
+                             by_session: { open: { n: 4, net_per_contract: 0.1, win_rate: 0.75 },
+                                           closed: { n: 6, net_per_contract: 0.02, win_rate: 0.5 } },
+                             gate: { rule: "gated", forward: { n: 7, net_per_contract: 0.14, total: 0.98, win_rate: 0.57, low95: 0.021, windows: 7 },
                                      by_series: { WTI: { n: 2, net_per_contract: 0.05, win_rate: 0.5 },
                                                   Brent: { n: 0, net_per_contract: null, win_rate: null },
-                                                  "Natural gas": { n: 5, net_per_contract: 0.2, win_rate: 0.6 } } } },
+                                                  "Natural gas": { n: 5, net_per_contract: 0.2, win_rate: 0.6 } } },
+                             bar: { basis: "gated", trades: 7, ready_trades: 300, ready: false, low95: 0.021, windows: 7, pending: 2,
+                                    control: { basis: "raw", trades: 10, ready: false, low95: -0.04 } },
+                             decisions: { recorded: 489, buy: 56, skip: 433, by_reason: { no_edge: 403, halt: 27, no_quote: 3 } },
+                             offsets: { by_offset: [
+                               { offset_min: 1, windows: 90, priced: 88, mean_edge_net: 0.028, n: 17, net_per_contract: 0.195, win_rate: 0.71 },
+                               { offset_min: 5, windows: 96, priced: 96, mean_edge_net: 0.09, n: 30, net_per_contract: 0.08, win_rate: 0.6 } ] } },
   "/api/oil/itm-record": { frozen: 24, settled: 24, hits: 9, hit_rate: 0.375, net_per_contract: 0.0188, backtest: null, recent: [] },
   "/api/gaps/desk": { as_of: "2026-11-05T21:00:00Z", started_at: "2026-11-04T12:15:00Z",
                       evidence: { status: "NOT ENOUGH EVIDENCE", days: 1.8, pairs: 1834, min_days: 28, min_pairs: 150 },
@@ -72,7 +84,7 @@ describe("Strategies", () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
-    const rule = await within(list).findByText(/Five minutes into each 15-minute WTI window/);
+    const rule = await within(list).findByText(/Five minutes into each 15-minute window, buy the side/);
     const fifteenDetails = rule.closest("details");
     expect(fifteenDetails).not.toBeNull();
     expect(fifteenDetails!.open).toBe(false);
@@ -89,7 +101,7 @@ describe("Strategies", () => {
     expect(tile).not.toBeNull();
     expect(tile!.id).toBe("fifteen-rule");
     for (const label of ["WTI", "Brent", "Natural gas"]) {
-      // Once in the tile's summary bars, once in the trade record's by-market table below.
+      // In the tile's summary bars; the per-market numbers live there, not in a second table below.
       expect(within(tile!).getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(await within(list).findByText(/2 gated trades · \+5\.0¢ a contract · 50% win/)).toBeInTheDocument();
@@ -99,6 +111,75 @@ describe("Strategies", () => {
     expect(within(list).queryByText(/15-minute oil and gas rule/)).not.toBeInTheDocument();
     // The tile headline is the family gated record with the raw record beside it as the control.
     expect(within(list).getByText(/7 gated trades · \+14\.0¢ a contract · 57% win · raw control 10 · \+5\.0¢ a contract/)).toBeInTheDocument();
+  });
+
+  it("splits the fifteen expansion into small titled expansions instead of one mega-dropdown", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    expect(tile).not.toBeNull();
+    for (const title of ["The rule", "Settlements scoring — the forecasts vs Kalshi's price", "The trade record",
+                         "Decisions — every window gets one", "Entry timing — what entering at each minute has paid",
+                         "Trading hours vs closed hours"]) {
+      const summary = within(tile!).getByText(title, { selector: "summary" });
+      const details = summary.closest("details");
+      expect(details).not.toBeNull();
+      expect(details!.open).toBe(false);
+    }
+    // The rule is stated once for the whole family, not once per market.
+    expect(within(tile!).getAllByText(/Five minutes into each 15-minute window, buy the side/)).toHaveLength(1);
+    expect(within(tile!).queryByText(/15-minute WTI window/)).toBeNull();
+    expect(within(tile!).queryByText(/15-minute Brent window/)).toBeNull();
+    // The old framing prose that restated the layout is gone.
+    expect(within(tile!).queryByText(/One rule, three separate markets/)).toBeNull();
+    // No by-market table duplicating the tile's per-market bars.
+    expect(within(tile!).queryByLabelText("Record by market")).toBeNull();
+  });
+
+  it("shows the trade record with the gated record leading, the raw record as control, and the go-live bar", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    expect(tile).not.toBeNull();
+    expect(within(tile!).getByText(/7 of 300 settled gated trades in 7 separate 15-minute windows/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/still ahead at the low end of its 95% range \(now \+2\.1¢\)/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/2 waiting to settle/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/On the original gross-edge record, kept as a control: 10 trades, \+5\.0¢ a contract, win rate 50%/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/Replay before the rule was fixed: 51 trades, \+9\.7¢ a contract/)).toBeInTheDocument();
+    // Decisions: every window gets one, with the skip reasons named once.
+    expect(within(tile!).getByText(/489 windows on record: 56 buys, 433 skipped \(no edge 403, no quote 3, halt 27\)/)).toBeInTheDocument();
+    // Entry timing: the per-minute table and its best minute, from the offsets block.
+    expect(within(tile!).getByLabelText("Entry timing by minute")).toBeInTheDocument();
+    expect(within(tile!).getByText(/Best entry minute so far: minute 1 of the window \(17 priced entries, \+19\.5¢ a contract after fees\)/)).toBeInTheDocument();
+    // Sessions: the split and its one-line reading survive.
+    expect(within(tile!).getByText(/A real edge should hold while futures trade/)).toBeInTheDocument();
+  });
+
+  it("gives the oil shadow its own block with its promotion state, apart from the v1 record", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    serve({ "/api/oil/fifteen-rule": { ...base,
+      shadow: { gate_version: "v2-oil-shadow", prereg_at: "2026-11-09T19:00:00+00:00",
+                variant: { series: ["WTI", "Brent"], offset_min: 1, bar: 0.05,
+                           rule: "Oil only, decided at minute 1 on the live tick read: buy the side whose chance beats its price by 5 points or more after Kalshi's taker fee, hold to the close. A shadow record until the frozen criterion promotes it." },
+                fresh: { windows: 60, trades: 12, net_per_contract: 0.295, low95: 0.181, win_rate: 0.8 },
+                paired: { windows: 192, delta_per_window: 0.055, low95: 0.02 },
+                grid: [{ offset_min: 1, bar: 0.05, windows: 60, trades: 12, net_per_contract: 0.295, low95: 0.181 }],
+                promotion: { state: "v1", met: false,
+                             criterion: { min_trades: 150, shadow_low95_above: 0, paired_low95_above: 0 },
+                             promoted_at: null, evidence: null } } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    expect(tile).not.toBeNull();
+    const summary = within(tile!).getByText("Oil shadow — the minute-1 variant", { selector: "summary" });
+    expect(summary.closest("details")).not.toBeNull();
+    expect(within(tile!).getByText(/decided at minute 1 on the live tick read/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/12 fresh trades · \+29\.5¢ a contract · win rate 80% · low end \+18\.1¢/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/Against the live rule on the same 192 windows: \+5\.5¢ a window \(low end \+2\.0¢\)/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/Promotion state: shadow — the live oil gate still runs v1/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/promotes itself at 150 fresh trades with both low ends above zero \(12\/150 so far\)/)).toBeInTheDocument();
   });
 
   it("adds a metals tile in the same visual form when the fifteen payload carries the metals block", async () => {
