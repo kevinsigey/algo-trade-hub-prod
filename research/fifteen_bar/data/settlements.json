@@ -1,0 +1,3926 @@
+[
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090445-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV070000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV070000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041515-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060430-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041445-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060445-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051430-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051700-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV081945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041645-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090200-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV081915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050900-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061515-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061445-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061530-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060330-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040930-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV040730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060815-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV082345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061700-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051400-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV040945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061430-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061800-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040815-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042000-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051900-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041130-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090630-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051545-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041730-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV081845-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050600-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041630-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050715-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV041145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041715-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV052330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV082345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV060145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052345-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061415-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040730-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050615-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060600-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060500-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV091115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV042115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091115-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090315-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090230-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090415-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060430-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV051245-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060400-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041930-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061915-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090945-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041500-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV062215-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090045-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082245-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061945-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV060100-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041745-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090345-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV091130-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV090515-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090545-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV040915-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041615-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV061200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050030-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060445-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061315-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052100-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061830-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV070000-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV052330-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV050830-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051845-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV051430-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV082200-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV090430-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV050145-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV042300-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061645-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV091030-30",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV062115-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV051230-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV041745-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV062015-15",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV041300-00",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV061145-45",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV061045-45",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV052215-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV090800-00",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXWTI15M-26NOV060530-30",
+    "outcome": 1
+  },
+  {
+    "target": "kalshi:KXBRENT15M-26NOV042015-15",
+    "outcome": 0
+  },
+  {
+    "target": "kalshi:KXNATGAS15M-26NOV050945-45",
+    "outcome": 1
+  }
+]
