@@ -402,6 +402,29 @@ def test_revenue_quarterly_only_no_bands():
     assert s["bands"] is None
 
 
+def test_fy_two_digit_glued_year_form():
+    # A2 completed (Phase B annex): the FY signal always accepted "FY27";
+    # the year extractor must read the glued two-digit form too. Quarter
+    # forms stay vetoed and out-of-window years stay rejected.
+    assert engine.is_full_year_period("FY27", now=NOW) is True
+    assert engine.is_full_year_period("Q1 FY27", now=NOW) is False
+    assert engine.is_full_year_period("FY30", now=NOW) is False
+    assert engine.period_key("FY27") == "FY2027"
+
+
+def test_revenue_anchor_reads_compact_fy27_period():
+    # CRM shape: the FY27 revenue guide bands on the revenue basis.
+    s = rev_sheet([rev_rec(period="FY27")])
+    assert s["status"] == "banded"
+    assert s["band_basis"] == "revenue"
+    assert s["anchor"]["period_key"] == "FY2027"
+
+
+def test_eps_anchor_reads_compact_fy27_period():
+    s = sheet([rec(period="FY27")])
+    assert s["status"] == "banded"
+
+
 def test_revenue_pct_growth_row_is_not_a_candidate():
     # ABT shape: a growth-rate row (unit pct) is a different statement, not a
     # rejected dollar guide.

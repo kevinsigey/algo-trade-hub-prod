@@ -106,3 +106,26 @@ only the guided quantity and the multiple change.
   guards reads `guide_rejected`; a live revenue anchor and multiple with no
   share count on record reads `no_peer_multiple`, its falsifier saying the
   per-share multiple cannot be formed.
+
+### Phase B implementation annex — two first-compute corrections (Nov 9, 2026)
+
+The first production compute exposed two data-layer defects; the method
+above is unchanged by either correction.
+
+1. **"Latest FY revenue" means the filer's total revenue.** The EDGAR layer
+   offers two revenue concepts, tried in order — but for lease-heavy filers
+   the first (RevenueFromContractWithCustomerExcludingAssessedTax) is an
+   ASC 606 sub-stream, not the total: the tower REITs served 0.94B / 0.22B /
+   0.24B against true totals of ~10.5B / ~5.7B / ~2.7B, and a first-non-null
+   pick built AMT's peer multiple out of sub-streams (95.4×). Rule: among
+   the revenue concepts on record, the total is the LARGEST fiscal-year
+   value — the same identity as the segment rule (a part never exceeds the
+   whole) — and that value, with its as-of, is what both the peer multiple
+   and the subject's trailing reference read.
+2. **A2 completed: the compact `FY<yy>` year form.** The FY signal has
+   always accepted "FY27"; the year extractor behind it only read
+   four-digit years and spaced two-digit years, so a glued "FY27" (CRM's
+   revenue guide) extracted no year and was invisible to anchor selection
+   on both bases. The extractor now reads the FY-prefixed two-digit year.
+   The standing rejects still reject: quarter forms are vetoed before year
+   extraction, and out-of-window years ("FY30") fail the window.

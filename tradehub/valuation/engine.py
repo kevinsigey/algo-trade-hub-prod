@@ -26,6 +26,7 @@ FUND_STALE_DAYS = 550
 
 _QUARTER = re.compile(r"\bq[1-4]\b|[1-4]q\d{2}|quarter", re.IGNORECASE)
 _YEAR = re.compile(r"(20\d{2})")
+_YEAR_FY2 = re.compile(r"fy\s?'?(\d{2})\b", re.IGNORECASE)
 # Amendment A2 (2026-11-09): the frozen method names "full year / FY / year
 # ending / calendar year" as full-year signals; the matcher also takes the
 # hyphenated "full-year" and the bare "Calendar <year>" form (ABT, FDX).
@@ -35,7 +36,12 @@ _FY_SIGNAL = re.compile(r"\bfy\d|\bfy\b|full[-\s]year|fiscal|calendar|"
 
 def _year_of(period: str) -> int | None:
     m = _YEAR.search(period or "")
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    # Compact FY form ("FY27"): the FY signal accepts it, so the year
+    # extractor reads it too (A2 completed, Phase B annex).
+    m = _YEAR_FY2.search(period or "")
+    return 2000 + int(m.group(1)) if m else None
 
 
 def is_full_year_period(period: str, *, now: datetime | None = None) -> bool:
