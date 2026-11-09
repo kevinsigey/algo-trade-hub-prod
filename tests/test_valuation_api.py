@@ -79,6 +79,54 @@ def test_get_one_and_404(monkeypatch):
     assert client.get("/api/valuation-bands/ZZZZ").status_code == 404
 
 
+def test_detail_carries_the_frozen_peer_group_members(monkeypatch):
+    # The Valuation tab's per-name detail names the peers behind the multiple.
+    # Members are derived read-side from the frozen group map -- the same map
+    # the engine froze -- never stored on the sheet.
+    from tradehub.api.dependencies import get_supabase as real_get_supabase
+    rows = [{"ticker": "AMGN", "tier": "watch", "status": "banded",
+             "band_basis": "eps", "peer_group": "biotechnology",
+             "peer_basis": "industry_group", "peer_count": 7,
+             "baseline_verdict": "short_zone_strong",
+             "computed_at": "2026-11-09T18:00:00Z",
+             "bands": {"bear": 272.18, "base": 310.17, "bull": 317.92}}]
+    main.app.dependency_overrides[admin.require_admin] = (
+        lambda: {"email": "k@example.com", "is_admin": True})
+    main.app.dependency_overrides[real_get_supabase] = lambda: _Supa(rows)
+    client = TestClient(main.app)
+    body = client.get("/api/valuation-bands/AMGN").json()
+    assert body["peer_members"] == ["ABBV", "AMGN", "BIIB", "GILD", "INCY",
+                                    "MRNA", "REGN", "VRTX"]
+
+
+def test_detail_peer_members_sector_fallback_and_unknown(monkeypatch):
+    from tradehub.api.dependencies import get_supabase as real_get_supabase
+    main.app.dependency_overrides[admin.require_admin] = (
+        lambda: {"email": "k@example.com", "is_admin": True})
+    rows = [{"ticker": "NBIS", "tier": "open", "status": "banded",
+             "band_basis": "eps", "peer_group": "sector:Health Care",
+             "peer_basis": "sector_fallback", "peer_count": 40,
+             "baseline_verdict": "neutral",
+             "computed_at": "2026-11-09T18:00:00Z", "bands": None},
+            {"ticker": "ZZZZ", "tier": "open", "status": "no_full_year_guide",
+             "band_basis": "eps", "peer_group": None, "peer_basis": None,
+             "peer_count": None, "baseline_verdict": "no_bands",
+             "computed_at": "2026-11-09T18:00:00Z", "bands": None}]
+    main.app.dependency_overrides[real_get_supabase] = lambda: _Supa(rows)
+    client = TestClient(main.app)
+    nbis = client.get("/api/valuation-bands/NBIS").json()
+    assert "AMGN" in nbis["peer_members"] and len(nbis["peer_members"]) > 20
+    zzzz = client.get("/api/valuation-bands/ZZZZ").json()
+    assert zzzz["peer_members"] == []
+
+
+def test_list_rows_do_not_grow_peer_members(monkeypatch):
+    # The list stays the stored rows verbatim; members are a detail-only cost.
+    client = _client(monkeypatch)
+    rows = client.get("/api/valuation-bands").json()
+    assert all("peer_members" not in r for r in rows)
+
+
 def test_revenue_basis_row_surfaces_its_basis(monkeypatch):
     # Phase B: a revenue-basis sheet is labeled wherever bands are shown --
     # the read API returns the stored basis and implied revenue verbatim.
