@@ -343,3 +343,37 @@ def test_the_desk_reports_pairs_funnel_ledger_and_current_gaps():
     assert out["grade"]["crypto"]["n"] == 1
     assert out["funnel"]["crypto"] == {"rows": 10, "gap": 9, "flagged": 1}
     assert [g["ticker"] for g in out["top_gaps"]][:2] == ["OLD", "B"] and len(out["open_positions"]) == 1
+
+
+def test_ledger_by_category_splits_each_desk_and_reconciles():
+    db = ReportStore()
+    db.db[POSITIONS] = [
+        {"id": 1, "ticker": "A", "category": "oil", "status": "closed", "pnl": 120.5, "gap_pts": 9.0, "exit_at": "1"},
+        {"id": 2, "ticker": "B", "category": "oil", "status": "closed", "pnl": -40.0, "gap_pts": 9.0, "exit_at": "2"},
+        {"id": 3, "ticker": "C", "category": "oil", "status": "closed", "pnl": -10.25, "gap_pts": 9.0, "exit_at": "3"},
+        {"id": 4, "ticker": "D", "category": "crypto", "status": "closed", "pnl": -260.0, "gap_pts": 9.0, "exit_at": "4"},
+        {"id": 5, "ticker": "E", "category": "crypto", "status": "closed", "pnl": 30.0, "gap_pts": 9.0, "exit_at": "5"},
+        {"id": 6, "ticker": "F", "category": "oil", "status": "open", "pnl": None, "gap_pts": 9.0, "exit_at": None},
+        {"id": 7, "ticker": "G", "category": "crypto", "status": "closed", "pnl": None, "gap_pts": 9.0, "exit_at": "6"},
+    ]
+    out = desk(db, NOW)
+    by_cat = out["ledger_by_category"]
+    assert by_cat["oil"] == {"closed": 3, "realized": 70.25, "win_rate": pytest.approx(1 / 3),
+                             "median_pnl": -10.25}
+    assert by_cat["crypto"] == {"closed": 2, "realized": -230.0, "win_rate": 0.5, "median_pnl": -115.0}
+    # The desks are the same trades as the shared ledger: counts and dollars reconcile.
+    assert sum(c["closed"] for c in by_cat.values()) == out["ledger"]["resolved"] == 5
+    assert sum(c["realized"] for c in by_cat.values()) == pytest.approx(
+        out["ledger"]["bankroll"] - logic.BANKROLL, abs=0.01)
+
+
+def test_ledger_by_category_counts_past_the_closed_page_cap():
+    db = ReportStore()
+    db.db[POSITIONS] = [
+        {"id": i, "ticker": f"T{i}", "category": "oil", "status": "closed", "pnl": 1.0,
+         "gap_pts": 9.0, "exit_at": str(i)} for i in range(60)
+    ]
+    out = desk(db, NOW)
+    assert len(out["closed_positions"]) == 50  # the page of trades stays capped
+    assert out["ledger_by_category"]["oil"]["closed"] == 60
+    assert out["ledger_by_category"]["oil"]["realized"] == 60.0

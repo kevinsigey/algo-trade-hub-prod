@@ -39,10 +39,11 @@ const BODIES: Record<string, unknown> = {
   "/api/crypto/sniper-verdict": { overall: { count: 18602, hit_rate: 0.548 } },
 };
 
-function serve() {
+function serve(overrides: Record<string, unknown> = {}) {
+  const bodies = { ...BODIES, ...overrides };
   vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
-    const key = Object.keys(BODIES).sort((a, b) => b.length - a.length).find((k) => String(url).includes(k));
-    return new Response(JSON.stringify(key ? BODIES[key] : {}), { status: key ? 200 : 404 });
+    const key = Object.keys(bodies).sort((a, b) => b.length - a.length).find((k) => String(url).includes(k));
+    return new Response(JSON.stringify(key ? bodies[key] : {}), { status: key ? 200 : 404 });
   }));
 }
 
@@ -89,6 +90,32 @@ describe("Strategies", () => {
     // Both desks render below, each with its own heading.
     expect(await screen.findByText("Oil gap tracker", { selector: "h2" })).toBeInTheDocument();
     expect(screen.getByText("Crypto gap tracker", { selector: "h2" })).toBeInTheDocument();
+  });
+
+  it("states the gap rule with the fee outside the entry test and the one-hour exit", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    // Both desks state the corrected rule: the 8-point entry gap is measured gross (fees come
+    // out of the trade's P&L), 2+ hours is the entry cutoff, and the near-settlement exit is 1 hour.
+    expect(await within(list).findAllByText(/fees come out of the trade's P&L, not the test/)).toHaveLength(2);
+    expect(within(list).getAllByText(/only with 2\+ hours to settlement and a book deep enough to exit/)).toHaveLength(2);
+    expect(within(list).getAllByText(/under an hour is left/)).toHaveLength(2);
+    // The two shipped errors are gone.
+    expect(within(list).queryByText(/8\+ points after the fee/)).toBeNull();
+    expect(within(list).queryByText(/2 hours before settlement/)).toBeNull();
+  });
+
+  it("reads each gap desk's record from the server ledger when the payload carries one", async () => {
+    // The capped closed-positions page would compute 2 oil / 1 crypto; the server ledger is
+    // computed over every closed position and wins.
+    serve({ "/api/gaps/desk": { ...(BODIES["/api/gaps/desk"] as Record<string, unknown>),
+      ledger_by_category: { oil: { closed: 21, realized: -667.95, win_rate: 0.5238, median_pnl: -12.5 },
+                            crypto: { closed: 20, realized: -2509.22, win_rate: 0.2, median_pnl: -95 } } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    expect(await within(list).findByText(/21 closed · −\$667\.95 realized · 52% won · typical trade −\$12\.50/)).toBeInTheDocument();
+    expect(within(list).getByText(/20 closed · −\$2509\.22 realized · 20% won · typical trade −\$95\.00/)).toBeInTheDocument();
   });
 
   it("shows the 15-minute settlements scoring as a chart in the fifteen section", async () => {

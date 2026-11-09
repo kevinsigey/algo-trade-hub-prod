@@ -67,6 +67,22 @@ describe("GapDesk", () => {
     expect(screen.queryByText("KXBTC-C")).toBeNull();       // and its closed trades stay out
   });
 
+  it("prefers the server ledger for this desk's record when the payload carries one", async () => {
+    const pos = (ticker: string, category: string, pnl: number | null) => ({
+      ticker, category, side: "yes", model_at_entry: 0.7, entry_price: 0.6, gap_pts: 12,
+      contracts: 100, exit_state: null, pnl });
+    serve({
+      ...EMPTY,
+      // The capped page alone would read 2 closed / +$80.50 for oil; the server ledger is
+      // computed over every closed position and wins.
+      closed_positions: [pos("KXBR-A", "oil", 120.5), pos("KXWTI-B", "oil", -40), pos("KXBTC-C", "crypto", -260)],
+      ledger_by_category: { oil: { closed: 21, realized: -667.95, win_rate: 11 / 21, median_pnl: -20 },
+                            crypto: { closed: 20, realized: -2509.22, win_rate: 0.2, median_pnl: -95 } },
+    });
+    render(<GapDesk category="oil" />);
+    expect(await screen.findByText(/21 closed trades · −\$667\.95 realized · 11 of 21 won · typical trade −\$20\.00/)).toBeInTheDocument();
+  });
+
   it("renders nothing when the read fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
     const { container } = render(<GapDesk category="crypto" />);
