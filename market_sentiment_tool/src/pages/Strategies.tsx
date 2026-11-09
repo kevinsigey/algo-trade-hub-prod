@@ -729,7 +729,7 @@ export default function Strategies() {
             Before each hourly WTI settlement on Kalshi, record the strike the model beats by the most, but only when its calibrated chance clears the price you can actually pay by 15 or more points; snapshots land thirty and ten minutes out. The model's raw chances have run about 13 points hot, so they are corrected against its own settled history first. Recorded, never traded.
           </p>
           <p className="mt-2 text-sm text-slate-400">
-            The live pick is on the <Link to="/oil" className="text-emerald-300 hover:text-emerald-200">Oil page</Link>; this is how the picks have done.
+            The live pick is on the <Link to="/oil" className="text-emerald-300 hover:text-emerald-200">Commodities page</Link>; this is how the picks have done.
           </p>
           {strike?.settled != null && strike.settled > 0 && strike.net_per_contract != null && (
             <p className="mt-1 text-sm text-slate-400">

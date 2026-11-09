@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import Oil, { StrikeBoard, TradeVerdict } from "@/pages/Oil";
+import OilLayout from "@/components/OilLayout";
 import type { JournalFeed, JournalResponse, JournalScore } from "@/lib/journal";
 import { copyWords } from "@/test/copyWords";
 
@@ -122,7 +123,18 @@ describe("/oil", () => {
   it("says the page is unavailable when the journal cannot be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ detail: "down" }) }) as Response));
     render(<MemoryRouter><Oil /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/Oil forecasts unavailable: down/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Commodities forecasts unavailable: down/)).toBeTruthy());
+  });
+});
+
+describe("Commodities page identity", () => {
+  // Kevin, 2026-11-09: the /oil page outgrew its name (metals, gas, hourly, the
+  // Hormuz tracker), so the page is titled Commodities. The route stays /oil.
+  it("is titled Commodities, not Oil", async () => {
+    render(<MemoryRouter><OilLayout /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Commodities" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Oil" })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Commodities sections" })).toBeInTheDocument();
   });
 });
 

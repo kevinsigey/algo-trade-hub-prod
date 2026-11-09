@@ -655,7 +655,7 @@ export default function Oil() {
     }
   }, [data, tick]);
 
-  if (error) return <div className="p-8 text-rose-300">Oil forecasts unavailable: {error}</div>;
+  if (error) return <div className="p-8 text-rose-300">Commodities forecasts unavailable: {error}</div>;
   if (!data) return <div className="p-8 text-slate-400">Loading…</div>;
 
   const rows = viewRows(data.forecasters.filter((s) => OIL.has(s.forecaster)));
