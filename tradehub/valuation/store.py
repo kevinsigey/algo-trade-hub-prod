@@ -40,6 +40,8 @@ def insert_sheet(client, sheet: dict) -> None:
         "anchor": sheet.get("anchor"),
         "bands": sheet.get("bands"),
         "implied_eps": (sheet.get("implied") or {}).get("eps"),
+        "implied_revenue": (sheet.get("implied") or {}).get("revenue"),
+        "band_basis": sheet.get("band_basis", "eps"),
         "gap_range_widths": sheet.get("gap_range_widths"),
         "guidance_percentile": sheet.get("guidance_percentile"),
         "baseline_verdict": sheet.get("baseline_verdict"),

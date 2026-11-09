@@ -147,6 +147,98 @@ def _select_anchor(records: list[dict], fundamentals: dict,
     return None, rejections, False
 
 
+def _trailing_revenue(fundamentals: dict, now: datetime) -> float | None:
+    """Latest FY revenue as a guard reference -- or None when the served
+    frame is older than the fundamentals gate (Phase B): a stale frame is
+    no reference at all, never a wrong one (PFE served FY2023 in Nov 2026)."""
+    rev = fundamentals.get("revenue") or {}
+    value, as_of = rev.get("value"), rev.get("as_of")
+    if not value:
+        return None
+    if as_of:
+        try:
+            if (now.date() - date.fromisoformat(as_of)).days > FUND_STALE_DAYS:
+                return None
+        except ValueError:
+            pass
+    return value
+
+
+def _revenue_guards(rec: dict, fundamentals: dict, now: datetime) -> list[str]:
+    """Magnitude guards for one revenue-anchor candidate (Phase B): the
+    frozen consensus/trailing bands under A3's basis-aware disjunction --
+    rejection requires failing every available reference. Candidacy
+    (metric, unit, full-year period) is filtered by the caller."""
+    reasons: list[str] = []
+    low, high = rec.get("low"), rec.get("high")
+    mid = _mid(low, high)
+    if low is None or low <= 0:
+        reasons.append(f"low end {low!r} is not positive")
+    if high is not None and low is not None and high < low:
+        reasons.append(f"high {high} below low {low}")
+    cons = rec.get("consensus")
+    cons_year = _year_of(rec.get("consensus_period") or "")
+    guide_year = _year_of(rec.get("period") or "")
+    periods_compatible = (cons_year is None or guide_year is None
+                          or cons_year == guide_year)
+    corroborated = False
+    if (cons and mid is not None and periods_compatible):
+        ratio = mid / cons if cons > 0 else None
+        if ratio is None or not (0.4 <= ratio <= 2.5):
+            reasons.append(
+                f"guide mid {mid:,.0f} vs consensus {cons:,.0f} outside "
+                f"[0.4x, 2.5x] consensus band")
+        else:
+            corroborated = True
+    trailing = _trailing_revenue(fundamentals, now)
+    if trailing and mid is not None:
+        if not (0.3 * trailing <= mid <= 2.0 * trailing) and not corroborated:
+            reasons.append(
+                f"guide mid {mid:,.0f} vs trailing revenue {trailing:,.0f} "
+                f"outside [0.3x, 2.0x] trailing band")
+    return reasons
+
+
+def _select_revenue_anchor(records: list[dict], fundamentals: dict,
+                           now: datetime) -> tuple[dict | None, list[str], bool]:
+    """Returns (anchor_record, guard_rejections, had_candidates).
+
+    Candidates: dollar revenue guides (metric revenue, unit usd -- growth
+    rows are 'pct', a different statement) for a full-year period. Latest
+    guided year first; inside the year, recorded-time cohorts latest-first;
+    inside a cohort the consolidated guide is the largest guard-passing
+    midpoint (a part never exceeds the whole), midpoint ties to the widest
+    stated range."""
+    rejections: list[str] = []
+    cands = [r for r in records
+             if r.get("metric") == "revenue" and r.get("unit") == "usd"
+             and is_full_year_period(r.get("period") or "", now=now)]
+    if not cands:
+        return None, rejections, False
+    years = sorted({_year_of(r["period"]) for r in cands}, reverse=True)
+    for year in years:
+        yc = [r for r in cands if _year_of(r["period"]) == year]
+        cohorts: dict[datetime, list[dict]] = {}
+        for r in yc:
+            cohorts.setdefault(_created(r), []).append(r)
+        for when in sorted(cohorts, reverse=True):
+            passing: list[dict] = []
+            for cand in cohorts[when]:
+                bad = _revenue_guards(cand, fundamentals, now)
+                if bad:
+                    rejections.extend(
+                        f"revenue {cand.get('period')}: {b}" for b in bad)
+                else:
+                    passing.append(cand)
+            if passing:
+                pick = max(passing, key=lambda r: (
+                    _mid(r.get("low"), r.get("high")) or 0.0,
+                    (r.get("high") or r.get("low") or 0.0)
+                    - (r.get("low") or 0.0)))
+                return pick, rejections, True
+    return None, rejections, True
+
+
 def _directions(records: list[dict]) -> dict:
     """Per metric: latest guide for its period vs the previous guide for the
     SAME period — raised / cut / held (midpoint move beyond +/-0.5%), or
@@ -215,18 +307,112 @@ def _percentile(ticker: str, guided_peers: list[dict]) -> float | None:
     return round(100.0 * below / (len(guided_peers) - 1), 1)
 
 
+def _revenue_sheet(sheet: dict, *, anchor: dict, price: float | None,
+                   price_date: date | None, sales_multiple: float | None,
+                   sales_count: int, sales_basis: str | None,
+                   guided_peers: list[dict], fundamentals: dict,
+                   now: datetime) -> dict:
+    """Completes a fact sheet on the revenue basis (Phase B): guided FY
+    revenue x the frozen peer Price/Sales multiple, per share over diluted
+    shares; bear carries the same 0.90 haircut; zones read implied revenue
+    against the guide range through the EPS classifier verbatim."""
+    ticker = sheet["ticker"]
+    low = float(anchor["low"])
+    high = float(anchor["high"]) if anchor.get("high") is not None else low
+    mid = (low + high) / 2.0
+    sheet["band_basis"] = "revenue"
+    sheet["anchor"] = {
+        "metric": "revenue", "period": anchor.get("period"),
+        "period_key": period_key(anchor.get("period") or ""),
+        "low": low, "high": high, "mid": mid,
+        "point_guide": high == low,
+        "consensus": anchor.get("consensus"),
+        "recorded_at": anchor.get("created_at"),
+        "accession": anchor.get("accession"),
+    }
+    if sales_multiple is None or sales_count < MIN_PEERS:
+        sheet["status"] = "no_peer_multiple"
+        sheet["baseline_verdict"] = "no_bands"
+        sheet["falsifier"] = (
+            f"No band to falsify: the peer group for {ticker} has fewer than "
+            f"{MIN_PEERS} members with a usable Price/Sales multiple.")
+        return sheet
+    shares = (fundamentals.get("shares_diluted") or {}).get("value")
+    if not shares:
+        sheet["status"] = "no_peer_multiple"
+        sheet["baseline_verdict"] = "no_bands"
+        sheet["falsifier"] = (
+            f"No band to falsify: {ticker} has a full-year revenue guide but "
+            "no diluted shares figure on record, so the peer Price/Sales "
+            "multiple cannot be turned into per-share bands.")
+        return sheet
+
+    m = float(sales_multiple)
+    sh = float(shares)
+    sheet["peer_multiple"] = sales_multiple
+    sheet["peer_count"] = sales_count
+    if sales_basis:
+        sheet["peer_basis"] = sales_basis
+    sheet["bands"] = {"bear": round(low * HAIRCUT * m / sh, 2),
+                      "base": round(mid * m / sh, 2),
+                      "bull": round(high * m / sh, 2)}
+    sheet["status"] = "banded"
+    sheet["guidance_percentile"] = _percentile(ticker, guided_peers)
+
+    # Staleness: same gates as the EPS basis -- record stands, verdict held.
+    if price_date is None or (now.date() - price_date).days > PRICE_STALE_DAYS:
+        sheet["stale"] = True
+        sheet["stale_reasons"].append("price")
+    if (now - _created(anchor)).days > GUIDE_STALE_DAYS:
+        sheet["stale"] = True
+        sheet["stale_reasons"].append("guide")
+
+    if price is None:
+        sheet["baseline_verdict"] = "no_price"
+        return sheet
+
+    implied_rev = price * sh / m
+    sheet["implied"] = {"revenue": round(implied_rev, 2),
+                        "vs_guide": ("above" if implied_rev > high else
+                                     "below" if implied_rev < low else
+                                     "inside")}
+    width = high - low
+    sheet["gap_range_widths"] = (round((implied_rev - mid) / width, 4)
+                                 if width > 0 else None)
+
+    if sheet["stale"]:
+        sheet["baseline_verdict"] = "stale"
+    else:
+        sheet["baseline_verdict"] = classify_zone(
+            price=price, bands=sheet["bands"], implied_eps=implied_rev,
+            guide_low=low, guide_high=high, guide_mid=mid)
+
+    sheet["falsifier"] = (
+        f"Falsified if {ticker} guides {sheet['anchor']['period_key']} "
+        f"revenue below {low:,.0f} (the recorded low end of the current "
+        f"guide) at the next print, or the guide is withdrawn -- the bear "
+        f"band ({sheet['bands']['bear']:.2f}) then has no recorded anchor. "
+        f"Re-underwrite on any new recorded guide for "
+        f"{sheet['anchor']['period_key']}.")
+    return sheet
+
+
 def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
                      price_date: date | None, peer_multiple: float | None,
                      peer_median_fwd_eps: float | None,
                      peer_count: int, peer_basis: str,
                      guided_peers: list[dict],
                      fundamentals: dict, now: datetime,
-                     tier: str = "open") -> dict:
+                     tier: str = "open",
+                     sales_multiple: float | None = None,
+                     sales_count: int = 0,
+                     sales_basis: str | None = None) -> dict:
     sheet: dict = {
         "ticker": ticker,
         "tier": tier,
         "computed_at": now.isoformat(),
         "status": None,
+        "band_basis": "eps",
         "price": price,
         "price_as_of": price_date.isoformat() if price_date else None,
         "peer_group": None,
@@ -261,13 +447,25 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
     anchor, rejections, had_fy = _select_anchor(records, fundamentals, now)
     sheet["guard_rejections"] = rejections
     if anchor is None:
-        sheet["status"] = "guide_rejected" if (had_fy or rejections) \
+        # Phase B: no usable EPS anchor -- try the revenue basis. An EPS
+        # anchor that passes always wins; the bases never mix on a sheet.
+        r_anchor, r_rejections, _r_had = _select_revenue_anchor(
+            records, fundamentals, now)
+        sheet["guard_rejections"] = rejections + r_rejections
+        if r_anchor is not None:
+            return _revenue_sheet(
+                sheet, anchor=r_anchor, price=price, price_date=price_date,
+                sales_multiple=sales_multiple, sales_count=sales_count,
+                sales_basis=sales_basis, guided_peers=guided_peers,
+                fundamentals=fundamentals, now=now)
+        sheet["status"] = "guide_rejected" if (had_fy or sheet["guard_rejections"]) \
             else "no_full_year_guide"
         sheet["baseline_verdict"] = "no_bands"
         sheet["falsifier"] = (
-            f"No band to falsify: {ticker} has no usable full-year EPS guide "
-            "on record. The next recorded full-year EPS guide creates the "
-            "bands; until then the name is tracked for direction only.")
+            f"No band to falsify: {ticker} has no usable full-year guide on "
+            "record on either basis (EPS or revenue). The next recorded "
+            "full-year guide creates the bands; until then the name is "
+            "tracked for direction only.")
         return sheet
 
     low = float(anchor["low"])

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import statistics
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from tradehub.core.supabase_client import get_client
 from tradehub.screening.sources import DataStore
@@ -26,6 +26,81 @@ EDGAR_CONCEPTS = {
     "debt_long_term": "LongTermDebtNoncurrent",
     "debt_current": "DebtCurrent",
 }
+
+
+def _peer_sales_multiple(ds: DataStore, ticker: str,
+                         now: datetime) -> tuple[float | None, int, str,
+                                                 str | None]:
+    """(median Price/Sales, member count, basis, group) -- Phase B mirror of
+    _peer_multiple over the same frozen groups: last close x diluted shares
+    / latest FY revenue per member. A member counts only with every input
+    present and a revenue as-of inside the fundamentals gate; net debt is
+    never involved (EV/Sales is the deferred v2 amendment)."""
+    group = peers.peer_group(ticker)
+    basis = "industry_group"
+    if group is not None:
+        members = peers.group_members(group)
+    else:
+        sec = peers.sector(ticker)
+        if sec is None:
+            try:
+                sec = ds.info(ticker).get("sector") or None
+            except Exception:
+                sec = None
+        members = peers.sector_members(sec) if sec else []
+        basis = "sector_fallback"
+        group = f"sector:{sec}" if sec else None
+
+    def collect(mems: list[str]) -> list[float]:
+        vals: list[float] = []
+        if not mems:
+            return vals
+        try:
+            frame = ds.prices(mems, years=1)
+        except Exception:
+            return vals
+        for m in mems:
+            try:
+                if m not in frame.columns:
+                    continue
+                series = frame[m].dropna()
+                if not len(series):
+                    continue
+                price = float(series.iloc[-1])
+                shares = ds.edgar_concept(
+                    m, "WeightedAverageNumberOfDilutedSharesOutstanding")
+                rev = None
+                for rc in ("RevenueFromContractWithCustomerExcludingAssessedTax",
+                           "Revenues"):
+                    rev = ds.edgar_concept(m, rc)
+                    if rev:
+                        break
+                if not shares or not rev:
+                    continue
+                (sv, _s_asof), (rv, r_asof) = shares, rev
+                if sv <= 0 or rv <= 0:
+                    continue
+                try:
+                    if (now.date() - date.fromisoformat(r_asof)).days \
+                            > engine.FUND_STALE_DAYS:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+                vals.append(price * sv / rv)
+            except Exception:
+                continue
+        return vals
+
+    vals = collect(members)
+    if len(vals) < engine.MIN_PEERS and basis == "industry_group":
+        sec = peers.sector(ticker)
+        wider = peers.sector_members(sec) if sec else []
+        vals2 = collect([m for m in wider if m not in members])
+        if len(vals) + len(vals2) >= engine.MIN_PEERS:
+            vals, basis = vals + vals2, "sector_widened"
+    if len(vals) < engine.MIN_PEERS:
+        return None, len(vals), basis, group
+    return round(statistics.median(vals), 4), len(vals), basis, group
 
 
 def _fundamentals(ds: DataStore, ticker: str) -> dict:
@@ -164,12 +239,24 @@ def compute(client, ds: DataStore, *, only: str | None = None,
             if peers.peer_group(other) == peers.peer_group(ticker) and \
                     peers.peer_group(ticker) is not None:
                 mates.append({"ticker": other, "surprise": surp})
+        fundamentals = _fundamentals(ds, ticker)
+        # Phase B: the peer Price/Sales multiple is computed only when no
+        # EPS anchor passes -- the revenue basis never runs beside a live
+        # EPS one.
+        sales_mult, sales_cnt, sales_basis = None, 0, None
+        eps_anchor, _rej, _had = engine._select_anchor(records, fundamentals,
+                                                       now)
+        if eps_anchor is None:
+            sales_mult, sales_cnt, sales_basis, _sg = _peer_sales_multiple(
+                ds, ticker, now)
         sheet = engine.build_fact_sheet(
             ticker=ticker, records=records, price=price,
             price_date=price_date, peer_multiple=mult,
             peer_median_fwd_eps=med_eps, peer_count=count, peer_basis=basis,
-            guided_peers=mates, fundamentals=_fundamentals(ds, ticker),
-            now=now, tier="watch" if peers.in_watch_tier(ticker) else "open")
+            guided_peers=mates, fundamentals=fundamentals,
+            now=now, tier="watch" if peers.in_watch_tier(ticker) else "open",
+            sales_multiple=sales_mult, sales_count=sales_cnt,
+            sales_basis=sales_basis)
         sheet["peer_group"] = group
         sheet["inputs"]["peer_members_basis"] = basis
         if not dry_run:
