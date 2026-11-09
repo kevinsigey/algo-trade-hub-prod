@@ -100,15 +100,60 @@ def test_a_refusal_does_not_cool_the_pool_down():
 
 def test_both_pools_refusing_fails_the_filing_and_names_both():
     def pool_a(text, key=None):
-        raise _http_error(429)
+        raise ValueError("unparseable reply")  # classifies as a refusal
 
     def pool_b(text, key=None):
-        raise pv.ProviderDown("opencode: exit 1")
+        raise pv.ProviderRefused("opencode: unparseable reply")
 
     asker = pv.CyclingAsker(pools=[("openrouter", pool_a), ("opencode", pool_b)], clock=FakeClock())
     with pytest.raises(pv.AllProvidersRefused) as ei:
         asker("text", key="k")
     assert "openrouter" in str(ei.value) and "opencode" in str(ei.value)
+
+
+def test_a_rate_limit_plus_a_down_is_a_pause_not_a_failure():
+    # The production MU case (2026-11-09): OpenRouter 429 + the opencode pool
+    # timing out. Neither pool REFUSED the filing, so it must not fail --
+    # the run pauses and the filing stays new for a later cycle.
+    def pool_a(text, key=None):
+        raise _http_error(429)
+
+    def pool_b(text, key=None):
+        raise pv.ProviderDown("opencode: timed out")
+
+    asker = pv.CyclingAsker(pools=[("openrouter", pool_a), ("opencode", pool_b)], clock=FakeClock())
+    with pytest.raises(pv.PoolsUnavailable):
+        asker("text", key="k")
+
+
+def test_a_rate_limit_plus_a_refusal_is_a_pause_not_a_failure():
+    # One pool never got to judge the filing (quota), so a refusal from the
+    # other pool alone is not a both-pools refusal.
+    def pool_a(text, key=None):
+        raise _http_error(429)
+
+    def pool_b(text, key=None):
+        raise pv.ProviderRefused("opencode: unparseable reply")
+
+    asker = pv.CyclingAsker(pools=[("openrouter", pool_a), ("opencode", pool_b)], clock=FakeClock())
+    with pytest.raises(pv.PoolsUnavailable):
+        asker("text", key="k")
+
+
+def test_a_refusal_while_the_other_pool_cools_is_a_pause():
+    clock = FakeClock()
+
+    def pool_a(text, key=None):
+        raise _http_error(429)
+
+    def pool_b(text, key=None):
+        raise pv.ProviderRefused("opencode: unparseable reply")
+
+    asker = pv.CyclingAsker(pools=[("openrouter", pool_a), ("opencode", pool_b)], clock=clock)
+    with pytest.raises(pv.PoolsUnavailable):
+        asker("one", key="k")  # a rate-limits (cools), b refuses: pause, not fail
+    with pytest.raises(pv.PoolsUnavailable):
+        asker("two", key="k")  # a still cooling (never attempted), b refuses: pause
 
 
 def test_no_attemptable_pool_is_unavailable_not_a_refusal():
@@ -119,8 +164,8 @@ def test_no_attemptable_pool_is_unavailable_not_a_refusal():
         raise pv.ProviderDown("opencode binary missing", hard=True)
 
     asker = pv.CyclingAsker(pools=[("openrouter", pool_a), ("opencode", pool_b)], clock=FakeClock())
-    with pytest.raises(pv.AllProvidersRefused):
-        asker("one", key="k")  # both attempted once: a refusal
+    with pytest.raises(pv.PoolsUnavailable):
+        asker("one", key="k")  # both attempted, both unavailable-class: a pause
     with pytest.raises(pv.PoolsUnavailable):
         asker("two", key="k")  # now a is cooling and b is hard down: nothing to attempt
 

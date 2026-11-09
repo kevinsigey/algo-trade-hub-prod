@@ -62,3 +62,15 @@ are bounded (subprocess timeout), classified *down*, cooled down, and logged;
 the moment the image's environment carries a working opencode link, pool 2 is
 live with no code change. The fleet therefore drains on pool 1's quota,
 paced, until then.
+
+## Production note (2026-11-09, same day)
+
+First live round exposed an aggregation bug in CyclingAsker: ANY attempted
+pool's failure was treated as a filing failure, so MU's filing was marked
+failed on an OpenRouter 429 plus an opencode gateway timeout -- neither is a
+refusal. The rule above is now enforced exactly: AllProvidersRefused requires
+every pool attempted in the call AND every error a refusal; any rate limit,
+outage, or cooling-skip raises PoolsUnavailable (pause). Two unit tests had
+encoded the wrong semantics (429 + down expected a failure) and were corrected
+with the code; three mixed-case tests pin the rule. MU's filing was restored
+to `new`.
