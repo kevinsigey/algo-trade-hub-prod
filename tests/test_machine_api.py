@@ -664,3 +664,176 @@ def test_a_tripped_breaker_fails_closed_when_positions_are_unreadable(api, monke
     monkeypatch.setattr(machine_api, "position_qty", boom)
     r = _post(client, _key(db), side="sell", qty=50)
     assert r.status_code == 424 and sent == []
+
+
+# ── preflight (2026-11-08): the same validators, run without submitting ──────
+
+def _preflight(client, headers, **over):
+    body = {"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
+    body.update(over)
+    return client.post("/api/v1/orders/preflight", json=body, headers=headers)
+
+
+def test_preflight_reports_headroom_and_places_nothing(api, monkeypatch):
+    client, db, sent = api
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: {"buying_power": "50000"} if path == "/v2/account" else {})
+    r = _preflight(client, _key(db))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and sent == []
+    assert all(c["ok"] for c in body["checks"])
+    head = body["headroom"]
+    assert head["price_used"] == 100.0 and head["order_notional"] == 200.0
+    assert head["daily_used"] == 0 and head["daily_remaining"] == 49  # after this order
+    assert body["kill_switch"]["machine_orders"] is True
+    assert body["kill_switch"]["breaker_tripped"] is False
+    assert body["account"]["buying_power"] == 50000.0
+    # A preflight is audited as a preflight -- never as a placement (the daily cap
+    # counts outcome="placed" rows, so a dry run must not eat the cap).
+    assert [e["outcome"] for e in _events(db)][-1] == "preflight"
+    assert not any(e["outcome"] == "placed" for e in _events(db))
+
+
+def test_preflight_flags_a_cap_failure_instead_of_refusing(api):
+    client, db, sent = api
+    r = _preflight(client, _key(db), qty=200)  # default max_qty is 100
+    assert r.status_code == 200 and sent == []
+    body = r.json()
+    assert body["ok"] is False
+    failed = [c for c in body["checks"] if not c["ok"]]
+    assert failed and failed[0]["name"] == "max_qty"
+
+
+def test_preflight_with_the_switch_off_reports_not_ok(api, monkeypatch):
+    client, db, sent = api
+    monkeypatch.delenv("TRADEHUB_MACHINE_ORDERS")
+    r = _preflight(client, _key(db))
+    assert r.status_code == 200 and r.json()["ok"] is False and sent == []
+    assert r.json()["kill_switch"]["machine_orders"] is False
+
+
+def test_preflight_needs_the_place_scope(api):
+    client, db, sent = api
+    assert _preflight(client, _key(db, scopes=("portfolio:read",))).status_code == 403
+
+
+def test_preflight_a_sell_reports_held_qty_and_shortability(api, monkeypatch):
+    client, db, sent = api
+    monkeypatch.setattr(machine_api, "position_qty", lambda symbol, book=None: 30.0)
+    monkeypatch.setattr(alpaca_paper, "asset_flags",
+                        lambda symbol, **kw: {"tradable": True, "shortable": True,
+                                              "easy_to_borrow": True, "fractionable": False})
+    r = _preflight(client, _key(db), side="sell", qty=52)
+    body = r.json()
+    assert body["account"]["held_qty"] == 30.0
+    checks = {c["name"]: c for c in body["checks"]}
+    # 52 > 30 held: the trim overshoots into a short. Advisory, not a refusal --
+    # sells-to-open are legal -- but the fact is on the page, with shortability.
+    assert checks["held_qty"]["ok"] is False and checks["held_qty"]["blocking"] is False
+    assert checks["shortable"]["ok"] is True
+    assert body["ok"] is True and sent == []
+
+
+def test_preflight_of_a_split_reports_the_child_plan(api):
+    client, db, sent = api
+    r = _preflight(client, _key(db), qty=208, split=True, client_order_id="trim")
+    body = r.json()
+    assert body["ok"] is True and sent == []
+    children = body["plan"]["children"]
+    assert [c["qty"] for c in children] == [100, 100, 8]  # the max_qty cap chunks it
+    assert [c["client_order_id"] for c in children] == ["ext-1-trim-1", "ext-1-trim-2", "ext-1-trim-3"]
+    assert body["headroom"]["daily_remaining"] == 50 - 3  # children count against the cap
+
+
+# ── parent orders / server-side splitting (2026-11-08) ───────────────────────
+
+def test_a_split_places_children_under_the_caps_and_audits_each(api):
+    client, db, sent = api
+    r = _post(client, _key(db), qty=208, split=True, client_order_id="trim")
+    assert r.status_code == 200
+    assert [(s["qty"], s["client_order_id"]) for s in sent] == [
+        (100, "ext-1-trim-1"), (100, "ext-1-trim-2"), (8, "ext-1-trim-3")]
+    body = r.json()
+    assert body["client_order_id"] == "ext-1-trim" and body["placed_by"] == "api:mac scripts"
+    group = body["group"]
+    assert group["is_group"] is True and group["qty"] == 208.0
+    placed = [e for e in _events(db) if e["outcome"] == "placed"]
+    assert len(placed) == 3  # children count against the daily cap individually
+    assert all((e["detail"] or "").startswith("group:trim") for e in placed)
+
+
+def test_a_split_chunks_by_the_notional_cap_when_it_bites_harder(api, monkeypatch):
+    client, db, sent = api
+    monkeypatch.setattr(alpaca_paper, "latest_price", lambda symbol: 300.0)
+    r = _post(client, _key(db, max_notional=25_000), qty=100, split=True, client_order_id="trim")
+    assert r.status_code == 200
+    # floor(25000 / 300) = 83 shares per child keeps every child under BOTH caps.
+    assert [s["qty"] for s in sent] == [83, 17]
+
+
+def test_a_split_refuses_before_placing_anything_when_the_daily_cap_cannot_hold_it(api):
+    client, db, sent = api
+    r = _post(client, _key(db, daily_cap=2), qty=208, split=True, client_order_id="trim")
+    assert r.status_code == 429 and "daily_cap" in r.json()["detail"] and sent == []
+
+
+def test_a_split_retry_counts_already_placed_children_as_placed(api):
+    client, db, sent = api
+    headers = _key(db)
+    assert _post(client, headers, qty=208, split=True, client_order_id="trim").status_code == 200
+    r = _post(client, headers, qty=208, split=True, client_order_id="trim")
+    assert r.status_code == 200 and len(sent) == 3  # no child was placed twice
+
+
+def test_a_split_that_fails_midway_reports_its_placed_children(api, monkeypatch):
+    client, db, sent = api
+    real_submit = paper_orders.submit
+
+    def flaky(symbol, qty, side, client_order_id, **kwargs):
+        if client_order_id.endswith("-2"):
+            raise paper_orders.OrderRejected("broker said no")
+        return real_submit(symbol, qty, side, client_order_id, **kwargs)
+
+    monkeypatch.setattr(paper_orders, "submit", flaky)
+    r = _post(client, _key(db), qty=208, split=True, client_order_id="trim")
+    assert r.status_code == 422
+    body = r.json()
+    assert body["placed_children"] == ["ext-1-trim-1"]
+    assert body["failed_child"]["client_order_id"] == "ext-1-trim-2"
+    assert [s["client_order_id"] for s in sent] == ["ext-1-trim-1"]  # child 3 never attempted
+
+
+def test_a_stop_cannot_be_split(api):
+    client, db, sent = api
+    r = _post(client, _key(db), side="sell", qty=10, split=True, order_type="stop",
+              time_in_force="gtc", stop_price=65.55)
+    assert r.status_code == 422 and sent == []
+
+
+def test_the_group_read_aggregates_children_fills(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    assert _post(client, headers, qty=208, split=True, client_order_id="trim").status_code == 200
+    kids = [
+        {"id": "a1", "client_order_id": "ext-1-trim-1", "symbol": "XLE", "qty": "100", "side": "buy",
+         "status": "filled", "filled_qty": "100", "filled_avg_price": "90.0",
+         "submitted_at": "2026-11-01T12:00:01+00:00"},
+        {"id": "a2", "client_order_id": "ext-1-trim-2", "symbol": "XLE", "qty": "100", "side": "buy",
+         "status": "filled", "filled_qty": "100", "filled_avg_price": "110.0",
+         "submitted_at": "2026-11-01T12:00:02+00:00"},
+        {"id": "a3", "client_order_id": "ext-1-trim-3", "symbol": "XLE", "qty": "8", "side": "buy",
+         "status": "filled", "filled_qty": "8", "filled_avg_price": "50.0",
+         "submitted_at": "2026-11-01T12:00:03+00:00"},
+    ]
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: kids if path == "/v2/orders" else {})
+    body = client.get("/api/v1/orders/trim", headers=headers).json()
+    assert body["is_group"] is True and body["status"] == "filled"
+    assert body["qty"] == 208.0 and body["filled_qty"] == 208.0
+    assert body["filled_avg_price"] == pytest.approx(20400 / 208)
+    assert [c["client_order_id"] for c in body["children"]] == [
+        "ext-1-trim-1", "ext-1-trim-2", "ext-1-trim-3"]
+    listed = client.get("/api/v1/orders", headers=headers).json()["orders"]
+    assert {o["client_order_id"]: o.get("group_id") for o in listed} == {
+        "ext-1-trim-1": "trim", "ext-1-trim-2": "trim", "ext-1-trim-3": "trim"}
