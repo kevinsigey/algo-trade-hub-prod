@@ -47,8 +47,17 @@ describe("/oil", () => {
     expect(screen.queryByText(/S&P/)).toBeNull();
     expect(screen.getByText(/Nothing locked in yet/)).toBeTruthy();
     // The budget grows with the page: the 2026-11-03 Commodities redesign adds the
-    // live hero and its labels -- still headings and labels, never essays.
-    expect(copyWords(container)).toBeLessThanOrEqual(60);
+    // live hero and its labels, and the 2026-11-09 clarity pass adds the trade-rule
+    // section's heading and label -- still headings and labels, never essays.
+    expect(copyWords(container)).toBeLessThanOrEqual(72);
+  });
+
+  it("carries the 15-minute trade rule's own section in the track record", async () => {
+    serve([score()]);
+    render(<MemoryRouter><Oil /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Track record" })).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "15-minute trade rule" })).toBeTruthy();
+    expect(screen.getByText(/paper record of trading the forecasts/)).toBeTruthy();
   });
 
   it("shows a scored forecast as a number with a verdict, and a missing score as a dash, never zero", async () => {

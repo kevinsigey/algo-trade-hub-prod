@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 
 import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
+import { FifteenSettlements } from "@/components/FifteenSettlements";
 import GapDesk from "@/components/GapDesk";
 import { SniperRecord } from "@/components/SniperRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
@@ -31,54 +32,101 @@ interface Row { id: string; name: string; rule: string; stage: Stage; record: st
 
 const signed = (v: number, digits = 1) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
 const cents = (v: number) => `${signed(v * 100)}¢ a contract`;
+const usd = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
 const toneOf = (v: number | null | undefined) => (v == null ? undefined : v >= 0 ? "text-emerald-300" : "text-rose-300");
 
+interface SeriesStats { n: number; net_per_contract: number | null; win_rate: number | null }
+interface FifteenPayload {
+  forward?: SeriesStats; replay?: SeriesStats; ready_trades?: number;
+  by_series?: Record<string, SeriesStats>;
+  gate?: { forward?: SeriesStats; by_series?: Record<string, SeriesStats> };
+}
+
 /**
- * Strategies (Kevin, 2026-11-05): every rule that trades or paper-trades, on one page. The market pages keep
- * the live reads, the Track record keeps whether the reads are right, and this page keeps whether trading on
- * them makes money: the rule in a line, where it stands, and its record against the bar it must clear.
+ * Strategies (Kevin, 2026-11-05; split per market 2026-11-09): every rule that trades or
+ * paper-trades, one market per line — what it does in one sentence, where it stands, and its
+ * record, readable on first sight. Composite entries hid which market was carrying them, so
+ * the 15-minute rule lists per market and the gap tracker lists per desk. The market pages
+ * keep the live reads; the Track record keeps whether the reads are right; this page keeps
+ * whether trading on them pays.
  */
 export default function Strategies() {
   const portfolio = useJson<{ scoreboard?: { return_pct: number | null; ahead_pts: number | null } }>("/api/portfolio");
   const ideas = useJson<{ live_books?: string[] }[]>("/api/ideas");
-  const fifteen = useJson<{ forward?: { n: number; net_per_contract: number | null }; replay?: { n: number; net_per_contract: number | null };
-                            ready_trades?: number }>("/api/oil/fifteen-rule");
+  const fifteen = useJson<FifteenPayload>("/api/oil/fifteen-rule");
   const strike = useJson<{ settled?: number; hits?: number; net_per_contract?: number | null }>("/api/oil/itm-record");
-  const gaps = useJson<{ ledger?: { return_pct: number; resolved: number }; evidence?: { days: number; min_days: number } }>("/api/gaps/desk");
+  const gaps = useJson<{ closed_positions?: { category: string; pnl: number | null }[] }>("/api/gaps/desk");
   const sniper = useJson<{ overall?: { count: number; hit_rate: number } }>("/api/crypto/sniper-verdict");
 
   // Trading on at least one book; `live` on this payload is the shadow record's state, not trading.
   const live = Array.isArray(ideas) ? ideas.filter((i) => (i.live_books ?? []).length > 0).length : null;
   const ahead = portfolio?.scoreboard?.ahead_pts;
-  const f = fifteen?.forward;
+
+  // One market's line for the 15-minute rule: the gated record leads (it is the live rule);
+  // a market with no gated trades yet falls back to its raw record and says so.
+  const fifteenRecord = (label: string): Pick<Row, "record" | "tone"> => {
+    const g = fifteen?.gate?.by_series?.[label];
+    const r = fifteen?.by_series?.[label];
+    if (!fifteen || (!g && !r)) return { record: null };
+    if (g && g.n > 0) {
+      return { record: `${g.n} gated trades · ${g.net_per_contract == null ? "—" : cents(g.net_per_contract)} · ${g.win_rate == null ? "—" : `${Math.round(g.win_rate * 100)}% win`}`,
+               tone: toneOf(g.net_per_contract) };
+    }
+    if (r) {
+      return { record: `${g ? "0 gated trades · " : ""}raw ${r.n} trade${r.n === 1 ? "" : "s"} · ${r.net_per_contract == null ? "—" : cents(r.net_per_contract)}`,
+               tone: toneOf(r.net_per_contract) };
+    }
+    return { record: null };
+  };
+  const fifteenRule = (market: string) =>
+    `Five minutes into each 15-minute ${market} window, buy the side the model beats by 10+ points after Kalshi's fee; hold to the close. Nothing trades around the 4:45–6:30 PM ET futures halt.`;
+
+  // One desk's line for the gap tracker: its own closed trades (the $10k pot is shared and
+  // stays combined in the desk below; the trades carry their market and split exactly).
+  const gapRecord = (category: string): Pick<Row, "record" | "tone"> => {
+    const mine = (gaps?.closed_positions ?? []).filter((p) => p.category === category && p.pnl != null);
+    if (!gaps || mine.length === 0) return { record: null };
+    const sum = mine.reduce((a, p) => a + (p.pnl ?? 0), 0);
+    const won = mine.filter((p) => (p.pnl ?? 0) > 0).length;
+    return { record: `${mine.length} closed · ${usd(sum)} realized · ${Math.round((won / mine.length) * 100)}% won`,
+             tone: toneOf(sum) };
+  };
+
   const rows: Row[] = [
     {
       id: "stock-ideas", name: "Stock ideas", stage: "Live paper account", detail: "/portfolio",
-      rule: "Each live idea holds its basket at its set size on the paper stock account; the morning job rebalances it.",
+      rule: "Workshop ideas that cleared their gates hold their stock baskets on the paper account at their set sizes; a morning job rebalances them.",
       record: ahead == null ? null : `${signed(ahead)} pts vs SPY since start${live != null ? ` · ${live} idea${live === 1 ? "" : "s"} trading` : ""}`,
       tone: toneOf(ahead),
     },
     {
-      id: "fifteen-rule", name: "15-minute oil and gas rule", stage: "Paper record", detail: "#fifteen-rule",
-      rule: "Five minutes into each window, buy the side the model beats by 10+ points; hold to the close. Never around the 5–6 PM ET futures halt.",
-      record: !f ? null : f.n === 0
-        ? `0 of ${fifteen?.ready_trades ?? 300} forward trades · replay ${fifteen?.replay?.net_per_contract == null ? "—" : cents(fifteen.replay.net_per_contract)}`
-        : `${f.n} of ${fifteen?.ready_trades ?? 300} forward trades · ${f.net_per_contract == null ? "—" : cents(f.net_per_contract)}`,
-      tone: toneOf(f?.n ? f.net_per_contract : null),
+      id: "fifteen-wti", name: "WTI 15-minute rule", stage: "Paper record", detail: "#fifteen-rule",
+      rule: fifteenRule("WTI"), ...fifteenRecord("WTI"),
     },
     {
-      id: "hourly-picks", name: "Hourly oil best strike", stage: "Paper record", detail: "#hourly-picks",
-      rule: "Half an hour before each hourly WTI settle, the strike with the biggest edge after fees; held to the settle.",
+      id: "fifteen-brent", name: "Brent 15-minute rule", stage: "Paper record", detail: "#fifteen-rule",
+      rule: fifteenRule("Brent"), ...fifteenRecord("Brent"),
+    },
+    {
+      id: "fifteen-natgas", name: "Natural gas 15-minute rule", stage: "Paper record", detail: "#fifteen-rule",
+      rule: fifteenRule("natural gas"), ...fifteenRecord("Natural gas"),
+    },
+    {
+      id: "hourly-picks", name: "WTI hourly best strike", stage: "Paper record", detail: "#hourly-picks",
+      rule: "Thirty minutes before each hourly WTI settlement on Kalshi, buy the single strike the model beats by the most after fees; hold to the settle.",
       record: strike?.settled == null ? null
         : `${strike.hits} of ${strike.settled} hit${strike.net_per_contract == null ? "" : ` · ${cents(strike.net_per_contract)}`}`,
       tone: toneOf(strike?.net_per_contract),
     },
     {
-      id: "gap-tracker", name: "Kalshi gap tracker, oil and crypto", stage: "Paper record", detail: "#gap-tracker",
-      rule: "Buy when the model beats the ask by 8+ points; exit when the gap closes, the model moves 5+ points, or an hour before settling.",
-      record: !gaps?.ledger ? null
-        : `${signed(gaps.ledger.return_pct)}% on $10k · ${gaps.ledger.resolved} closed${gaps.evidence ? ` · ${gaps.evidence.days.toFixed(0)} of ${gaps.evidence.min_days} days` : ""}`,
-      tone: toneOf(gaps?.ledger?.return_pct),
+      id: "gap-oil", name: "Oil gap tracker", stage: "Paper record", detail: "#gap-oil",
+      rule: "Brent and WTI hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points after the fee — one trade per event — and exit when the gap narrows to 2 points, the model moves 5+ points against the trade, or 2 hours before settlement.",
+      ...gapRecord("oil"),
+    },
+    {
+      id: "gap-crypto", name: "Crypto gap tracker", stage: "Paper record", detail: "#gap-crypto",
+      rule: "Bitcoin and Ethereum hourly and daily contracts on Kalshi: the same gap rule as the oil desk — buy an 8+ point gap after fees, one trade per event; exit at a 2-point gap, a 5+ point model move against the trade, or 2 hours before settlement.",
+      ...gapRecord("crypto"),
     },
     {
       id: "sports-picks", name: "Sports picks", stage: "Picks only", detail: "/sports",
@@ -96,9 +144,9 @@ export default function Strategies() {
     <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
       <h1 className="text-2xl font-bold tracking-tight text-white">Strategies</h1>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-400">
-        Every rule that trades or paper-trades, in one place: the rule, where it stands, and its record. The market
-        pages keep the live reads; the Track record says whether the reads are right; this page says whether trading
-        on them pays.
+        Every rule that trades or paper-trades, one market per line: what it does in one sentence, where it
+        stands, and its record. The market pages keep the live reads; the Track record says whether the reads
+        are right; this page says whether trading on them pays.
       </p>
 
       <ul aria-label="Strategies at a glance" className="mt-5 divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-900/50">
@@ -134,21 +182,40 @@ export default function Strategies() {
           </div>
         </section>
 
-        <section id="fifteen-rule" aria-label="15-minute oil and gas rule" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4 xl:row-span-2">
-          <h2 className="text-lg font-semibold text-white">15-minute oil and gas rule</h2>
+        <section id="fifteen-rule" aria-label="15-minute rules by market" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4 xl:row-span-2">
+          <h2 className="text-lg font-semibold text-white">15-minute rules — WTI, Brent, natural gas</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            One rule, three separate markets — each market has its own line above and its own column in the
+            record below, so a market that pays is never hidden inside one that doesn't. First, whether the
+            forecasts themselves are right; then, whether trading them pays.
+          </p>
+          <h3 className="mt-4 text-sm font-semibold text-slate-200">Settlements scoring — the forecasts vs Kalshi's price</h3>
+          <FifteenSettlements />
+          <h3 className="mt-5 text-sm font-semibold text-slate-200">The trade record</h3>
           <FifteenRuleRecord />
         </section>
 
-        <section id="hourly-picks" aria-label="Hourly oil best strike" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-          <h2 className="text-lg font-semibold text-white">Hourly oil best strike</h2>
+        <section id="hourly-picks" aria-label="WTI hourly best strike" className="scroll-mt-6 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+          <h2 className="text-lg font-semibold text-white">WTI hourly best strike</h2>
           <p className="mt-1 text-sm text-slate-400">
             The live pick is on the <Link to="/oil" className="text-emerald-300 hover:text-emerald-200">Oil page</Link>; this is how the picks have done.
           </p>
+          {strike?.settled != null && strike.settled > 0 && strike.net_per_contract != null && (
+            <p className="mt-1 text-sm text-slate-400">
+              {strike.net_per_contract < 0
+                ? "The graded picks are behind: on the picks so far, the model's stated chances run hotter than its hits — it claims more edge than it has."
+                : "The graded picks are ahead so far."}
+            </p>
+          )}
           <StrikeRecordLine />
         </section>
 
-        <div id="gap-tracker" className="scroll-mt-6">
-          <GapDesk />
+        <div id="gap-oil" className="scroll-mt-6">
+          <GapDesk category="oil" />
+        </div>
+
+        <div id="gap-crypto" className="scroll-mt-6">
+          <GapDesk category="crypto" />
         </div>
 
         <section id="sniper" aria-label="Crypto sniper" className="scroll-mt-6 space-y-2">

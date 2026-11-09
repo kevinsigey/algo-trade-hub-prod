@@ -159,6 +159,31 @@ def test_record_reports_the_gated_record_beside_the_raw_one(monkeypatch):
     assert out["decisions"]["recorded"] == 0 and out["offsets"]["by_offset"] == []
 
 
+def test_record_reports_the_gated_record_by_series(monkeypatch):
+    # The Strategies page splits the rule by market, so the gated record splits too:
+    # a WTI window the fee eats (raw buys, the gate refuses) and a natgas window both take.
+    rows = {
+        ("oil_wti_15m", "wti-15m-v2"): [
+            {"target": "g", "probability": 0.615, "payload": {"yes_ask": 0.51, "yes_bid": 0.49},
+             "frozen_at": "2026-11-13T20:45:00+00:00"},
+        ],
+        ("natgas_15m", "natgas-15m-v2"): [
+            {"target": "n", "probability": 0.63, "payload": {"yes_ask": 0.51, "yes_bid": 0.49},
+             "frozen_at": "2026-11-13T21:30:00+00:00"},
+        ],
+    }
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {t: 1 for t in targets})
+    out = rule.record(FakeSupa())
+    gate_series = out["gate"]["by_series"]
+    assert gate_series["WTI"]["n"] == 0            # the fee-eaten window is not a gated buy
+    assert gate_series["Natural gas"]["n"] == 1
+    assert gate_series["Brent"]["n"] == 0
+    # The split mirrors the raw by_series shape: forward trades only, one entry per series.
+    assert out["by_series"]["WTI"]["n"] == 1 and out["by_series"]["Natural gas"]["n"] == 1
+    assert gate_series["Natural gas"]["net_per_contract"] == out["gate"]["forward"]["net_per_contract"]
+
+
 class _Chain:
     """The supabase query chain store.select_all walks: select/order/range/execute."""
 

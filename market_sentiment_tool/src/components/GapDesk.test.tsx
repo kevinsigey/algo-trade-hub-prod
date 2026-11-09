@@ -45,6 +45,28 @@ describe("GapDesk", () => {
     expect(screen.queryByText("KXBTC-B")).toBeNull();
   });
 
+  it("splits the desk: this category's own closed record, its positions only, the shared pot labelled", async () => {
+    const pos = (ticker: string, category: string, pnl: number | null) => ({
+      ticker, category, side: "yes", model_at_entry: 0.7, entry_price: 0.6, gap_pts: 12,
+      contracts: 100, exit_state: null, pnl });
+    serve({
+      ...EMPTY,
+      grade: { all: SCORE, crypto: SCORE,
+               oil: { ...SCORE, n: 1968, model_brier: 0.121, market_brier: 0.0994, brier_delta: 0.0216 } },
+      closed_positions: [pos("KXBR-A", "oil", 120.5), pos("KXWTI-B", "oil", -40), pos("KXBTC-C", "crypto", -260)],
+      open_positions: [pos("KXBR-D", "oil", null), pos("KXETH-E", "crypto", null)],
+    });
+    render(<GapDesk category="oil" />);
+    expect(await screen.findByText("Oil gap tracker")).toBeInTheDocument();
+    // This desk's own record: 2 closed, +$80.50 realized, 1 of 2 won, median +$40.25.
+    expect(screen.getByText(/2 closed trades · \+\$80\.50 realized · 1 of 2 won · typical trade \+\$40\.25/)).toBeInTheDocument();
+    expect(screen.getByText(/shared \$10k pot/)).toBeInTheDocument();
+    expect(screen.getByText("0.022")).toBeInTheDocument();  // oil's own Brier delta, not the combined one
+    expect(screen.getByText("KXBR-D")).toBeInTheDocument();
+    expect(screen.queryByText("KXETH-E")).toBeNull();       // the other desk's open position stays out
+    expect(screen.queryByText("KXBTC-C")).toBeNull();       // and its closed trades stay out
+  });
+
   it("renders nothing when the read fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 503 })));
     const { container } = render(<GapDesk category="crypto" />);

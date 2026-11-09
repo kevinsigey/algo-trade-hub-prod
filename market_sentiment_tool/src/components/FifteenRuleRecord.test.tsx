@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 
@@ -77,6 +77,40 @@ describe("FifteenRuleRecord with the go-live bar on the gated record", () => {
     expect(screen.getByText(/low end of its 95% range \(now \+3\.2¢\)/)).toBeInTheDocument();
     expect(screen.getByText(/2 waiting to settle/)).toBeInTheDocument();
     expect(screen.getByText(/On the original gross-edge record, kept as a control: 46 trades, \+10\.2¢ a contract, win rate 56%/)).toBeInTheDocument();
+  });
+});
+
+describe("FifteenRuleRecord split by market, with the entry-timing table", () => {
+  it("shows each market's gated and raw forward record side by side, and what each entry minute paid", async () => {
+    serve({
+      rule: "Buy the side the model beats by 10 points.",
+      prereg_at: "2026-11-07T00:00:00+00:00",
+      ready_trades: 300,
+      replay: stats(49, 0.097),
+      forward: stats(30, 0.05),
+      by_series: { WTI: stats(3, 0.03), Brent: stats(1, -0.02), "Natural gas": stats(6, 0.19) },
+      pending: 1, recent: [],
+      gate: { rule: "gated", forward: stats(24, 0.111),
+              by_series: { WTI: stats(2, 0.05), Brent: stats(0, null), "Natural gas": stats(5, 0.2) } },
+      decisions: { recorded: 141, buy: 31, skip: 110, by_reason: { no_edge: 104, halt: 6 } },
+      offsets: { by_offset: [
+        { offset_min: 1, windows: 40, priced: 39, mean_edge_net: 0.028, n: 12, net_per_contract: 0.195, win_rate: 0.71, mean_move_to_settle_bps: -2, mean_move_to_60m_bps: -4 },
+        { offset_min: 5, windows: 40, priced: 38, mean_edge_net: 0.046, n: 20, net_per_contract: 0.062, win_rate: 0.53, mean_move_to_settle_bps: 1, mean_move_to_60m_bps: -3 },
+        { offset_min: 15, windows: 40, priced: 0, mean_edge_net: null, n: 0, net_per_contract: null, win_rate: null, mean_move_to_settle_bps: 0, mean_move_to_60m_bps: -3 },
+      ] },
+    });
+    render(<FifteenRuleRecord />);
+    const markets = within(await screen.findByLabelText("Record by market"));
+    expect(markets.getByText("Natural gas")).toBeInTheDocument();
+    expect(markets.getByText("+20.0¢")).toBeInTheDocument();   // natgas, gated
+    expect(markets.getByText("+19.0¢")).toBeInTheDocument();   // natgas, raw
+    expect(markets.getByText("−2.0¢")).toBeInTheDocument();    // Brent, raw (its gated record is empty)
+    const timing = within(screen.getByLabelText("Entry timing by minute"));
+    expect(timing.getByText("+19.5¢")).toBeInTheDocument();    // minute 1 entries
+    expect(timing.getByText("+6.2¢")).toBeInTheDocument();     // minute 5 entries (the freeze minute)
+    expect(timing.getByText(/best so far/)).toBeInTheDocument();
+    expect(timing.queryByText("15")).not.toBeInTheDocument();  // an unpriced minute is not a row
+    expect(screen.getByText(/Best entry minute so far: minute 1/)).toBeInTheDocument();
   });
 });
 
