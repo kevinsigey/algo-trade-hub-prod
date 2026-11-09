@@ -1437,12 +1437,22 @@ def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
     from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, go_live_bar, record, summarize
 
     try:
-        return record(supabase)
+        payload = record(supabase)
     except Exception:  # noqa: BLE001
         empty = summarize([])["forward"]
         return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
                 "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
                 "bar": go_live_bar(empty, empty)}
+    # The oil minute-1 shadow variant (preregistration 2026-11-09): one
+    # additive block -- its fresh record, the grid, and the promotion flag.
+    # Fail-soft like the rest of this endpoint: no shadow, no block.
+    try:
+        from tradehub import fifteen_shadow
+
+        payload["shadow"] = fifteen_shadow.summary(supabase)
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
 
 
 @app.get("/api/oil/hourly-live", tags=["Oil"])

@@ -87,10 +87,39 @@ def _first_forecasts(supa, name: str, version: str, targets: list[str]) -> dict[
     return first
 
 
+def _live_gate(supa) -> tuple[str, datetime | None]:
+    """The oil gate's live version, from the shadow variant's promotions log
+    (preregistration 2026-11-09, tradehub/fifteen_shadow.py). Any doubt --
+    the log not migrated yet, a failed read -- reads as v1: the flip must be
+    earned in the data, never assumed."""
+    try:
+        from tradehub import fifteen_shadow as shadow
+        if shadow.current_state(supa) == shadow.LIVE_VERSION:
+            at = shadow.promoted_at(supa)
+            return shadow.LIVE_VERSION, _dt(at) if at else None
+    except Exception:  # noqa: BLE001
+        pass
+    return "v1", None
+
+
+def _promoted_decision(tick: dict | None, *, ref: str) -> tuple[dict[str, Any], float | None]:
+    """The promoted oil gate's decision for one window (preregistration
+    2026-11-09): the shadow variant's own evaluation of the minute-1 tick at
+    its 0.05 bar, or the honest skip when the live read was not there."""
+    from tradehub import fifteen_shadow as shadow
+    if tick is None or tick.get("prob_up") is None:
+        return ({"action": "skip", "reason": "stale_tape", "side": None, "cost": None,
+                 "edge_net": None, "best_edge_net": None}, None)
+    ev = shadow.evaluate_at(float(tick["prob_up"]), yes_ask=tick.get("yes_ask"),
+                            yes_bid=tick.get("yes_bid"), ref=ref, bar=shadow.VARIANT_BAR)
+    return ev, round(float(tick["prob_up"]), 5)
+
+
 def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK) -> dict[str, Any]:
     """One gated decision per targeted window in the lookback: the buy, or the skip and why."""
     candles_fn = candles_fn or _candles_or_empty
     rows: list[dict] = []
+    gate_version, gate_since = _live_gate(supa)
     for name, version, _label in rule.SERIES:
         series = _BY_NAME[name]["series"]
         coin = SERIES_COINS[series]
@@ -100,11 +129,43 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
         names = [t["target"] for t in targets]
         first = _first_forecasts(supa, name, version, names)
         settled = store.fetch_settlements(supa, names)
+        promoted = (gate_version == "v2-oil" and gate_since is not None
+                    and name in ("oil_wti_15m", "oil_brent_15m"))
+        tick_buckets: dict[str, dict[int, dict]] = {}
+        if promoted:
+            by_close: dict[str, list[dict]] = {}
+            for tk in fetch_ticks(supa, series, [_iso(t["cutoff_at"]) for t in targets]):
+                by_close.setdefault(_iso(tk["close_time"]), []).append(tk)
+            tick_buckets = {ct: _tick_buckets(rs) for ct, rs in by_close.items()}
         for t in targets:
             target = t["target"]
             close_time = _dt(t["cutoff_at"])
             window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
             frozen = first.get(target)
+            stamp = "v1"
+            if promoted and window_open >= gate_since:
+                # The variant is the live oil gate from the flip: the decision
+                # is read off the minute-1 tick, stamped with its version.
+                ref = (frozen["frozen_at"] if frozen is not None
+                       else (window_open + timedelta(minutes=5)).isoformat())
+                ev, model_prob = _promoted_decision(
+                    tick_buckets.get(_iso(t["cutoff_at"]), {}).get(1), ref=ref)
+                frozen_at = (window_open + timedelta(minutes=1)).isoformat()
+                stamp = "v2-oil"
+                outcome = settled.get(target)
+                rows.append({
+                    "series": series, "target": target,
+                    "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
+                    "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
+                    "frozen_at": frozen_at,
+                    "session": "open" if rule.futures_open(ref) else "closed",
+                    "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
+                    "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
+                    "best_edge_net": ev["best_edge_net"], "outcome": outcome,
+                    "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
+                           if ev["action"] == "buy" and outcome is not None else None,
+                    "evaluated_at": now.isoformat(), "gate_version": stamp})
+                continue
             if frozen is not None:
                 pay = frozen.get("payload") or {}
                 ev = rule.evaluate(float(frozen["probability"]), yes_ask=pay.get("yes_ask"),
@@ -132,7 +193,7 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
                 "best_edge_net": ev["best_edge_net"], "outcome": outcome,
                 "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
                        if ev["action"] == "buy" and outcome is not None else None,
-                "evaluated_at": now.isoformat()})
+                "evaluated_at": now.isoformat(), "gate_version": stamp})
     if rows:
         supa.table(rule.DECISIONS_TABLE).upsert(rows, on_conflict="series,target").execute()
     by_reason: dict[str, int] = {}
