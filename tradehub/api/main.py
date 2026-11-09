@@ -859,11 +859,30 @@ def workshop_auto(idea_id: int, body: _AutoIn, user: dict = Depends(admin.requir
                                 detail="only an idea live on that book and not killed there can trade")
         if not act:
             raise HTTPException(status_code=409, detail="the idea is not live on that book")
+        if body.on:
+            # The portfolio check rides the auto-on (Kevin, 2026-11-09):
+            # enabling the auto-trader IS an activation, at the size and run
+            # the book went live with.
+            run = workshop_store.get_run(supabase, act["live_run_id"]) \
+                if act.get("live_run_id") else None
+            if run is not None:
+                refusal = _portfolio_activation_check(
+                    supabase, idea_id, run["spec"], float(act.get("size_pct") or 0), body.book)
+                if refusal:
+                    raise HTTPException(status_code=409, detail=refusal)
         return workshop_store.set_auto_book(supabase, body.book, idea_id, body.on,
                                             user.get("email", "admin"))
     idea = _found(supabase, idea_id)["idea"]
     if body.on and (not idea.get("live_at") or idea.get("killed_at")):
         raise HTTPException(status_code=409, detail="only a live idea that has not been killed can trade")
+    if body.on:
+        run = workshop_store.get_run(supabase, idea["live_run_id"]) \
+            if idea.get("live_run_id") else None
+        if run is not None:
+            refusal = _portfolio_activation_check(
+                supabase, idea_id, run["spec"], float(idea.get("size_pct") or 0), "main")
+            if refusal:
+                raise HTTPException(status_code=409, detail=refusal)
     return workshop_store.set_auto(supabase, idea_id, body.on, user.get("email", "admin"))
 
 
@@ -1071,6 +1090,12 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
             raise HTTPException(status_code=409, detail=check.get("note") or "the book could not be read")
         if check.get("structure_problems"):
             raise HTTPException(status_code=409, detail=" ".join(check["structure_problems"]))
+    # The portfolio check (Kevin, 2026-11-09): the last gate before any book
+    # goes live on this idea -- a breach lands in the manual-actions queue with
+    # the portfolio reason and refuses the activation.
+    refusal = _portfolio_activation_check(supabase, idea_id, run["spec"], body.size_pct, body.book)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     if body.book != "main":
         return workshop_store.go_live_book(supabase, body.book, idea_id, run["id"],
                                            body.size_pct, gate)
@@ -1237,6 +1262,67 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: st
         full = {t: 1 / len(spec.hold) for t in spec.hold}
         out["structure_problems"] = option_structure_problems(spec.options, full, size_pct, equity, prices)
     return out
+
+
+def _portfolio_activation_check(supabase, idea_id: int, spec_dict: dict,
+                                size_pct: float, book: str) -> str | None:
+    """The portfolio check at activation time (Kevin, 2026-11-09): the same gate
+    that guards machine orders, run on the activation's full envelope -- the
+    blended target weights at `size_pct` of the book's equity, laid on top of the
+    book as it stands (a fresh activation's conservative fiction: the check
+    cannot assume the morning planner would first sell something else). Returns
+    the refusal detail when the activation would breach a cap, None when it may
+    proceed. A book that cannot be read proceeds with an "unavailable" event
+    recorded -- placement is impossible on a disconnected account anyway, and
+    the existing activation machinery has always degraded the same way.
+
+    Options specs are noted, not gated, in v1: their book impact is the premium,
+    already sized and structure-checked by the go-live play check; the share
+    envelope says nothing honest about them."""
+    from tradehub.portfolio import alpaca_paper, portfolio_check
+    from tradehub.workshop.engine import _blend_weights
+
+    try:
+        spec = IdeaSpec(**spec_dict)
+    except Exception:  # noqa: BLE001 -- endpoint validation owns the 422 for this
+        return None
+    if spec.options:
+        portfolio_check.record_event(
+            supabase, book, "activation", None,
+            {"outcome": "pass",
+             "detail": f"activation of idea {idea_id} carries option legs; the "
+                       "portfolio check gates share envelopes in v1 and the "
+                       "structure is sized by the go-live play check",
+             "blocks": [], "warnings": []})
+        return None
+    idea_weights = {}
+    if spec.hold:
+        idea_weights.update({t: 1 / len(spec.hold) for t in spec.hold})
+    if spec.short:
+        idea_weights.update({t: -1 / len(spec.short) for t in spec.short})
+    weights = _blend_weights(spec, idea_weights)
+    try:
+        account = alpaca_paper.paper_get("/v2/account", book=book) or {}
+        equity = float(account.get("equity") or 0)
+        if equity <= 0:
+            raise ValueError("the account read back no equity")
+    except Exception as exc:  # noqa: BLE001 -- stated, then the activation proceeds
+        portfolio_check.record_event(
+            supabase, book, "activation", None,
+            {"outcome": "unavailable", "blocks": [], "warnings": [],
+             "detail": f"portfolio check unavailable at activation of idea {idea_id}: "
+                       f"the book could not be read ({type(exc).__name__})"})
+        return None
+    deltas = {t: w * (float(size_pct) / 100.0) * equity for t, w in weights.items()}
+    block = portfolio_check.check_order(supabase, book, deltas, source="activation",
+                                        idea_id=idea_id)
+    if block["outcome"] == "block":
+        reason = (f"portfolio check: idea {idea_id} at {size_pct:g}% of {book} "
+                  f"would breach a cap -- {block['blocks'][0]['detail']}")
+        workshop_store.add_manual_action(
+            supabase, book, idea_id, "portfolio_check", None, reason)
+        return reason
+    return None
 
 
 @app.get("/api/workshop/ideas/{idea_id}/play-check", tags=["Workshop"])
@@ -2022,6 +2108,23 @@ def get_manual_actions(book: str = "main", user: dict = Depends(admin.require_ad
     return {"book": book, "actions": [{**r, "idea_title": ideas.get(r.get("idea_id"))} for r in rows]}
 
 
+@app.get("/api/portfolio/portfolio-check", tags=["Portfolio"])
+def get_portfolio_check(book: str = "main", user: dict = Depends(admin.require_admin),
+                        supabase=Depends(get_supabase)):
+    """The Portfolio card's payload (Kevin, 2026-11-09): thesis weights against
+    the caps and targets, the three cluster exposures, cash %, and the most
+    recent check outcomes -- all from tradehub.portfolio.portfolio_check, the
+    same engine (and the same stored targets and series) the preflight gate and
+    the activation gate read, so the card and the gates can never disagree."""
+    from tradehub.portfolio import portfolio_check
+
+    try:
+        return portfolio_check.current_state(supabase, _book_or_400(book))
+    except Exception as exc:  # noqa: BLE001 -- an unreadable book is stated, not faked
+        raise HTTPException(status_code=503,
+                            detail=f"the {book} book could not be read ({type(exc).__name__})") from exc
+
+
 @app.post("/api/portfolio/manual-actions/{action_id}/resolve", tags=["Portfolio"])
 def resolve_manual_action(action_id: int, body: dict, user: dict = Depends(admin.require_admin),
                           supabase=Depends(get_supabase)):
@@ -2121,7 +2224,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
-            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
+            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
+            "tag": body.tag, "idea_id": body.idea_id}
     result = machine_api.validate_order(supabase, key, spec)
     if result["refusal"] is not None:
         refused(*result["refusal"])
@@ -2188,7 +2292,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         response = {"order": order, "client_order_id": client_order_id,
-                    "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session}
+                    "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session,
+                    "portfolio_check": result["portfolio_check"]}
         if option["kind"] == "single":
             response["position_intent"] = option["legs"][0]["position_intent"]
         else:
@@ -2230,7 +2335,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         return {"order": order, "client_order_id": client_order_id,
-                "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session}
+                "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session,
+                "portfolio_check": result["portfolio_check"]}
 
     # A parent order: the server chunks the total under the key's caps and places
     # the children as one logical order. A child the broker already has (a retry of
@@ -2293,7 +2399,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker,
                                          _machine_label_tags(supabase)),
             "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag,
-            "exit": result["exit"]}
+            "exit": result["exit"], "portfolio_check": result["portfolio_check"]}
 
 
 @app.post("/api/v1/orders/preflight", tags=["Machine API"])
@@ -2319,7 +2425,8 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
-            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
+            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
+            "tag": body.tag, "idea_id": body.idea_id}
     result = machine_api.validate_order(supabase, key, spec, dry_run=True)
     from tradehub.portfolio import option_orders as _option_orders
 
@@ -2352,6 +2459,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
                 "kill_switch": {"machine_orders": machine_api.machine_orders_enabled(),
                                 "breaker_tripped": bool(breaker and breaker["tripped"]),
                                 "breaker_reasons": (breaker or {}).get("reasons", [])},
+                "portfolio_check": result["portfolio_check"],
                 "account": {"options_buying_power":
                             option["options_buying_power"] if option else None},
                 "option": ({"kind": option["kind"],
@@ -2425,6 +2533,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
             "kill_switch": {"machine_orders": machine_api.machine_orders_enabled(),
                             "breaker_tripped": bool(breaker and breaker["tripped"]),
                             "breaker_reasons": (breaker or {}).get("reasons", [])},
+            "portfolio_check": result["portfolio_check"],
             "account": account,
             "plan": {"children": plan}}
 

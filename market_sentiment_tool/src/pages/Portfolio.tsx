@@ -30,6 +30,7 @@ import {
   type ClosedPayload,
   type CurveRange,
   type ManualAction,
+  type PortfolioCheckState,
   type PortfolioPayload,
   type PositionRow,
 } from "@/lib/paperPortfolio";
@@ -405,6 +406,7 @@ function Body({ data, liveIdeas, book }: {
           </Box>
           {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
           <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
+          <PortfolioCheckBox book={book} />
           <OrdersBox book={book} />
           <div className="flex min-w-0 flex-col gap-2">
             <RecentTrades book={book} />
@@ -682,6 +684,174 @@ function ManualActions({ book }: { book: string }) {
           </li>
         ))}
       </ul>
+    </Box>
+  );
+}
+
+const CHECK_STATUS_TONE: Record<string, string> = {
+  ok: "text-slate-100", over: "text-rose-300", under: "text-amber-300",
+};
+const CHECK_OUTCOME_TONE: Record<string, string> = {
+  pass: "text-emerald-300", warn: "text-amber-300", block: "text-rose-300", unavailable: "text-slate-400",
+};
+
+/**
+ * The portfolio check, as a card (Kevin, 2026-11-09): thesis weights against the caps and
+ * targets, the three factor clusters, cash, and the most recent check outcomes. One engine
+ * with the preflight gate and the activation gate (tradehub.portfolio.portfolio_check) and
+ * the same stored targets and series, so the card can never disagree with the gates.
+ * Weights are % of invested. Signed-in only: signed out, it renders nothing.
+ */
+function PortfolioCheckBox({ book }: { book: string }) {
+  const [state, setState] = useState<PortfolioCheckState | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminJson<PortfolioCheckState>(`/api/portfolio/portfolio-check?book=${book}`)
+      .then((body) => {
+        // Shape-guarded like ManualActions: anything that isn't the card's own
+        // payload (a signed-out stub, another endpoint's body) renders nothing.
+        if (!cancelled && body && Array.isArray(body.sleeves) && Array.isArray(body.recent_checks)) {
+          setState(body);
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [book]);
+
+  if (state === null) return null;
+
+  const pct = (v: number, dp = 1) => `${v.toFixed(dp)}%`;
+  const memberNote = (m: PortfolioCheckState["sleeves"][number]["members"][number]) =>
+    [
+      m.target_pct != null ? `target ${m.target_pct}%` : null,
+      m.min_pct != null ? `floor ${m.min_pct}%` : null,
+      m.max_pct != null ? `cap ${m.max_pct}%` : null,
+    ].filter(Boolean).join(" · ");
+  const full = (
+    <div>
+      <table className="w-full text-left text-xs">
+        <thead>
+          <tr className="text-[11px] uppercase tracking-wide text-slate-500">
+            <th className="py-1 pr-3">Name</th><th className="py-1 pr-3">Weight</th>
+            <th className="py-1 pr-3">Target</th><th className="py-1 pr-3">Floor</th>
+            <th className="py-1 pr-3">Cap</th><th className="py-1">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {state.sleeves.flatMap((s) => [
+            <tr key={s.id} className="border-t border-slate-800 font-medium text-slate-200">
+              <td className="py-1 pr-3">{s.label}</td>
+              <td className="py-1 pr-3 tabular-nums">{pct(s.weight_pct, 2)}</td>
+              <td className="py-1 pr-3">—</td><td className="py-1 pr-3">—</td>
+              <td className="py-1 pr-3">{s.exit_only ? "exit-only" : s.sleeve_max_pct != null ? pct(s.sleeve_max_pct, 0) : "—"}</td>
+              <td className={`py-1 ${CHECK_STATUS_TONE[s.status]}`}>{s.status}</td>
+            </tr>,
+            ...s.members.map((m) => (
+              <tr key={`${s.id}-${m.symbol}`} className="text-slate-400">
+                <td className="py-1 pr-3 pl-4">{m.symbol}</td>
+                <td className="py-1 pr-3 tabular-nums">{pct(m.weight_pct, 2)}</td>
+                <td className="py-1 pr-3">{m.target_pct != null ? pct(m.target_pct) : "—"}</td>
+                <td className="py-1 pr-3">{m.min_pct != null ? pct(m.min_pct) : "—"}</td>
+                <td className="py-1 pr-3">{m.max_pct != null ? pct(m.max_pct) : "—"}</td>
+                <td className={`py-1 ${CHECK_STATUS_TONE[m.status]}`}>{m.status}</td>
+              </tr>
+            )),
+          ])}
+          {state.unassigned.map((u) => (
+            <tr key={u.symbol} className="text-slate-400">
+              <td className="py-1 pr-3 pl-4">{u.symbol} (unassigned)</td>
+              <td className="py-1 pr-3 tabular-nums">{pct(u.weight_pct, 2)}</td>
+              <td className="py-1 pr-3">—</td><td className="py-1 pr-3">—</td>
+              <td className="py-1 pr-3">5%</td>
+              <td className="py-1 text-slate-100">ok</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {state.recent_checks.length > 0 && (
+        <ul className="mt-3 space-y-1.5 border-t border-slate-800 pt-2">
+          {state.recent_checks.map((e, i) => (
+            <li key={i} className="text-xs text-slate-300">
+              <span className={`font-semibold uppercase ${CHECK_OUTCOME_TONE[e.outcome ?? "unavailable"]}`}>
+                {e.outcome ?? "unavailable"}
+              </span>{" "}
+              {e.symbol ? <span className="text-slate-400">{e.symbol} · </span> : null}
+              {e.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-[11px] text-slate-500">
+        Targets updated {state.targets_updated_at ? ctDateTime(state.targets_updated_at) : "never (seed values)"};
+        return series refreshed {state.series_refreshed_at ? ctDateTime(state.series_refreshed_at) : "not yet"}.
+      </p>
+    </div>
+  );
+
+  return (
+    <Box title="Portfolio check" className="lg:col-span-2" full={full}>
+      <ul className="space-y-1.5">
+        {state.sleeves.map((s) => (
+          <li key={s.id} className="text-xs">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-slate-300">{s.label}</span>
+              <span className={`tabular-nums font-medium ${CHECK_STATUS_TONE[s.status]}`}>
+                {pct(s.weight_pct)}
+                <span className="ml-2 font-normal text-slate-500">
+                  {s.exit_only ? "exit-only" : s.sleeve_max_pct != null ? `cap ${s.sleeve_max_pct}%` : ""}
+                  {s.correlation_to_book != null ? ` · corr ${s.correlation_to_book.toFixed(2)} to book` : ""}
+                </span>
+              </span>
+            </div>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {s.members.map((m) => (
+                <span key={m.symbol} className="mr-2">
+                  <span className={m.status !== "ok" ? CHECK_STATUS_TONE[m.status] : undefined}>
+                    {m.symbol} {pct(m.weight_pct)}
+                  </span>
+                  {memberNote(m) ? <span className="text-slate-600"> ({memberNote(m)})</span> : null}
+                </span>
+              ))}
+            </p>
+          </li>
+        ))}
+      </ul>
+      <dl className="mt-2 grid grid-cols-4 gap-x-3 gap-y-1 border-t border-slate-800 pt-2">
+        {Object.values(state.clusters).map((c) => (
+          <div key={c.label}>
+            <dt className="truncate text-[11px] text-slate-400">{c.label}</dt>
+            <dd className="mt-0.5 text-sm font-semibold tabular-nums text-white">
+              {pct(c.pct)}
+              {c.with_flagged_pct != null && c.with_flagged_pct !== c.pct
+                ? <span className="ml-1 text-[11px] font-normal text-slate-500">({pct(c.with_flagged_pct)} incl. GLD)</span>
+                : null}
+            </dd>
+          </div>
+        ))}
+        <div>
+          <dt className="truncate text-[11px] text-slate-400">Cash</dt>
+          <dd className="mt-0.5 text-sm font-semibold tabular-nums text-white">
+            {state.cash_pct != null ? pct(state.cash_pct) : "—"}
+          </dd>
+        </div>
+      </dl>
+      {state.recent_checks.length > 0 && (
+        <ul className="mt-2 space-y-1 border-t border-slate-800 pt-2">
+          {state.recent_checks.slice(0, 3).map((e, i) => (
+            <li key={i} className="text-xs text-slate-300">
+              <span className={`font-semibold uppercase ${CHECK_OUTCOME_TONE[e.outcome ?? "unavailable"]}`}>
+                {e.outcome ?? "unavailable"}
+              </span>{" "}
+              {e.symbol ? <span className="text-slate-400">{e.symbol} · </span> : null}
+              {e.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-[11px] text-slate-500">
+        Weights are % of invested. The same check gates machine orders and idea activations.
+      </p>
     </Box>
   );
 }

@@ -336,3 +336,50 @@ export function dayMovers(rows: PositionRow[], n = 3): { up: PositionRow[]; down
     known: rows.some((r) => r.day_pl != null),
   };
 }
+
+/** The Portfolio card's payload (GET /api/portfolio/portfolio-check): thesis weights against the
+ * caps and targets, cluster exposures, cash, and the latest check outcomes -- the same engine
+ * (tradehub.portfolio.portfolio_check) and stored state the order and activation gates read. */
+export interface PortfolioCheckMember {
+  symbol: string;
+  weight_pct: number;
+  target_pct: number | null;
+  max_pct: number | null;
+  min_pct: number | null;
+  status: "ok" | "over" | "under";
+}
+
+export interface PortfolioCheckSleeve {
+  id: string;
+  label: string;
+  weight_pct: number;
+  sleeve_max_pct: number | null;
+  exit_only: boolean;
+  status: "ok" | "over" | "under";
+  correlation_to_book: number | null;
+  members: PortfolioCheckMember[];
+}
+
+export interface PortfolioCheckEvent {
+  at: string | null;
+  source: string | null;
+  symbol: string | null;
+  outcome: "pass" | "warn" | "block" | "unavailable" | null;
+  detail: string | null;
+}
+
+export interface PortfolioCheckState {
+  book: string;
+  as_of: string;
+  equity: number;
+  cash: number;
+  cash_pct: number | null;
+  invested: number;
+  sleeves: PortfolioCheckSleeve[];
+  unassigned: { symbol: string; weight_pct: number }[];
+  clusters: Record<string, { label: string; pct: number; with_flagged_pct?: number }>;
+  recent_checks: PortfolioCheckEvent[];
+  targets_updated_at: string | null;
+  series_refreshed_at: string | null;
+  unpriced: string[];
+}
