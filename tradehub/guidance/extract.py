@@ -133,12 +133,43 @@ def _number_tokens(text: str) -> list[float]:
     return tokens
 
 
+_PM_MARKER = re.compile(r"±|\+/-|plus or minus")
+
+
+def _plus_minus(norm_evidence: str) -> tuple[float, float, float, float] | None:
+    """A "X ± Y" / "X plus or minus Z%" statement in the quote, as
+    (center, delta, low, high) in as-written units (amendment A1, 2026-11-09).
+
+    The guided figure is the last number printed before the marker; the delta
+    is the first number after it, read as a percentage when a % follows it.
+    The bounds are arithmetic on those two printed numbers -- nothing enters
+    the record that is not printed or derived by this stated arithmetic."""
+    m = _PM_MARKER.search(norm_evidence)
+    if not m:
+        return None
+    before = _number_tokens(norm_evidence[:m.start()])
+    rest = norm_evidence[m.end():]
+    dm = _NUMBER_TOKEN_RE.search(rest)
+    if not before or not dm:
+        return None
+    center = before[-1]
+    delta = float(dm.group().replace(",", ""))
+    if rest[dm.end():].lstrip().startswith("%"):
+        return center, delta, center * (1 - delta / 100.0), center * (1 + delta / 100.0)
+    return center, delta, center - delta, center + delta
+
+
+def _close(val: float, ref: float) -> bool:
+    return abs(val - ref) <= 1e-6 * max(1.0, abs(ref))
+
+
 def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], int]:
     """Verify items against the release text.
 
     Keeps an item only if:
     - Its normalized evidence is a substring of the normalized text
-    - Every non-None low/high value equals some number token in the evidence (as float, abs diff < 1e-9)
+    - Every non-None low/high value equals some number token in the evidence (as float, abs diff < 1e-9),
+      or a bound/center derived from a "±" statement in the evidence (amendment A1)
 
     Returns (kept_items, dropped_count).
     """
@@ -154,11 +185,14 @@ def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], in
             dropped += 1
             continue
 
-        # Check low/high numbers appear in evidence
+        # Check low/high numbers appear in evidence (or derive from its ± statement)
         evidence_numbers = _number_tokens(norm_evidence)
+        pm = _plus_minus(norm_evidence)
+        derived = [pm[0], pm[2], pm[3]] if pm else []
         ok = True
         for val in (item.low, item.high):
-            if val is not None and not any(abs(val - n) < 1e-9 for n in evidence_numbers):
+            if val is not None and not (any(abs(val - n) < 1e-9 for n in evidence_numbers)
+                                        or any(_close(val, d) for d in derived)):
                 ok = False
                 break
         if ok and _names_metric(item, norm_evidence):
@@ -205,6 +239,29 @@ def cleaned(item: GuidanceItem) -> GuidanceItem:
     return item.model_copy(update={"metric": metric, "unit": "usd_per_share", "scale": "units"})
 
 
+def expanded(item: GuidanceItem) -> GuidanceItem:
+    """A ± guide rewritten to its stated range (amendment A1, 2026-11-09).
+
+    Free models file a "±" guide as the bare center point, as center/delta in
+    the low/high slots, or already expanded; the first two become the range
+    the company actually stated. An item whose range never touches the ±
+    center, delta, or bounds is left exactly as filed -- the expansion never
+    rewrites an unrelated range."""
+    pm = _plus_minus(_normalize(item.evidence))
+    if pm is None:
+        return item
+    center, delta, low, high = pm
+    if item.low is not None and _close(item.low, low) \
+            and item.high is not None and _close(item.high, high):
+        return item
+    touches = any(v is not None and (_close(v, center) or _close(v, delta)
+                                     or _close(v, low) or _close(v, high))
+                  for v in (item.low, item.high))
+    if not touches:
+        return item
+    return item.model_copy(update={"low": low, "high": high})
+
+
 def dedupe(items: list[GuidanceItem]) -> list[GuidanceItem]:
     """One item per (period, metric, unit, low, high): the model sometimes repeats an item."""
     seen, out = set(), []
@@ -225,7 +282,9 @@ SYSTEM_PROMPT = (
     "Extract only forward-looking guidance the company gives for a future period "
     "(not reported results). Produce one item per metric and period. "
     "For each item, include low and high exactly as written with the scale word "
-    "given separately. The evidence field must be an exact sentence or clause copied "
+    "given separately. When guidance is stated as 'X ± Y' or 'X plus or minus Z%', "
+    "report low and high as the expanded bounds (X-Y and X+Y, or X*(1-Z%) and X*(1+Z%)). "
+    "The evidence field must be an exact sentence or clause copied "
     "from the text. If there is no forward-looking guidance, set no_guidance to true."
 )
 
@@ -378,7 +437,7 @@ def run(
 
             # Verify items against text
             kept, dropped = verify(env.items, text)
-            kept = dedupe([cleaned(it) for it in kept])
+            kept = dedupe([expanded(cleaned(it)) for it in kept])
             counts["dropped"] += dropped
 
             if not kept:

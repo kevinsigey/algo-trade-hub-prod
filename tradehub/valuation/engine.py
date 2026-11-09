@@ -26,8 +26,11 @@ FUND_STALE_DAYS = 550
 
 _QUARTER = re.compile(r"\bq[1-4]\b|[1-4]q\d{2}|quarter", re.IGNORECASE)
 _YEAR = re.compile(r"(20\d{2})")
-_FY_SIGNAL = re.compile(r"\bfy\d|\bfy\b|full year|fiscal|year ending|year ended",
-                        re.IGNORECASE)
+# Amendment A2 (2026-11-09): the frozen method names "full year / FY / year
+# ending / calendar year" as full-year signals; the matcher also takes the
+# hyphenated "full-year" and the bare "Calendar <year>" form (ABT, FDX).
+_FY_SIGNAL = re.compile(r"\bfy\d|\bfy\b|full[-\s]year|fiscal|calendar|"
+                        r"year ending|year ended", re.IGNORECASE)
 
 
 def _year_of(period: str) -> int | None:
@@ -96,15 +99,24 @@ def _guards(rec: dict, fundamentals: dict) -> list[str]:
     guide_year = _year_of(rec.get("period") or "")
     periods_compatible = (cons_year is None or guide_year is None
                           or cons_year == guide_year)
+    corroborated = False
     if (cons and mid is not None and periods_compatible):
         ratio = mid / cons if cons > 0 else None
         if ratio is None or not (0.4 <= ratio <= 2.5):
             reasons.append(
                 f"guide mid {mid:.2f} vs consensus {cons:.2f} outside "
                 f"[0.4x, 2.5x] consensus band")
+        else:
+            corroborated = True
     trailing = (fundamentals.get("eps_diluted") or {}).get("value")
     if trailing and mid is not None:
-        if not (0.3 * trailing <= mid <= 2.0 * trailing):
+        # Amendment A3 (2026-11-09): the trailing reference is GAAP diluted
+        # EPS; consensus is the guide's own (adjusted) basis. A trailing-band
+        # failure rejects only when the same-basis reference does not
+        # corroborate the guide -- at charge-heavy names the GAAP series is
+        # structurally far from the adjusted guide and is not evidence
+        # against it (ABBV: guide 13.97, consensus 13.98, GAAP trailing ~1.0).
+        if not (0.3 * trailing <= mid <= 2.0 * trailing) and not corroborated:
             reasons.append(
                 f"guide mid {mid:.2f} vs trailing diluted EPS {trailing:.2f} "
                 f"outside [0.3x, 2.0x] trailing band")
