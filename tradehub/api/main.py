@@ -1790,15 +1790,162 @@ def get_portfolio_activity(book: str = "main", supabase=Depends(get_supabase)):
     return service.activity(supabase, book_name=_book_or_400(book))
 
 
-class _OrderIn(BaseModel):
-    symbol: str = Field(min_length=1, max_length=10)
-    qty: int = Field(ge=1, le=100_000)
+class _OptionLegIn(BaseModel):
+    """One leg of a combo, shared by the machine order model and the hand-order
+    form model (2026-11-09): an OCC symbol, a side, an absolute contract count,
+    and an optional open/close intent (defaulted by side in validation)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(min_length=1, max_length=21)
     side: str
+    qty: int = Field(ge=1, le=100_000)
+    position_intent: str | None = None
+
+
+class _OrderIn(BaseModel):
+    # Symbol/qty/side are optional at the schema since 2026-11-09: a combo body
+    # carries legs[] instead, and the route refuses whichever shape is
+    # incomplete. Symbol is 21 wide for OCC contracts; limit_price carries no
+    # gt=0 because a combo's net limit is negative for a credit -- the route
+    # enforces the sign per shape.
+    symbol: str | None = Field(default=None, max_length=21)
+    qty: int | None = Field(default=None, ge=1, le=100_000)
+    side: str | None = None
     order_type: str = "market"
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: float | None = None
     time_in_force: str = "day"
     idea_id: int | None = None
     book: str = "main"
+    position_intent: str | None = None
+    legs: list[_OptionLegIn] | None = None
+
+
+def _place_form_option_order(body: _OrderIn, user: dict):
+    """The hand-order form's options path (2026-11-09): the SAME validation the
+    machine API runs -- the shared tradehub.portfolio.option_orders checks
+    (contract exists/tradable, defined-risk, max loss vs options buying power)
+    -- then the same paper_orders submission. The doors' own fences differ (an
+    admin session instead of a key, no per-key caps, the manual-/idea-
+    client_order_id family instead of ext-); the rules for what may be placed
+    do not, so the two surfaces cannot diverge."""
+    from uuid import uuid4
+
+    from tradehub.portfolio import option_orders, paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.portfolio.options import fetch_mid
+
+    book = body.book
+    try:
+        if body.legs:
+            legs = option_orders.normalize_legs([leg.model_dump() for leg in body.legs])
+            kind = "combo"
+        else:
+            legs = [option_orders.normalize_leg(
+                {"symbol": body.symbol, "side": body.side, "qty": body.qty,
+                 "position_intent": body.position_intent})]
+            kind = "single"
+    except option_orders.OptionOrderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.time_in_force != "day":
+        raise HTTPException(status_code=422, detail=(
+            f"option orders are day orders: Alpaca paper does not take {body.time_in_force} "
+            "on an option order, and the form will not silently downgrade it to day"))
+    if kind == "combo":
+        if body.order_type != "limit" or body.limit_price is None or body.limit_price == 0:
+            raise HTTPException(status_code=422, detail=(
+                "a combo is placed at one net limit_price "
+                "(positive is a debit paid, negative a credit taken)"))
+        parent, ratios = option_orders.parent_and_ratios(legs)
+        premium = float(body.limit_price) * parent * 100
+    else:
+        if body.order_type not in ("market", "limit"):
+            raise HTTPException(status_code=422, detail="hand-placed option orders are market or limit only")
+        if body.order_type == "limit" and body.limit_price is None:
+            raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
+        if body.limit_price is not None and body.limit_price <= 0:
+            raise HTTPException(status_code=422, detail="a single-leg limit_price must be positive")
+        parent, ratios = legs[0]["qty"], [1]
+        only = legs[0]
+        if only["position_intent"] in option_orders.OPEN_INTENTS:
+            if body.order_type == "limit":
+                price = float(body.limit_price)
+            else:
+                price = fetch_mid(only["symbol"], book=book)
+                if price is None:
+                    raise HTTPException(status_code=424, detail=(
+                        f"no usable quote for {only['symbol']}; the order cannot be priced"))
+            premium = option_orders.opening_premium(legs, {only["symbol"]: price})
+        else:
+            premium = 0.0
+    for symbol in dict.fromkeys(leg["symbol"] for leg in legs):
+        try:
+            row = option_orders.contract(symbol, book)
+        except AccountNotConnected as exc:
+            raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+        except Exception as exc:  # noqa: BLE001 -- unverifiable is unplaceable: fail closed
+            raise HTTPException(status_code=424, detail=f"the contract for {symbol} could not be verified") from exc
+        if row is None:
+            raise HTTPException(status_code=422, detail=(
+                f"{symbol} is not a tradable option contract on this paper account"))
+    try:
+        held = option_orders.positions_map(book)
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=424, detail=(
+            "positions could not be read; the defined-risk check cannot run")) from exc
+    reason = option_orders.check_defined_risk(legs, held)
+    if reason is not None:
+        raise HTTPException(status_code=422, detail=reason)
+    max_loss = option_orders.max_loss(legs, held, premium)
+    if any(leg["position_intent"] in option_orders.OPEN_INTENTS for leg in legs):
+        try:
+            obp = option_orders.options_buying_power(book)
+        except AccountNotConnected as exc:
+            raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=424, detail=(
+                "buying power could not be read; the max-loss check cannot run")) from exc
+        if obp is None or max_loss > obp:
+            raise HTTPException(status_code=422, detail=(
+                f"max loss ${max_loss:,.0f} exceeds the book's options buying power ${obp:,.0f}"
+                if obp is not None else "the account reports no options buying power"))
+    tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
+    client_order_id = tag + uuid4().hex[:12]
+    try:
+        if kind == "single":
+            leg = legs[0]
+            order = paper_orders.submit(
+                leg["symbol"], leg["qty"], leg["side"], client_order_id,
+                order_type=body.order_type, time_in_force="day",
+                limit_price=body.limit_price if body.order_type == "limit" else None,
+                book=book, position_intent=leg["position_intent"])
+        else:
+            mleg_legs = [{"symbol": leg["symbol"], "side": leg["side"], "ratio_qty": ratio,
+                          "position_intent": leg["position_intent"]}
+                         for leg, ratio in zip(legs, ratios)]
+            order = paper_orders.submit_mleg(mleg_legs, parent, float(body.limit_price),
+                                             client_order_id, book=book)
+    except paper_orders.OrdersDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except paper_orders.DuplicateOrder as exc:
+        raise HTTPException(status_code=409, detail="an order with this client_order_id was already sent") from exc
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    response = {"order": order, "client_order_id": client_order_id, "placed_by": user["email"]}
+    if kind == "single":
+        response["position_intent"] = legs[0]["position_intent"]
+    else:
+        response["option"] = {
+            "legs": [{"symbol": leg["symbol"], "side": leg["side"], "qty": leg["qty"],
+                      "ratio_qty": ratio, "position_intent": leg["position_intent"]}
+                     for leg, ratio in zip(legs, ratios)],
+            "parent_qty": parent, "net_limit_price": float(body.limit_price),
+            "net_price_convention": option_orders.NET_PRICE_CONVENTION, "max_loss": max_loss}
+    return response
 
 
 @app.post("/api/portfolio/orders", tags=["Portfolio"])
@@ -1809,25 +1956,34 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     switch and the protective-order tag rules all still apply. Plain market/limit only; stops
     and GTC orders remain the hub's own protective orders, never hand-placed.
     With an idea_id the client_order_id carries the `idea-<n>-` tag, so the order shows in that
-    idea's order log and fills like an auto order does."""
+    idea's order log and fills like an auto order does.
+    Option orders (2026-11-09) -- a single-leg OCC symbol, or legs[] for a combo --
+    take the _place_form_option_order path: the machine API's shared validation,
+    so a naked short is refused here exactly as it is there."""
     from uuid import uuid4
 
-    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio import option_orders, paper_orders
     from tradehub.portfolio.alpaca_paper import AccountNotConnected
     from tradehub.workshop.spec import TICKER
 
-    symbol = body.symbol.strip().upper()
+    _book_or_400(body.book)
+    if body.legs or option_orders.is_option_symbol(body.symbol):
+        return _place_form_option_order(body, user)
+    symbol = (body.symbol or "").strip().upper()
     if not TICKER.match(symbol):
         raise HTTPException(status_code=422, detail=f"not a ticker: {body.symbol!r}")
     if body.side not in ("buy", "sell"):
         raise HTTPException(status_code=422, detail="side must be buy or sell")
+    if body.qty is None or body.qty < 1:
+        raise HTTPException(status_code=422, detail="qty must be at least 1")
     if body.order_type not in ("market", "limit"):
         raise HTTPException(status_code=422, detail="hand-placed orders are market or limit only")
     if body.time_in_force not in ("opg", "cls", "day"):
         raise HTTPException(status_code=422, detail="time_in_force must be opg, cls or day")
     if body.order_type == "limit" and body.limit_price is None:
         raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
-    _book_or_400(body.book)
+    if body.limit_price is not None and body.limit_price <= 0:
+        raise HTTPException(status_code=422, detail="limit_price must be positive")
     tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
     client_order_id = tag + uuid4().hex[:12]
     try:
@@ -1893,15 +2049,25 @@ def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.req
 class _MachineOrderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")  # order_class and other broker shapes 422 here
 
-    symbol: str = Field(min_length=1, max_length=10)
-    qty: int = Field(ge=1, le=100_000)
-    side: str
+    # Symbol is 21 chars wide since 2026-11-09: an OCC contract symbol
+    # (SPY261113P00570000) is a first-class order here, not a too-long ticker.
+    # Symbol/qty/side are optional at the schema because a combo body carries
+    # legs[] instead; validate_order refuses whichever shape is incomplete.
+    symbol: str | None = Field(default=None, max_length=21)
+    qty: int | None = Field(default=None, ge=1, le=100_000)
+    side: str | None = None
     client_order_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     order_type: str = "market"
     time_in_force: str = "day"
-    limit_price: float | None = Field(default=None, gt=0)
+    # No gt=0: a combo's net limit is negative for a credit. validate_order
+    # enforces the sign per shape (single-leg limits stay positive).
+    limit_price: float | None = None
     stop_price: float | None = Field(default=None, gt=0)
     idea_id: int | None = None
+    # Single-leg options (2026-11-09): the open/close intent Alpaca needs.
+    position_intent: str | None = None
+    # Combos (2026-11-09): legs[] + ONE net limit_price, placed as one mleg order.
+    legs: list[_OptionLegIn] | None = None
     # A parent order (2026-11-08): qty is the TOTAL and the server chunks it under
     # the key's caps, placing children <caller id>-1..n as one logical order.
     split: bool = False
@@ -1939,7 +2105,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split}
+            "split": body.split, "position_intent": body.position_intent,
+            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
     result = machine_api.validate_order(supabase, key, spec)
     if result["refusal"] is not None:
         refused(*result["refusal"])
@@ -1963,6 +2130,62 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
             return "label failed"
         return None
+
+    if result["option"] is not None:
+        # Options placement (2026-11-09): ONE order -- a single leg through
+        # paper_orders.submit carrying its position intent, or the whole combo
+        # as one mleg order through submit_mleg, never sequential legs.
+        # Namespacing, idempotency, labelling and the audit event are exactly
+        # the share path's; every cap already ran in validate_order.
+        option = result["option"]
+        client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+        try:
+            if option["kind"] == "single":
+                leg = option["legs"][0]
+                order = paper_orders.submit(
+                    leg["symbol"], leg["qty"], leg["side"], client_order_id,
+                    order_type=option["order_type"], time_in_force="day",
+                    limit_price=body.limit_price if option["order_type"] == "limit" else None,
+                    book=book, position_intent=leg["position_intent"])
+            else:
+                mleg_legs = [{"symbol": leg["symbol"], "side": leg["side"],
+                              "ratio_qty": ratio, "position_intent": leg["position_intent"]}
+                             for leg, ratio in zip(option["legs"], option["ratios"])]
+                order = paper_orders.submit_mleg(mleg_legs, option["parent_qty"],
+                                                 option["net_limit_price"], client_order_id,
+                                                 book=book)
+        except paper_orders.OrdersDisabled as exc:
+            refused("paper_switch_off", 409, str(exc))
+        except paper_orders.DuplicateOrder:
+            refused("duplicate", 409, "an order with this client_order_id was already sent")
+        except AccountNotConnected:
+            refused("account", 424, "the paper account is not connected")
+        except (paper_orders.OrderRejected, ValueError) as exc:
+            refused("rejected", 422, str(exc))
+        machine_keys.record_event(supabase, key["id"], route, "placed",
+                                  detail=label(order["id"]), client_order_id=client_order_id)
+        from datetime import datetime, timezone
+
+        session = machine_api.session_fields(
+            {**order, "time_in_force": "day",
+             "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
+             "status": order.get("status", "accepted")})
+        response = {"order": order, "client_order_id": client_order_id,
+                    "placed_by": f"api:{key['label']}", "tag": body.tag, **session}
+        if option["kind"] == "single":
+            response["position_intent"] = option["legs"][0]["position_intent"]
+        else:
+            from tradehub.portfolio import option_orders as _option_orders
+
+            response.update({
+                "legs": [{"symbol": leg["symbol"], "side": leg["side"], "qty": leg["qty"],
+                          "ratio_qty": ratio, "position_intent": leg["position_intent"]}
+                         for leg, ratio in zip(option["legs"], option["ratios"])],
+                "parent_qty": option["parent_qty"],
+                "net_limit_price": option["net_limit_price"],
+                "net_price_convention": _option_orders.NET_PRICE_CONVENTION,
+                "max_loss": option["max_loss"]})
+        return response
 
     if not body.split:
         if body.order_type == "stop":
@@ -2074,8 +2297,50 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split}
+            "split": body.split, "position_intent": body.position_intent,
+            "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
     result = machine_api.validate_order(supabase, key, spec, dry_run=True)
+    from tradehub.portfolio import option_orders as _option_orders
+
+    if body.legs or _option_orders.is_option_symbol(body.symbol):
+        # The options preflight (2026-11-09): the same checks validate_order ran
+        # (contract, defined-risk, per-leg caps, max loss vs options buying
+        # power), the cap headroom with the combo counting once, and the plan --
+        # one namespaced order, parent qty for a combo.
+        option = result["option"]
+        used = result["daily_used"] or 0
+        plan = ([{"qty": option["parent_qty"],
+                  "client_order_id": f"ext-{key['id']}-{body.client_order_id}"}]
+                if result["refusal"] is None and option is not None else [])
+        machine_keys.record_event(supabase, key["id"], route, "preflight",
+                                  detail="ok" if result["refusal"] is None else result["refusal"][0],
+                                  client_order_id=body.client_order_id)
+        breaker = result["breaker"]
+        return {"ok": result["refusal"] is None,
+                "kind": "option_combo" if body.legs else "option_single",
+                "symbol": result["symbol"], "checks": result["checks"],
+                "headroom": {"max_qty_per_order": int(key["max_qty"]),
+                             "max_notional_per_order": float(key["max_notional"]),
+                             "daily_used": used, "daily_cap": int(key["daily_cap"]),
+                             "daily_remaining": int(key["daily_cap"]) - used - len(plan),
+                             "max_loss": option["max_loss"] if option else None,
+                             "options_buying_power":
+                                 option["options_buying_power"] if option else None},
+                "kill_switch": {"machine_orders": machine_api.machine_orders_enabled(),
+                                "breaker_tripped": bool(breaker and breaker["tripped"]),
+                                "breaker_reasons": (breaker or {}).get("reasons", [])},
+                "account": {"options_buying_power":
+                            option["options_buying_power"] if option else None},
+                "option": ({"kind": option["kind"],
+                            "legs": [{"symbol": leg["symbol"], "side": leg["side"],
+                                      "qty": leg["qty"], "ratio_qty": ratio,
+                                      "position_intent": leg["position_intent"]}
+                                     for leg, ratio in zip(option["legs"], option["ratios"])],
+                            "parent_qty": option["parent_qty"],
+                            "net_limit_price": option["net_limit_price"],
+                            "net_price_convention": _option_orders.NET_PRICE_CONVENTION,
+                            "max_loss": option["max_loss"]} if option else None),
+                "plan": {"children": plan}}
     book, symbol, price = result["book"], result["symbol"], result["price"]
     checks = list(result["checks"])
     account: dict = {"buying_power": None, "held_qty": None, "shortable": None}

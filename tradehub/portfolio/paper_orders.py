@@ -59,7 +59,8 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
            stop_price: float | None = None, trail_percent: float | None = None,
            order_class: str | None = None, take_profit_price: float | None = None,
            extended_hours: bool = False,
-           book: str | None = None, session=requests) -> dict[str, Any]:
+           book: str | None = None, position_intent: str | None = None,
+           session=requests) -> dict[str, Any]:
     if order_type not in ORDER_TYPES or time_in_force not in TIMES_IN_FORCE or side not in ("buy", "sell"):
         raise ValueError(f"unsupported order: {order_type}/{time_in_force}/{side}")
     # extended hours: Alpaca takes it on day or gtc limits only (a gtc one still needs a sanctioned tag below)
@@ -72,6 +73,13 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
                            and order_type in ("stop", "trailing_stop", "limit")):
         raise ValueError("stops and good-till-cancelled orders are only sanctioned protective orders "
                          "(an idea- stop tag or a machine ext- stop tag)")
+    # Single-leg option orders carry an explicit open/close intent (2026-11-09):
+    # Alpaca evaluates a short leg by its intent, so opens and closes never blur.
+    # The key joins the body ONLY when an intent is given -- a share order's body
+    # is byte-identical to what it was before options rode this path.
+    if position_intent is not None and position_intent not in (
+            "buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"):
+        raise ValueError(f"unsupported position intent: {position_intent!r}")
     if order_class not in (None, "oco"):
         raise ValueError(f"unsupported order class: {order_class}")
     if order_class == "oco" and not (order_type == "limit" and take_profit_price and stop_price):
@@ -104,6 +112,8 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         body["trail_percent"] = f"{trail_percent:g}"
     if extended_hours:
         body["extended_hours"] = True
+    if position_intent is not None:
+        body["position_intent"] = position_intent
     return _post_order(body, client_order_id, book, session)
 
 

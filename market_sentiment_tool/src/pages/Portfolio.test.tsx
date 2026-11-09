@@ -146,6 +146,44 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(await screen.findByText(/Order sent: buy 3 XLE \(manual-abc123\)/)).toBeInTheDocument();
     expect(posted).toEqual([{ symbol: "XLE", qty: 3, side: "buy", order_type: "market", time_in_force: "day", book: "main" }]);
   });
+
+  it("places a single-leg option order with an intent and a day time-in-force", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    page(<Portfolio />);
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "SPY261113P00570000" } });
+    // The form names the contract it parsed and counts contracts, not shares.
+    expect(await screen.findByText("SPY Nov 13 2026 $570 put")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Contracts"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "limit" } });
+    fireEvent.change(screen.getByLabelText("Limit price"), { target: { value: "2.40" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: buy 2 SPY261113P00570000 \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted).toEqual([{ symbol: "SPY261113P00570000", qty: 2, side: "buy", order_type: "limit",
+      time_in_force: "day", position_intent: "buy_to_open", limit_price: 2.4, book: "main" }]);
+  });
+
+  it("places a combo as legs plus one net limit, with absolute quantities", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    page(<Portfolio />);
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
+    fireEvent.click(screen.getByRole("button", { name: "Combo (spread)" }));
+    fireEvent.change(screen.getByLabelText("Leg 1 symbol"), { target: { value: "SPY261113P00570000" } });
+    fireEvent.change(screen.getByLabelText("Leg 1 qty"), { target: { value: "6" } });
+    fireEvent.change(screen.getByLabelText("Leg 2 symbol"), { target: { value: "SPY261113P00565000" } });
+    fireEvent.change(screen.getByLabelText("Leg 2 qty"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Net limit price"), { target: { value: "1.20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: combo of 2 legs \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted).toEqual([{ legs: [
+      { symbol: "SPY261113P00570000", side: "buy", qty: 6, position_intent: "buy_to_open" },
+      { symbol: "SPY261113P00565000", side: "sell", qty: 3, position_intent: "sell_to_open" },
+    ], order_type: "limit", limit_price: 1.2, time_in_force: "day", book: "main" }]);
+  });
 });
 
 describe("ClosedTrades", () => {
