@@ -4395,6 +4395,21 @@ def valuation_verdict_run(body: _VerdictRunIn,
     return {"started": ticker}
 
 
+# ── Band crossings (Spec C, log-only) ────────────────────────────────────────
+# The engine records would-be actions against the Guidance bands and grades
+# them; it has no order path. This endpoint is its read surface: the mode
+# stated up front, the falsifier counter, recent scans, recent crossings.
+
+@app.get("/api/band-crossings", tags=["Valuation"])
+def band_crossings_list(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """Recent band crossings with their would-be actions, Portfolio Check
+    outcomes, and graded results, plus the engine's mode and falsifier
+    state. Read-only; the engine itself is log-only (Kevin, 2026-11-09)."""
+    from tradehub.valuation import band_crossing as bc
+
+    return bc.read_surface(supabase)
+
+
 mount_frontend(app, FRONTEND_DIST)
 
 
