@@ -379,7 +379,7 @@ export default function Valuation() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Valuation</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-white">Guidance</h1>
       <p className="mt-1 max-w-3xl text-sm text-slate-400">
         Each company's own recorded full-year guidance, valued at its peer group's median
         multiple, as bear / base / bull bands — with the zone the current price sits in.
