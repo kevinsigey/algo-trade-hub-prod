@@ -1886,19 +1886,15 @@ class _MachineOrderIn(BaseModel):
     limit_price: float | None = Field(default=None, gt=0)
     stop_price: float | None = Field(default=None, gt=0)
     idea_id: int | None = None
-    # A parent order (2026-11-08): qty is the TOTAL and the server chunks it under
-    # the key's caps, placing children <caller id>-1..n as one logical order.
-    split: bool = False
 
 
 @app.post("/api/v1/orders", tags=["Machine API"])
 def place_machine_order(body: _MachineOrderIn, authorization: str | None = Header(None),
                         supabase=Depends(get_supabase)):
-    from fastapi.responses import JSONResponse
-
     from tradehub.api import machine_api, machine_keys
     from tradehub.portfolio import paper_orders
-    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_price
+    from tradehub.workshop.spec import TICKER
 
     if supabase is None:
         raise HTTPException(status_code=503, detail="database unavailable")
@@ -1913,202 +1909,107 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
 
     machine_api.require_scope(supabase, key, "orders:place", route)
     # Per-book keys (Kevin, 2026-11-03): the order lands on the KEY's book, never a
-    # caller-chosen one -- _MachineOrderIn does not even carry a book field. Every
-    # fence below is machine_api.validate_order, the one validation path the
-    # preflight route shares (2026-11-08), so the two can never drift.
-    spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
-            "order_type": body.order_type, "time_in_force": body.time_in_force,
-            "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split}
-    result = machine_api.validate_order(supabase, key, spec)
-    if result["refusal"] is not None:
-        refused(*result["refusal"])
-    book, symbol = result["book"], result["symbol"]
+    # caller-chosen one -- _MachineOrderIn does not even carry a book field.
+    book = machine_api.key_book(key)
+    from tradehub.portfolio import books
+
+    if book not in books.names():
+        refused("book", 422, f"this key is bound to an unknown book: {book}")
+    if not machine_api.machine_orders_enabled():
+        refused("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")
+    symbol = body.symbol.strip().upper()
+    if not TICKER.match(symbol):
+        refused("validation", 422, f"not a ticker: {body.symbol!r}")
+    if body.side not in ("buy", "sell"):
+        refused("validation", 422, "side must be buy or sell")
+    if body.order_type not in ("market", "limit", "stop"):
+        refused("order_type", 422, "machine orders are market, limit or stop only")
+    if body.order_type == "stop":
+        if body.time_in_force != "gtc":
+            refused("order_type", 422, "a machine stop is good-till-cancelled: time_in_force must be gtc")
+        if body.stop_price is None:
+            refused("order_type", 422, "a stop order needs a stop_price")
+        if body.limit_price is not None:
+            refused("order_type", 422, "limit_price is for limit orders")
+    else:
+        if body.time_in_force not in ("opg", "cls", "day"):
+            refused("validation", 422, "time_in_force must be opg, cls or day")
+        if body.stop_price is not None:
+            refused("order_type", 422, "stop_price is for stop orders")
+    if body.order_type == "limit" and body.limit_price is None:
+        refused("order_type", 422, "a limit order needs a limit_price")
+    if body.order_type == "market" and body.limit_price is not None:
+        refused("order_type", 422, "limit_price is for limit orders")
+    if body.qty > int(key["max_qty"]):
+        refused("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")
+    if body.order_type == "stop":
+        # The position fence: a machine stop protects shares actually held, net of
+        # resting orders on that side. Unreadable positions fail closed.
+        try:
+            capacity = machine_api.stop_capacity(symbol, body.side, book=book)
+        except AccountNotConnected:
+            refused("account", 424, "the paper account is not connected")
+        except Exception:  # noqa: BLE001 -- an unverifiable position is an unplaceable stop
+            refused("position_unverified", 424, "positions could not be read; the stop cannot be checked")
+        if body.qty > capacity:
+            refused("position", 422,
+                    f"a {body.side} stop for {body.qty} exceeds the {capacity} uncovered shares held in {symbol}")
+        price = body.stop_price  # the cap prices a stop at its stop, like a limit at its limit
+    elif body.order_type == "limit":
+        price = body.limit_price  # the cap prices a limit at its limit (spec §1.4): no estimate involved
+    else:
+        try:
+            price = latest_price(symbol)
+        except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
+            refused("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked")
+    if price * body.qty > float(key["max_notional"]):
+        refused("max_notional", 429,
+                f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")
+    if machine_api.placed_today(supabase, key["id"]) >= int(key["daily_cap"]):
+        refused("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")
+    from tradehub.portfolio import breakers
+
+    breaker = breakers.check(supabase, book)
+    if breaker["tripped"] and body.order_type != "stop":  # a stop is already fenced to protect held shares
+        try:
+            closing = breakers.closes_position(body.side, body.qty, machine_api.position_qty(symbol, book=book))
+        except Exception:  # noqa: BLE001 -- can't tell it's a closing order, so it isn't one
+            refused("position_unverified", 424, "positions could not be read; the circuit breaker cannot pass this order")
+        if not closing:
+            breakers.notify(supabase, book, breaker)
+            refused("circuit_breaker", 409, f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass.")
+
+    if body.order_type == "stop":
+        client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"
+    else:
+        client_order_id = f"ext-{key['id']}-{body.client_order_id}"
     submit_kwargs = {}
     if body.order_type == "stop":
         submit_kwargs["stop_price"] = body.stop_price
-
-    def submit_one(qty: int, client_order_id: str):
-        return paper_orders.submit(symbol, qty, body.side, client_order_id,
-                                   order_type=body.order_type, time_in_force=body.time_in_force,
-                                   limit_price=body.limit_price if body.order_type == "limit" else None,
-                                   book=book, **submit_kwargs)
-
-    def label(order_id: str) -> str | None:
-        try:
-            from tradehub.workshop import store as workshop_store
-
-            workshop_store.add_label(supabase, order_id, body.idea_id, f"api:{key['label']}")
-        except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
-            return "label failed"
-        return None
-
-    if not body.split:
-        if body.order_type == "stop":
-            client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"
-        else:
-            client_order_id = f"ext-{key['id']}-{body.client_order_id}"
-        try:
-            order = submit_one(body.qty, client_order_id)
-        except paper_orders.OrdersDisabled as exc:
-            refused("paper_switch_off", 409, str(exc))
-        except paper_orders.DuplicateOrder:
-            refused("duplicate", 409, "an order with this client_order_id was already sent")
-        except AccountNotConnected:
-            refused("account", 424, "the paper account is not connected")
-        except (paper_orders.OrderRejected, ValueError) as exc:
-            refused("rejected", 422, str(exc))
-        machine_keys.record_event(supabase, key["id"], route, "placed",
-                                  detail=label(order["id"]), client_order_id=client_order_id)
-        return {"order": order, "client_order_id": client_order_id, "placed_by": f"api:{key['label']}"}
-
-    # A parent order: the server chunks the total under the key's caps and places
-    # the children as one logical order. A child the broker already has (a retry of
-    # the same group) counts as placed -- the group is idempotent, never doubled.
-    # A child that fails midway stops the split and is REPORTED with the children
-    # that did place: a partial split is a state the caller must see, not an error
-    # that pretends nothing happened.
-    namespaced = f"ext-{key['id']}-{body.client_order_id}"
-    placed_children: list[str] = []
-    failure: tuple[str, int, str, str] | None = None  # outcome, status, detail, child id
-    for i, chunk in enumerate(result["chunks"], 1):
-        child_id = f"{namespaced}-{i}"
-        try:
-            order = submit_one(chunk, child_id)
-        except paper_orders.DuplicateOrder:
-            placed_children.append(child_id)
-            continue
-        except paper_orders.OrdersDisabled as exc:
-            failure = ("paper_switch_off", 409, str(exc), child_id)
-            break
-        except AccountNotConnected:
-            failure = ("account", 424, "the paper account is not connected", child_id)
-            break
-        except (paper_orders.OrderRejected, ValueError) as exc:
-            failure = ("rejected", 422, str(exc), child_id)
-            break
-        note = label(order["id"])
-        detail = f"group:{body.client_order_id}" + (f"; {note}" if note else "")
-        machine_keys.record_event(supabase, key["id"], route, "placed",
-                                  detail=detail, client_order_id=child_id)
-        placed_children.append(child_id)
-    if failure is not None:
-        outcome, status, detail, child_id = failure
-        if not placed_children:
-            refused(outcome, status, detail)
-        machine_keys.record_event(supabase, key["id"], route, f"refused:{outcome}",
-                                  detail=f"split child {child_id}: {detail}",
-                                  client_order_id=child_id)
-        return JSONResponse(status_code=status, content={
-            "detail": f"split stopped at {child_id}: {detail}",
-            "group_id": body.client_order_id, "client_order_id": namespaced,
-            "placed_children": placed_children,
-            "failed_child": {"client_order_id": child_id, "detail": detail}})
     try:
-        broker = machine_api.broker_orders(book=book)
+        order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
+                                    order_type=body.order_type, time_in_force=body.time_in_force,
+                                    limit_price=body.limit_price if body.order_type == "limit" else None,
+                                    book=book, **submit_kwargs)
+    except paper_orders.OrdersDisabled as exc:
+        refused("paper_switch_off", 409, str(exc))
+    except paper_orders.DuplicateOrder:
+        refused("duplicate", 409, "an order with this client_order_id was already sent")
     except AccountNotConnected:
-        broker = {}
-    events = machine_api.group_events(supabase, key["id"], namespaced, body.client_order_id)
-    # A child the broker window has not caught up with still reads with the quantity
-    # this call placed -- the group's total never depends on the read window.
-    chunks = {f"{namespaced}-{i}": c for i, c in enumerate(result["chunks"], 1)}
-    for event in events:
-        cid = event["client_order_id"]
-        if cid not in broker and cid in chunks:
-            broker[cid] = {"client_order_id": cid, "symbol": symbol, "side": body.side,
-                           "type": body.order_type, "time_in_force": body.time_in_force,
-                           "qty": str(chunks[cid]), "filled_qty": "0", "status": "accepted",
-                           "submitted_at": event["at"]}
-    return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker),
-            "client_order_id": namespaced, "placed_by": f"api:{key['label']}"}
+        refused("account", 424, "the paper account is not connected")
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        refused("rejected", 422, str(exc))
 
-
-@app.post("/api/v1/orders/preflight", tags=["Machine API"])
-def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = Header(None),
-                            supabase=Depends(get_supabase)):
-    """The placement validators without the placement (2026-11-08): what the real call
-    would do, stated before it does it -- per-gate pass/fail, cap headroom, the book's
-    switch and breaker state, and the account facts a hand-split trim used to need
-    memory for (buying power, shares actually held across lots, shortability for a
-    sell that would open a short). Shares its one validation path with
-    POST /api/v1/orders (machine_api.validate_order). Audited as `preflight`, never
-    `placed`: the daily cap counts placements, and a question is not one."""
-    from tradehub.api import machine_api, machine_keys
-    from tradehub.portfolio import alpaca_paper, breakers
-
-    if supabase is None:
-        raise HTTPException(status_code=503, detail="database unavailable")
-    key = machine_api.authenticate(supabase, authorization)
-    machine_api.check_rate_limit(key)
-    route = "POST /api/v1/orders/preflight"
-    machine_api.require_scope(supabase, key, "orders:place", route)
-    spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
-            "order_type": body.order_type, "time_in_force": body.time_in_force,
-            "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split}
-    result = machine_api.validate_order(supabase, key, spec, dry_run=True)
-    book, symbol, price = result["book"], result["symbol"], result["price"]
-    checks = list(result["checks"])
-    account: dict = {"buying_power": None, "held_qty": None, "shortable": None}
+    label_note = None
     try:
-        acct = alpaca_paper.paper_get("/v2/account", book=book) or {}
-        if acct.get("buying_power") is not None:
-            account["buying_power"] = float(acct["buying_power"])
-    except Exception:  # noqa: BLE001 -- an unreadable fact reads as unknown, never as zero
-        pass
-    if result["refusal"] is None or result["refusal"][0] not in ("book", "symbol", "side"):
-        try:
-            account["held_qty"] = machine_api.position_qty(symbol, book=book)
-        except Exception:  # noqa: BLE001
-            pass
-    if price is not None and account["buying_power"] is not None:
-        notional = price * body.qty
-        checks.append({"name": "buying_power", "blocking": False,
-                       "ok": body.side != "buy" or notional <= account["buying_power"],
-                       "detail": f"buying power ${account['buying_power']:,.0f}"
-                                 + (f" against a ${notional:,.0f} order" if body.side == "buy" else "")})
-    if body.side == "sell" and account["held_qty"] is not None:
-        held = account["held_qty"]
-        checks.append({"name": "held_qty", "blocking": False, "ok": body.qty <= held,
-                       "detail": f"{held:g} shares held in {symbol} across lots; this sell is for {body.qty}"})
-        if body.qty > held:  # the sell opens a short: is the name shortable at all?
-            try:
-                account["shortable"] = bool(alpaca_paper.asset_flags(symbol, book=book).get("shortable"))
-            except Exception:  # noqa: BLE001
-                pass
-            checks.append({"name": "shortable", "blocking": False, "ok": bool(account["shortable"]),
-                           "detail": f"{symbol} is shortable" if account["shortable"]
-                                     else f"{symbol} is not flagged shortable"})
-    breaker = result["breaker"]
-    if breaker is None:
-        try:
-            breaker = breakers.check(supabase, book)
-        except Exception:  # noqa: BLE001
-            breaker = None
-    namespaced = (f"ext-{key['id']}-stop-{body.client_order_id}" if body.order_type == "stop"
-                  else f"ext-{key['id']}-{body.client_order_id}")
-    if body.split:
-        plan = [{"qty": c, "client_order_id": f"{namespaced}-{i}"}
-                for i, c in enumerate(result["chunks"], 1)]
-    else:
-        plan = [{"qty": body.qty, "client_order_id": namespaced}] if result["chunks"] else []
-    used = result["daily_used"] or 0
-    machine_keys.record_event(supabase, key["id"], route, "preflight",
-                              detail="ok" if result["refusal"] is None else result["refusal"][0],
-                              client_order_id=body.client_order_id)
-    return {"ok": result["refusal"] is None, "symbol": symbol, "side": body.side,
-            "qty": body.qty, "split": body.split, "checks": checks,
-            "headroom": {"price_used": price,
-                         "order_notional": price * body.qty if price is not None else None,
-                         "max_qty_per_order": int(key["max_qty"]),
-                         "max_notional_per_order": float(key["max_notional"]),
-                         "daily_used": used, "daily_cap": int(key["daily_cap"]),
-                         "daily_remaining": int(key["daily_cap"]) - used - len(plan)},
-            "kill_switch": {"machine_orders": machine_api.machine_orders_enabled(),
-                            "breaker_tripped": bool(breaker and breaker["tripped"]),
-                            "breaker_reasons": (breaker or {}).get("reasons", [])},
-            "account": account,
-            "plan": {"children": plan}}
+        from tradehub.workshop import store as workshop_store
+
+        workshop_store.add_label(supabase, order["id"], body.idea_id, f"api:{key['label']}")
+    except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
+        label_note = "label failed"
+    machine_keys.record_event(supabase, key["id"], route, "placed",
+                              detail=label_note, client_order_id=client_order_id)
+    return {"order": order, "client_order_id": client_order_id, "placed_by": f"api:{key['label']}"}
 
 
 @app.get("/api/v1/portfolio", tags=["Machine API"])
@@ -2146,24 +2047,6 @@ def _machine_order_view(event: dict, order: dict | None) -> dict:
             "event_id": event["id"], "placed_at": event["at"]}
 
 
-def _machine_group_view(caller_group_id: str, namespaced: str, events: list, broker: dict) -> dict:
-    """One split group as ONE logical order (2026-11-08): aggregate filled quantity,
-    the volume-weighted fill price, and the rolled-up status, with the per-child
-    views riding along as the breakdown."""
-    from tradehub.api import machine_api
-
-    views = [_machine_order_view(e, broker.get(e["client_order_id"])) for e in events]
-    return {"client_order_id": namespaced, "group_id": caller_group_id, "is_group": True,
-            "status": machine_api.rollup_status(views),
-            "symbol": views[0].get("symbol") if views else None,
-            "side": views[0].get("side") if views else None,
-            "qty": sum(v.get("qty") or 0 for v in views),
-            "filled_qty": sum(v.get("filled_qty") or 0 for v in views),
-            "filled_avg_price": machine_api.weighted_fill_price(views),
-            "placed_at": events[0]["at"] if events else None,
-            "children": views}
-
-
 @app.get("/api/v1/orders", tags=["Machine API"])
 def list_machine_orders(limit: int = 50, before: int | None = None, status: str | None = None,
                         book: str | None = None,
@@ -2188,10 +2071,6 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
     except AccountNotConnected:
         broker, reachable = {}, False
     views = [_machine_order_view(e, broker.get(e["client_order_id"])) for e in events]
-    for event, view in zip(events, views):  # a split child names its parent group
-        detail = event.get("detail") or ""
-        if detail.startswith("group:"):
-            view["group_id"] = detail[len("group:"):].split(";")[0].strip()
     if status == "open":
         views = [v for v in views if v["status"] in machine_api.OPEN_STATUSES]
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders", "read")
@@ -2237,22 +2116,9 @@ def get_machine_order(client_order_id: str, authorization: str | None = Header(N
     namespaced = machine_api.resolve_caller_id(key, client_order_id)
     event = machine_api.owns_event(supabase, key["id"], namespaced)
     if event is None:
-        # Not a single order: a split group id reads as the ONE logical order it
-        # placed (2026-11-08) -- aggregate fills, weighted price, children attached.
-        prefix = f"ext-{key['id']}-"
-        caller_form = namespaced[len(prefix):] if namespaced.startswith(prefix) else client_order_id
-        children = machine_api.group_events(supabase, key["id"], namespaced, caller_form)
-        if not children:
-            machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}",
-                                      "refused:ownership", client_order_id=namespaced)
-            raise HTTPException(status_code=404, detail="no such order")
-        try:
-            broker = machine_api.broker_orders(book=machine_api.key_book(key))
-        except AccountNotConnected:
-            broker = {}
-        machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}", "read",
-                                  client_order_id=namespaced)
-        return _machine_group_view(caller_form, namespaced, children, broker)
+        machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}",
+                                  "refused:ownership", client_order_id=namespaced)
+        raise HTTPException(status_code=404, detail="no such order")
     try:
         broker = machine_api.broker_orders(book=machine_api.key_book(key))
     except AccountNotConnected:
@@ -3753,6 +3619,28 @@ def screening_quote(ticker: str, _admin: dict = Depends(admin.require_admin)):
         raise HTTPException(status_code=404,
                             detail=f"no quote data for {ticker.strip().upper()}")
     return payload
+
+
+@app.get("/api/valuation-bands", tags=["Valuation"])
+def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """Latest fact sheet per ticker (valuation Spec v1, Phase 0).
+
+    Deterministic bands off the recorded guidance file; display data only --
+    no debate, judge, book, or order state is read or written here."""
+    from tradehub.valuation import store as val_store
+
+    return val_store.latest_sheets(supabase)
+
+
+@app.get("/api/valuation-bands/{ticker}", tags=["Valuation"])
+def valuation_bands_get(ticker: str, _admin: dict = Depends(admin.require_admin),
+                        supabase=Depends(get_supabase)):
+    from tradehub.valuation import store as val_store
+
+    row = val_store.latest_sheet(supabase, ticker.strip().upper())
+    if row is None:
+        raise HTTPException(status_code=404, detail="no fact sheet for ticker")
+    return row
 
 
 mount_frontend(app, FRONTEND_DIST)
