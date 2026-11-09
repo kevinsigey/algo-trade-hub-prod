@@ -14,6 +14,12 @@ the trade rule's tracking (tradehub/fifteen_tracking.py) -- one persisted
 decision per targeted window and the per-offset shadow track for settled
 windows. Same invocation, no new arguments; a tracking failure is reported
 in the summary, never allowed to fail the freeze pass it rides on.
+
+Amendment 2026-11-09: the same run also writes the oil minute-1 shadow
+variant's grid and its once-a-day promotion evaluation
+(tradehub/fifteen_shadow.py, preregistration
+docs/superpowers/specs/2026-11-09-fifteen-shadow-oil-minute1-prereg.md),
+under the same fail-soft rule.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from tradehub import fifteen_tracking
+from tradehub import fifteen_shadow, fifteen_tracking
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
@@ -34,7 +40,9 @@ from tradehub.journal.runner import run_forecaster
 def run(supa, forecasters, now: datetime) -> dict[str, Any]:
     summary = {f.name: run_forecaster(supa, f, now) for f in forecasters}
     for key, fn in (("fifteen_decisions", fifteen_tracking.record_decisions),
-                    ("fifteen_offsets", fifteen_tracking.record_offsets)):
+                    ("fifteen_offsets", fifteen_tracking.record_offsets),
+                    ("fifteen_shadow", fifteen_shadow.record_shadow),
+                    ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily)):
         try:
             summary[key] = fn(supa, now)
         except Exception as exc:  # noqa: BLE001 -- tracking reports, it never blocks the freeze
