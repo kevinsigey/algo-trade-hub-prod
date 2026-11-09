@@ -8,6 +8,12 @@ same dedupe), so this script only narrows the roster. It runs on the
 VPS's deploy crontab every 5 minutes: the freeze band opens 1.5 minutes
 into a window, so the +5 pass lands the freeze and the +10 pass dedupes.
 The hourly journal run keeps passing over the same rows harmlessly.
+
+Amendment 2026-11-08: after the journal passes, the same run also writes
+the trade rule's tracking (tradehub/fifteen_tracking.py) -- one persisted
+decision per targeted window and the per-offset shadow track for settled
+windows. Same invocation, no new arguments; a tracking failure is reported
+in the summary, never allowed to fail the freeze pass it rides on.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from tradehub import fifteen_tracking
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
@@ -25,7 +32,14 @@ from tradehub.journal.runner import run_forecaster
 
 
 def run(supa, forecasters, now: datetime) -> dict[str, Any]:
-    return {f.name: run_forecaster(supa, f, now) for f in forecasters}
+    summary = {f.name: run_forecaster(supa, f, now) for f in forecasters}
+    for key, fn in (("fifteen_decisions", fifteen_tracking.record_decisions),
+                    ("fifteen_offsets", fifteen_tracking.record_offsets)):
+        try:
+            summary[key] = fn(supa, now)
+        except Exception as exc:  # noqa: BLE001 -- tracking reports, it never blocks the freeze
+            summary[key] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+    return summary
 
 
 def main() -> int:

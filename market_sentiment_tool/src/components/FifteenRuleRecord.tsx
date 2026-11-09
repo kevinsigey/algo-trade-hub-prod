@@ -4,11 +4,20 @@ import { getJson } from "@/lib/getJson";
 
 interface Stats { n: number; net_per_contract: number | null; total: number; win_rate: number | null; low95: number | null; ready: boolean; windows?: number }
 interface Trade { series: string; target: string; frozen_at: string; side: "yes" | "no"; cost: number; model: number; outcome: number; pnl: number }
+interface OffsetStat { offset_min: number; windows: number; priced: number; mean_edge_net: number | null; n: number; net_per_contract: number | null; win_rate: number | null; mean_move_to_settle_bps: number | null; mean_move_to_60m_bps: number | null }
 interface RuleRecord {
   rule: string; prereg_at: string; ready_trades: number; replay: Stats; forward: Stats;
   pending: number; recent: Trade[]; unavailable?: boolean;
   by_session?: { open: Stats; closed: Stats };
+  gate?: { rule: string; forward: Stats; by_session?: { open: Stats; closed: Stats } };
+  decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
+  offsets?: { by_offset: OffsetStat[] };
 }
+
+const REASON_LABELS: [string, string][] = [
+  ["no_edge", "no edge"], ["no_quote", "no quote"], ["no_prediction", "no prediction"],
+  ["stale_tape", "stale tape"], ["halt", "halt"],
+];
 
 const c = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
 
@@ -96,6 +105,32 @@ export function FifteenRuleRecord() {
           <p className="mt-1 text-xs text-slate-400">A real edge should hold while futures trade; wins only in closed hours can come from stale prices.</p>
         </div>
       )}
+      {rec.gate?.forward && (
+        <p className="mt-3 text-xs text-slate-400">
+          With the fee netted out of the edge test (the live gate):{" "}
+          {rec.gate.forward.n === 0
+            ? "no forward trades clear it yet."
+            : `${rec.gate.forward.n} trades, ${c(rec.gate.forward.net_per_contract ?? 0)} a contract, win rate ${Math.round((rec.gate.forward.win_rate ?? 0) * 100)}%.`}
+        </p>
+      )}
+      {rec.decisions && rec.decisions.recorded > 0 && (
+        <p className="mt-1 text-xs text-slate-400">
+          {rec.decisions.recorded} windows on record: {rec.decisions.buy} buys, {rec.decisions.skip} skipped
+          {REASON_LABELS.some(([k]) => rec.decisions!.by_reason[k]) &&
+            ` (${REASON_LABELS.filter(([k]) => rec.decisions!.by_reason[k]).map(([k, label]) => `${label} ${rec.decisions!.by_reason[k]}`).join(", ")})`}
+          .
+        </p>
+      )}
+      {(() => {
+        const best = (rec.offsets?.by_offset ?? [])
+          .filter((o) => o.n >= 10 && o.net_per_contract != null)
+          .sort((a, b) => (b.net_per_contract ?? 0) - (a.net_per_contract ?? 0))[0];
+        return best ? (
+          <p className="mt-1 text-xs text-slate-400">
+            Best entry minute so far: minute {best.offset_min} of the window ({best.n} priced entries, {c(best.net_per_contract ?? 0)} a contract after fees).
+          </p>
+        ) : null;
+      })()}
       {rec.recent.length > 0 && (
         <table className="mt-3 w-full max-w-xl text-xs tabular-nums">
           <thead><tr className="text-left text-slate-500">
