@@ -88,8 +88,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 63 | `20261108000002_order_labels_tag.sql` |
 | 64 | `20261109000001_fifteen_rule_tracking.sql` |
 | 65 | `20261109000002_valuation_band_basis.sql` |
+| 66 | `20261109000003_oil_picker_v2.sql` |
 
-**Watermark: `20261109000002_valuation_band_basis.sql`**
+**Watermark: `20261109000003_oil_picker_v2.sql`**
 
 ## How to record a new one
 

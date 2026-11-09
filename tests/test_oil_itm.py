@@ -19,6 +19,12 @@ def test_freeze_window():
     assert not in_freeze_window(24.9) and not in_freeze_window(35.1)
 
 
+def test_freeze_window_t10():
+    # Picker v2's second snapshot: a cadence-wide window at T-10.
+    assert in_freeze_window(5, "T-10") and in_freeze_window(15, "T-10") and in_freeze_window(10, "T-10")
+    assert not in_freeze_window(4.9, "T-10") and not in_freeze_window(25, "T-10")
+
+
 class _Q:
     def __init__(self, store, name):
         self.store, self.name = store, name
@@ -76,8 +82,13 @@ class _Live:
 
 def _ladder(minutes=30.0, itm=True):
     def fn(_now):
+        # Picker v2 freezes off the ladder's rows: stated 0.75 at a 0.58
+        # ask clears the 15-point bar on the (identity, in tests) map.
         view = {"state": "live", "event": "KXWTIH-26NOV0311", "minutes_to_close": minutes,
-                "live_price": 98.6,
+                "live_price": 98.6, "sigma_h": 0.31,
+                "close_time": "2026-11-03T16:00:00+00:00",
+                "rows": [{"strike": 98.0, "ours": 0.75, "market": 0.575,
+                          "yes_bid": 0.57, "yes_ask": 0.58}] if itm else [],
                 "best": {"strike": 98.0, "side": "yes", "prob": 0.65, "cost": 0.58, "edge_pts": 7.0} if itm else None}
         return view
 
@@ -115,7 +126,7 @@ def test_a_frozen_pick_stores_its_side_cost_and_edge():
     fake = _Fake()
     run(fake, now=NOW, live=_Live(), ladder_fn=_ladder())
     row = fake.store["oil_itm_lines"][0]
-    assert row["side"] == "yes" and row["cost"] == 0.58 and row["edge_pts"] == 7.0 and row["ours"] == 0.65
+    assert row["side"] == "yes" and row["cost"] == 0.58 and row["edge_pts"] == 17.0 and row["ours"] == 0.75
 
 
 def test_the_record_carries_the_replay_of_the_rule():

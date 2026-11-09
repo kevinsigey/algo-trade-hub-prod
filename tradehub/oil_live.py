@@ -35,6 +35,7 @@ from tradehub.journal.forecasters.oil_hourly import (
     HourlyInputs,
 )
 from tradehub.journal.kalshi_linked import quote_mid
+from tradehub.oil_calibration import apply_map
 
 MIN_MINUTES = 20.0
 CACHE_SECONDS = 20.0
@@ -122,6 +123,41 @@ def pick_best_strike(rows: list[dict]) -> tuple[dict | None, dict | None]:
     return (closest if closest["edge_pts"] >= BEST_MIN_EDGE_PTS else None), closest
 
 
+# Picker v2 (spec 2026-11-09, options A + B): the same candidate shape and
+# the same fee, but the probabilities are calibrated first (tradehub/
+# oil_calibration.py) and the gross-edge bar is 15 points, not 5. The
+# gated quantity is the same one v1 gated -- gross edge in points -- now
+# computed on the calibrated probability; ranking stays by net edge with
+# the taker fee inside it. Candidates also carry the raw probability and
+# the row's quotes, so a freeze can store exactly what it saw.
+PICKER_V2_MIN_EDGE_PTS = 15.0
+
+
+def pick_best_strike_v2(rows: list[dict], calib) -> tuple[dict | None, dict | None]:
+    """(the pick, the closest candidate) under the v2 rule. ``calib`` maps
+    a raw YES probability to its calibrated value; a NO side's probability
+    is 1 - calib(p_yes). Pure, like v1's picker."""
+    candidates = []
+    for row in rows:
+        bid, ask, ours = row.get("yes_bid"), row.get("yes_ask"), row.get("ours")
+        if bid is None or ask is None or ours is None or ask - bid > BEST_MAX_SPREAD:
+            continue
+        cal = calib(ours)
+        for side, prob_raw, prob, cost in (("yes", ours, cal, ask),
+                                           ("no", 1 - ours, 1 - cal, round(1 - bid, 4))):
+            if BEST_COST_BAND[0] <= cost <= BEST_COST_BAND[1]:
+                fee = TAKER_FEE_RATE * cost * (1 - cost)
+                candidates.append({"strike": row["strike"], "side": side,
+                                   "prob": round(prob, 4), "prob_raw": round(prob_raw, 4),
+                                   "cost": cost, "yes_bid": bid, "yes_ask": ask,
+                                   "edge_pts": round((prob - cost) * 100, 2),
+                                   "net_pts": round((prob - cost - fee) * 100, 2)})
+    if not candidates:
+        return None, None
+    closest = max(candidates, key=lambda c: c["net_pts"])
+    return (closest if closest["edge_pts"] >= PICKER_V2_MIN_EDGE_PTS else None), closest
+
+
 def _geo_chip() -> dict | None:
     try:
         from tradehub.core.supabase_client import get_client
@@ -139,16 +175,28 @@ def _geo_chip() -> dict | None:
 
 
 def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs | None = None,
-                geo: bool = True) -> dict[str, Any]:
+                geo: bool = True, event_ticker: str | None = None, calib_map=None) -> dict[str, Any]:
     """The live ladder payload. Degrades to {"state": "unavailable",
-    "reason": ...} -- a named gap, never invented numbers."""
+    "reason": ...} -- a named gap, never invented numbers.
+
+    ``event_ticker`` targets one event directly, bypassing the roll rule
+    (the T-10 freeze needs the imminent event the hero has already rolled
+    past). ``calib_map`` switches the pick to the v2 rule (picker v2,
+    spec 2026-11-09): rows gain ``ours_cal`` and the payload names the
+    picker and map versions that produced its pick."""
     now = now or datetime.now(UTC)
     live = live or KalshiLive()
     inputs = inputs or HourlyInputs(live)
     events: dict[str, list] = {}
     for lm in live.open_markets(SERIES):
         events.setdefault(lm.market.event_ticker, []).append(lm)
-    picked = pick_event(events, now)
+    if event_ticker is not None:
+        markets = events.get(event_ticker)
+        if not markets:
+            return {"state": "unavailable", "reason": f"{event_ticker} is not open"}
+        picked = (event_ticker, markets)
+    else:
+        picked = pick_event(events, now)
     if picked is None:
         return {"state": "unavailable", "reason": "no open hourly event right now"}
     event, markets = picked
@@ -172,17 +220,26 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
     for lm in sorted(markets, key=lambda m: m.market.floor_strike or 0.0):
         if lm.market.floor_strike is None:
             continue
-        rows.append({"strike": lm.market.floor_strike,
-                     "ours": round(hourly_prob(lm.market, price.value, sigma_h, minutes), 4),
-                     "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None),
-                     "yes_bid": lm.quote.yes_bid, "yes_ask": lm.quote.yes_ask})
+        ours = round(hourly_prob(lm.market, price.value, sigma_h, minutes), 4)
+        row = {"strike": lm.market.floor_strike,
+               "ours": ours,
+               "market": (round(m, 4) if (m := quote_mid(lm)) is not None else None),
+               "yes_bid": lm.quote.yes_bid, "yes_ask": lm.quote.yes_ask}
+        if calib_map is not None:
+            row["ours_cal"] = round(apply_map(calib_map, ours), 4)
+        rows.append(row)
     if not rows:
         return {"state": "unavailable", "reason": "the event carries no strikes"}
-    best, closest = pick_best_strike(rows)
+    if calib_map is not None:
+        best, closest = pick_best_strike_v2(rows, lambda p: apply_map(calib_map, p))
+    else:
+        best, closest = pick_best_strike(rows)
     return {
         "state": "live",
         "best": best,
         "closest": closest,
+        "picker_version": "v2" if calib_map is not None else "v1",
+        **({"calib_map_version": calib_map.version} if calib_map is not None else {}),
         "event": event,
         "close_time": markets[0].market.close_time.isoformat(),
         "minutes_to_close": round(minutes, 1),
@@ -200,13 +257,40 @@ def live_ladder(now: datetime | None = None, *, live=None, inputs: HourlyInputs 
     }
 
 
+_hero_calib: dict[str, Any] = {"at": float("-inf"), "map": None}
+HERO_CALIB_TTL_SECONDS = 1800.0
+
+
+def _hero_calib_map():
+    """The serving process's calibration map for the hero pick, refitted
+    at most every 30 minutes on events already closed (so the walk-
+    forward rule holds for any event it is applied to). Fail-soft like
+    the geo chip: any failure leaves the ladder on the v1 pick and the
+    payload's picker_version says so -- the page never breaks over a
+    calibration read. Freezes never use this map; oil_itm fits its own
+    per event with the exact cutoff."""
+    now_s = time.monotonic()
+    if now_s - _hero_calib["at"] < HERO_CALIB_TTL_SECONDS:
+        return _hero_calib["map"]
+    fitted = None
+    try:
+        from tradehub.core.supabase_client import get_client
+        from tradehub.oil_calibration import fit_map, load_samples, pairs_before
+
+        fitted = fit_map(pairs_before(load_samples(get_client()), datetime.now(UTC)))
+    except Exception:  # noqa: BLE001 -- the v1 pick is the honest fallback
+        fitted = None
+    _hero_calib.update(at=now_s, map=fitted)
+    return fitted
+
+
 def live_ladder_cached() -> dict[str, Any]:
     """20-second server cache: the page polls every 30s and the Yahoo/
     Kalshi reads behind it should not scale with viewers."""
     now_s = time.monotonic()
     if _cache["payload"] is not None and now_s - _cache["at"] < CACHE_SECONDS:
         return _cache["payload"]
-    payload = live_ladder()
+    payload = live_ladder(calib_map=_hero_calib_map())
     _cache.update(at=now_s, payload=payload)
     return payload
 
