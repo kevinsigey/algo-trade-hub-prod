@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, ChevronDown } from "lucide-react";
 
-import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 import { FifteenSettlements } from "@/components/FifteenSettlements";
 import GapDesk from "@/components/GapDesk";
 import { SniperRecord } from "@/components/SniperRecord";
@@ -29,21 +28,50 @@ const STAGE_TONE: Record<Stage, string> = {
 };
 
 const signed = (v: number, digits = 1) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
-const cents = (v: number) => `${signed(v * 100)}¢ a contract`;
+const cent1 = (v: number) => `${signed(v * 100)}¢`;
+const cents = (v: number) => `${cent1(v)} a contract`;
+const pts1 = (v: number) => `${signed(v * 100)} pts`;
 const usd = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
 const toneOf = (v: number | null | undefined) => (v == null ? undefined : v >= 0 ? "text-emerald-300" : "text-rose-300");
 
 interface GapCategoryLedger { closed: number; realized: number; win_rate: number | null; median_pnl: number | null }
-interface SeriesStats { n: number; net_per_contract: number | null; win_rate: number | null }
+interface SeriesStats { n: number; net_per_contract: number | null; win_rate: number | null;
+                        total?: number; low95?: number | null; windows?: number }
+interface FifteenTrade { series: string; target: string; frozen_at: string; side: "yes" | "no";
+                         cost: number; model: number; outcome: number; pnl: number }
+interface OffsetStat { offset_min: number; windows: number; priced: number; mean_edge_net: number | null;
+                       n: number; net_per_contract: number | null; win_rate: number | null }
+interface ShadowBlock {
+  variant?: { rule: string };
+  fresh?: { windows: number; trades: number; net_per_contract: number | null; low95: number | null; win_rate: number | null };
+  paired?: { windows: number; delta_per_window: number | null; low95: number | null };
+  grid?: { offset_min: number; bar: number; windows: number; trades: number; net_per_contract: number | null; low95: number | null }[];
+  promotion?: { state: string; met: boolean; criterion: { min_trades: number }; promoted_at: string | null };
+}
 interface FifteenPayload {
-  forward?: SeriesStats; replay?: SeriesStats; ready_trades?: number;
+  prereg_at?: string; ready_trades?: number;
+  forward?: SeriesStats; replay?: SeriesStats; pending?: number; recent?: FifteenTrade[];
   by_series?: Record<string, SeriesStats>;
+  by_session?: { open: SeriesStats; closed: SeriesStats };
   gate?: { forward?: SeriesStats; by_series?: Record<string, SeriesStats> };
+  bar?: { basis: string; trades: number; ready_trades: number; ready: boolean; low95: number | null; windows?: number; pending?: number };
+  decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
+  offsets?: { by_offset: OffsetStat[] };
+  shadow?: ShadowBlock;
   // The metals family (2026-11-09 preregistration): its own record block in
   // the same shape, counted entirely apart from the oil family's above.
   metals?: { prereg_at?: string; ready_trades?: number;
              by_series?: Record<string, SeriesStats>;
              gate?: { forward?: SeriesStats; by_series?: Record<string, SeriesStats> } };
+}
+
+const REASON_LABELS: [string, string][] = [
+  ["no_edge", "no edge"], ["no_quote", "no quote"], ["no_prediction", "no prediction"],
+  ["stale_tape", "stale tape"], ["halt", "halt"],
+];
+
+function etShort(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 /** A diverging bar for a signed value: fills right of centre when positive, left when negative. */
@@ -170,6 +198,19 @@ function Tile({ spec }: { spec: TileSpec }) {
   );
 }
 
+/** One small titled expansion inside a tile — the split that replaced the single mega-dropdown. */
+function SubDetails({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="group/sub border-t border-slate-800 py-3 first:border-t-0 first:pt-0 last:pb-0">
+      <summary className="cursor-pointer list-none text-sm font-semibold text-slate-200 hover:text-white [&::-webkit-details-marker]:hidden">
+        {title}
+        <ChevronDown className="ml-1 inline h-3.5 w-3.5 text-slate-500 transition-transform group-open/sub:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
+}
+
 /** A headline record line: the same composed string the glance list used to carry, kept whole. */
 function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
   return (
@@ -182,9 +223,11 @@ function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
 /**
  * Strategies (Kevin, 2026-11-05; split per market 2026-11-09; visual tiles 2026-11-09): every rule
  * that trades or paper-trades as a tile — its record drawn (bars, curves) with a few headline
- * numbers, and every sentence of explanation under the tile's expansion, moved verbatim, never
- * deleted. The market pages keep the live reads; the Track record keeps whether the reads are
- * right; this page keeps whether trading on them pays.
+ * numbers, and every sentence of explanation under the tile's expansion. The 15-minute oil & gas
+ * expansion is itself split into small titled blocks (rule, settlements, record, decisions,
+ * timing, sessions, shadow), each fact stated once — the single mega-dropdown repeated itself
+ * (Kevin, 2026-11-09). The market pages keep the live reads; the Track record keeps whether the
+ * reads are right; this page keeps whether trading on them pays.
  */
 export default function Strategies() {
   const portfolio = useJson<{ scoreboard?: { return_pct: number | null; ahead_pts: number | null };
@@ -302,6 +345,18 @@ export default function Strategies() {
       ? { record: `${oilAgg.n} gated trades · ${oilAgg.net_per_contract == null ? "—" : cents(oilAgg.net_per_contract)} · ${oilAgg.win_rate == null ? "—" : `${Math.round(oilAgg.win_rate * 100)}% win`}${oilRaw && oilRaw.n > 0 ? ` · raw control ${oilRaw.n} · ${oilRaw.net_per_contract == null ? "—" : cents(oilRaw.net_per_contract)}` : ""}`,
           tone: toneOf(oilAgg.net_per_contract) }
       : { record: `${oilAgg ? "0 gated trades · " : ""}raw ${oilRaw?.n ?? 0} trade${oilRaw?.n === 1 ? "" : "s"} · ${oilRaw?.net_per_contract == null ? "—" : cents(oilRaw.net_per_contract)}`, tone: toneOf(oilRaw?.net_per_contract) };
+  // The oil tile's detail blocks, all read from the same payload: the gated record leads,
+  // the raw record is its control, and the shadow keeps its own block apart from both.
+  const gateFwd = fifteen?.gate?.forward ?? null;
+  const rawFwd = fifteen?.forward ?? null;
+  const liveBar = fifteen?.bar ?? null;
+  const readyN = fifteen?.ready_trades ?? 300;
+  const barPct = liveBar ? Math.min(100, (liveBar.trades / readyN) * 100) : 0;
+  const pricedOffsets = (fifteen?.offsets?.by_offset ?? []).filter((o) => o.priced > 0);
+  const bestOffset = pricedOffsets
+    .filter((o) => o.n >= 10 && o.net_per_contract != null)
+    .sort((a, b) => (b.net_per_contract ?? 0) - (a.net_per_contract ?? 0))[0];
+  const shadow = fifteen?.shadow ?? null;
   // The metals headline prefers the block's own served aggregate (gate.forward);
   // the fold over its per-series stats is only the fallback for a payload without one.
   // Before the first settled trade the headline says accruing, like its per-market lines.
@@ -353,20 +408,201 @@ export default function Strategies() {
       stats: <RecordLine text={oilLine.record} tone={oilLine.tone} />,
       children: (
         <section aria-label="15-minute rules by market">
-          <div className="space-y-2">
-            {(["WTI", "Brent", "natural gas"] as const).map((m) => (
-              <p key={m} className="text-sm text-slate-400">{fifteenRule(m)}</p>
-            ))}
-          </div>
-          <p className="mt-3 text-sm text-slate-400">
-            One rule, three separate markets — each market has its own line above and its own column in the
-            record below, so a market that pays is never hidden inside one that doesn't. First, whether the
-            forecasts themselves are right; then, whether trading them pays.
-          </p>
-          <h3 className="mt-4 text-sm font-semibold text-slate-200">Settlements scoring — the forecasts vs Kalshi's price</h3>
-          <FifteenSettlements />
-          <h3 className="mt-5 text-sm font-semibold text-slate-200">The trade record</h3>
-          <FifteenRuleRecord />
+          <SubDetails title="The rule">
+            <p className="text-sm text-slate-400">
+              Five minutes into each 15-minute window, buy the side the model beats by 10+ points after
+              Kalshi's fee; hold to the close. Nothing trades around the 4:45–6:30 PM ET futures halt.
+            </p>
+          </SubDetails>
+          <SubDetails title="Settlements scoring — the forecasts vs Kalshi's price">
+            <FifteenSettlements />
+          </SubDetails>
+          {fifteen && (
+            <SubDetails title="The trade record">
+              {gateFwd && gateFwd.n > 0 ? (
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 tabular-nums">
+                  <span className={`text-lg font-semibold ${toneOf(gateFwd.net_per_contract) ?? "text-slate-200"}`}>
+                    {gateFwd.net_per_contract == null ? "—" : cents(gateFwd.net_per_contract)}
+                  </span>
+                  <span className="text-sm text-slate-400">
+                    win rate {gateFwd.win_rate == null ? "—" : `${Math.round(gateFwd.win_rate * 100)}%`}
+                    {gateFwd.total != null && <> · {gateFwd.total >= 0 ? "+" : "−"}${Math.abs(gateFwd.total).toFixed(2)} on one contract each</>}
+                  </span>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">
+                  No forward trades yet{fifteen.prereg_at ? <>. The record starts {etShort(fifteen.prereg_at)} ET</> : ""}.
+                </p>
+              )}
+              {liveBar && (
+                <div className="mt-2">
+                  <div className="h-1.5 max-w-sm rounded-full bg-slate-800" role="img" aria-label={`${liveBar.trades} of ${readyN} settled gated trades`}>
+                    <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${barPct}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {liveBar.trades} of {readyN} settled gated trades{liveBar.windows != null ? ` in ${liveBar.windows} separate 15-minute windows` : ""}. Copyable once the gated record has {readyN} and is still ahead at the
+                    low end of its 95% range{liveBar.low95 != null ? ` (now ${cent1(liveBar.low95)})` : ""}.{liveBar.ready ? " It has cleared that bar." : ""}
+                    {(liveBar.pending ?? 0) > 0 ? ` ${liveBar.pending} waiting to settle.` : ""}
+                  </p>
+                </div>
+              )}
+              {rawFwd && rawFwd.n > 0 && (
+                <p className="mt-2 text-xs text-slate-400">
+                  On the original gross-edge record, kept as a control: {rawFwd.n} trades, {rawFwd.net_per_contract == null ? "—" : cents(rawFwd.net_per_contract)}, win rate {rawFwd.win_rate == null ? "—" : `${Math.round(rawFwd.win_rate * 100)}%`}.
+                </p>
+              )}
+              {(fifteen.recent ?? []).length > 0 && (
+                <table className="mt-3 w-full max-w-xl text-xs tabular-nums">
+                  <thead><tr className="text-left text-slate-500">
+                    <th className="pb-1 pr-3 font-medium">Window</th><th className="pb-1 pr-3 font-medium">Market</th>
+                    <th className="pb-1 pr-3 font-medium">Bought</th><th className="pb-1 text-right font-medium">Result</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-800/70 text-slate-300">
+                    {(fifteen.recent ?? []).slice(0, 6).map((t) => (
+                      <tr key={`${t.series}-${t.target}`}>
+                        <td className="py-1 pr-3">{etShort(t.frozen_at)}</td>
+                        <td className="py-1 pr-3">{t.series}</td>
+                        <td className="py-1 pr-3">{t.side.toUpperCase()} at {Math.round(t.cost * 100)}¢ (model {Math.round((t.side === "yes" ? t.model : 1 - t.model) * 100)}%)</td>
+                        <td className={`py-1 text-right ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{cent1(t.pnl)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {fifteen.replay && (
+                <p className="mt-2 text-xs text-slate-500">
+                  Replay before the rule was fixed: {fifteen.replay.n} trades, {fifteen.replay.net_per_contract == null ? "—" : cents(fifteen.replay.net_per_contract)}. Fills at the quoted price are assumed; paper only.
+                </p>
+              )}
+            </SubDetails>
+          )}
+          {fifteen?.decisions && fifteen.decisions.recorded > 0 && (
+            <SubDetails title="Decisions — every window gets one">
+              <p className="text-xs text-slate-400">
+                {fifteen.decisions.recorded} windows on record: {fifteen.decisions.buy} buys, {fifteen.decisions.skip} skipped
+                {REASON_LABELS.some(([k]) => fifteen.decisions!.by_reason[k]) &&
+                  ` (${REASON_LABELS.filter(([k]) => fifteen.decisions!.by_reason[k]).map(([k, label]) => `${label} ${fifteen.decisions!.by_reason[k]}`).join(", ")})`}
+                .
+              </p>
+            </SubDetails>
+          )}
+          {pricedOffsets.length > 0 && (
+            <SubDetails title="Entry timing — what entering at each minute has paid">
+              <table aria-label="Entry timing by minute" className="w-full max-w-xl text-xs tabular-nums">
+                <thead><tr className="text-left text-slate-500">
+                  <th className="pb-1 pr-3 font-medium">Minute</th>
+                  <th className="pb-1 pr-3 font-medium text-right">Windows priced</th>
+                  <th className="pb-1 pr-3 font-medium text-right">Entries</th>
+                  <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
+                  <th className="pb-1 pr-3 font-medium text-right">Win rate</th>
+                  <th className="pb-1 font-medium text-right">Edge on offer</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-800/70 text-slate-300">
+                  {pricedOffsets.map((o) => (
+                    <tr key={o.offset_min} className={bestOffset && o.offset_min === bestOffset.offset_min ? "text-slate-100" : undefined}>
+                      <td className="py-1 pr-3 text-slate-200">
+                        {o.offset_min}
+                        {bestOffset && o.offset_min === bestOffset.offset_min ? <span className="text-emerald-300"> · best so far</span> : null}
+                      </td>
+                      <td className="py-1 pr-3 text-right">{o.priced}</td>
+                      <td className="py-1 pr-3 text-right">{o.n}</td>
+                      <td className="py-1 pr-3 text-right">{o.net_per_contract == null ? "—" : cent1(o.net_per_contract)}</td>
+                      <td className="py-1 pr-3 text-right">{o.win_rate == null ? "—" : `${Math.round(o.win_rate * 100)}%`}</td>
+                      <td className="py-1 text-right">{o.mean_edge_net == null ? "—" : pts1(o.mean_edge_net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-1 text-xs text-slate-400">
+                Each row replays the gate at that minute of the window on settled windows — the same window can
+                appear in several rows, so read it as "what this minute has paid", not as separate trades.
+                Minutes 0 and 15 have almost no priced rows: the tape recorder starts and stops at the window's edges.
+              </p>
+              {bestOffset && (
+                <p className="mt-1 text-xs text-slate-400">
+                  Best entry minute so far: minute {bestOffset.offset_min} of the window ({bestOffset.n} priced entries, {cent1(bestOffset.net_per_contract ?? 0)} a contract after fees).
+                </p>
+              )}
+            </SubDetails>
+          )}
+          {fifteen?.by_session && (
+            <SubDetails title="Trading hours vs closed hours">
+              <table className="w-full max-w-md text-xs tabular-nums">
+                <thead><tr className="text-left text-slate-500">
+                  <th className="pb-1 pr-3 font-medium"></th>
+                  <th className="pb-1 pr-3 font-medium text-right">Trades</th>
+                  <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
+                  <th className="pb-1 text-right font-medium">Win rate</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-800/70 text-slate-300">
+                  <tr>
+                    <td className="py-1 pr-3 text-slate-200">When futures were trading</td>
+                    <td className="py-1 text-right">{fifteen.by_session.open.n}</td>
+                    <td className="py-1 text-right">{fifteen.by_session.open.net_per_contract == null ? "—" : cent1(fifteen.by_session.open.net_per_contract)}</td>
+                    <td className="py-1 text-right">{fifteen.by_session.open.win_rate == null ? "—" : `${Math.round(fifteen.by_session.open.win_rate * 100)}%`}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-3 text-slate-200">When futures were closed</td>
+                    <td className="py-1 text-right">{fifteen.by_session.closed.n}</td>
+                    <td className="py-1 text-right">{fifteen.by_session.closed.net_per_contract == null ? "—" : cent1(fifteen.by_session.closed.net_per_contract)}</td>
+                    <td className="py-1 text-right">{fifteen.by_session.closed.win_rate == null ? "—" : `${Math.round(fifteen.by_session.closed.win_rate * 100)}%`}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="mt-1 text-xs text-slate-400">A real edge should hold while futures trade; wins only in closed hours can come from stale prices.</p>
+            </SubDetails>
+          )}
+          {shadow && (
+            <SubDetails title="Oil shadow — the minute-1 variant">
+              {shadow.variant && <p className="text-sm text-slate-400">{shadow.variant.rule}</p>}
+              {shadow.fresh && (
+                <p className="mt-2 text-sm font-medium tabular-nums text-slate-200">
+                  {shadow.fresh.trades > 0
+                    ? <>{shadow.fresh.trades} fresh trades · {shadow.fresh.net_per_contract == null ? "—" : cents(shadow.fresh.net_per_contract)} · win rate {shadow.fresh.win_rate == null ? "—" : `${Math.round(shadow.fresh.win_rate * 100)}%`} · low end {shadow.fresh.low95 == null ? "—" : cent1(shadow.fresh.low95)}</>
+                    : "No fresh shadow trades yet."}
+                </p>
+              )}
+              {shadow.paired && shadow.paired.windows > 0 && (
+                <p className="mt-1 text-xs text-slate-400">
+                  Against the live rule on the same {shadow.paired.windows} windows: {shadow.paired.delta_per_window == null ? "—" : cent1(shadow.paired.delta_per_window)} a window (low end {shadow.paired.low95 == null ? "—" : cent1(shadow.paired.low95)}).
+                </p>
+              )}
+              {shadow.promotion && (
+                <p className="mt-1 text-xs text-slate-400">
+                  {shadow.promotion.state === "v2-oil"
+                    ? <>Promotion state: live — the variant promoted{shadow.promotion.promoted_at ? ` ${etShort(shadow.promotion.promoted_at)} ET` : ""} and the live oil gate now runs it; the v1 record above stays its own segment.</>
+                    : <>Promotion state: shadow — the live oil gate still runs v1. It promotes itself at {shadow.promotion.criterion.min_trades} fresh trades with both low ends above zero ({shadow.fresh?.trades ?? 0}/{shadow.promotion.criterion.min_trades} so far).</>}
+                </p>
+              )}
+              {(shadow.grid ?? []).length > 0 && (
+                <table aria-label="Oil shadow grid" className="mt-3 w-full max-w-xl text-xs tabular-nums">
+                  <thead><tr className="text-left text-slate-500">
+                    <th className="pb-1 pr-3 font-medium">Minute</th>
+                    <th className="pb-1 pr-3 font-medium text-right">Bar</th>
+                    <th className="pb-1 pr-3 font-medium text-right">Windows</th>
+                    <th className="pb-1 pr-3 font-medium text-right">Trades</th>
+                    <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
+                    <th className="pb-1 font-medium text-right">Low end</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-800/70 text-slate-300">
+                    {(shadow.grid ?? []).map((g) => (
+                      <tr key={`${g.offset_min}-${g.bar}`} className={g.offset_min === 1 && g.bar === 0.05 ? "text-slate-100" : undefined}>
+                        <td className="py-1 pr-3 text-slate-200">
+                          {g.offset_min}
+                          {g.offset_min === 1 && g.bar === 0.05 ? <span className="text-emerald-300"> · the variant</span> : null}
+                        </td>
+                        <td className="py-1 pr-3 text-right">{Math.round(g.bar * 100)} pts</td>
+                        <td className="py-1 pr-3 text-right">{g.windows}</td>
+                        <td className="py-1 pr-3 text-right">{g.trades}</td>
+                        <td className="py-1 pr-3 text-right">{g.net_per_contract == null ? "—" : cent1(g.net_per_contract)}</td>
+                        <td className="py-1 text-right">{g.low95 == null ? "—" : cent1(g.low95)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </SubDetails>
+          )}
         </section>
       ),
     },
