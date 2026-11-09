@@ -270,6 +270,30 @@ describe("Portfolio positions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Market value" }));
     expect(names()).toEqual(["NVDA", "NVDA Dec 4 2026 $200 call", "MU"]);
   });
+
+  it("sorts Chg % and Day P&L by signed value, not magnitude", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        row("AAA", 4000, { change_pct: 2, day_pl: 30 }),
+        row("BBB", 3000, { change_pct: -8, day_pl: -90 }),
+        row("CCC", 2000, { change_pct: 0, day_pl: 0 }),
+        row("DDD", 1000, { change_pct: 5, day_pl: -10 }),
+      ],
+    }));
+    page(<Portfolio />);
+    await screen.findByText("Positions · 4");
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions · 4 in full" }));
+    const table = () => screen.getByRole("dialog", { name: "Positions · 4" });
+    const names = () => within(table()).getAllByRole("row").slice(1, 5).map((r) => r.querySelector("td")!.textContent);
+    // Highest to lowest means +5, +2, 0, -8: gainers on top, losers at the bottom.
+    fireEvent.click(screen.getByRole("button", { name: "Chg %" }));
+    expect(names()).toEqual(["DDD", "AAA", "CCC", "BBB"]);
+    fireEvent.click(screen.getByRole("button", { name: "Chg %" }));
+    expect(names()).toEqual(["BBB", "CCC", "AAA", "DDD"]);
+    fireEvent.click(screen.getByRole("button", { name: "Day P&L" }));
+    expect(names()).toEqual(["AAA", "CCC", "DDD", "BBB"]);
+  });
 });
 
 describe("Portfolio circuit breaker", () => {
