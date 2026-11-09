@@ -132,6 +132,19 @@ describe("/oil 15-minute panel", () => {
     expect(screen.queryByRole("region", { name: "Chokepoints monitor" })).toBeNull();
   });
 
+  it("stacks the Next hour module underneath Next 15 minutes, not beside it in a split grid", async () => {
+    serve([score()], {}, undefined, { state: "live", markets: [market] });
+    render(<MemoryRouter><Oil /></MemoryRouter>);
+    const fifteen = await screen.findByRole("region", { name: "Next 15 minutes" });
+    const hour = await screen.findByRole("region", { name: "Live next hour" });
+    // Reading order: the 15-minute module first, the hour module after it.
+    expect(fifteen.compareDocumentPosition(hour) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Stacked at every width: neither module sits in a col-span split placement
+    // (the old xl 12-column grid squeezed the 15-minute calls into a narrow column).
+    expect(fifteen.closest("div[class*='col-span']")).toBeNull();
+    expect(hour.closest("div[class*='col-span']")).toBeNull();
+  });
+
   it("states the direction, Kalshi's number and the most to pay", async () => {
     serve([score()], {}, undefined, { state: "live", markets: [market] });
     render(<MemoryRouter><Oil /></MemoryRouter>);
