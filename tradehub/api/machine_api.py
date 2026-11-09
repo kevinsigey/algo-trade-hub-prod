@@ -12,6 +12,7 @@ caller must not be able to flood the audit table it is being throttled for.
 from __future__ import annotations
 
 import os
+import re
 import threading
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -174,7 +175,48 @@ OPEN_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled",
                            "held", "accepted_for_bidding"})
 
 
-def broker_order_view(order: dict) -> dict:
+_OPEN_T = time(9, 30)
+_CLOSE_T = time(16, 0)
+
+
+def session_fields(order: dict, *, now: datetime | None = None) -> dict:
+    """When an order actually goes live (2026-11-08): `effective_session`, the ET
+    trading date whose session the order belongs to, and `session_state` --
+    "held_for_open" while an accepted order is still waiting for that session,
+    so a Sunday-night OPG order staged for Monday's auction is never mistaken
+    for a working one. Derived from the order's own time-in-force and the NYSE
+    calendar the journal already keeps (tradehub.journal.nyse); no second
+    calendar is invented here."""
+    from tradehub.journal import nyse
+
+    tif = (order.get("time_in_force") or "day").lower()
+    try:
+        submitted = datetime.fromisoformat(str(order.get("submitted_at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        submitted = now or datetime.now(_ET)
+    if submitted.tzinfo is None:
+        submitted = submitted.replace(tzinfo=timezone.utc)
+    local = submitted.astimezone(_ET)
+    day, tod = local.date(), local.time()
+    if tif == "opg":
+        effective = day if (nyse.is_session(day) and tod < _OPEN_T) \
+            else nyse.next_session(day + timedelta(days=1))
+    elif tif == "cls":
+        effective = day if (nyse.is_session(day) and tod < _CLOSE_T) \
+            else nyse.next_session(day + timedelta(days=1))
+    elif tif == "gtc":
+        effective = nyse.next_session(day)
+    else:  # day / ioc / fok: live in the session they were sent into
+        effective = day if (nyse.is_session(day) and tod < _CLOSE_T) \
+            else nyse.next_session(day + timedelta(days=1))
+    now_et = (now or datetime.now(_ET)).astimezone(_ET)
+    opens = datetime.combine(effective, _OPEN_T, tzinfo=_ET)
+    held = order.get("status") in OPEN_STATUSES and now_et < opens
+    return {"effective_session": effective.isoformat(),
+            "session_state": "held_for_open" if held else "active"}
+
+
+def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
     """One broker order, normalized for the staged-orders views: what it is, what it
     costs, how much has filled -- the fields a staged book is checked against."""
     def num(value):
@@ -189,7 +231,54 @@ def broker_order_view(order: dict) -> dict:
             "qty": num(order.get("qty")), "filled_qty": num(order.get("filled_qty")),
             "limit_price": num(order.get("limit_price")), "stop_price": num(order.get("stop_price")),
             "status": order.get("status"), "submitted_at": order.get("submitted_at"),
-            "filled_avg_price": num(order.get("filled_avg_price"))}
+            "filled_avg_price": num(order.get("filled_avg_price")),
+            **session_fields(order, now=now)}
+
+
+_MACHINE_ID = re.compile(r"^ext-(\d+)-(?:stop-)?")
+_IDEA_ID = re.compile(r"^idea-(\d+)-")
+
+
+def attribute_orders(supa, views: list[dict]) -> list[dict]:
+    """Who placed each resting order (2026-11-08): the staged book is broker-wide,
+    and an unlabelled list invites duplicate or conflicting orders from a second
+    reader. Attribution, in order: the machine id namespace names its key
+    (ext-<key id>-... -> that key's label); the hub's idea-<id> family names its
+    idea; the workshop label ledger (order_labels) wins wherever it has a row --
+    it is the only source that knows a manual relabel. Anything else is an
+    external placement (the Alpaca app) and reads "unknown", stated, not hidden."""
+    try:
+        key_labels = {k["id"]: k["label"] for k in machine_keys.list_keys(supa)}
+    except Exception:  # noqa: BLE001 -- attribution is enrichment; the read must not fail for it
+        key_labels = {}
+    try:
+        from tradehub.workshop import store as workshop_store
+
+        history = workshop_store.label_history(supa)
+    except Exception:  # noqa: BLE001
+        history = {}
+    for view in views:
+        cid = view.get("client_order_id") or ""
+        placed_by, idea_id, source = "unknown", None, "external"
+        m = _MACHINE_ID.match(cid)
+        if m:
+            label = key_labels.get(int(m.group(1)))
+            placed_by = f"api:{label}" if label else f"api:key {m.group(1)}"
+            source = "machine"
+        else:
+            mi = _IDEA_ID.match(cid)
+            if mi:
+                idea_id, placed_by, source = int(mi.group(1)), "hub:idea engine", "hub"
+        rows = history.get(view.get("alpaca_order_id") or "")
+        if rows:
+            latest = rows[-1]
+            if latest.get("idea_id") is not None:
+                idea_id = latest["idea_id"]
+            if latest.get("by"):
+                placed_by = latest["by"]
+                source = "machine" if str(latest["by"]).startswith("api:") else source
+        view.update({"placed_by": placed_by, "idea_id": idea_id, "source": source})
+    return views
 
 
 def open_broker_orders(book: str | None = None) -> list[dict]:

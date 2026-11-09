@@ -811,6 +811,105 @@ def test_a_stop_cannot_be_split(api):
     assert r.status_code == 422 and sent == []
 
 
+# ── session semantics (2026-11-08): when an accepted order actually goes live ──
+
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+
+_SUN_EVENING = _dt(2026, 11, 8, 23, 0, tzinfo=_tz.utc)  # Sun 18:00 ET
+
+
+def _order_view(**over):
+    order = {"id": "alpaca-1", "client_order_id": "ext-1-x", "symbol": "GLD", "qty": "52",
+             "filled_qty": "0", "side": "sell", "type": "market", "time_in_force": "opg",
+             "status": "accepted", "submitted_at": "2026-11-08T23:00:00+00:00",
+             "filled_avg_price": None, "limit_price": None, "stop_price": None}
+    order.update(over)
+    return machine_api.broker_order_view(order, now=_SUN_EVENING)
+
+
+def test_an_opg_order_staged_sunday_is_held_for_mondays_open():
+    view = _order_view()
+    assert view["effective_session"] == "2026-11-09"  # Monday's auction, stated
+    assert view["session_state"] == "held_for_open"  # never mistaken for working
+
+
+def test_an_opg_order_sent_before_the_open_targets_that_open():
+    view = _order_view(submitted_at="2026-11-09T13:00:00+00:00")  # Mon 08:00 ET
+    assert view["effective_session"] == "2026-11-09"
+    assert view["session_state"] == "held_for_open"
+
+
+def test_an_opg_order_sent_after_the_open_rolls_to_the_next_session():
+    view = _order_view(submitted_at="2026-11-09T15:00:00+00:00")  # Mon 10:00 ET
+    assert view["effective_session"] == "2026-11-10"
+
+
+def test_a_day_order_staged_on_a_sunday_is_held_for_monday():
+    view = _order_view(time_in_force="day")
+    assert view["effective_session"] == "2026-11-09" and view["session_state"] == "held_for_open"
+
+
+def test_a_working_order_in_its_session_reads_active():
+    view = _order_view(time_in_force="day", submitted_at="2026-11-09T17:00:00+00:00",
+                       )  # Mon 12:00 ET
+    assert machine_api.session_fields(
+        {"time_in_force": "day", "submitted_at": "2026-11-09T17:00:00+00:00", "status": "new"},
+        now=_dt(2026, 11, 9, 17, 5, tzinfo=_tz.utc)) == {
+        "effective_session": "2026-11-09", "session_state": "active"}
+
+
+def test_a_filled_order_is_never_held():
+    view = _order_view(status="filled", filled_qty="52")
+    assert view["session_state"] == "active"
+
+
+def test_the_place_response_carries_the_session_fields(api):
+    client, db, sent = api
+    r = _post(client, _key(db), time_in_force="opg")
+    assert r.status_code == 200
+    assert r.json()["effective_session"] and r.json()["session_state"] in ("held_for_open", "active")
+
+
+# ── the book-wide open-orders read (2026-11-08): who placed what ─────────────
+
+def test_open_orders_accepts_a_portfolio_read_key(api4):
+    client, db, _, _ = api4
+    reader = _key(db, scopes=("portfolio:read",))
+    assert client.get("/api/v1/orders/open", headers=reader).status_code == 200
+    place_only = _key(db, scopes=("orders:place",))
+    assert client.get("/api/v1/orders/open", headers=place_only).status_code == 403
+
+
+def test_open_orders_are_labelled_with_who_placed_them(api4, monkeypatch):
+    from tradehub.portfolio import alpaca_paper
+    from tradehub.workshop import store as workshop_store
+
+    client, db, _, _ = api4
+    mine = _key(db)               # key 1, "mac scripts"
+    theirs = _key(db)             # key 2, also labelled "mac scripts" by the helper
+    orders = [
+        {**BROKER_ORDER, "id": "alpaca-1", "client_order_id": "ext-1-run-1"},
+        {"id": "alpaca-2", "client_order_id": "ext-2-big-1", "symbol": "GLD", "qty": "52",
+         "filled_qty": "0", "side": "sell", "type": "market", "time_in_force": "opg",
+         "status": "accepted", "submitted_at": "2026-11-08T23:00:00+00:00", "filled_avg_price": None},
+        {"id": "alpaca-3", "client_order_id": "idea-50-entry-abc", "symbol": "NVDA", "qty": "1",
+         "filled_qty": "0", "side": "buy", "type": "limit", "time_in_force": "day",
+         "status": "new", "submitted_at": "2026-11-08T20:00:00+00:00", "filled_avg_price": None},
+        {"id": "alpaca-4", "client_order_id": "9f2e-manual", "symbol": "XOM", "qty": "49",
+         "filled_qty": "0", "side": "sell", "type": "stop", "time_in_force": "gtc",
+         "status": "new", "submitted_at": "2026-11-08T19:00:00+00:00", "filled_avg_price": None},
+    ]
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: orders if path == "/v2/orders" else {})
+    workshop_store.add_label(db, "alpaca-3", 50, "hub:idea engine")
+    body = client.get("/api/v1/orders/open", headers=mine).json()
+    by_id = {o["alpaca_order_id"]: o for o in body["orders"]}
+    assert by_id["alpaca-1"]["placed_by"] == "api:mac scripts" and by_id["alpaca-1"]["source"] == "machine"
+    assert by_id["alpaca-2"]["source"] == "machine"  # another key's order, still attributed
+    assert by_id["alpaca-3"]["idea_id"] == 50 and by_id["alpaca-3"]["source"] == "hub"
+    assert by_id["alpaca-4"]["placed_by"] == "unknown" and by_id["alpaca-4"]["source"] == "external"
+
+
 def test_the_group_read_aggregates_children_fills(api, monkeypatch):
     client, db, sent = api
     headers = _key(db)
