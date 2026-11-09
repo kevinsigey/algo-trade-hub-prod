@@ -3,6 +3,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
+import BandCrossings from "@/pages/BandCrossings";
 import {
   gapText, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
@@ -427,6 +428,8 @@ export default function Valuation() {
               +1.0 means the figure the price implies sits one full guide range above the midpoint.
             </p>
           </div>
+
+          <BandCrossings />
 
           <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
             <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
