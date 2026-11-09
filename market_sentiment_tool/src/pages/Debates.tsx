@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
 import { DebateFeed } from "@/components/AgentDebates";
+import ValuationDebates from "@/components/ValuationDebates";
 
 /**
  * Agent debates (TradingAgents), its own tab next to the Workshop (Kevin, 2026-11-02).
@@ -124,6 +125,20 @@ export default function Debates() {
       </div>
 
       <DebateFeed refreshKey={refreshKey} />
+
+      <div className="mt-12 space-y-2 text-sm text-slate-400">
+        <p>
+          Below that sits a second panel with a narrower brief. A valuation debate does not range over the whole
+          stock: it debates <strong className="text-slate-200">the guidance file</strong> — the deterministic fact
+          sheet behind the Valuation tab's bear / base / bull bands is Exhibit A, fixed for every side — and a judge
+          renders a verdict against those bands. Every verdict is graded at +20 and +60 trading days on a
+          peer-relative basis, against both the plain band rule and the proposer's own pick, so the panel has to beat
+          its own controls, not just the market. It is display-only until roughly 40 graded verdicts pass that bar:
+          nothing below feeds a score, an idea, or an order either.
+        </p>
+      </div>
+
+      <ValuationDebates />
     </div>
   );
 }
