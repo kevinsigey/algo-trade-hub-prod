@@ -25,14 +25,16 @@ def tag_id(client_order_id: str | None) -> int | None:
 
 
 def tag_fills(fills: list[dict], client_ids: dict[str, str], labels: dict[str, int | None],
-              titles: dict[int, str]) -> list[dict]:
-    """Add `idea_id` and `idea` (title) to each fill. A relabel beats the tag; an id not in `titles` is manual."""
+              titles: dict[int, str], tags: dict[str, str] | None = None) -> list[dict]:
+    """Add `idea_id` and `idea` (title) to each fill. A relabel beats the tag; an id not in `titles` is manual.
+    `tags` (order id -> thesis tag) rides along as the fill's `tag`, so a manual play's label reaches its lots."""
     out = []
     for f in fills:
         order = f.get("order_id")
         wanted = labels[order] if order in labels else tag_id(client_ids.get(order))
         idea_id = wanted if wanted in titles else None
-        out.append({**f, "idea_id": idea_id, "idea": titles[idea_id] if idea_id is not None else MANUAL})
+        out.append({**f, "idea_id": idea_id, "idea": titles[idea_id] if idea_id is not None else MANUAL,
+                    "tag": (tags or {}).get(order)})
     return out
 
 
@@ -75,8 +77,8 @@ def _num(row: dict, key: str) -> float | None:
     return float(value) if value not in (None, "") else None
 
 
-def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str, dict[str, float]] | None = None
-                   ) -> list[dict]:
+def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str, dict[str, float]] | None = None,
+                   lot_tags: dict[str, dict[str, list[str]]] | None = None) -> list[dict]:
     equity = float(account["equity"])
     rows = []
     for p in positions:
@@ -92,6 +94,7 @@ def positions_view(account: dict, positions: list[dict], open_by_idea: dict[str,
                 "pct_of_book": abs(value * share) / equity * 100 if equity else None,
                 "unrealized_pl": pl * share,
                 "idea": idea,
+                "tags": list((lot_tags or {}).get(p["symbol"], {}).get(idea, [])),
                 "last_price": _num(p, "current_price"),
                 "change_pct": None if _num(p, "change_today") is None else _num(p, "change_today") * 100,
                 "avg_price": _num(p, "avg_entry_price"),
@@ -135,10 +138,14 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
         g = groups.setdefault(symbol, {"symbol": symbol,
                                        "asset": "option" if _OCC.match(symbol) else "stock",
                                        "qty": 0.0, "market_value": 0.0, "unrealized_pl": 0.0,
+                                       "tags": [],
                                        "_pl_seen": False, "_cost": 0.0, "_cost_qty": 0.0,
                                        "_avg_num": 0.0, "_avg_den": 0.0})
         qty = float(r["qty"])
         g["qty"] += qty
+        for tag in r.get("tags") or []:
+            if tag not in g["tags"]:
+                g["tags"].append(tag)
         g["market_value"] += float(r.get("market_value") or 0)
         if r.get("unrealized_pl") is not None:
             g["unrealized_pl"] += float(r["unrealized_pl"])
@@ -160,7 +167,7 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
         out.append({"symbol": g["symbol"], "asset": g["asset"], "qty": g["qty"],
                     "market_value": g["market_value"],
                     "pct_of_equity": g["market_value"] / equity * 100 if equity else None,
-                    "avg_entry": avg,
+                    "avg_entry": avg, "tags": g["tags"],
                     "unrealized_pl": g["unrealized_pl"] if g["_pl_seen"] else None})
     return sorted(out, key=lambda a: -abs(a["market_value"]))
 
@@ -239,6 +246,7 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
         qty = float(f["qty"]) * (1 if f["side"] == "buy" else -1)
         price, at = float(f["price"]), f["transaction_time"]
         book, idea = lots[f["symbol"]], f.get("idea", MANUAL)
+        lot_tag = f.get("tag")
         while qty and book and (book[0][0] > 0) != (qty > 0):
             # A closing fill takes its own idea's oldest lot first, then the oldest lot of any idea.
             at_lot = next((i for i, lot in enumerate(book) if lot[3] == idea), 0)
@@ -256,7 +264,7 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
             if not lot[0]:
                 del book[at_lot]
         if qty:
-            book.append([qty, price, at, idea])
+            book.append([qty, price, at, idea, lot_tag])
     return trades, lots
 
 
@@ -268,10 +276,22 @@ def open_lots(fills: list[dict]) -> dict[str, dict[str, float]]:
     """Open signed quantity per symbol per idea."""
     out: dict[str, dict[str, float]] = {}
     for symbol, book in _fifo(fills)[1].items():
-        for qty, _, _, idea in book:
+        for qty, _, _, idea, _tag in book:
             out.setdefault(symbol, {})
             out[symbol][idea] = out[symbol].get(idea, 0.0) + qty
     return {s: v for s, v in out.items() if v}
+
+
+def open_lot_tags(fills: list[dict]) -> dict[str, dict[str, list[str]]]:
+    """Thesis tags on the lots still open, per symbol per idea (2026-11-08): a tag
+    belongs to the order that opened the lot, so it survives exactly as long as
+    the lot does -- a partial close shrinks the shares, never the label's truth."""
+    out: dict[str, dict[str, list[str]]] = {}
+    for symbol, book in _fifo(fills)[1].items():
+        for _qty, _price, _at, idea, tag in book:
+            if tag and tag not in out.setdefault(symbol, {}).setdefault(idea, []):
+                out[symbol][idea].append(tag)
+    return out
 
 
 def win_rate(trades: list[dict]) -> float | None:
@@ -284,7 +304,7 @@ def open_cost(fills: list[dict]) -> dict[str, dict[str, tuple[float, float]]]:
     """Open signed quantity and average entry price per symbol per idea (the base for protective stops)."""
     out: dict[str, dict] = {}
     for symbol, lots in _fifo(fills)[1].items():
-        for qty, price, _, idea in lots:
+        for qty, price, _, idea, _tag in lots:
             q, cost = out.setdefault(symbol, {}).get(idea, (0.0, 0.0))
             out[symbol][idea] = (q + qty, cost + qty * price)
     return {s: {i: (q, c / q) for i, (q, c) in v.items() if q} for s, v in out.items()}

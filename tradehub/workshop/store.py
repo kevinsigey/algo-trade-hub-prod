@@ -75,8 +75,11 @@ def append_shadow(supa, idea_id: int, rows: list[dict]) -> list[dict]:
     return supa.table(SHADOW).insert([{"idea_id": idea_id, **r} for r in rows]).execute().data
 
 
-def add_label(supa, order_id: str, idea_id: int | None, by: str) -> dict:
-    return supa.table(LABELS).insert({"order_id": order_id, "idea_id": idea_id, "by": by}).execute().data[0]
+def add_label(supa, order_id: str, idea_id: int | None, by: str, tag: str | None = None) -> dict:
+    row = {"order_id": order_id, "idea_id": idea_id, "by": by}
+    if tag is not None:
+        row["tag"] = tag  # the thesis tag (2026-11-08): metadata only, nothing routes by it
+    return supa.table(LABELS).insert(row).execute().data[0]
 
 
 def add_manual_move(supa, book: str, symbol: str, idea_id: int, by: str) -> dict:
@@ -101,6 +104,12 @@ def label_history(supa) -> dict[str, list[dict]]:
 def labels(supa) -> dict[str, int | None]:
     """The current label per order id: the latest relabel wins."""
     return {order: rows[-1]["idea_id"] for order, rows in label_history(supa).items()}
+
+
+def label_tags(supa) -> dict[str, str]:
+    """Order id -> its thesis tag, for the orders that carry one (latest row wins)."""
+    return {order: rows[-1]["tag"] for order, rows in label_history(supa).items()
+            if rows[-1].get("tag")}
 
 
 def create_idea(supa, title: str, plain_words: str) -> dict:

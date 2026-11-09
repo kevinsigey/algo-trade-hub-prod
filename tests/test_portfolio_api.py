@@ -215,6 +215,24 @@ def test_portfolio_attributes_to_published_ideas_only(client_with, monkeypatch):
     assert "Secret idea" not in r.text
 
 
+def test_a_label_tag_surfaces_on_the_resulting_lots(client_with, monkeypatch):
+    """Item 6 (2026-11-08): the tag stored with a machine order rides its fills into
+    the portfolio lots (and the aggregate), so a manual play stays organized."""
+    supa = FakeSupabase()
+    supa.store["ideas"] = list(IDEAS)
+    supa.store["order_labels"] = [{"id": 1, "order_id": "a", "idea_id": 1,
+                                    "by": "api:mac scripts", "tag": "gld-trim", "at": "t"}]
+    monkeypatch.setattr(service, "paper_get", alpaca(fills=TAGGED_FILLS, orders=ORDERS))
+    body = client_with(supa).get("/api/portfolio").json()
+    gld_rows = [p for p in body["positions"] if p["symbol"] == "GLD"]
+    gold = next(p for p in gld_rows if p["idea"] == "Gold when rates rise")
+    assert gold["tags"] == ["gld-trim"]
+    manual = next(p for p in gld_rows if p["idea"] == service.book.MANUAL)
+    assert manual["tags"] == []
+    agg = next(a for a in body["positions_aggregate"] if a["symbol"] == "GLD")
+    assert agg["tags"] == ["gld-trim"]
+
+
 def test_relabel_moves_a_fill(client_with, monkeypatch):
     supa = FakeSupabase()
     supa.store["ideas"] = list(IDEAS)
