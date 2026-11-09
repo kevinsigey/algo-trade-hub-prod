@@ -1434,13 +1434,15 @@ def oil_itm_record(supabase=Depends(get_supabase)) -> dict:
 def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
     """The 15-minute trade rule's paper record (Kevin, 2026-11-05): replay and forward apart.
     Public and fail-soft: an unreadable journal reads as an empty record, never a 500."""
-    from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, record, summarize
+    from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, go_live_bar, record, summarize
 
     try:
         return record(supabase)
     except Exception:  # noqa: BLE001
+        empty = summarize([])["forward"]
         return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
-                "by_series": {}, "pending": 0, "recent": [], "unavailable": True}
+                "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
+                "bar": go_live_bar(empty, empty)}
 
 
 @app.get("/api/oil/hourly-live", tags=["Oil"])

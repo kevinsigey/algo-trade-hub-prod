@@ -57,6 +57,29 @@ describe("FifteenRuleRecord with the fee-netted gate and tracking", () => {
   });
 });
 
+describe("FifteenRuleRecord with the go-live bar on the gated record", () => {
+  it("counts the bar on gated trades and keeps the raw record as the control", async () => {
+    serve({
+      rule: "Buy the side the model beats by 10 points.",
+      prereg_at: "2026-11-07T00:00:00+00:00",
+      ready_trades: 300,
+      replay: stats(49, 0.097),
+      forward: { n: 46, net_per_contract: 0.102, total: 4.71, win_rate: 0.56, low95: -0.018, ready: false, windows: 46 },
+      by_series: {}, pending: 3, recent: [],
+      gate: { rule: "gated", forward: { n: 37, net_per_contract: 0.162, total: 6.01, win_rate: 0.62, low95: 0.032, ready: false, windows: 37 } },
+      bar: { basis: "gated", trades: 37, ready_trades: 300, ready: false, low95: 0.032, windows: 37, pending: 2,
+             control: { basis: "raw", trades: 46, ready: false, low95: -0.018 } },
+    });
+    render(<FifteenRuleRecord />);
+    expect(await screen.findByText(/37\/300 gated trades so far/)).toBeInTheDocument();
+    expect(screen.getByText(/37 of 300 settled gated trades in 37 separate 15-minute windows/)).toBeInTheDocument();
+    expect(screen.getByText(/\+16\.2¢ a contract, win rate 62%/)).toBeInTheDocument();
+    expect(screen.getByText(/low end of its 95% range \(now \+3\.2¢\)/)).toBeInTheDocument();
+    expect(screen.getByText(/2 waiting to settle/)).toBeInTheDocument();
+    expect(screen.getByText(/On the original gross-edge record, kept as a control: 46 trades, \+10\.2¢ a contract, win rate 56%/)).toBeInTheDocument();
+  });
+});
+
 describe("FifteenRuleRecord on a malformed reply", () => {
   it("renders nothing rather than crash", async () => {
     serve({ state: "live" });

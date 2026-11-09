@@ -107,3 +107,36 @@ decision counts by action/reason) and `offsets` (the per-offset aggregate).
 All three fail soft to empty when their tables are unreadable, like the rest
 of the endpoint. The Oil page panel shows the gated record beside the raw one
 and the skipped-window counts; it does not hide the raw record.
+
+## Amendment 2 (2026-11-09): the go-live bar reads the gated record
+
+Kevin's direction, 2026-11-09: *"i agree rebasing on the gated record is
+worth it."* The 2026-11-08 amendment above said, under "What does not
+change", that "the 300-trade go-live bar still reads on that raw forward
+record." **This amendment supersedes that sentence.**
+
+- From this amendment, the go-live bar — 300 settled forward trades, still
+  ahead at the low end of the 95% range (`low95 > 0`) — counts the **gated**
+  record: the net-edge reconstruction (`pick_net`), the trades the live gate
+  would actually have taken. The bar's height (300) and its low95 condition
+  are unchanged; only the record it counts changes.
+- The raw gross-edge record keeps accruing and stays reported exactly as
+  before — forward totals, `by_series`, `by_session`, recent trades — now
+  explicitly as the **control** the gated record is checked against, not as
+  the bar.
+- The count does **not** restart at zero. The gated record is a
+  reconstruction over the same frozen journal history back to `PREREG_AT`,
+  so it already has a settled forward count, and the bar starts from it:
+  **37 settled gated forward trades** at this amendment (live read,
+  2026-11-09: +16.2¢ a contract, win rate 62.2%, low95 +3.2¢; the raw
+  control stood at 46 trades, +10.2¢, low95 −1.8¢).
+- Read side: `/api/oil/fifteen-rule` adds a `bar` object — `basis:
+  "gated"`, the gated forward count against `ready_trades`, its `ready`
+  flag and `low95`, and a `control` sub-object carrying the raw record's
+  count, `ready` flag and `low95`. The Oil page's progress toward the bar
+  (the summary count, the progress bar, and the "copyable once…" sentence)
+  reads the gated basis; the raw record remains on the panel as the
+  control.
+- Nothing else changes: the gate, the reconstruction, the persisted
+  decisions, the per-offset tracking, the `by_session` split, and
+  `PREREG_AT` all stay exactly as the 2026-11-08 amendment froze them.

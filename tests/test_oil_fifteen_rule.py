@@ -215,6 +215,65 @@ def test_record_reads_the_decision_and_offset_tables(monkeypatch):
     assert by[7]["priced"] == 0 and by[7]["n"] == 0 and by[7]["net_per_contract"] is None
 
 
+def test_the_go_live_bar_counts_the_gated_record(monkeypatch):
+    # Amendment 2026-11-09: the bar counts settled GATED trades; the raw record
+    # rides in the bar as the control and is still reported on its own.
+    rows = {("oil_wti_15m", "wti-15m-v2"): [
+        {"target": "a", "probability": 0.63, "payload": {"yes_ask": 0.51, "yes_bid": 0.49}, "frozen_at": "2026-11-13T21:30:00+00:00"},
+        {"target": "g", "probability": 0.615, "payload": {"yes_ask": 0.51, "yes_bid": 0.49}, "frozen_at": "2026-11-13T20:45:00+00:00"},
+    ]}
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {t: 1 for t in targets})
+    out = rule.record(FakeSupa())
+    bar = out["bar"]
+    assert bar["basis"] == "gated"
+    assert bar["trades"] == 1 and bar["trades"] == out["gate"]["forward"]["n"]
+    assert bar["ready_trades"] == rule.READY_TRADES == 300
+    assert bar["ready"] is False and bar["low95"] == out["gate"]["forward"]["low95"]
+    assert bar["control"] == {"basis": "raw", "trades": 2, "ready": False,
+                              "low95": out["forward"]["low95"]}
+    assert out["forward"]["n"] == 2  # the raw control is still reported, untouched
+
+
+def test_the_bar_clears_on_the_gated_record_even_when_the_raw_control_does_not(monkeypatch):
+    # 300 gated winners clear the bar on their own; 3,000 extra gross-only buys
+    # (fee-eaten, all losers) drag the raw control under water. The bar must
+    # follow the gated record, not the control.
+    winners = [{"target": f"w{i}", "probability": 0.63, "payload": {"yes_ask": 0.51, "yes_bid": 0.49},
+                "frozen_at": "2026-11-13T21:30:00+00:00"} for i in range(300)]
+    losers = [{"target": f"l{i}", "probability": 0.615, "payload": {"yes_ask": 0.51, "yes_bid": 0.49},
+               "frozen_at": "2026-11-13T21:30:00+00:00"} for i in range(3000)]
+    rows = {("oil_wti_15m", "wti-15m-v2"): winners + losers}
+    outcomes = {**{f"w{i}": 1 for i in range(300)}, **{f"l{i}": 0 for i in range(3000)}}
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements",
+                        lambda supa, targets: {t: outcomes[t] for t in targets})
+    out = rule.record(FakeSupa())
+    assert out["gate"]["forward"]["n"] == 300 and out["forward"]["n"] == 3300
+    assert out["bar"]["trades"] == 300 and out["bar"]["ready"] is True
+    assert out["forward"]["ready"] is False and out["bar"]["control"]["ready"] is False
+
+
+def test_the_route_fallback_still_carries_the_bar(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from tradehub.api import main
+    from tradehub.api.dependencies import get_supabase
+
+    def boom(*_a, **_k):
+        raise RuntimeError("journal down")
+
+    monkeypatch.setattr(rule.store, "fetch_forecasts", boom)
+    main.app.dependency_overrides[get_supabase] = lambda: None
+    try:
+        body = TestClient(main.app).get("/api/oil/fifteen-rule").json()
+    finally:
+        main.app.dependency_overrides.clear()
+    assert body["unavailable"] is True
+    assert body["bar"]["basis"] == "gated" and body["bar"]["trades"] == 0
+    assert body["bar"]["control"]["basis"] == "raw" and body["bar"]["control"]["trades"] == 0
+
+
 def test_record_returns_by_session_split(monkeypatch):
     # forward trades: one open (Fri 16:30), one closed (Sat 12:00), one open (Wed 18:30)
     # Use dates after PREREG_AT (2026-11-07T00:00:00+00:00)

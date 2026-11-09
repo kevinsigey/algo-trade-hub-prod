@@ -5,11 +5,13 @@ import { getJson } from "@/lib/getJson";
 interface Stats { n: number; net_per_contract: number | null; total: number; win_rate: number | null; low95: number | null; ready: boolean; windows?: number }
 interface Trade { series: string; target: string; frozen_at: string; side: "yes" | "no"; cost: number; model: number; outcome: number; pnl: number }
 interface OffsetStat { offset_min: number; windows: number; priced: number; mean_edge_net: number | null; n: number; net_per_contract: number | null; win_rate: number | null; mean_move_to_settle_bps: number | null; mean_move_to_60m_bps: number | null }
+interface Bar { basis: string; trades: number; ready_trades: number; ready: boolean; low95: number | null; windows?: number; pending?: number; control?: { basis: string; trades: number; ready: boolean; low95: number | null } }
 interface RuleRecord {
   rule: string; prereg_at: string; ready_trades: number; replay: Stats; forward: Stats;
   pending: number; recent: Trade[]; unavailable?: boolean;
   by_session?: { open: Stats; closed: Stats };
   gate?: { rule: string; forward: Stats; by_session?: { open: Stats; closed: Stats } };
+  bar?: Bar;
   decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
   offsets?: { by_offset: OffsetStat[] };
 }
@@ -28,8 +30,10 @@ function etShort(iso: string): string {
 /**
  * The 15-minute trade rule's paper record (Kevin, 2026-11-05: "develop its own winning strategy that can be
  * copied easily, and once it's legitimate we can automate it"). One plain rule, fixed before its forward
- * record began; only trades after that count toward the go-live bar. The replay that suggested the rule is
- * shown apart, because a rule always looks good on the data it was picked from.
+ * record began; only trades after that count toward the go-live bar. Since the 2026-11-09 amendment the
+ * bar counts the fee-gated record; the original gross-edge record stays on the panel as the control. The
+ * replay that suggested the rule is shown apart, because a rule always looks good on the data it was
+ * picked from.
  */
 export function FifteenRuleRecord() {
   const [rec, setRec] = useState<RuleRecord | null>(null);
@@ -47,12 +51,14 @@ export function FifteenRuleRecord() {
   // A reply without the record's shape (an older server, a proxy page) hides the box rather than crash the page.
   if (!rec?.forward || !rec.replay) return null;
   const f = rec.forward;
-  const pct = Math.min(100, (f.n / rec.ready_trades) * 100);
+  const bar = rec.bar;
+  const gf = rec.gate?.forward;
+  const pct = Math.min(100, ((bar?.trades ?? f.n) / rec.ready_trades) * 100);
   return (
     <details className="group mt-5 border-t border-slate-800 pt-4">
       <summary className="cursor-pointer text-sm font-semibold text-slate-200 hover:text-white">
         The trade rule, on paper{" "}
-        <span className="font-normal text-slate-400">· {f.n}/{rec.ready_trades} trades so far</span>
+        <span className="font-normal text-slate-400">· {bar ? `${bar.trades}/${rec.ready_trades} gated trades so far` : `${f.n}/${rec.ready_trades} trades so far`}</span>
       </summary>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-300">{rec.rule}</p>
       <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-1 tabular-nums">
@@ -68,14 +74,23 @@ export function FifteenRuleRecord() {
         )}
       </div>
       <div className="mt-2">
-        <div className="h-1.5 max-w-sm rounded-full bg-slate-800" role="img" aria-label={`${f.n} of ${rec.ready_trades} forward trades`}>
+        <div className="h-1.5 max-w-sm rounded-full bg-slate-800" role="img" aria-label={bar ? `${bar.trades} of ${rec.ready_trades} settled gated trades` : `${f.n} of ${rec.ready_trades} forward trades`}>
           <div className="h-full rounded-full bg-emerald-400/80" style={{ width: `${pct}%` }} />
         </div>
-        <p className="mt-1 text-xs text-slate-400">
-          {f.n} of {rec.ready_trades} forward trades{f.windows != null ? ` in ${f.windows} separate 15-minute windows` : ""}. Copyable once it has {rec.ready_trades} and is still ahead at the
-          low end of its 95% range{f.low95 != null ? ` (now ${c(f.low95)})` : ""}.{f.ready ? " It has cleared that bar." : ""}
-          {rec.pending ? ` ${rec.pending} waiting to settle.` : ""}
-        </p>
+        {bar ? (
+          <p className="mt-1 text-xs text-slate-400">
+            {bar.trades} of {rec.ready_trades} settled gated trades{bar.windows != null ? ` in ${bar.windows} separate 15-minute windows` : ""}
+            {gf ? <> — {c(gf.net_per_contract ?? 0)} a contract, win rate {Math.round((gf.win_rate ?? 0) * 100)}%</> : ""}. Copyable once the gated record has {rec.ready_trades} and is still ahead at the
+            low end of its 95% range{bar.low95 != null ? ` (now ${c(bar.low95)})` : ""}.{bar.ready ? " It has cleared that bar." : ""}
+            {(bar.pending ?? rec.pending) ? ` ${(bar.pending ?? rec.pending)} waiting to settle.` : ""}
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-slate-400">
+            {f.n} of {rec.ready_trades} forward trades{f.windows != null ? ` in ${f.windows} separate 15-minute windows` : ""}. Copyable once it has {rec.ready_trades} and is still ahead at the
+            low end of its 95% range{f.low95 != null ? ` (now ${c(f.low95)})` : ""}.{f.ready ? " It has cleared that bar." : ""}
+            {rec.pending ? ` ${rec.pending} waiting to settle.` : ""}
+          </p>
+        )}
       </div>
       {rec.by_session && (
         <div className="mt-3">
@@ -105,7 +120,14 @@ export function FifteenRuleRecord() {
           <p className="mt-1 text-xs text-slate-400">A real edge should hold while futures trade; wins only in closed hours can come from stale prices.</p>
         </div>
       )}
-      {rec.gate?.forward && (
+      {rec.bar ? (
+        <p className="mt-3 text-xs text-slate-400">
+          On the original gross-edge record, kept as a control:{" "}
+          {f.n === 0
+            ? "no forward trades yet."
+            : `${f.n} trades, ${c(f.net_per_contract ?? 0)} a contract, win rate ${Math.round((f.win_rate ?? 0) * 100)}%.`}
+        </p>
+      ) : rec.gate?.forward && (
         <p className="mt-3 text-xs text-slate-400">
           With the fee netted out of the edge test (the live gate):{" "}
           {rec.gate.forward.n === 0
