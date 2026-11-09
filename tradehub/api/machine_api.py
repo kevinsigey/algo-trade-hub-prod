@@ -212,6 +212,224 @@ def broker_orders(book: str | None = None) -> dict[str, dict]:
     return {o["client_order_id"]: o for o in page if o.get("client_order_id")}
 
 
+def plan_chunks(total_qty: int, price: float | None, key: dict) -> list[int]:
+    """Child quantities for a split (parent) order: greedy chunks that each satisfy
+    BOTH per-order caps -- max_qty, and max_notional at the order's pricing basis
+    (limit at its limit, market at the latest trade). An empty plan means a single
+    share already breaks the notional cap: unplaceable, stated rather than chunked
+    into a child the caps would refuse."""
+    per = int(key["max_qty"])
+    if price:
+        per = min(per, int(float(key["max_notional"]) // price))
+    if per < 1:
+        return []
+    out, left = [], int(total_qty)
+    while left > 0:
+        take = min(per, left)
+        out.append(take)
+        left -= take
+    return out
+
+
+def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dict:
+    """The placement validators, shared verbatim by POST /api/v1/orders and the
+    preflight route (2026-11-08): one code path, so a dry run can never promise
+    what the real call would refuse. `spec` carries the order fields (symbol, qty,
+    side, order_type, time_in_force, limit_price, stop_price, split); qty is the
+    TOTAL for a split, whose per-child caps the returned chunk plan enforces.
+
+    Returns {refusal, price, chunks, checks, symbol, book, daily_used, breaker}:
+    `refusal` is the (outcome, status, detail) the live route audits and raises, or
+    None when the order may proceed; `checks` is the same walk, one entry per gate,
+    for the preflight response. A dry run never fires the breaker notice -- a
+    question must not page anyone."""
+    from tradehub.portfolio import books, breakers
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_price
+    from tradehub.workshop.spec import TICKER
+
+    checks: list[dict] = []
+    out: dict = {"refusal": None, "price": None, "chunks": [], "checks": checks,
+                 "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None}
+
+    def gate(name: str, ok: bool, detail: str, refusal: tuple | None = None) -> bool:
+        checks.append({"name": name, "ok": ok, "detail": detail, "blocking": True})
+        if not ok:
+            out["refusal"] = refusal
+        return ok
+
+    book = out["book"]
+    if not gate("book", book in books.names(), f"orders land on the {book} book",
+                ("book", 422, f"this key is bound to an unknown book: {book}")):
+        return out
+    if not gate("machine_switch", machine_orders_enabled(),
+                "machine orders are switched on" if machine_orders_enabled()
+                else "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)",
+                ("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")):
+        return out
+    symbol = str(spec.get("symbol") or "").strip().upper()
+    out["symbol"] = symbol
+    if not gate("symbol", bool(TICKER.match(symbol)), f"{symbol} is a ticker",
+                ("validation", 422, f"not a ticker: {spec.get('symbol')!r}")):
+        return out
+    side = spec.get("side")
+    if not gate("side", side in ("buy", "sell"), "side is buy or sell",
+                ("validation", 422, "side must be buy or sell")):
+        return out
+    order_type, tif = spec.get("order_type") or "market", spec.get("time_in_force") or "day"
+    limit_price, stop_price = spec.get("limit_price"), spec.get("stop_price")
+    split = bool(spec.get("split"))
+    qty = int(spec.get("qty") or 0)
+    shape: tuple | None = None
+    if order_type not in ("market", "limit", "stop"):
+        shape = ("order_type", 422, "machine orders are market, limit or stop only")
+    elif split and order_type == "stop":
+        shape = ("validation", 422, "a protective stop is placed as one order; split is for market and limit orders")
+    elif order_type == "stop":
+        if tif != "gtc":
+            shape = ("order_type", 422, "a machine stop is good-till-cancelled: time_in_force must be gtc")
+        elif stop_price is None:
+            shape = ("order_type", 422, "a stop order needs a stop_price")
+        elif limit_price is not None:
+            shape = ("order_type", 422, "limit_price is for limit orders")
+    else:
+        if tif not in ("opg", "cls", "day"):
+            shape = ("validation", 422, "time_in_force must be opg, cls or day")
+        elif stop_price is not None:
+            shape = ("order_type", 422, "stop_price is for stop orders")
+        elif order_type == "limit" and limit_price is None:
+            shape = ("order_type", 422, "a limit order needs a limit_price")
+        elif order_type == "market" and limit_price is not None:
+            shape = ("order_type", 422, "limit_price is for limit orders")
+    if not gate("order_shape", shape is None,
+                "the order shape is one the machine door takes", shape):
+        return out
+    if split:
+        gate("max_qty", True, f"the total {qty} is chunked under the per-order cap of {key['max_qty']}")
+    elif not gate("max_qty", qty <= int(key["max_qty"]),
+                  f"{qty} within the per-order cap of {key['max_qty']}",
+                  ("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")):
+        return out
+    price: float | None = None
+    if order_type == "stop":
+        try:
+            capacity = stop_capacity(symbol, side, book=book)
+        except AccountNotConnected:
+            gate("position", False, "the paper account is not connected",
+                 ("account", 424, "the paper account is not connected"))
+            return out
+        except Exception:  # noqa: BLE001 -- an unverifiable position is an unplaceable stop
+            gate("position", False, "positions could not be read; the stop cannot be checked",
+                 ("position_unverified", 424, "positions could not be read; the stop cannot be checked"))
+            return out
+        if not gate("position", qty <= capacity,
+                    f"{qty} within the {capacity} uncovered shares held in {symbol}",
+                    ("position", 422,
+                     f"a {side} stop for {qty} exceeds the {capacity} uncovered shares held in {symbol}")):
+            return out
+        price = float(stop_price)  # the cap prices a stop at its stop, like a limit at its limit
+        checks.append({"name": "pricing", "ok": True, "blocking": True,
+                       "detail": f"priced at the stop {price}"})
+    elif order_type == "limit":
+        price = float(limit_price)  # the cap prices a limit at its limit: no estimate involved
+        checks.append({"name": "pricing", "ok": True, "blocking": True,
+                       "detail": f"priced at the limit {price}"})
+    else:
+        try:
+            price = float(latest_price(symbol))
+        except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
+            gate("pricing", False, f"no latest price for {symbol}; the notional cap cannot be checked",
+                 ("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked"))
+            return out
+        checks.append({"name": "pricing", "ok": True, "blocking": True,
+                       "detail": f"priced at the latest trade {price}"})
+    out["price"] = price
+    if split:
+        chunks = plan_chunks(qty, price, key)
+        if not gate("max_notional", bool(chunks),
+                    f"{len(chunks)} children, each under the ${float(key['max_notional']):,.0f} cap",
+                    ("max_notional", 429,
+                     f"cap exceeded: one share at {price} already exceeds max_notional "
+                     f"${float(key['max_notional']):,.0f} for this key")):
+            return out
+        out["chunks"] = chunks
+    else:
+        if not gate("max_notional", price * qty <= float(key["max_notional"]),
+                    f"${price * qty:,.0f} under the ${float(key['max_notional']):,.0f} per-order cap",
+                    ("max_notional", 429,
+                     f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")):
+            return out
+        out["chunks"] = [qty]
+    used = placed_today(supa, key["id"])
+    out["daily_used"] = used
+    planned = len(out["chunks"])
+    if not gate("daily_cap", used + planned <= int(key["daily_cap"]),
+                f"{used} placed today, {planned} planned, cap {key['daily_cap']}",
+                ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
+        return out
+    breaker = breakers.check(supa, book)
+    out["breaker"] = breaker
+    if breaker["tripped"] and order_type != "stop":  # a stop is already fenced to protect held shares
+        try:
+            closing = breakers.closes_position(side, qty, position_qty(symbol, book=book))
+        except Exception:  # noqa: BLE001 -- can't tell it's a closing order, so it isn't one
+            gate("circuit_breaker", False, "positions could not be read; the circuit breaker cannot pass this order",
+                 ("position_unverified", 424, "positions could not be read; the circuit breaker cannot pass this order"))
+            return out
+        if not closing:
+            if not dry_run:
+                breakers.notify(supa, book, breaker)
+            gate("circuit_breaker", False, f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass.",
+                 ("circuit_breaker", 409, f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass."))
+            return out
+    gate("circuit_breaker", True,
+         "the book's circuit breaker is not tripped" if not breaker["tripped"]
+         else "the breaker is tripped but this order closes or protects a position")
+    return out
+
+
+def group_events(supa, key_id: int, namespaced_group: str, caller_group_id: str) -> list[dict]:
+    """The placed events of one split group, child order first to last. Membership is
+    the `group:<caller id>` marker the placement wrote on each child's audit row,
+    cross-checked against the child's namespaced id shape -- so one caller's `trim`
+    can never swallow another's `trim-2`."""
+    out = []
+    for event in placed_events(supa, key_id):
+        cid = event.get("client_order_id") or ""
+        if not cid.startswith(namespaced_group + "-"):
+            continue
+        if not cid[len(namespaced_group) + 1:].isdigit():
+            continue
+        if not (event.get("detail") or "").startswith(f"group:{caller_group_id}"):
+            continue
+        out.append(event)
+    return sorted(out, key=lambda e: int(e["client_order_id"].rsplit("-", 1)[1]))
+
+
+def rollup_status(views: list[dict]) -> str:
+    """One status for a split group from its children's broker views."""
+    total = sum(v.get("qty") or 0 for v in views)
+    filled = sum(v.get("filled_qty") or 0 for v in views)
+    if total and filled >= total:
+        return "filled"
+    if filled > 0:
+        return "partially_filled"
+    statuses = [v.get("status") for v in views]
+    if any(s in OPEN_STATUSES for s in statuses):
+        return "open"
+    if statuses and len(set(statuses)) == 1:
+        return statuses[0]
+    return "unknown" if not statuses else "canceled"
+
+
+def weighted_fill_price(views: list[dict]) -> float | None:
+    """The group's volume-weighted fill price; None until something has filled."""
+    filled = sum(v.get("filled_qty") or 0 for v in views)
+    if not filled:
+        return None
+    return sum((v.get("filled_qty") or 0) * v["filled_avg_price"]
+               for v in views if v.get("filled_avg_price") is not None) / filled
+
+
 def placed_today(supa, key_id: int, *, now: datetime | None = None) -> int:
     """Today's placements for the daily cap, counted from the audit trail itself (the ET
     trading day): the counter and the record are the same rows, so they cannot disagree."""
