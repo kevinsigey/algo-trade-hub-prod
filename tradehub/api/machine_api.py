@@ -216,6 +216,44 @@ def session_fields(order: dict, *, now: datetime | None = None) -> dict:
             "session_state": "held_for_open" if held else "active"}
 
 
+def _leg_readback(order: dict, num) -> dict:
+    """The combo read-back (2026-11-08): per-leg fills, the `expected_leg_fills`
+    echo of what the placement requested (parent qty x each leg's ratio), and a
+    leg_state. A parent whose legs are out of sync with its own fill -- the parent
+    claims contracts a leg never delivered -- reads leg_state/status_warning
+    "partial_leg_fill", never a plain filled: the Idea 50 lesson, and the IBKR
+    combo-quantity lesson, is that the legs are the truth, not the headline."""
+    parent_qty = num(order.get("qty"))
+    parent_filled = num(order.get("filled_qty")) or 0
+    views, expected = [], []
+    desync, all_filled = False, True
+    for leg in order.get("legs") or []:
+        ratio = num(leg.get("ratio_qty")) or 1
+        leg_qty = parent_qty * ratio if parent_qty is not None else num(leg.get("qty"))
+        leg_filled = num(leg.get("filled_qty"))
+        views.append({"symbol": leg.get("symbol"), "side": leg.get("side"),
+                      "ratio_qty": ratio, "position_intent": leg.get("position_intent"),
+                      "status": leg.get("status"), "qty": leg_qty,
+                      "filled_qty": leg_filled,
+                      "filled_avg_price": num(leg.get("filled_avg_price"))})
+        expected.append({"symbol": leg.get("symbol"), "side": leg.get("side"),
+                         "ratio_qty": ratio, "qty": leg_qty})
+        if leg_filled is not None and abs(leg_filled - parent_filled * ratio) > 1e-9:
+            desync = True
+        if leg_qty is None or leg_filled is None or leg_filled < leg_qty:
+            all_filled = False
+    if desync and parent_filled > 0:
+        state = "partial_leg_fill"
+    elif all_filled:
+        state = "complete"
+    else:
+        state = "pending"
+    out = {"legs": views, "expected_leg_fills": expected, "leg_state": state}
+    if state == "partial_leg_fill":
+        out["status_warning"] = "partial_leg_fill"
+    return out
+
+
 def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
     """One broker order, normalized for the staged-orders views: what it is, what it
     costs, how much has filled -- the fields a staged book is checked against."""
@@ -225,7 +263,7 @@ def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
         except (TypeError, ValueError):
             return None
 
-    return {"alpaca_order_id": order.get("id"), "client_order_id": order.get("client_order_id"),
+    view = {"alpaca_order_id": order.get("id"), "client_order_id": order.get("client_order_id"),
             "symbol": order.get("symbol"), "side": order.get("side"),
             "type": order.get("type"), "time_in_force": order.get("time_in_force"),
             "qty": num(order.get("qty")), "filled_qty": num(order.get("filled_qty")),
@@ -233,6 +271,9 @@ def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
             "status": order.get("status"), "submitted_at": order.get("submitted_at"),
             "filled_avg_price": num(order.get("filled_avg_price")),
             **session_fields(order, now=now)}
+    if order.get("legs"):  # a combo carries its legs or it is not fully read
+        view.update(_leg_readback(order, num))
+    return view
 
 
 _MACHINE_ID = re.compile(r"^ext-(\d+)-(?:stop-)?")
