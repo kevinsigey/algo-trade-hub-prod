@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from tradehub.gaps import logic
-from tradehub.gaps.run import RUNS, SNAPSHOTS, all_positions
+from tradehub.gaps.run import RUNS, SNAPSHOTS, all_positions, entries_enabled
 
 TOP_GAPS = 8
 NEAR_MISSES = 25
@@ -72,7 +72,7 @@ def desk(supa, now: datetime) -> dict:
     positions = all_positions(supa)
     current = (supa.table(SNAPSHOTS).select("*").eq("taken_at", latest).execute().data or []) if latest else []
     known = [r for r in current if r.get("gap_pts") is not None]
-    return {"as_of": latest, "started_at": started,
+    return {"as_of": latest, "started_at": started, "entries_paused": not entries_enabled(supa),
             "evidence": logic.evidence_status(days=days, pairs=len(pairs)), "grade": logic.grade(pairs),
             "ledger": logic.summarize_ledger(positions),
             "ledger_by_category": ledger_by_category(positions),

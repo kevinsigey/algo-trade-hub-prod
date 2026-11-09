@@ -92,8 +92,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 67 | `20261109000004_fifteen_shadow.sql` |
 | 68 | `20261109000004_valuation_phase1.sql` |
 | 69 | `20261109000004_portfolio_check.sql` |
+| 70 | `20261109000005_gap_pause.sql` |
 
-**Watermark: `20261109000004_fifteen_shadow.sql`**
+**Watermark: `20261109000005_gap_pause.sql`**
 
 ## How to record a new one
 
