@@ -130,9 +130,10 @@ def tagged_fills(supa, public: bool = True, book_name: str | None = None) -> tup
         client_ids = {}
     try:
         labels, titles = workshop_store.labels(supa), _titles(supa, public)
+        tags = workshop_store.label_tags(supa)
     except Exception:  # noqa: BLE001
-        labels, titles = {}, {}
-    return book.tag_fills(fills, client_ids, labels, titles), client_ids
+        labels, titles, tags = {}, {}, {}
+    return book.tag_fills(fills, client_ids, labels, titles, tags), client_ids
 
 
 @_with_book
@@ -167,9 +168,10 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
     try:
         fills = tagged_fills(supa, book_name=name)[0]
         trades, lots = book.closed_trades(fills), book.open_lots(fills)
+        lot_tags = book.open_lot_tags(fills)
     except Exception:  # noqa: BLE001
-        trades, lots = None, None
-    rows = book.positions_view(account, positions, lots)
+        trades, lots, lot_tags = None, None, None
+    rows = book.positions_view(account, positions, lots, lot_tags)
     score = book.scoreboard(snaps)
     score["equity"] = float(account["equity"])
     record = _record_account(name)

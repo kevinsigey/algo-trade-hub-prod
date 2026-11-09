@@ -870,6 +870,42 @@ def test_the_place_response_carries_the_session_fields(api):
     assert r.json()["effective_session"] and r.json()["session_state"] in ("held_for_open", "active")
 
 
+# ── thesis tags (2026-11-08): a manual play keeps its label end to end ───────
+
+def test_a_tag_is_stored_echoed_and_shown_on_reads(api4):
+    client, db, _, _ = api4
+    headers = _key(db)
+    r = _post(client, headers, tag="gld-trim")
+    assert r.status_code == 200 and r.json()["tag"] == "gld-trim"
+    assert db.db["order_labels"][0]["tag"] == "gld-trim"
+    listed = client.get("/api/v1/orders", headers=headers).json()["orders"]
+    assert listed[0]["tag"] == "gld-trim"
+    one = client.get("/api/v1/orders/run-1", headers=headers).json()
+    assert one["tag"] == "gld-trim"
+
+
+def test_an_untagged_order_reads_tag_none(api4):
+    client, db, _, _ = api4
+    headers = _key(db)
+    assert _post(client, headers).status_code == 200
+    assert client.get("/api/v1/orders", headers=headers).json()["orders"][0]["tag"] is None
+
+
+def test_a_tag_with_bad_characters_or_length_dies_at_the_schema(api):
+    client, db, sent = api
+    headers = _key(db)
+    for tag in ("gold trim", "bang!", "-leading-dash", "x" * 25, ""):
+        assert _post(client, headers, tag=tag).status_code == 422, tag
+    assert sent == []
+
+
+def test_a_split_carries_the_tag_to_every_child(api):
+    client, db, sent = api
+    r = _post(client, _key(db), qty=208, split=True, client_order_id="trim", tag="gld-trim")
+    assert r.status_code == 200 and r.json()["tag"] == "gld-trim"
+    assert [row["tag"] for row in db.db["order_labels"]] == ["gld-trim"] * 3
+
+
 # ── the book-wide open-orders read (2026-11-08): who placed what ─────────────
 
 def test_open_orders_accepts_a_portfolio_read_key(api4):

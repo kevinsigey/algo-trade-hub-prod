@@ -1889,6 +1889,10 @@ class _MachineOrderIn(BaseModel):
     # A parent order (2026-11-08): qty is the TOTAL and the server chunks it under
     # the key's caps, placing children <caller id>-1..n as one logical order.
     split: bool = False
+    # A thesis tag (2026-11-08): a short slug stored with the order's label and
+    # surfaced on the resulting portfolio lots. Metadata only -- it never affects
+    # caps, routing or the ext- namespacing.
+    tag: str | None = Field(default=None, max_length=24, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 @app.post("/api/v1/orders", tags=["Machine API"])
@@ -1938,7 +1942,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         try:
             from tradehub.workshop import store as workshop_store
 
-            workshop_store.add_label(supabase, order_id, body.idea_id, f"api:{key['label']}")
+            workshop_store.add_label(supabase, order_id, body.idea_id, f"api:{key['label']}",
+                                     tag=body.tag)
         except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
             return "label failed"
         return None
@@ -1960,7 +1965,14 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             refused("rejected", 422, str(exc))
         machine_keys.record_event(supabase, key["id"], route, "placed",
                                   detail=label(order["id"]), client_order_id=client_order_id)
-        return {"order": order, "client_order_id": client_order_id, "placed_by": f"api:{key['label']}"}
+        from datetime import datetime, timezone
+
+        session = machine_api.session_fields(
+            {**order, "time_in_force": body.time_in_force,
+             "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
+             "status": order.get("status", "accepted")})
+        return {"order": order, "client_order_id": client_order_id,
+                "placed_by": f"api:{key['label']}", "tag": body.tag, **session}
 
     # A parent order: the server chunks the total under the key's caps and places
     # the children as one logical order. A child the broker already has (a retry of
@@ -2019,8 +2031,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                            "type": body.order_type, "time_in_force": body.time_in_force,
                            "qty": str(chunks[cid]), "filled_qty": "0", "status": "accepted",
                            "submitted_at": event["at"]}
-    return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker),
-            "client_order_id": namespaced, "placed_by": f"api:{key['label']}"}
+    return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker,
+                                         _machine_label_tags(supabase)),
+            "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag}
 
 
 @app.post("/api/v1/orders/preflight", tags=["Machine API"])
@@ -2136,23 +2149,39 @@ def get_machine_portfolio(book: str | None = None, authorization: str | None = H
 # ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
 # audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
 # a 403 -- the API does not confirm the order exists.
-def _machine_order_view(event: dict, order: dict | None) -> dict:
+def _machine_label_tags(supabase) -> dict:
+    """Order id -> thesis tag, for the machine views. Enrichment only: a labels
+    read that fails must never fail the order read it decorates."""
+    try:
+        from tradehub.workshop import store as workshop_store
+
+        return workshop_store.label_tags(supabase)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _machine_order_view(event: dict, order: dict | None, tag: str | None = None) -> dict:
     if order is None:
         return {"client_order_id": event["client_order_id"], "status": "unknown",
-                "event_id": event["id"], "placed_at": event["at"]}
+                "event_id": event["id"], "placed_at": event["at"], "tag": tag}
     from tradehub.api.machine_api import broker_order_view
 
     return {**broker_order_view(order), "client_order_id": event["client_order_id"],
-            "event_id": event["id"], "placed_at": event["at"]}
+            "event_id": event["id"], "placed_at": event["at"], "tag": tag}
 
 
-def _machine_group_view(caller_group_id: str, namespaced: str, events: list, broker: dict) -> dict:
+def _machine_group_view(caller_group_id: str, namespaced: str, events: list, broker: dict,
+                        tags: dict | None = None) -> dict:
     """One split group as ONE logical order (2026-11-08): aggregate filled quantity,
     the volume-weighted fill price, and the rolled-up status, with the per-child
     views riding along as the breakdown."""
     from tradehub.api import machine_api
 
-    views = [_machine_order_view(e, broker.get(e["client_order_id"])) for e in events]
+    def _tag(order):
+        return (tags or {}).get(order.get("id")) if order else None
+
+    views = [_machine_order_view(e, broker.get(e["client_order_id"]),
+                                 _tag(broker.get(e["client_order_id"]))) for e in events]
     return {"client_order_id": namespaced, "group_id": caller_group_id, "is_group": True,
             "status": machine_api.rollup_status(views),
             "symbol": views[0].get("symbol") if views else None,
@@ -2187,7 +2216,11 @@ def list_machine_orders(limit: int = 50, before: int | None = None, status: str 
         reachable = True
     except AccountNotConnected:
         broker, reachable = {}, False
-    views = [_machine_order_view(e, broker.get(e["client_order_id"])) for e in events]
+    tags = _machine_label_tags(supabase)
+    views = [_machine_order_view(e, broker.get(e["client_order_id"]),
+                                 tags.get(broker[e["client_order_id"]].get("id"))
+                                 if broker.get(e["client_order_id"]) else None)
+             for e in events]
     for event, view in zip(events, views):  # a split child names its parent group
         detail = event.get("detail") or ""
         if detail.startswith("group:"):
@@ -2212,13 +2245,21 @@ def list_open_orders(book: str | None = None, authorization: str | None = Header
         raise HTTPException(status_code=503, detail="database unavailable")
     key = machine_api.authenticate(supabase, authorization)
     machine_api.check_rate_limit(key)
-    machine_api.require_scope(supabase, key, "orders:read", "GET /api/v1/orders/open")
+    # The staged book is a portfolio read as much as an order read (2026-11-08):
+    # a key holding portfolio:read sees every resting order on its book, each
+    # labelled with who placed it, so two readers never collide blind.
+    if "orders:read" not in key.get("scopes", []) and "portfolio:read" not in key.get("scopes", []):
+        machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/open",
+                                  "refused:scope", detail="needs orders:read or portfolio:read")
+        raise HTTPException(status_code=403,
+                            detail="this key lacks the orders:read or portfolio:read scope")
     book = machine_api.resolve_book(supabase, key, book, "GET /api/v1/orders/open")
     try:
         orders = machine_api.open_broker_orders(book=book)
         reachable = True
     except AccountNotConnected:
         orders, reachable = [], False
+    orders = machine_api.attribute_orders(supabase, orders)
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/open", "read")
     return {"orders": orders, "broker_reachable": reachable}
 
@@ -2252,14 +2293,17 @@ def get_machine_order(client_order_id: str, authorization: str | None = Header(N
             broker = {}
         machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}", "read",
                                   client_order_id=namespaced)
-        return _machine_group_view(caller_form, namespaced, children, broker)
+        return _machine_group_view(caller_form, namespaced, children, broker,
+                                   _machine_label_tags(supabase))
     try:
         broker = machine_api.broker_orders(book=machine_api.key_book(key))
     except AccountNotConnected:
         broker = {}
     machine_keys.record_event(supabase, key["id"], "GET /api/v1/orders/{id}", "read",
                               client_order_id=namespaced)
-    return _machine_order_view(event, broker.get(namespaced))
+    order = broker.get(namespaced)
+    tag = _machine_label_tags(supabase).get(order.get("id")) if order else None
+    return _machine_order_view(event, order, tag)
 
 
 @app.delete("/api/v1/orders/{client_order_id}", tags=["Machine API"])
