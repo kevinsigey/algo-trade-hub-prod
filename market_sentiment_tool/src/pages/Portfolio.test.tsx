@@ -411,3 +411,65 @@ describe("Manual actions box", () => {
     expect(calls.some((c) => c.includes("POST") && c.includes("/manual-actions/7/resolve"))).toBe(true);
   });
 });
+
+describe("Portfolio check card", () => {
+  const CARD = {
+    book: "main", as_of: "2026-11-09T19:00:00Z", equity: 1050000, cash: 150000,
+    cash_pct: 14.29, invested: 900000,
+    sleeves: [
+      { id: "t4_ballast", label: "T4 ballast (W18 core)", weight_pct: 51.89, sleeve_max_pct: null,
+        exit_only: false, status: "ok", correlation_to_book: 0.42,
+        members: [
+          { symbol: "GLD", weight_pct: 13.0, target_pct: 11, max_pct: 12, min_pct: 2, status: "over" },
+          { symbol: "XLP", weight_pct: 5.56, target_pct: null, max_pct: 8, min_pct: 2, status: "ok" },
+        ] },
+      { id: "t8_ai", label: "T8 AI winners core", weight_pct: 6.0, sleeve_max_pct: 10,
+        exit_only: false, status: "ok", correlation_to_book: 0.83,
+        members: [{ symbol: "NVDA", weight_pct: 1.0, target_pct: 1.67, max_pct: null, min_pct: null, status: "ok" }] },
+      { id: "ibit", label: "IBIT BTC sleeve", weight_pct: 3.78, sleeve_max_pct: null,
+        exit_only: true, status: "ok", correlation_to_book: null,
+        members: [{ symbol: "IBIT", weight_pct: 3.78, target_pct: null, max_pct: null, min_pct: null, status: "ok" }] },
+    ],
+    unassigned: [],
+    clusters: {
+      rates: { label: "Rates factor", pct: 16.67, with_flagged_pct: 29.67 },
+      ai_complex: { label: "AI complex", pct: 7.89 },
+      gold: { label: "Gold", pct: 13.0 },
+    },
+    recent_checks: [
+      { at: "2026-11-09T18:00:00Z", source: "machine_preflight", symbol: "GLD", outcome: "block",
+        detail: "GLD would be 13.5% of invested after this order, over GLD's cap of 12%" },
+      { at: "2026-11-09T17:00:00Z", source: "machine_preflight", symbol: "XLP", outcome: "pass",
+        detail: "portfolio check passes" },
+    ],
+    targets_updated_at: "2026-11-09T12:00:00Z", series_refreshed_at: null, unpriced: [],
+  };
+
+  it("renders sleeve weights against caps, clusters, cash and recent outcomes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/portfolio-check")) return new Response(JSON.stringify(CARD), { status: 200 });
+      if (url.includes("/api/portfolio/manual-actions")) return new Response(JSON.stringify({ book: "main", actions: [] }), { status: 200 });
+      if (url.includes("/api/portfolio/books")) return new Response(JSON.stringify({ books: [] }), { status: 200 });
+      if (url.includes("/api/portfolio")) {
+        return new Response(JSON.stringify(payload({
+          state: "live",
+          positions: [{ symbol: "GLD", qty: 310, side: "long", market_value: 117000, pct_of_book: 13, unrealized_pl: 0, idea: null }],
+        })), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText("Portfolio check")).toBeInTheDocument();
+    expect(screen.getByText("GLD 13.0%")).toBeInTheDocument();
+    expect(screen.getByText(/target 11% · floor 2% · cap 12%/)).toBeInTheDocument();
+    expect(screen.getByText("Rates factor")).toBeInTheDocument();
+    expect(screen.getByText("16.7%")).toBeInTheDocument();
+    // "Cash" also labels the account rail's row; the card's figure is the check.
+    expect(screen.getByText("14.3%")).toBeInTheDocument();
+    expect(screen.getByText("block")).toBeInTheDocument();
+    expect(screen.getByText(/over GLD's cap of 12%/)).toBeInTheDocument();
+    expect(screen.getByText(/corr 0.83 to book/)).toBeInTheDocument();
+    expect(screen.getByText(/exit-only/)).toBeInTheDocument();
+  });
+});

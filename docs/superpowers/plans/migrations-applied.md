@@ -91,6 +91,7 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 66 | `20261109000003_oil_picker_v2.sql` |
 | 67 | `20261109000004_fifteen_shadow.sql` |
 | 68 | `20261109000004_valuation_phase1.sql` |
+| 69 | `20261109000004_portfolio_check.sql` |
 
 **Watermark: `20261109000004_fifteen_shadow.sql`**
 

@@ -452,7 +452,7 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     checks: list[dict] = []
     out: dict = {"refusal": None, "price": None, "chunks": [], "checks": checks,
                  "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None,
-                 "option": None,
+                 "option": None, "portfolio_check": None,
                  "exit": {"is_exit": False, "bypassed": [], "claimed": spec.get("exit_claim"),
                           "detail": "not classified: an earlier gate refused this order"}}
 
@@ -630,7 +630,54 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     gate("circuit_breaker", True,
          "the book's circuit breaker is not tripped" if not breaker["tripped"]
          else "the breaker is tripped but this order closes or protects a position")
+    # The portfolio check (Kevin, 2026-11-09): the last gate, on the post-trade
+    # book. A protective stop moves nothing unless it fills and is already fenced
+    # to held shares, so it carries a stated pass instead of a book read.
+    if order_type == "stop":
+        out["portfolio_check"] = {
+            "outcome": "pass", "blocks": [], "warnings": [],
+            "detail": "protective stop: it moves the book only if it fills and is "
+                      "fenced to held shares; not portfolio-checked"}
+    elif price is None:
+        # The exit lane's unpriced exit: no price basis exists to value the
+        # delta with, so the check states itself unavailable rather than
+        # guessing one. Non-blocking, like every unavailable read.
+        from tradehub.portfolio import portfolio_check
+
+        out["portfolio_check"] = {
+            "outcome": "unavailable", "blocks": [], "warnings": [],
+            "detail": "portfolio check unavailable: this exit carries no price, "
+                      "so its post-trade weight cannot be computed"}
+        portfolio_check.record_event(
+            supa, book, "machine_preflight" if dry_run else "machine_order",
+            symbol, out["portfolio_check"])
+    else:
+        signed = qty if side == "buy" else -qty
+        _portfolio_gate(supa, out, gate, book, {symbol: signed * price},
+                        symbol=symbol, spec=spec, dry_run=dry_run)
     return out
+
+
+def _portfolio_gate(supa, out: dict, gate, book: str, deltas: dict, *, symbol: str,
+                    spec: dict, dry_run: bool) -> None:
+    """Run the portfolio check and fold it into the validation walk. A block is a
+    refusal like any other gate's (422, outcome `portfolio_check`, naming the cap
+    and the post-trade weight); a pass or a warning joins `checks` as a
+    non-blocking entry; an unreadable book is stated in out["portfolio_check"]
+    itself and never silently passes (check_order's contract)."""
+    from tradehub.portfolio import portfolio_check
+
+    block = portfolio_check.check_order(
+        supa, book, deltas, source="machine_preflight" if dry_run else "machine_order",
+        symbol=symbol, tag=spec.get("tag"), idea_id=spec.get("idea_id"))
+    out["portfolio_check"] = block
+    if block["outcome"] == "block":
+        detail = block["blocks"][0]["detail"]
+        gate("portfolio_check", False, detail,
+             ("portfolio_check", 422, f"portfolio check: {detail}"))
+    elif block["outcome"] in ("pass", "warn"):
+        out["checks"].append({"name": "portfolio_check", "ok": True, "blocking": False,
+                              "detail": block["detail"]})
 
 
 def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_run: bool = False) -> dict:
@@ -867,6 +914,17 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
                      "net_limit_price": float(limit_price) if kind == "combo" else None,
                      "max_loss": max_loss, "options_buying_power": obp,
                      "order_type": order_type}
+
+    # The portfolio check (Kevin, 2026-11-09): the legs' exposure lands on their
+    # underlying -- a bought contract adds its premium value, a sold one removes
+    # it -- and the package is judged against the post-trade book like any order.
+    deltas: dict[str, float] = {}
+    for leg in legs:
+        underlying = leg["parsed"]["underlying"]
+        signed = leg["qty"] * prices[leg["symbol"]] * 100
+        deltas[underlying] = deltas.get(underlying, 0.0) + (signed if leg["side"] == "buy" else -signed)
+    _portfolio_gate(supa, out, gate, book, deltas,
+                    symbol=legs[0]["parsed"]["underlying"], spec=spec, dry_run=dry_run)
     return out
 
 
