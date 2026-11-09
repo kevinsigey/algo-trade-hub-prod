@@ -34,6 +34,43 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _select_edgar_row(rows: list[dict]) -> dict | None:
+    """The one EDGAR frame-selection rule (pinned by tests/test_edgar_concept.py).
+
+    Instant concepts (cash, debt — rows carry no period start) take the
+    latest period end regardless of the fiscal-period tag: filers stop
+    tagging a concept FY in their annual filings while quarterly filings
+    keep reporting it (SBUX cash: fp=FY ends 2021-10-03, the concept's
+    latest observation is 2022-07-03), and preferring the FY tag silently
+    served a years-old frame. Duration concepts (revenue, EPS, shares —
+    rows carry a start) take a true full-year row: FY tag AND a ~1-year
+    span, so a two-year comparative column or a later quarter can never
+    displace the annual figure. Ties on the period end break by the latest
+    filed date — a restatement supersedes the original filing. Falls back
+    to the latest period end overall when no full-year row exists."""
+    pool = [r for r in rows if r.get("end") and r.get("val") is not None]
+    if not pool:
+        return None
+
+    def key(row: dict) -> tuple[str, str]:
+        return (str(row["end"])[:10], str(row.get("filed") or "")[:10])
+
+    duration = [r for r in pool if r.get("start")]
+    if duration:
+        full_year = []
+        for row in duration:
+            try:
+                span = (datetime.fromisoformat(str(row["end"])[:10])
+                        - datetime.fromisoformat(str(row["start"])[:10])).days
+            except ValueError:
+                continue
+            if row.get("fp") == "FY" and 300 <= span <= 400:
+                full_year.append(row)
+        if full_year:
+            return max(full_year, key=key)
+    return max(pool, key=key)
+
+
 def _http_get(url: str, headers: dict, timeout: int = 30) -> bytes:
     """GET via requests when available (proxy/redirect handling on this VM
     stalls under bare urllib for some hosts, e.g. fred.stlouisfed.org),
@@ -285,6 +322,12 @@ class DataStore:
 
         Flow concepts (revenue, capex) return the latest fiscal-YEAR figure;
         stock concepts (cash, debt, RPO) return the latest reported figure.
+        Selection is _select_edgar_row's: an instant concept takes its
+        latest period end whatever the fiscal-period tag says (the SBUX cash
+        case — fp=FY rows stop at 2021-10-03 while the concept's latest
+        observation is 2022-07-03), a duration concept takes a true
+        full-year row, and ties break by the latest filed date so a
+        restatement supersedes the original filing.
         """
         key = f"edgar|{ticker}|{concept}"
         hit = self.cache.get(key, TTL["edgar"])
@@ -308,16 +351,12 @@ class DataStore:
                 self.note_missing(ticker, f"edgar.{concept}", "concept not reported")
                 self.cache.set(key, [])
                 return None
-            df = pd.DataFrame(rows)
-            df = df[df["form"].isin(["10-K", "10-Q"])]
-            if not len(df):
+            rows = [r for r in rows if r.get("form") in ("10-K", "10-Q")]
+            row = _select_edgar_row(rows)
+            if row is None:
                 self.cache.set(key, [])
                 return None
-            df["end"] = pd.to_datetime(df["end"])
-            fy = df[df.get("fp", "") == "FY"] if "fp" in df else df.iloc[0:0]
-            pick = fy if len(fy) else df
-            row = pick.sort_values("end").iloc[-1]
-            val = (float(row["val"]), str(row["end"].date()))
+            val = (float(row["val"]), str(row["end"])[:10])
             self.cache.set(key, list(val))
             self._note_asof("edgar")
             return val
