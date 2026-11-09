@@ -2085,6 +2085,11 @@ class _MachineOrderIn(BaseModel):
     # surfaced on the resulting portfolio lots. Metadata only -- it never affects
     # caps, routing or the ext- namespacing.
     tag: str | None = Field(default=None, max_length=24, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+    # A caller's exit CLAIM (2026-11-09): recorded and reported, never trusted.
+    # The exit classification that exempts an order from the machine caps is
+    # book math computed in machine_api.validate_order; when the claim and the
+    # math disagree, the math wins and the preflight says so.
+    exit: bool | None = None
 
 
 @app.post("/api/v1/orders", tags=["Machine API"])
@@ -2115,7 +2120,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split, "position_intent": body.position_intent,
+            "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
     result = machine_api.validate_order(supabase, key, spec)
     if result["refusal"] is not None:
@@ -2173,7 +2178,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except (paper_orders.OrderRejected, ValueError) as exc:
             refused("rejected", 422, str(exc))
         machine_keys.record_event(supabase, key["id"], route, "placed",
-                                  detail=label(order["id"]), client_order_id=client_order_id)
+                                  detail=machine_api.exit_event_detail(
+                                      label(order["id"]), result["exit"]["is_exit"]),
+                                  client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
@@ -2181,7 +2188,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         response = {"order": order, "client_order_id": client_order_id,
-                    "placed_by": f"api:{key['label']}", "tag": body.tag, **session}
+                    "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session}
         if option["kind"] == "single":
             response["position_intent"] = option["legs"][0]["position_intent"]
         else:
@@ -2213,7 +2220,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except (paper_orders.OrderRejected, ValueError) as exc:
             refused("rejected", 422, str(exc))
         machine_keys.record_event(supabase, key["id"], route, "placed",
-                                  detail=label(order["id"]), client_order_id=client_order_id)
+                                  detail=machine_api.exit_event_detail(
+                                      label(order["id"]), result["exit"]["is_exit"]),
+                                  client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
@@ -2221,7 +2230,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         return {"order": order, "client_order_id": client_order_id,
-                "placed_by": f"api:{key['label']}", "tag": body.tag, **session}
+                "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session}
 
     # A parent order: the server chunks the total under the key's caps and places
     # the children as one logical order. A child the broker already has (a retry of
@@ -2250,6 +2259,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             break
         note = label(order["id"])
         detail = f"group:{body.client_order_id}" + (f"; {note}" if note else "")
+        detail = machine_api.exit_event_detail(detail, result["exit"]["is_exit"])
         machine_keys.record_event(supabase, key["id"], route, "placed",
                                   detail=detail, client_order_id=child_id)
         placed_children.append(child_id)
@@ -2282,7 +2292,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                            "submitted_at": event["at"]}
     return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker,
                                          _machine_label_tags(supabase)),
-            "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag}
+            "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag,
+            "exit": result["exit"]}
 
 
 @app.post("/api/v1/orders/preflight", tags=["Machine API"])
@@ -2307,7 +2318,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split, "position_intent": body.position_intent,
+            "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None}
     result = machine_api.validate_order(supabase, key, spec, dry_run=True)
     from tradehub.portfolio import option_orders as _option_orders
@@ -2329,10 +2340,12 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
         return {"ok": result["refusal"] is None,
                 "kind": "option_combo" if body.legs else "option_single",
                 "symbol": result["symbol"], "checks": result["checks"],
+                "exit": result["exit"],
                 "headroom": {"max_qty_per_order": int(key["max_qty"]),
                              "max_notional_per_order": float(key["max_notional"]),
                              "daily_used": used, "daily_cap": int(key["daily_cap"]),
-                             "daily_remaining": int(key["daily_cap"]) - used - len(plan),
+                             "daily_remaining": int(key["daily_cap"]) - used
+                             - (0 if result["exit"]["is_exit"] else len(plan)),
                              "max_loss": option["max_loss"] if option else None,
                              "options_buying_power":
                                  option["options_buying_power"] if option else None},
@@ -2401,13 +2414,14 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
                               detail="ok" if result["refusal"] is None else result["refusal"][0],
                               client_order_id=body.client_order_id)
     return {"ok": result["refusal"] is None, "symbol": symbol, "side": body.side,
-            "qty": body.qty, "split": body.split, "checks": checks,
+            "qty": body.qty, "split": body.split, "checks": checks, "exit": result["exit"],
             "headroom": {"price_used": price,
                          "order_notional": price * body.qty if price is not None else None,
                          "max_qty_per_order": int(key["max_qty"]),
                          "max_notional_per_order": float(key["max_notional"]),
                          "daily_used": used, "daily_cap": int(key["daily_cap"]),
-                         "daily_remaining": int(key["daily_cap"]) - used - len(plan)},
+                         "daily_remaining": int(key["daily_cap"]) - used
+                         - (0 if result["exit"]["is_exit"] else len(plan))},
             "kill_switch": {"machine_orders": machine_api.machine_orders_enabled(),
                             "breaker_tripped": bool(breaker and breaker["tripped"]),
                             "breaker_reasons": (breaker or {}).get("reasons", [])},
@@ -4110,156 +4124,6 @@ def valuation_bands_get(ticker: str, _admin: dict = Depends(admin.require_admin)
     if row is None:
         raise HTTPException(status_code=404, detail="no fact sheet for ticker")
     return val_store.with_peer_members(row)
-
-
-# ── Valuation verdicts (Phase 1: the forked debate over Exhibit A) ─────────
-# Display-only by the spec's authority rule: verdicts render, log, and grade
-# against the band-rule baseline and the proposer's own pick; nothing here
-# feeds an idea, a book, or an order, and this module has no path to any.
-
-def _verdict_view(supabase, row: dict) -> dict:
-    from tradehub.valuation import verdict_store
-
-    view = dict(row)
-    view["zone"] = row.get("baseline_verdict")
-    grades = verdict_store.grades_for(supabase, row["id"])
-    gview: dict = {}
-    for horizon in (20, 60):
-        match = next((g for g in grades if g.get("horizon") == horizon), None)
-        if match is None:
-            gview[str(horizon)] = "pending"
-        else:
-            gview[str(horizon)] = {
-                "peer_excess_pct": match.get("peer_excess_pct"),
-                "index_excess_pct": match.get("index_excess_pct"),
-                "relative_pass": match.get("verdict_relative_pass"),
-                "brier": match.get("verdict_brier"),
-                "baseline_relative_pass": match.get("baseline_relative_pass"),
-                "proposer_relative_pass": match.get("proposer_relative_pass"),
-                "mfe_pct": match.get("mfe_pct"),
-                "mae_pct": match.get("mae_pct"),
-                "time_to_target_days": match.get("time_to_target_days"),
-            }
-    view["grades"] = gview
-    return view
-
-
-@app.get("/api/valuation-verdicts", tags=["Valuation"])
-def valuation_verdicts_list(_admin: dict = Depends(admin.require_admin),
-                            supabase=Depends(get_supabase)):
-    """Latest rendered verdict per ticker, the authority-gate summary, the
-    band watch's held-position flags, and the pending trigger queue."""
-    from tradehub.valuation import grading, verdict_store
-
-    views = [_verdict_view(supabase, r)
-             for r in verdict_store.latest_verdicts(supabase)
-             if r.get("status") == "rendered"]
-    flags = [s["state"] for s in verdict_store.all_watch_state(supabase)
-             if s.get("kind") == "held" and s.get("state")]
-    return {
-        "chip": "Valuation debate — display only; graded against the band "
-                "rule and the proposer's own pick, never a model signal",
-        "authority": grading.authority_summary(
-            verdict_store.all_grades(supabase)),
-        "verdicts": views,
-        "watch": {"flags": flags,
-                  "pending_triggers": verdict_store.pending_triggers(supabase)},
-    }
-
-
-@app.get("/api/valuation-verdicts/{ticker}", tags=["Valuation"])
-def valuation_verdicts_history(ticker: str,
-                               _admin: dict = Depends(admin.require_admin),
-                               supabase=Depends(get_supabase)):
-    """Every verdict row for a name, voids included — the audit trail."""
-    from tradehub.valuation import verdict_store
-
-    rows = verdict_store.verdicts_for(supabase, ticker.strip().upper())
-    return [_verdict_view(supabase, r) for r in rows]
-
-
-class _VerdictRunIn(BaseModel):
-    ticker: str = Field(min_length=1, max_length=12)
-    force: bool = False  # rerun even inside the reuse window
-
-
-# Same daily-cadence discipline as the classic debates: a rerun inside the
-# window returns the standing verdict instead of spending another panel.
-_VERDICT_REUSE_WINDOW = timedelta(hours=12)
-_VERDICT_IN_FLIGHT: set[str] = set()
-_VERDICT_LOCK = threading.Lock()
-
-
-@app.post("/api/valuation-verdicts/run", tags=["Valuation"], status_code=202)
-def valuation_verdict_run(body: _VerdictRunIn,
-                          _admin: dict = Depends(admin.require_admin),
-                          supabase=Depends(get_supabase)):
-    """Start an on-demand valuation debate (spec section 5). The fact sheet
-    is recomputed for the name, then the forked debate renders a verdict off
-    it. Declines that can be known up front — no sheet, no bands, a stale
-    sheet, the daily budget spent — answer 422 with the reason; the render
-    itself runs on a background thread and lands in the feed."""
-    from tradehub.valuation import store as val_store
-    from tradehub.valuation import verdict_store
-    from tradehub.valuation import verdicts as val_verdicts
-
-    ticker = body.ticker.strip().upper()
-    if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
-        raise HTTPException(status_code=422, detail="that does not look like a ticker")
-    sheet = val_store.latest_sheet(supabase, ticker)
-    if sheet is None:
-        raise HTTPException(status_code=422, detail=f"no fact sheet for {ticker} — "
-                                                    "the name has no recorded guidance")
-    if sheet.get("status") != "banded" or not sheet.get("bands"):
-        raise HTTPException(status_code=422, detail=f"{ticker} has no bands "
-                                                    f"(sheet status {sheet.get('status')})")
-    if sheet.get("stale"):
-        raise HTTPException(status_code=422, detail=f"{ticker}'s fact sheet is stale — "
-                                                    "a stale sheet does not render a verdict")
-    now = datetime.now(timezone.utc)
-    if val_verdicts.cap_reached(supabase, now):
-        raise HTTPException(status_code=422, detail="the daily debate budget "
-                                                    f"({val_verdicts.DAILY_CAP}/day) is spent")
-    if not body.force:
-        for row in verdict_store.verdicts_for(supabase, ticker):
-            if row.get("status") != "rendered":
-                continue
-            try:
-                ran_at = datetime.fromisoformat(
-                    str(row["rendered_at"]).replace("Z", "+00:00"))
-            except (KeyError, ValueError):
-                break
-            age = now - ran_at
-            if age < _VERDICT_REUSE_WINDOW:
-                return JSONResponse(status_code=200, content={
-                    "reused": row["id"], "ticker": ticker,
-                    "age_hours": round(age.total_seconds() / 3600, 1)})
-            break
-    with _VERDICT_LOCK:
-        if ticker in _VERDICT_IN_FLIGHT:
-            raise HTTPException(status_code=409, detail=f"a valuation debate on {ticker} "
-                                                        "is already running")
-        _VERDICT_IN_FLIGHT.add(ticker)
-
-    def _go() -> None:
-        try:
-            from tradehub.screening.sources import DataStore
-            from tradehub.valuation import run as val_run
-
-            ds = DataStore()
-            try:
-                val_run.compute(supabase, ds, only=ticker)
-            except Exception:  # noqa: BLE001 -- the stored sheet still stands
-                pass
-            val_verdicts.render_verdict(supabase, ds, ticker,
-                                        trigger="on_demand")
-        finally:
-            with _VERDICT_LOCK:
-                _VERDICT_IN_FLIGHT.discard(ticker)
-
-    threading.Thread(target=_go, daemon=True,
-                     name=f"valuation-debate-{ticker}").start()
-    return {"started": ticker}
 
 
 mount_frontend(app, FRONTEND_DIST)

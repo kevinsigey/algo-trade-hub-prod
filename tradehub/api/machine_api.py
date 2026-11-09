@@ -364,6 +364,75 @@ def plan_chunks(total_qty: int, price: float | None, key: dict) -> list[int]:
     return out
 
 
+EXIT_BYPASSED_CAPS = ["max_qty", "max_notional", "daily_cap"]
+
+
+def classify_share_exit(spec: dict, symbol: str, side: str, qty: int, book: str | None) -> dict:
+    """The shares exit test (Kevin, 2026-11-09): a sell whose TOTAL quantity --
+    for a split, the group total, which is what `qty` carries -- is no larger
+    than the book's held quantity in the symbol. The order can take the position
+    to zero; it can never make it negative. A buy, an oversell, a sell of an
+    unheld symbol, or a position read that fails is NOT an exit: the caps apply
+    in full, with no partial exemption for the covered part. The classification
+    is this book math and nothing else -- a caller's `exit` claim is recorded
+    (`claimed`) and reported when it disagrees, but it never decides."""
+    info: dict = {"is_exit": False, "bypassed": [], "claimed": spec.get("exit_claim"),
+                  "detail": ""}
+    if side != "sell":
+        info["detail"] = "not an exit: only a sell can close a long share position"
+    else:
+        try:
+            held = position_qty(symbol, book=book)
+        except Exception:  # noqa: BLE001 -- unprovable is unexempted: fail toward the caps
+            info["detail"] = ("not an exit: positions could not be read, so the book math "
+                              "cannot prove this sale only closes a position; the caps apply")
+            return info
+        if qty <= held:
+            info["is_exit"] = True
+            info["bypassed"] = list(EXIT_BYPASSED_CAPS)
+            info["detail"] = (f"an exit: selling {qty} of the {held:g} {symbol} shares held "
+                              "only closes the position; the machine caps do not apply to exits")
+        else:
+            info["detail"] = (f"not an exit: the book holds {held:g} {symbol} shares and this "
+                              f"sell is for {qty}; the excess would open a short, so the caps apply")
+    if info["claimed"] and not info["is_exit"]:
+        info["detail"] += (" The caller marked this order an exit; the book math disagrees, "
+                           "and the math wins.")
+    return info
+
+
+def classify_option_exit(legs: list[dict], held: dict[str, float], claim=None) -> dict:
+    """The options exit test (Kevin, 2026-11-09): EVERY leg closes a position the
+    book actually holds -- sell_to_close no larger than the held long,
+    buy_to_close no larger than the held short (`held` is
+    option_orders.positions_map: signed qty per symbol). One opening leg, or a
+    close larger than the holding, makes the whole package a non-exit."""
+    info: dict = {"is_exit": False, "bypassed": [], "claimed": claim, "detail": ""}
+    for leg in legs:
+        have = held.get(leg["symbol"], 0.0)
+        intent = leg["position_intent"]
+        if intent == "sell_to_close" and have >= leg["qty"]:
+            continue
+        if intent == "buy_to_close" and have <= -leg["qty"]:
+            continue
+        if intent in ("buy_to_close", "sell_to_close"):
+            info["detail"] = (f"not an exit: {intent} {leg['qty']} x {leg['symbol']} exceeds "
+                              f"the {abs(have):g} contracts held; the package runs under the caps")
+        else:
+            info["detail"] = (f"not an exit: the {leg['symbol']} leg is {intent} -- an opening "
+                              "leg makes the whole package an entry under the caps")
+        break
+    else:
+        info["is_exit"] = True
+        info["bypassed"] = list(EXIT_BYPASSED_CAPS)
+        info["detail"] = ("an exit: every leg closes a held position; the machine caps "
+                          "do not apply to exits")
+    if info["claimed"] and not info["is_exit"]:
+        info["detail"] += (" The caller marked this order an exit; the book math disagrees, "
+                           "and the math wins.")
+    return info
+
+
 def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dict:
     """The placement validators, shared verbatim by POST /api/v1/orders and the
     preflight route (2026-11-08): one code path, so a dry run can never promise
@@ -383,7 +452,9 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     checks: list[dict] = []
     out: dict = {"refusal": None, "price": None, "chunks": [], "checks": checks,
                  "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None,
-                 "option": None}
+                 "option": None,
+                 "exit": {"is_exit": False, "bypassed": [], "claimed": spec.get("exit_claim"),
+                          "detail": "not classified: an earlier gate refused this order"}}
 
     def gate(name: str, ok: bool, detail: str, refusal: tuple | None = None) -> bool:
         checks.append({"name": name, "ok": ok, "detail": detail, "blocking": True})
@@ -448,7 +519,21 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     if not gate("qty", qty >= 1, "qty is a positive whole number of shares",
                 ("validation", 422, "qty must be at least 1")):
         return out
-    if split:
+    # Exit classification (Kevin, 2026-11-09): computed here, in the shared
+    # validation layer, from the book's live positions -- an exit is exempt
+    # from the qty, notional and daily caps below, and from nothing else (the
+    # kill switch above and the position/breaker checks below all still run).
+    exit_info = classify_share_exit(spec, symbol, side, qty, book)
+    out["exit"] = exit_info
+    checks.append({"name": "exit_classification", "ok": True, "blocking": False,
+                   "exit": exit_info["is_exit"], "bypassed": exit_info["bypassed"],
+                   "detail": exit_info["detail"]})
+    is_exit = exit_info["is_exit"]
+    if is_exit:
+        gate("max_qty", True,
+             f"bypassed for an exit: the per-order cap of {key['max_qty']} does not apply "
+             "to a closing order")
+    elif split:
         gate("max_qty", True, f"the total {qty} is chunked under the per-order cap of {key['max_qty']}")
     elif not gate("max_qty", qty <= int(key["max_qty"]),
                   f"{qty} within the per-order cap of {key['max_qty']}",
@@ -482,13 +567,24 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
         try:
             price = float(latest_price(symbol))
         except Exception:  # noqa: BLE001 -- an unpriceable order is an uncheckable cap: fail closed
-            gate("pricing", False, f"no latest price for {symbol}; the notional cap cannot be checked",
-                 ("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked"))
-            return out
-        checks.append({"name": "pricing", "ok": True, "blocking": True,
-                       "detail": f"priced at the latest trade {price}"})
+            if not is_exit:
+                gate("pricing", False, f"no latest price for {symbol}; the notional cap cannot be checked",
+                     ("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked"))
+                return out
+            # An exit needs no price: the notional cap it would feed is bypassed.
+            checks.append({"name": "pricing", "ok": True, "blocking": True,
+                           "detail": f"no latest price for {symbol}; an exit does not need "
+                                     "one (the notional cap does not apply to a closing order)"})
+        else:
+            checks.append({"name": "pricing", "ok": True, "blocking": True,
+                           "detail": f"priced at the latest trade {price}"})
     out["price"] = price
-    if split:
+    if is_exit:
+        gate("max_notional", True,
+             "bypassed for an exit: the per-order notional cap does not apply to a "
+             "closing order, so an exit places as ONE order at its full quantity")
+        out["chunks"] = [qty]
+    elif split:
         chunks = plan_chunks(qty, price, key)
         if not gate("max_notional", bool(chunks),
                     f"{len(chunks)} children, each under the ${float(key['max_notional']):,.0f} cap",
@@ -506,11 +602,16 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
         out["chunks"] = [qty]
     used = placed_today(supa, key["id"])
     out["daily_used"] = used
-    planned = len(out["chunks"])
-    if not gate("daily_cap", used + planned <= int(key["daily_cap"]),
-                f"{used} placed today, {planned} planned, cap {key['daily_cap']}",
-                ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
-        return out
+    if is_exit:
+        gate("daily_cap", True,
+             f"an exit does not consume the daily count: {used} placed today, "
+             f"cap {key['daily_cap']}")
+    else:
+        planned = len(out["chunks"])
+        if not gate("daily_cap", used + planned <= int(key["daily_cap"]),
+                    f"{used} placed today, {planned} planned, cap {key['daily_cap']}",
+                    ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
+            return out
     breaker = breakers.check(supa, book)
     out["breaker"] = breaker
     if breaker["tripped"] and order_type != "stop":  # a stop is already fenced to protect held shares
@@ -627,6 +728,16 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
              ("position_unverified", 424, "positions could not be read; the defined-risk check cannot run"))
         return out
 
+    # ── exit classification (Kevin, 2026-11-09): every leg closing a held
+    # position exempts the package from the per-leg and daily caps below. The
+    # defined-risk guard right after this still runs and still blocks. ──
+    exit_info = classify_option_exit(legs, held, spec.get("exit_claim"))
+    out["exit"] = exit_info
+    checks.append({"name": "exit_classification", "ok": True, "blocking": False,
+                   "exit": exit_info["is_exit"], "bypassed": exit_info["bypassed"],
+                   "detail": exit_info["detail"]})
+    is_exit = exit_info["is_exit"]
+
     # ── defined risk: no naked shorts, closes backed by holdings ──
     reason = option_orders.check_defined_risk(legs, held)
     if not gate("defined_risk", reason is None,
@@ -637,6 +748,7 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
 
     # ── pricing + per-leg caps ──
     prices: dict[str, float] = {}
+    unpriced_exits: list[str] = []
     for leg in legs:
         symbol = leg["symbol"]
         if symbol not in prices:
@@ -652,12 +764,25 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
                 except Exception:  # noqa: BLE001 -- an unpriceable leg is an uncheckable cap
                     mid = None
                 if mid is None:
-                    gate("pricing", False, f"no usable quote for {symbol}; the caps cannot be checked",
-                         ("notional_unpriced", 424,
-                          f"no usable quote for {symbol}; the notional cap cannot be checked"))
-                    return out
-                prices[symbol] = float(mid)
+                    if not is_exit:
+                        gate("pricing", False, f"no usable quote for {symbol}; the caps cannot be checked",
+                             ("notional_unpriced", 424,
+                              f"no usable quote for {symbol}; the notional cap cannot be checked"))
+                        return out
+                    # An exit leg needs no quote: the caps it would feed are
+                    # bypassed, and a pure close's max loss is 0 at any price.
+                    prices[symbol] = 0.0
+                    unpriced_exits.append(symbol)
+                else:
+                    prices[symbol] = float(mid)
         leg_price = prices[symbol]
+        if is_exit:
+            gate("max_qty", True,
+                 f"bypassed for an exit: {leg['qty']} x {symbol} closes a held position")
+            gate("max_notional", True,
+                 "bypassed for an exit: the per-order notional cap does not apply "
+                 "to a closing leg")
+            continue
         if not gate("max_qty", leg["qty"] <= int(key["max_qty"]),
                     f"{leg['qty']} contracts within the per-order cap of {key['max_qty']}",
                     ("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")):
@@ -668,8 +793,11 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
                     ("max_notional", 429,
                      f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")):
             return out
-    checks.append({"name": "pricing", "ok": True, "blocking": True,
-                   "detail": "legs priced at " + ", ".join(f"{s} {p:g}" for s, p in prices.items())})
+    pricing_detail = "legs priced at " + ", ".join(f"{s} {p:g}" for s, p in prices.items())
+    if unpriced_exits:
+        pricing_detail += ("; no usable quote for " + ", ".join(unpriced_exits)
+                           + " (an exit does not need one)")
+    checks.append({"name": "pricing", "ok": True, "blocking": True, "detail": pricing_detail})
 
     # ── max loss (defined-risk math) vs options buying power ──
     if kind == "combo":
@@ -705,13 +833,17 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
          else "a closing order risks nothing new")
     out["price"] = float(limit_price) if kind == "combo" else prices[legs[0]["symbol"]]
 
-    # ── daily cap: the package counts once, never per leg ──
+    # ── daily cap: the package counts once, never per leg; an exit counts zero ──
     used = placed_today(supa, key["id"])
     out["daily_used"] = used
     out["chunks"] = [1]
-    if not gate("daily_cap", used + 1 <= int(key["daily_cap"]),
-                f"{used} placed today, 1 planned (a combo counts once), cap {key['daily_cap']}",
-                ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
+    if is_exit:
+        gate("daily_cap", True,
+             f"an exit does not consume the daily count: {used} placed today, "
+             f"cap {key['daily_cap']}")
+    elif not gate("daily_cap", used + 1 <= int(key["daily_cap"]),
+                  f"{used} placed today, 1 planned (a combo counts once), cap {key['daily_cap']}",
+                  ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
         return out
 
     # ── circuit breaker: only a pure close passes a tripped book ──
@@ -781,12 +913,34 @@ def weighted_fill_price(views: list[dict]) -> float | None:
                for v in views if v.get("filled_avg_price") is not None) / filled
 
 
+def exit_event_detail(detail: str | None, is_exit: bool) -> str | None:
+    """The audit detail for a placement, with the exit marker appended when the
+    order was classified an exit: `exit` as its own `; `-separated segment (the
+    same marker channel the split `group:<caller id>` prefix uses, and appended
+    after it, so group parsing is untouched). The outcome stays "placed" -- the
+    audit vocabulary and the ownership reads do not change; only the daily
+    counter reads the marker."""
+    if not is_exit:
+        return detail
+    return f"{detail}; exit" if detail else "exit"
+
+
+def detail_marks_exit(detail) -> bool:
+    """True when an audit row's detail carries the exit segment."""
+    if not detail:
+        return False
+    return "exit" in {segment.strip() for segment in str(detail).split(";")}
+
+
 def placed_today(supa, key_id: int, *, now: datetime | None = None) -> int:
     """Today's placements for the daily cap, counted from the audit trail itself (the ET
-    trading day): the counter and the record are the same rows, so they cannot disagree."""
+    trading day): the counter and the record are the same rows, so they cannot disagree.
+    Exit placements are in the trail but carry the exit marker in their detail and do
+    not count (Kevin, 2026-11-09: exits are exempt from the daily cap, prospectively --
+    rows written before the marker existed keep counting, exactly as they did)."""
     now = now or datetime.now(timezone.utc)
     day_start = datetime.combine(now.astimezone(_ET).date(), time.min, tzinfo=_ET)
-    rows = supa.table(machine_keys.EVENTS).select("at").eq("key_id", key_id) \
+    rows = supa.table(machine_keys.EVENTS).select("at,detail").eq("key_id", key_id) \
         .eq("outcome", "placed").execute().data
     count = 0
     for r in rows:
@@ -794,6 +948,6 @@ def placed_today(supa, key_id: int, *, now: datetime | None = None) -> int:
             at = datetime.fromisoformat(str(r["at"]).replace("Z", "+00:00"))
         except (KeyError, ValueError):
             continue
-        if at >= day_start:
+        if at >= day_start and not detail_marks_exit(r.get("detail")):
             count += 1
     return count
