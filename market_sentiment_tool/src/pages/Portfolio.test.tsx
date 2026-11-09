@@ -461,15 +461,34 @@ describe("Portfolio check card", () => {
     }));
     page(<Portfolio />);
     expect(await screen.findByText("Portfolio check")).toBeInTheDocument();
-    expect(screen.getByText("GLD 13.0%")).toBeInTheDocument();
-    expect(screen.getByText(/target 11% · floor 2% · cap 12%/)).toBeInTheDocument();
-    expect(screen.getByText("Rates factor")).toBeInTheDocument();
-    expect(screen.getByText("16.7%")).toBeInTheDocument();
-    // "Cash" also labels the account rail's row; the card's figure is the check.
-    expect(screen.getByText("14.3%")).toBeInTheDocument();
-    expect(screen.getByText("block")).toBeInTheDocument();
-    expect(screen.getByText(/over GLD's cap of 12%/)).toBeInTheDocument();
-    expect(screen.getByText(/corr 0.83 to book/)).toBeInTheDocument();
-    expect(screen.getByText(/exit-only/)).toBeInTheDocument();
+    const card = within(screen.getByText("Portfolio check").closest("section") as HTMLElement);
+    // Resting state is bars, not rows: GLD (over its cap) and XLP (capped) earn
+    // bars with floor / target / cap ticks; NVDA (ok, uncapped) does not.
+    expect(card.getByText("GLD")).toBeInTheDocument();
+    // GLD's bar value and the gold chip carry the same 13.0% (same position).
+    expect(card.getAllByText("13.0%")).toHaveLength(2);
+    expect(card.getAllByTitle("floor 2%")).toHaveLength(2);
+    expect(card.getByTitle("target 11%")).toBeInTheDocument();
+    expect(card.getByTitle("cap 12%")).toBeInTheDocument();
+    expect(card.getByTitle("cap 8%")).toBeInTheDocument();
+    expect(card.queryByText("NVDA")).not.toBeInTheDocument();
+    // Sleeve bars, the cash bar, the exit-only note and the cluster chips.
+    expect(card.getByText("T4 ballast (W18 core)")).toBeInTheDocument();
+    expect(card.getByText(/exit-only/)).toBeInTheDocument();
+    expect(card.getByText("Cash")).toBeInTheDocument();
+    expect(card.getByText("14.3%")).toBeInTheDocument();
+    expect(card.getByText("Rates factor")).toBeInTheDocument();
+    expect(card.getByText("16.7%")).toBeInTheDocument();
+    expect(card.getByText(/29.7% incl. GLD/)).toBeInTheDocument();
+    // The latest outcome rides in the header; the detail (every recent outcome,
+    // the member table, the correlation readout) sits behind the open view.
+    expect(card.getByText("block")).toBeInTheDocument();
+    expect(card.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
+    expect(card.queryByText(/0\.83/)).not.toBeInTheDocument();
+    fireEvent.click(card.getByRole("button", { name: "Open Portfolio check in full" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText(/over GLD's cap of 12%/)).toBeInTheDocument();
+    expect(dialog.getByText("0.83")).toBeInTheDocument();
+    expect(dialog.getByText("portfolio check passes")).toBeInTheDocument();
   });
 });
