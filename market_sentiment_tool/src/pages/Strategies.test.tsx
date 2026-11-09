@@ -6,9 +6,9 @@ import Strategies from "@/pages/Strategies";
 
 const GAP_SCORE = { n: 0, model_brier: null, market_brier: null, brier_delta: null,
                     model_log_loss: null, market_log_loss: null, calibration: [] };
-const gapPos = (ticker: string, category: string, pnl: number) => ({
+const gapPos = (ticker: string, category: string, pnl: number, exit_reason: string) => ({
   ticker, category, side: "yes", model_at_entry: 0.7, entry_price: 0.6, gap_pts: 12,
-  contracts: 100, exit_state: null, pnl });
+  contracts: 100, exit_state: null, exit_reason, pnl });
 
 const BODIES: Record<string, unknown> = {
   "/api/portfolio": { state: "live", as_of: "2026-11-05T21:00:00Z", scoreboard: { equity: 97706, return_pct: -2.3, ahead_pts: 1.4 },
@@ -36,12 +36,14 @@ const BODIES: Record<string, unknown> = {
                                { offset_min: 1, windows: 90, priced: 88, mean_edge_net: 0.028, n: 17, net_per_contract: 0.195, win_rate: 0.71 },
                                { offset_min: 5, windows: 96, priced: 96, mean_edge_net: 0.09, n: 30, net_per_contract: 0.08, win_rate: 0.6 } ] } },
   "/api/oil/itm-record": { frozen: 24, settled: 24, hits: 9, hit_rate: 0.375, net_per_contract: 0.0188, backtest: null, recent: [] },
-  "/api/gaps/desk": { as_of: "2026-11-05T21:00:00Z", started_at: "2026-11-04T12:15:00Z",
+  "/api/gaps/desk": { as_of: "2026-11-05T21:00:00Z", started_at: "2026-11-04T12:15:00Z", entries_paused: true,
                       evidence: { status: "NOT ENOUGH EVIDENCE", days: 1.8, pairs: 1834, min_days: 28, min_pairs: 150 },
-                      grade: { all: GAP_SCORE, crypto: GAP_SCORE, oil: GAP_SCORE },
+                      grade: { all: GAP_SCORE, crypto: { ...GAP_SCORE, n: 2369, brier_delta: 0.0022 },
+                               oil: { ...GAP_SCORE, n: 2055, brier_delta: 0.0233 } },
                       ledger: { bankroll: 8114.82, return_pct: -18.85, max_drawdown_pct: 20, resolved: 3, open: 0, win_rate: 0.33, avg_entry_gap_pts: 12 },
                       fee_basis: "net", open_positions: [], top_gaps: [], near_misses: [], funnel: {},
-                      closed_positions: [gapPos("KXBR-A", "oil", 120.5), gapPos("KXWTI-B", "oil", -40), gapPos("KXBTC-C", "crypto", -260)] },
+                      closed_positions: [gapPos("KXBR-A", "oil", 120.5, "gap_closed"), gapPos("KXWTI-B", "oil", -40, "model_moved"),
+                                         gapPos("KXBTC-C", "crypto", -260, "model_moved")] },
   "/api/journal": { as_of: "2026-11-05T21:00:00Z", headline: {},
                     forecasters: [{ forecaster: "oil_wti_15m", forecaster_version: "wti-15m-v2", cadence: "15min",
                                     baseline: "kalshi", n_targets: 1000, n_settled: 969, brier: 0.0975,
@@ -240,32 +242,72 @@ describe("Strategies", () => {
     expect(await within(list).findByRole("img", { name: "Portfolio curve against SPY" })).toBeInTheDocument();
   });
 
-  it("splits the gap tracker into an oil desk and a crypto desk, each with its own record", async () => {
+  it("shows the gap tracker as a paused, closed book below the retired entries, with each desk's record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     expect(await within(list).findByText(/2 closed · \+\$80\.50 realized · 50% won/)).toBeInTheDocument();
     expect(within(list).getByText(/1 closed · −\$260\.00 realized · 0% won/)).toBeInTheDocument();
     expect(within(list).queryByText(/oil and crypto/)).not.toBeInTheDocument();
-    // Both desks render in the tile's expansion, each with its own heading.
-    expect(await screen.findByText("Oil gap tracker", { selector: "h2" })).toBeInTheDocument();
-    expect(screen.getByText("Crypto gap tracker", { selector: "h2" })).toBeInTheDocument();
-    // The tile headline is the combined realized record across both desks.
+    // The tile headline is the combined realized record across both desks, as the final record.
     expect(within(list).getByText(/−\$179\.50/)).toBeInTheDocument();
+    expect(within(list).getByText(/realized · the final record/)).toBeInTheDocument();
+    expect(within(list).getByText(/3 closed · pot \$8,114\.82 of \$10,000/)).toBeInTheDocument();
+    // Demoted: muted, chipped as paused with the date, and last in the grid.
+    const tile = within(list).getByText("Kalshi gap tracker").closest("li");
+    expect(tile).not.toBeNull();
+    expect(tile!.id).toBe("gap-tracker");
+    expect(tile!.className).toContain("opacity-70");
+    expect(within(tile!).getByText(/Paused · Nov 9, 2026/)).toBeInTheDocument();
+    expect(list.lastElementChild?.id).toBe("gap-tracker");
+    // One post-mortem expansion; the live-desk panels and their framing are gone.
+    expect(within(tile!).getByLabelText("Kalshi gap tracker — the record")).toBeInTheDocument();
+    expect(within(list).queryByText("Oil gap tracker", { selector: "h2" })).toBeNull();
+    expect(within(list).queryByText("Crypto gap tracker", { selector: "h2" })).toBeNull();
+    expect(within(list).queryByText(/Largest passing gaps/)).toBeNull();
+    expect(within(list).queryByText(/NOT ENOUGH EVIDENCE/)).toBeNull();
   });
 
-  it("states the gap rule with the fee outside the entry test and the one-hour exit", async () => {
+  it("states the gap rule once, in past tense, with the fee outside the entry test and the one-hour exit", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
-    // Both desks state the corrected rule: the 8-point entry gap is measured gross (fees come
-    // out of the trade's P&L), 2+ hours is the entry cutoff, and the near-settlement exit is 1 hour.
-    expect(await within(list).findAllByText(/fees come out of the trade's P&L, not the test/)).toHaveLength(2);
-    expect(within(list).getAllByText(/only with 2\+ hours to settlement and a book deep enough to exit/)).toHaveLength(2);
-    expect(within(list).getAllByText(/under an hour is left/)).toHaveLength(2);
+    // The post-mortem states the corrected rule once, in past tense: the 8-point entry gap was
+    // measured gross (fees came out of the trade's P&L), 2+ hours was the entry cutoff, and the
+    // near-settlement exit was 1 hour.
+    expect(await within(list).findAllByText(/fees came out of the trade's P&L, not the test/)).toHaveLength(1);
+    expect(within(list).getAllByText(/only with 2\+ hours to settlement and a book deep enough to exit/)).toHaveLength(1);
+    expect(within(list).getAllByText(/under an hour was left/)).toHaveLength(1);
+    expect(within(list).getAllByText(/it bought Brent and WTI, Bitcoin and Ethereum/)).toHaveLength(1);
     // The two shipped errors are gone.
     expect(within(list).queryByText(/8\+ points after the fee/)).toBeNull();
     expect(within(list).queryByText(/2 hours before settlement/)).toBeNull();
+  });
+
+  it("gives the gap post-mortem: worse-than-market grades, the churn, and how the trades ended", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("Kalshi gap tracker")).closest("li");
+    expect(tile).not.toBeNull();
+    // Why it was paused, in the grade's own numbers: both desks worse than Kalshi's price.
+    expect(within(tile!).getByText(/each desk's fair values graded worse than Kalshi's/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/Brier worse by \+0\.023 on oil and \+0\.002 on crypto/)).toBeInTheDocument();
+    // The two desk stories, computed from how their trades ended.
+    expect(within(tile!).getByText(/Crypto's exits churned: 1 of its 1 trade ended because the model/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/Oil's gap-closed exits were the one working piece: 1 trade, \+\$120\.50/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/The WTI hourly lane never fired/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/flagged none/)).toBeInTheDocument();
+    // The exit-type breakdown, per desk.
+    expect(within(tile!).getByText("How the trades ended")).toBeInTheDocument();
+    expect(within(tile!).getByText("Gap closed")).toBeInTheDocument();
+    expect(within(tile!).getAllByText("Model moved")).toHaveLength(2);
+    expect(within(tile!).getByText("−$40.00")).toBeInTheDocument();
+    // The closed trades themselves, with how each ended.
+    expect(within(tile!).getByText("Closed trades")).toBeInTheDocument();
+    expect(within(tile!).getByText("KXBR-A")).toBeInTheDocument();
+    expect(within(tile!).getByText(/\+\$120\.50 · gap closed/)).toBeInTheDocument();
+    expect(within(tile!).getByText(/−\$260\.00 · model moved/)).toBeInTheDocument();
   });
 
   it("reads each gap desk's record from the server ledger when the payload carries one", async () => {
