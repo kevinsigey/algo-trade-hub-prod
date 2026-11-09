@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from tradehub.workshop import signals
+from tradehub.workshop import basket_gate, signals
 from tradehub.workshop.spec import CASH, Condition, Exits, Group, IdeaSpec
 
 DAYS = 252
@@ -647,8 +647,56 @@ def _walk_forward(spec: IdeaSpec, idx, r: np.ndarray, b: np.ndarray, s: np.ndarr
     return {"folds": folds, "held": sum(1 for f in judged if f["holds"]), "of": len(judged)}
 
 
+def _ew_reference(spec: IdeaSpec, rets: pd.DataFrame) -> np.ndarray | None:
+    """The equal-weight basket of the idea's own legs (unique tickers, same signs, always in,
+    costless): the basket battery's counterfactual control. None when the comparison is
+    degenerate — the idea IS that basket (unique long legs held once each, no shorts, no
+    portfolio blend) or it has fewer than two unique legs. For a blended spec the reference
+    is the sleeve's legs, so read it as sleeve-level context."""
+    longs = list(dict.fromkeys(spec.hold))
+    shorts = list(dict.fromkeys(spec.short))
+    if len(longs) + len(shorts) < 2:
+        return None
+    if not shorts and spec.portfolio is None and len(longs) == len(spec.hold):
+        return None
+    total = rets[longs].sum(axis=1) if longs else pd.Series(0.0, index=rets.index)
+    if shorts:
+        total = total - rets[shorts].sum(axis=1)
+    return (total / (len(longs) + len(shorts))).to_numpy()
+
+
+def _context_curve_periods(spec: IdeaSpec, idx, r: np.ndarray, b: np.ndarray, s: np.ndarray,
+                           mask: np.ndarray, rets: pd.DataFrame, built: slice, unseen: slice):
+    """The result blocks every battery shares: benchmark context rows, the equity curve,
+    and how many of the five timeline chunks the claim held in."""
+    kind = spec.claim
+    chunks = np.array_split(np.arange(len(r)), 5)
+    held_periods = sum(1 for c in chunks if _claim(kind, r[c], b[c], s[c], mask[c])[0])
+    context = [{"name": "Idea", "built_cagr": _cagr(r[built]), "unseen_cagr": _cagr(r[unseen]),
+                "unseen_max_dd": _max_dd(r[unseen])}]
+    for name in CONTEXT:
+        if name in rets:
+            col = rets[name].to_numpy()
+            ok_b, ok_u = ~np.isnan(col[built]), ~np.isnan(col[unseen])
+            context.append({"name": name, "built_cagr": _cagr(col[built][ok_b]),
+                            "unseen_cagr": _cagr(col[unseen][ok_u]),
+                            "unseen_max_dd": _max_dd(col[unseen][ok_u])})
+    cum_r, cum_b = (np.cumprod(1 + r) - 1) * 100, (np.cumprod(1 + b) - 1) * 100
+    step = max(1, math.ceil(len(r) / CURVE_POINTS))
+    points = list(range(0, len(r), step))
+    if points and points[-1] != len(r) - 1:
+        points[-1] = len(r) - 1
+    curve = [{"t": str(idx[i].date()), "idea": float(cum_r[i]), "benchmark": float(cum_b[i])} for i in points]
+    return context, curve, held_periods
+
+
 def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *, variations: int, seed: int,
              permutations: int = 1000, div_yields: dict[str, float] | None = None) -> dict:
+    if spec.claim_type in ("event", "overlay"):
+        # Design-only in this pass (spec 2026-11-08): declared on the spec, but their
+        # batteries are not built — refusing beats grading them with the wrong instrument.
+        raise ValueError(f"claim_type {spec.claim_type!r} is design-only in this pass (spec 2026-11-08): "
+                         "its battery is not built yet")
     idx, mask, held, other, b, s, rets = _legs(spec, closes, fred, div_yields)
     cost = _switch_cost(spec)
 
@@ -712,6 +760,37 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
                        "claim": None, "shuffle": None, "t_test": None, "periods": None, "context": [], "curve": [],
                        "notes": notes, "walk_forward": walk_forward, "options": options_info})
 
+    if spec.claim_type == "basket":
+        # The basket battery (spec 2026-11-08): the allocation graded relatively — block
+        # bootstrap CIs on the log-excess series and the drawdown bound, per span. The
+        # shared blocks (claim reads, context, curve, walk-forward) are the timing
+        # result's own, so consumers see one shape; shuffle/t_test stay null because
+        # neither was run.
+        on_b = _claim(spec.claim, r[built], b[built], s[built], mask[built])
+        on_u = _claim(spec.claim, r[unseen], b[unseen], s[unseen], mask[unseen])
+        bat = basket_gate.battery(r, b, _ew_reference(spec, rets), split=k,
+                                  seed=seed + basket_gate.SEED_OFFSET)
+        context, curve, held_periods = _context_curve_periods(spec, idx, r, b, s, mask, rets, built, unseen)
+        if bat["verdict"] == "PASS":
+            headline = "Outran its benchmark on both spans, beyond bootstrap chance, inside the drawdown bound."
+        elif all(leg["holds"] for leg in bat["legs"] if leg["name"].startswith("ci")):
+            headline = "Beat its benchmark, but fell into a deeper hole doing it."
+        else:
+            headline = "No reliable edge over its benchmark once market drift is accounted for."
+        return _clean({
+            **base, "verdict": bat["verdict"], "headline": headline, "reason": None,
+            "claim_type": "basket",
+            "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
+                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
+            "shuffle": None, "t_test": None, "battery": bat,
+            "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
+            "notes": notes + ["Graded with the basket battery (spec 2026-11-08): relative-Sharpe "
+                              "block-bootstrap intervals and the drawdown bound on both spans — "
+                              "not the timing shuffle. This verdict is reported, never applied "
+                              "to the idea's standing."],
+            "walk_forward": walk_forward, "options": options_info,
+        })
+
     kind = spec.claim
     on_b = _claim(kind, r[built], b[built], s[built], mask[built])
     on_u = _claim(kind, r[unseen], b[unseen], s[unseen], mask[unseen])
@@ -752,23 +831,7 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
             t = stats.ttest_1samp(diff, 0.0)
             t_test = {"mean_daily_diff": float(np.mean(diff) * 100), "t": float(t.statistic), "p": float(t.pvalue)}
 
-    chunks = np.array_split(np.arange(n), 5)
-    held_periods = sum(1 for c in chunks if _claim(kind, r[c], b[c], s[c], mask[c])[0])
-
-    context = [{"name": "Idea", "built_cagr": _cagr(r[built]), "unseen_cagr": _cagr(ru), "unseen_max_dd": _max_dd(ru)}]
-    for name in CONTEXT:
-        if name in rets:
-            col = rets[name].to_numpy()
-            ok_b, ok_u = ~np.isnan(col[built]), ~np.isnan(col[unseen])
-            context.append({"name": name, "built_cagr": _cagr(col[built][ok_b]), "unseen_cagr": _cagr(col[unseen][ok_u]),
-                            "unseen_max_dd": _max_dd(col[unseen][ok_u])})
-
-    cum_r, cum_b = (np.cumprod(1 + r) - 1) * 100, (np.cumprod(1 + b) - 1) * 100
-    step = max(1, math.ceil(n / CURVE_POINTS))
-    points = list(range(0, n, step))
-    if points[-1] != n - 1:
-        points[-1] = n - 1
-    curve = [{"t": str(idx[i].date()), "idea": float(cum_r[i]), "benchmark": float(cum_b[i])} for i in points]
+    context, curve, held_periods = _context_curve_periods(spec, idx, r, b, s, mask, rets, built, unseen)
 
     return _clean({
         **base, "verdict": verdict, "headline": headline, "reason": None,
