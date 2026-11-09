@@ -1,0 +1,644 @@
+{
+ "prereg_at": "2026-11-07T00:00:00+00:00",
+ "windows_total": 984,
+ "crosscheck": {
+  "decisions_rows": 504,
+  "edge_matched": 474,
+  "edge_mismatched": 0,
+  "worst_diff": 3.0000000050128817e-08,
+  "decisions_targets_not_in_forecasts": 0
+ },
+ "distribution_forward_freeze": {
+  "WTI": {
+   "windows": 94,
+   "mean_best_edge": 0.0365,
+   "median_best_edge": 0.0273,
+   "p75_best_edge": 0.0545,
+   "bands": {
+    "5-10": 19,
+    "10+": 7,
+    "0-5": 50,
+    "<0": 18
+   },
+   "band_shares": {
+    "5-10": 0.202,
+    "10+": 0.074,
+    "0-5": 0.532,
+    "<0": 0.191
+   }
+  },
+  "Brent": {
+   "windows": 93,
+   "mean_best_edge": 0.0325,
+   "median_best_edge": 0.0198,
+   "p75_best_edge": 0.0629,
+   "bands": {
+    "5-10": 17,
+    "10+": 11,
+    "0-5": 31,
+    "<0": 34
+   },
+   "band_shares": {
+    "5-10": 0.183,
+    "10+": 0.118,
+    "0-5": 0.333,
+    "<0": 0.366
+   }
+  },
+  "Natural gas": {
+   "windows": 95,
+   "mean_best_edge": 0.0699,
+   "median_best_edge": 0.0369,
+   "p75_best_edge": 0.0842,
+   "bands": {
+    "10+": 23,
+    "<0": 20,
+    "0-5": 34,
+    "5-10": 18
+   },
+   "band_shares": {
+    "10+": 0.242,
+    "<0": 0.211,
+    "0-5": 0.358,
+    "5-10": 0.189
+   }
+  }
+ },
+ "reconcile_010": {
+  "WTI": {
+   "n": 7,
+   "net_per_contract": 0.1637,
+   "total": 1.15,
+   "win_rate": 0.714,
+   "low95": -0.0884,
+   "ready": false,
+   "windows": 7
+  },
+  "Brent": {
+   "n": 10,
+   "net_per_contract": 0.0554,
+   "total": 0.55,
+   "win_rate": 0.5,
+   "low95": -0.1665,
+   "ready": false,
+   "windows": 10
+  },
+  "Natural gas": {
+   "n": 22,
+   "net_per_contract": 0.2393,
+   "total": 5.27,
+   "win_rate": 0.682,
+   "low95": 0.057,
+   "ready": false,
+   "windows": 22
+  }
+ },
+ "record_010_all": {
+  "n": 39,
+  "net_per_contract": 0.1786,
+  "total": 6.97,
+  "win_rate": 0.641,
+  "low95": 0.053,
+  "ready": false,
+  "windows": 39
+ },
+ "counterfactual": {
+  "WTI": {
+   "at_010": {
+    "n": 7,
+    "net_per_contract": 0.1637,
+    "total": 1.15,
+    "win_rate": 0.714,
+    "low95": -0.0884,
+    "ready": false,
+    "windows": 7
+   },
+   "at_005": {
+    "n": 26,
+    "net_per_contract": -0.0403,
+    "total": -1.05,
+    "win_rate": 0.462,
+    "low95": -0.1748,
+    "ready": false,
+    "windows": 26
+   },
+   "marginal_band_5_10": {
+    "n": 19,
+    "net_per_contract": -0.1155,
+    "total": -2.19,
+    "win_rate": 0.368,
+    "low95": -0.2641,
+    "ready": false,
+    "windows": 19
+   },
+   "at_010_open": {
+    "n": 3,
+    "net_per_contract": -0.0388,
+    "total": -0.12,
+    "win_rate": 0.333,
+    "low95": -0.5595,
+    "ready": false,
+    "windows": 3
+   },
+   "at_005_open": {
+    "n": 18,
+    "net_per_contract": -0.1126,
+    "total": -2.03,
+    "win_rate": 0.333,
+    "low95": -0.2578,
+    "ready": false,
+    "windows": 18
+   },
+   "band_open": {
+    "n": 15,
+    "net_per_contract": -0.1274,
+    "total": -1.91,
+    "win_rate": 0.333,
+    "low95": -0.2777,
+    "ready": false,
+    "windows": 15
+   },
+   "at_010_closed": {
+    "n": 4,
+    "net_per_contract": 0.3155,
+    "total": 1.26,
+    "win_rate": 1.0,
+    "low95": 0.1816,
+    "ready": false,
+    "windows": 4
+   },
+   "at_005_closed": {
+    "n": 8,
+    "net_per_contract": 0.1223,
+    "total": 0.98,
+    "win_rate": 0.75,
+    "low95": -0.1493,
+    "ready": false,
+    "windows": 8
+   },
+   "band_closed": {
+    "n": 4,
+    "net_per_contract": -0.0709,
+    "total": -0.28,
+    "win_rate": 0.5,
+    "low95": -0.5512,
+    "ready": false,
+    "windows": 4
+   }
+  },
+  "Brent": {
+   "at_010": {
+    "n": 10,
+    "net_per_contract": 0.0554,
+    "total": 0.55,
+    "win_rate": 0.5,
+    "low95": -0.1665,
+    "ready": false,
+    "windows": 10
+   },
+   "at_005": {
+    "n": 27,
+    "net_per_contract": 0.063,
+    "total": 1.7,
+    "win_rate": 0.481,
+    "low95": -0.0818,
+    "ready": false,
+    "windows": 27
+   },
+   "marginal_band_5_10": {
+    "n": 17,
+    "net_per_contract": 0.0675,
+    "total": 1.15,
+    "win_rate": 0.471,
+    "low95": -0.127,
+    "ready": false,
+    "windows": 17
+   },
+   "at_010_open": {
+    "n": 7,
+    "net_per_contract": 0.055,
+    "total": 0.38,
+    "win_rate": 0.429,
+    "low95": -0.2381,
+    "ready": false,
+    "windows": 7
+   },
+   "at_005_open": {
+    "n": 19,
+    "net_per_contract": 0.1045,
+    "total": 1.99,
+    "win_rate": 0.474,
+    "low95": -0.0749,
+    "ready": false,
+    "windows": 19
+   },
+   "band_open": {
+    "n": 12,
+    "net_per_contract": 0.1334,
+    "total": 1.6,
+    "win_rate": 0.5,
+    "low95": -0.1017,
+    "ready": false,
+    "windows": 12
+   },
+   "at_010_closed": {
+    "n": 3,
+    "net_per_contract": 0.0564,
+    "total": 0.17,
+    "win_rate": 0.667,
+    "low95": -0.3142,
+    "ready": false,
+    "windows": 3
+   },
+   "at_005_closed": {
+    "n": 8,
+    "net_per_contract": -0.0355,
+    "total": -0.28,
+    "win_rate": 0.5,
+    "low95": -0.2779,
+    "ready": false,
+    "windows": 8
+   },
+   "band_closed": {
+    "n": 5,
+    "net_per_contract": -0.0907,
+    "total": -0.45,
+    "win_rate": 0.4,
+    "low95": -0.4305,
+    "ready": false,
+    "windows": 5
+   }
+  },
+  "Oil (WTI+Brent)": {
+   "at_010": {
+    "n": 17,
+    "net_per_contract": 0.1,
+    "total": 1.7,
+    "win_rate": 0.588,
+    "low95": -0.0637,
+    "ready": false,
+    "windows": 17
+   },
+   "at_005": {
+    "n": 53,
+    "net_per_contract": 0.0123,
+    "total": 0.65,
+    "win_rate": 0.472,
+    "low95": -0.0867,
+    "ready": false,
+    "windows": 53
+   },
+   "marginal_band_5_10": {
+    "n": 36,
+    "net_per_contract": -0.0291,
+    "total": -1.05,
+    "win_rate": 0.417,
+    "low95": -0.1519,
+    "ready": false,
+    "windows": 36
+   },
+   "at_010_open": {
+    "n": 10,
+    "net_per_contract": 0.0268,
+    "total": 0.27,
+    "win_rate": 0.4,
+    "low95": -0.216,
+    "ready": false,
+    "windows": 10
+   },
+   "at_005_open": {
+    "n": 37,
+    "net_per_contract": -0.0011,
+    "total": -0.04,
+    "win_rate": 0.405,
+    "low95": -0.121,
+    "ready": false,
+    "windows": 37
+   },
+   "band_open": {
+    "n": 27,
+    "net_per_contract": -0.0115,
+    "total": -0.31,
+    "win_rate": 0.407,
+    "low95": -0.1516,
+    "ready": false,
+    "windows": 27
+   },
+   "at_010_closed": {
+    "n": 7,
+    "net_per_contract": 0.2045,
+    "total": 1.43,
+    "win_rate": 0.857,
+    "low95": 0.0167,
+    "ready": false,
+    "windows": 7
+   },
+   "at_005_closed": {
+    "n": 16,
+    "net_per_contract": 0.0434,
+    "total": 0.69,
+    "win_rate": 0.625,
+    "low95": -0.1369,
+    "ready": false,
+    "windows": 16
+   },
+   "band_closed": {
+    "n": 9,
+    "net_per_contract": -0.0819,
+    "total": -0.74,
+    "win_rate": 0.444,
+    "low95": -0.3475,
+    "ready": false,
+    "windows": 9
+   }
+  },
+  "Natural gas": {
+   "at_010": {
+    "n": 22,
+    "net_per_contract": 0.2393,
+    "total": 5.27,
+    "win_rate": 0.682,
+    "low95": 0.057,
+    "ready": false,
+    "windows": 22
+   },
+   "at_005": {
+    "n": 40,
+    "net_per_contract": 0.1414,
+    "total": 5.66,
+    "win_rate": 0.65,
+    "low95": 0.009,
+    "ready": false,
+    "windows": 40
+   },
+   "marginal_band_5_10": {
+    "n": 18,
+    "net_per_contract": 0.0217,
+    "total": 0.39,
+    "win_rate": 0.611,
+    "low95": -0.1608,
+    "ready": false,
+    "windows": 18
+   },
+   "at_010_open": {
+    "n": 18,
+    "net_per_contract": 0.2663,
+    "total": 4.79,
+    "win_rate": 0.667,
+    "low95": 0.0762,
+    "ready": false,
+    "windows": 18
+   },
+   "at_005_open": {
+    "n": 35,
+    "net_per_contract": 0.1391,
+    "total": 4.87,
+    "win_rate": 0.629,
+    "low95": -0.0005,
+    "ready": false,
+    "windows": 35
+   },
+   "band_open": {
+    "n": 17,
+    "net_per_contract": 0.0044,
+    "total": 0.08,
+    "win_rate": 0.588,
+    "low95": -0.1857,
+    "ready": false,
+    "windows": 17
+   },
+   "at_010_closed": {
+    "n": 4,
+    "net_per_contract": 0.118,
+    "total": 0.47,
+    "win_rate": 0.75,
+    "low95": -0.4616,
+    "ready": false,
+    "windows": 4
+   },
+   "at_005_closed": {
+    "n": 5,
+    "net_per_contract": 0.1573,
+    "total": 0.79,
+    "win_rate": 0.8,
+    "low95": -0.2982,
+    "ready": false,
+    "windows": 5
+   },
+   "band_closed": {
+    "n": 1,
+    "net_per_contract": 0.3145,
+    "total": 0.31,
+    "win_rate": 1.0,
+    "low95": null,
+    "ready": false,
+    "windows": 1
+   }
+  },
+  "All": {
+   "at_010": {
+    "n": 39,
+    "net_per_contract": 0.1786,
+    "total": 6.97,
+    "win_rate": 0.641,
+    "low95": 0.053,
+    "ready": false,
+    "windows": 39
+   },
+   "at_005": {
+    "n": 93,
+    "net_per_contract": 0.0678,
+    "total": 6.31,
+    "win_rate": 0.548,
+    "low95": -0.013,
+    "ready": false,
+    "windows": 93
+   },
+   "marginal_band_5_10": {
+    "n": 54,
+    "net_per_contract": -0.0122,
+    "total": -0.66,
+    "win_rate": 0.481,
+    "low95": -0.1134,
+    "ready": false,
+    "windows": 54
+   },
+   "at_010_open": {
+    "n": 28,
+    "net_per_contract": 0.1808,
+    "total": 5.06,
+    "win_rate": 0.571,
+    "low95": 0.0274,
+    "ready": false,
+    "windows": 28
+   },
+   "at_005_open": {
+    "n": 72,
+    "net_per_contract": 0.067,
+    "total": 4.83,
+    "win_rate": 0.514,
+    "low95": -0.0254,
+    "ready": false,
+    "windows": 72
+   },
+   "band_open": {
+    "n": 44,
+    "net_per_contract": -0.0053,
+    "total": -0.23,
+    "win_rate": 0.477,
+    "low95": -0.1171,
+    "ready": false,
+    "windows": 44
+   },
+   "at_010_closed": {
+    "n": 11,
+    "net_per_contract": 0.173,
+    "total": 1.9,
+    "win_rate": 0.818,
+    "low95": -0.0523,
+    "ready": false,
+    "windows": 11
+   },
+   "at_005_closed": {
+    "n": 21,
+    "net_per_contract": 0.0705,
+    "total": 1.48,
+    "win_rate": 0.667,
+    "low95": -0.0995,
+    "ready": false,
+    "windows": 21
+   },
+   "band_closed": {
+    "n": 10,
+    "net_per_contract": -0.0422,
+    "total": -0.42,
+    "win_rate": 0.5,
+    "low95": -0.2922,
+    "ready": false,
+    "windows": 10
+   }
+  }
+ },
+ "offsets_sensitivity_band_trades": {
+  "1": {
+   "oil": {
+    "n": 37,
+    "net_per_contract": 0.2671,
+    "total": 9.88,
+    "win_rate": 0.784,
+    "low95": 0.1345,
+    "ready": false,
+    "windows": 33
+   },
+   "gas": {
+    "n": 25,
+    "net_per_contract": 0.0554,
+    "total": 1.39,
+    "win_rate": 0.56,
+    "low95": -0.1482,
+    "ready": false,
+    "windows": 25
+   }
+  },
+  "3": {
+   "oil": {
+    "n": 53,
+    "net_per_contract": 0.0521,
+    "total": 2.76,
+    "win_rate": 0.509,
+    "low95": -0.0673,
+    "ready": false,
+    "windows": 42
+   },
+   "gas": {
+    "n": 27,
+    "net_per_contract": 0.1649,
+    "total": 4.45,
+    "win_rate": 0.704,
+    "low95": 0.0119,
+    "ready": false,
+    "windows": 27
+   }
+  },
+  "5": {
+   "oil": {
+    "n": 63,
+    "net_per_contract": -0.0351,
+    "total": -2.21,
+    "win_rate": 0.397,
+    "low95": -0.1325,
+    "ready": false,
+    "windows": 53
+   },
+   "gas": {
+    "n": 32,
+    "net_per_contract": -0.0093,
+    "total": -0.3,
+    "win_rate": 0.531,
+    "low95": -0.1435,
+    "ready": false,
+    "windows": 32
+   }
+  },
+  "7": {
+   "oil": {
+    "n": 67,
+    "net_per_contract": 0.0237,
+    "total": 1.59,
+    "win_rate": 0.522,
+    "low95": -0.0638,
+    "ready": false,
+    "windows": 58
+   },
+   "gas": {
+    "n": 40,
+    "net_per_contract": 0.1801,
+    "total": 7.2,
+    "win_rate": 0.725,
+    "low95": 0.0729,
+    "ready": false,
+    "windows": 40
+   }
+  },
+  "10": {
+   "oil": {
+    "n": 49,
+    "net_per_contract": 0.0221,
+    "total": 1.08,
+    "win_rate": 0.408,
+    "low95": -0.0722,
+    "ready": false,
+    "windows": 45
+   },
+   "gas": {
+    "n": 27,
+    "net_per_contract": -0.0771,
+    "total": -2.08,
+    "win_rate": 0.296,
+    "low95": -0.2141,
+    "ready": false,
+    "windows": 27
+   }
+  },
+  "13": {
+   "oil": {
+    "n": 47,
+    "net_per_contract": 0.0082,
+    "total": 0.39,
+    "win_rate": 0.319,
+    "low95": -0.0806,
+    "ready": false,
+    "windows": 43
+   },
+   "gas": {
+    "n": 18,
+    "net_per_contract": -0.0557,
+    "total": -1.0,
+    "win_rate": 0.556,
+    "low95": -0.2037,
+    "ready": false,
+    "windows": 18
+   }
+  }
+ }
+}
