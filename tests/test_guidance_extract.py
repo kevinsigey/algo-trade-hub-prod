@@ -1,5 +1,7 @@
 """Guidance extraction (Kevin, 2026-11-06): the model reads a release, and a number is kept only if an exact quote
 from the release backs it. Network and model are faked."""
+import pytest
+
 from tradehub.guidance import extract as gx
 
 RELEASE = """<html><body><p>ACME Reports Third Quarter Results</p>
@@ -138,6 +140,86 @@ def test_non_gaap_per_share_wording_makes_it_adjusted_eps():
 def test_repeated_items_are_kept_once():
     a = _item()
     assert gx.dedupe([a, _item(), _item(period="FY2027")]) == [a, _item(period="FY2027")]
+
+
+PM_RELEASE = """<html><body><p>MU Reports Fourth Quarter Results</p>
+<p>For the first quarter of fiscal 2027, MU expects revenue of $61.5 billion ± $1.5 billion
+and non-GAAP earnings per share of $38.15 ± $1.00.</p>
+<p>NVDA said revenue is expected to be $108.00 billion, plus or minus 2%.</p></body></html>"""
+
+
+def test_plus_minus_bounds_the_model_computed_are_verified_not_dropped():
+    # Amendment A1 (2026-11-09): "X ± Y" is a range statement. A model that expands it to
+    # 60.0/63.0 names numbers that never print -- the bounds are arithmetic on the printed
+    # center and delta, so verify must accept them instead of dropping the whole guide.
+    text = gx.html_to_text(PM_RELEASE)
+    rev = _item(period="Q1 FY2027", low=60.0, high=63.0,
+                evidence="MU expects revenue of $61.5 billion ± $1.5 billion")
+    eps = _item(period="Q1 FY2027", metric="eps_adjusted", unit="usd_per_share", scale="units",
+                low=37.15, high=39.15,
+                evidence="non-GAAP earnings per share of $38.15 ± $1.00")
+    kept, dropped = gx.verify([rev, eps], text)
+    assert kept == [rev, eps] and dropped == 0
+
+
+def test_plus_minus_point_and_delta_misread_expand_to_the_range():
+    # The other shapes the free models produce for a ± guide: the bare center as a point,
+    # and center/delta filed as low/high. expanded() rewrites both to the stated range.
+    rev = _item(period="Q1 FY2027", low=61.5, high=None,
+                evidence="MU expects revenue of $61.5 billion ± $1.5 billion")
+    out = gx.expanded(rev)
+    assert (out.low, out.high) == (60.0, 63.0)
+    eps = _item(period="Q1 FY2027", metric="eps_adjusted", unit="usd_per_share", scale="units",
+                low=38.15, high=1.00,
+                evidence="non-GAAP earnings per share of $38.15 ± $1.00")
+    out = gx.expanded(eps)
+    assert (out.low, out.high) == (37.15, 39.15)
+
+
+def test_plus_or_minus_percent_expands_around_the_center():
+    # NVDA's printed form: "$108.00 billion, plus or minus 2%" -> [105.84, 110.16].
+    item = _item(period="Q3 FY2027", low=108.0, high=None,
+                 evidence="revenue is expected to be $108.00 billion, plus or minus 2%")
+    out = gx.expanded(item)
+    assert out.low == pytest.approx(105.84) and out.high == pytest.approx(110.16)
+    text = gx.html_to_text(PM_RELEASE)
+    computed = _item(period="Q3 FY2027", low=105.84, high=110.16,
+                     evidence="revenue is expected to be $108.00 billion, plus or minus 2%")
+    kept, dropped = gx.verify([computed], text)
+    assert kept == [computed] and dropped == 0
+
+
+def test_expanded_leaves_plain_ranges_and_unrelated_items_alone():
+    plain = _item()  # the $9.6B to $10.0B range: no ± anywhere in its quote
+    assert gx.expanded(plain) == plain
+    other = _item(period="Q1 FY2027", low=55.0, high=58.0,
+                  evidence="MU expects revenue of $61.5 billion ± $1.5 billion")
+    assert gx.expanded(other) == other  # a range that never touches the ± center is not rewritten
+
+
+def test_a_run_stores_plus_minus_guides_as_ranges(monkeypatch):
+    from workshop_fake import DB
+
+    db = DB()
+    db.table("guidance_filings").insert([
+        {"accession": "pm1", "ticker": "MU", "cik": "0000723125", "doc_url": "u1", "status": "new"},
+    ]).execute()
+
+    def model(text, **_k):
+        return gx.Envelope(no_guidance=False, model="m", items=[
+            _item(period="Q1 FY2027", low=61.5, high=None,
+                  evidence="MU expects revenue of $61.5 billion ± $1.5 billion"),
+            _item(period="Q1 FY2027", metric="eps_adjusted", unit="usd_per_share", scale="units",
+                  low=37.15, high=39.15,
+                  evidence="non-GAAP earnings per share of $38.15 ± $1.00"),
+        ])
+
+    out = gx.run(db, fetch=lambda url: PM_RELEASE, model=model,
+                 consensus=lambda ticker, metric, period: (None, None, None), key="k")
+    assert out["records"] == 2 and out["dropped"] == 0
+    recs = {(r["metric"]): r for r in db.db["guidance_records"]}
+    assert (recs["revenue"]["low"], recs["revenue"]["high"]) == (60.0e9, 63.0e9)
+    assert (recs["eps_adjusted"]["low"], recs["eps_adjusted"]["high"]) == (37.15, 39.15)
 
 
 def test_consensus_is_compared_only_where_it_means_the_same_thing():

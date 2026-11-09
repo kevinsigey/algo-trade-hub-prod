@@ -45,6 +45,32 @@ def test_full_year_period_parsing(period, ok):
     assert engine.is_full_year_period(period) is ok
 
 
+@pytest.mark.parametrize("period,ok", [
+    # Amendment A2 (2026-11-09): the frozen method names calendar-year phrasing and
+    # the hyphenated full-year; the matcher is aligned to it.
+    ("full-year 2026", True), ("Full-Year 2027", True),
+    ("Calendar 2026", True), ("calendar year 2026", True),
+    # Standing exclusions are unchanged: out-of-window years and quarter tokens.
+    ("full-year 2030", False), ("Calendar 2030", False),
+    ("Q4 calendar 2026", False), ("Calendar Q1 2026", False),
+    ("Second-quarter full-year review 2026", False),
+])
+def test_full_year_period_phrasings_amended(period, ok):
+    assert engine.is_full_year_period(period, now=NOW) is ok
+
+
+def test_hyphenated_full_year_period_anchors():
+    s = sheet([rec(period="full-year 2026")])
+    assert s["status"] == "banded"
+    assert s["anchor"]["period_key"] == "FY2026"
+
+
+def test_calendar_year_period_anchors():
+    s = sheet([rec(period="Calendar 2026", metric="eps_gaap", consensus=None)])
+    assert s["status"] == "banded"
+    assert s["anchor"]["period_key"] == "FY2026"
+
+
 # --- band construction + haircut -------------------------------------------
 
 def test_bands_from_guide_with_bear_haircut():
@@ -150,6 +176,48 @@ def test_guard_rejects_guide_far_from_trailing_eps():
     s = sheet([rec(low=40.0, high=44.0, consensus=None)],
               fundamentals={"eps_diluted": {"value": 5.0,
                                             "as_of": "2025-12-31"}})
+    assert s["status"] != "banded"
+    assert any("trailing" in r for r in s["guard_rejections"])
+
+
+def test_guard_excuses_trailing_when_consensus_corroborates():
+    # Amendment A3 (2026-11-09), ABBV shape: adjusted guide 13.95-13.99 matched by its
+    # own-basis consensus 13.98, while GAAP trailing EPS (~1.02) is structurally crushed
+    # by charges. The GAAP series is not evidence about the adjusted guide -> banded.
+    s = sheet([rec(low=13.95, high=13.99, consensus=13.9831,
+                   consensus_period="0y")],
+              fundamentals={"eps_diluted": {"value": 1.02,
+                                            "as_of": "2026-09-30"}})
+    assert s["status"] == "banded"
+    assert not any("trailing" in r for r in s["guard_rejections"])
+
+
+def test_guard_excuses_trailing_for_point_guide_cvs_shape():
+    # CVS shape: point guide 8.2, consensus 8.218, GAAP trailing 1.39 (ratio 5.9x).
+    s = sheet([rec(low=8.2, high=None, consensus=8.21802, consensus_period="0y")],
+              fundamentals={"eps_diluted": {"value": 1.39,
+                                            "as_of": "2026-09-30"}})
+    assert s["status"] == "banded"
+
+
+def test_guard_still_rejects_when_both_references_fail():
+    # The KO pin, with a trailing reference present too: 9.0 vs consensus 3.34 (2.69x)
+    # fails its own-basis band, and 9.0 vs trailing 2.97 (3.03x) fails the other --
+    # no corroboration, no excuse, still rejected.
+    s = sheet([rec(low=9.0, high=None, consensus=3.34)],
+              fundamentals={"eps_diluted": {"value": 2.97,
+                                            "as_of": "2026-09-30"}})
+    assert s["status"] != "banded"
+    assert any("consensus" in r for r in s["guard_rejections"])
+    assert any("trailing" in r for r in s["guard_rejections"])
+
+
+def test_guard_trailing_alone_still_governs_without_consensus():
+    # No consensus on record -> no excuse available: a guide far below the trailing
+    # floor stays rejected (MRK's captured GAAP-only point shape, 2.04 vs ~7.3).
+    s = sheet([rec(metric="eps_gaap", low=2.04, high=2.04, consensus=None)],
+              fundamentals={"eps_diluted": {"value": 7.3,
+                                            "as_of": "2026-09-30"}})
     assert s["status"] != "banded"
     assert any("trailing" in r for r in s["guard_rejections"])
 
