@@ -191,40 +191,39 @@ def test_verify_drops_empty_quote():
     assert dropped == 1
 
 
-def test_extraction_cache_skips_cached_call():
-    """The extraction cache should skip already cached calls."""
-    from research.call_outlook.extract import _load_cache, _save_cache_entry
-    import tempfile
-    import os
-    from pathlib import Path
-    from unittest.mock import patch
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-        cache_file = f.name
-    
+def test_extraction_cache_skips_cached_call(tmp_path, monkeypatch):
+    """The extraction cache should skip already cached calls.
+
+    Hermetic (2026-11-08): extract_call routes through the opencode CLI, which
+    exists on Kevin's Mac but not in CI, so the model call is faked here; and
+    _load_cache globs CACHE_DIR while _save_cache_entry appends to
+    EXTRACTIONS_CACHE, so both are pointed at one tmp dir. The skip is proven
+    by the model being called exactly once across two extract_call calls.
+    """
     import research.call_outlook.extract as extract_mod
-    original_cache = extract_mod.EXTRACTIONS_CACHE
-    extract_mod.EXTRACTIONS_CACHE = Path(cache_file)
-    
-    try:
-        # First call - should process
-        call_id = "AAPL-2023-01-01"
-        
-        with patch('research.call_outlook.extract._post_openrouter') as mock_post:
-            mock_post.return_value = {"statements": [
-                {"topic": "revenue", "direction": "up", "magnitude_pct": 10.0, "horizon": "next_quarter", "quote": "We expect revenue to grow 10%."}
-            ], "model": "test-model"}
-            
-            from research.call_outlook.extract import extract_call, _load_cache
-            statements1 = extract_call(call_id, "We expect revenue to grow 10%.", "test-key")
-            assert len(statements1) == 1
-            
-            # Second call with same ID should use cache
-            statements2 = extract_call(call_id, "We expect revenue to grow 10%.", "test-key")
-            assert len(statements2) == 1
-    finally:
-        extract_mod.EXTRACTIONS_CACHE = original_cache
-        os.unlink(cache_file)
+
+    monkeypatch.setattr(extract_mod, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(extract_mod, "EXTRACTIONS_CACHE", tmp_path / "extractions.jsonl")
+
+    calls = []
+
+    def fake_post_opencode(text, *, model):
+        calls.append(model)
+        return {"statements": [
+            {"topic": "revenue", "direction": "up", "magnitude_pct": 10.0,
+             "horizon": "next_quarter", "quote": "We expect revenue to grow 10%."}
+        ], "model": "test-model"}
+
+    monkeypatch.setattr(extract_mod, "_post_opencode", fake_post_opencode)
+
+    call_id = "AAPL-2023-01-01"
+    statements1 = extract_mod.extract_call(call_id, "We expect revenue to grow 10%.", "test-key")
+    assert len(statements1) == 1
+
+    # Second call with same ID should use cache, not the model
+    statements2 = extract_mod.extract_call(call_id, "We expect revenue to grow 10%.", "test-key")
+    assert statements2 == statements1
+    assert len(calls) == 1
 
 def test_flat_other_and_capex_do_not_dilute_the_score():
     from research.call_outlook.statements import score
