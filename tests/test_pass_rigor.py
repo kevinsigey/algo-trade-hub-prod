@@ -98,3 +98,42 @@ def test_a_new_stricter_verdict_changes_no_stored_verdict():
     run = _run("PASS", 0.02, 4, 4)
     registry.adjusted({1: run})
     assert run["verdict"] == "PASS"
+
+
+# ── event runs after the battery's promotion (spec 2026-11-08, Amendment 2) ──
+
+def _event_run(verdict, battery_p, shuffle_p=None):
+    """A run row in one of the two event shapes: post-promotion (the battery
+    judged; its record carries the p, the legacy gate is a control whose
+    numbers are not at top level) or pre-promotion (no battery block; the
+    verdict was the shuffle's)."""
+    result = {"kind": "event", "walk_forward": None,
+              "shuffle": {"p": shuffle_p} if shuffle_p is not None else None}
+    if battery_p is not None or shuffle_p is None:
+        result["battery"] = {"type": "event", "p": battery_p}
+    return {"verdict": verdict, "result": result}
+
+
+def test_event_runs_answer_to_the_battery_p_in_the_family():
+    latest = {1: _run("PASS", 0.001, 4, 4),        # a timing anchor for the family
+              2: _event_run("PASS", 0.048)}         # the battery's p, over the 0.01 bar
+    out = registry.adjusted(latest)
+    assert out[2]["p"] == 0.048 and out[2]["p_ok"] is False
+    assert out[2]["verdict_now"] == "FAIL"  # demoted on its own judge's p
+
+
+def test_event_run_with_a_strong_battery_p_keeps_its_p():
+    out = registry.adjusted({1: _event_run("PASS", 0.001)})
+    assert out[1]["p"] == 0.001 and out[1]["p_ok"] is True and out[1]["fdr_pass"] is True
+
+
+def test_prepromotion_event_run_keeps_its_shuffle_p():
+    # Stored before the battery existed: no battery block, the verdict was the
+    # shuffle's, so the shuffle's p is still its honest family accounting.
+    out = registry.adjusted({1: _event_run("PASS", None, shuffle_p=0.001)})
+    assert out[1]["p"] == 0.001 and out[1]["p_ok"] is True
+
+
+def test_event_battery_nodata_stays_out_of_the_family():
+    out = registry.adjusted({1: _event_run("NOT ENOUGH DATA", None)})
+    assert out[1]["p"] is None and out[1]["verdict_now"] == "NOT ENOUGH DATA"

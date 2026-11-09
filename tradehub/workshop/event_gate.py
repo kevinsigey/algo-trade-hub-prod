@@ -25,9 +25,12 @@ preregistration, not an edit):
 - T_BAR_BUILT 1.0: the built span formed the hypothesis; it must point the
   same way (mean > 0) at a lower bar. The verdict bar lives on unseen data.
 
-Grandfathering: this battery is a reported read inside an event run. The run's
-own verdict stays the event gate's (random-dates permutation), and the
-registry's adjustment treats event runs exactly as before.
+Promotion (Amendment 2, Kevin 2026-11-08 23:35 CT): this battery's verdict IS
+the event run's verdict -- "things should measure with their best measure".
+The old random-dates gate is computed alongside and preserved in the result
+as the `legacy_event_gate` control; the registry's family p for an event run
+is this battery's p. Stored runs from before the promotion keep their
+recorded verdicts.
 
 Pure: per-event excess arrays in, a battery dict out. events.py owns the rows,
 the split and the result shape; this module owns the measurement.

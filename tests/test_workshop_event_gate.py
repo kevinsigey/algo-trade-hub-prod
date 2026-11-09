@@ -1,7 +1,9 @@
-"""The event battery (spec 2026-11-08, amendment): per-event excess vs the index
-(judged) and vs matched in-study peers (reported), cross-event t and hit rate per
-span, frozen minimum event counts. The battery rides inside run_event_test's
-result; the run's own verdict stays the existing event gate's."""
+"""The event battery (spec 2026-11-08, amendments 1-2): per-event excess vs the
+index (judged) and vs matched in-study peers (reported), cross-event t and hit
+rate per span, frozen minimum event counts. Since Amendment 2 (Kevin,
+2026-11-08 23:35 CT) the battery's verdict IS the run's verdict; the old
+random-dates gate is preserved in the result as the `legacy_event_gate`
+control, its numbers no longer at top level."""
 
 import numpy as np
 import pandas as pd
@@ -78,7 +80,7 @@ def test_event_constants_match_the_event_engines():
     assert event_gate.MIN_UNSEEN_EVENTS == events.MIN_UNSEEN_EVENTS == 10
 
 
-# ── the battery rides in run_event_test, the gate's verdict untouched ────────
+# ── the battery's verdict IS the run's verdict; the old gate is the control ──
 
 def _closes(seed=12, n=2200):
     rng = np.random.default_rng(seed)
@@ -106,7 +108,7 @@ def _custom_spec(days, tickers=("AAA",)):
         "start": "2018-01-02", "unseen_fraction": 0.3})
 
 
-def test_event_run_carries_the_battery_beside_the_gate_verdict():
+def test_event_run_verdict_is_the_batterys_and_the_gate_is_the_control():
     rng, idx, spy, aaa = _closes()
     days = list(idx[100:2100:50])  # 40 events spread over both spans
     aaa = _plant_drift(aaa, idx, days, rng)
@@ -115,8 +117,52 @@ def test_event_run_carries_the_battery_beside_the_gate_verdict():
     bat = out["battery"]
     assert bat["type"] == "event" and bat["verdict"] == "PASS", bat["legs"]
     assert bat["spans"]["unseen"]["index"]["mean"] > 3  # ~+5% planted, minus noise
-    assert out["verdict"] == "PASS" and out["shuffle"] is not None  # the gate's own read, intact
+    assert out["verdict"] == bat["verdict"] == "PASS"  # the battery judges now (Amendment 2)
+    # The old gate ran, as a control, and its whole record sits under its own name.
+    legacy = out["legacy_event_gate"]
+    assert legacy["verdict"] == "PASS" and legacy["shuffle"]["p"] < 0.05
+    assert legacy["t_test"] is not None and legacy["periods"] is not None
+    # Top level no longer presents the control's numbers as the judge's.
+    assert out["shuffle"] is None and out["t_test"] is None and out["periods"] is None
+    assert out["claim"] is not None  # the descriptive built/unseen read stays
     assert bat["spans"]["unseen"]["peer"] is None  # single-name study: no in-study peers
+
+
+def test_battery_fail_overrules_a_legacy_pass_when_the_hit_rate_is_thin():
+    # A few huge wins carry the unseen mean (the random-dates gate passes it)
+    # but most unseen events lose: the battery's hit leg fails it, and since
+    # Amendment 2 the battery's FAIL is the run's verdict.
+    rng, idx, spy, aaa = _closes()
+    aaa = spy + rng.normal(0, 0.0015, len(idx))  # quiet noise, so the plants decide
+    days = list(idx[100:2100:50])  # 40 events; the newest 12 are the unseen span
+    pos = {d: i for i, d in enumerate(idx)}
+    for d in days[:28]:  # built span: a consistent small drift
+        aaa[pos[d] + 1:pos[d] + 6] += 0.006
+    for d in days[28:33]:  # unseen: 5 big wins
+        aaa[pos[d] + 1:pos[d] + 6] += 0.03
+    for d in days[33:]:  # unseen: 7 small losses
+        aaa[pos[d] + 1:pos[d] + 6] -= 0.002
+    closes = pd.DataFrame({"SPY": 100 * np.cumprod(1 + spy), "AAA": 100 * np.cumprod(1 + aaa)}, index=idx)
+    out = run_event_test(_custom_spec(days), closes, {}, variations=1, seed=7)
+    bat = out["battery"]
+    legs = {leg["name"]: leg for leg in bat["legs"]}
+    assert legs["t_unseen"]["holds"] is True and legs["hit_unseen"]["holds"] is False, bat["legs"]
+    assert bat["verdict"] == "FAIL" and out["verdict"] == "FAIL"
+    assert out["legacy_event_gate"]["verdict"] == "PASS"  # the control disagrees, on the record
+
+
+def test_battery_pass_overrules_a_legacy_fail_on_the_variations_bar():
+    # 50 variations raise the random-dates bar to 0.001, below the resolution
+    # of 100 permutations: the legacy gate must fail a real drift. The battery
+    # judges the events themselves and passes it -- and its verdict rules.
+    rng, idx, spy, aaa = _closes()
+    days = list(idx[100:2100:50])
+    aaa = _plant_drift(aaa, idx, days, rng)
+    closes = pd.DataFrame({"SPY": 100 * np.cumprod(1 + spy), "AAA": 100 * np.cumprod(1 + aaa)}, index=idx)
+    out = run_event_test(_custom_spec(days), closes, {}, variations=50, seed=7, permutations=100)
+    assert out["battery"]["verdict"] == "PASS", out["battery"]["legs"]
+    assert out["legacy_event_gate"]["verdict"] == "FAIL"
+    assert out["verdict"] == "PASS"
 
 
 def test_event_run_reports_peers_for_a_multi_name_study():
@@ -138,3 +184,4 @@ def test_event_run_too_few_events_still_carries_the_battery():
     out = run_event_test(_custom_spec(days), closes, {}, variations=1, seed=7)
     assert out["verdict"] == "NOT ENOUGH DATA"
     assert out["battery"]["type"] == "event" and out["battery"]["verdict"] == "NOT ENOUGH DATA"
+    assert out["legacy_event_gate"] is None  # the control never ran; the record says so

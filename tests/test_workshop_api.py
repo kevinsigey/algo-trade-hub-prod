@@ -442,16 +442,22 @@ def test_event_study_run_and_its_guards(api, monkeypatch):
     assert c.get(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/analysis").status_code == 422
 
 
-def test_macro_event_days_come_from_fred_releases(api, monkeypatch):
+def test_macro_event_days_come_from_their_calendars(api, monkeypatch):
     c, _, _ = api
     got = {}
     monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: "closes")
     monkeypatch.setattr(main, "workshop_release_dates", lambda rid: f"release:{rid}")
+    monkeypatch.setattr(main, "workshop_fomc_times", lambda: "fomc:statement-table")
     monkeypatch.setattr(main, "run_event_test", lambda spec, closes, events, **k: (got.update(events=events), RESULT)[1])
     idea = c.post("/api/workshop/ideas", json={"title": "Fed days", "plain_words": "spy on fed days"}).json()
     r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs",
                json={"spec": {**EVENT, "tickers": ["SPY", "QQQ"], "event": "fomc", "when": "all"}})
-    assert r.status_code == 200 and got["events"] == {"*": "release:101"}
+    # FOMC comes from the frozen statement table (Amendment 2), never FRED
+    # release 101 -- whose date list was every business day.
+    assert r.status_code == 200 and got["events"] == {"*": "fomc:statement-table"}
+    r = c.post(f"/api/workshop/ideas/{idea['id']}/event-runs",
+               json={"spec": {**EVENT, "tickers": ["SPY"], "event": "cpi", "when": "all"}})
+    assert r.status_code == 200 and got["events"] == {"*": "release:10"}  # CPI stays a FRED release
 
 
 def test_event_study_on_an_etf_earnings_is_422(api, monkeypatch):

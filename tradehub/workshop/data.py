@@ -372,7 +372,10 @@ FRED_RELEASE_DATES = "https://api.stlouisfed.org/fred/release/dates"
 
 
 def release_dates(release_id: int, *, get_text=None, api_key: str | None = None) -> pd.DataFrame:
-    """The days FRED published a release (101 FOMC press release, 10 CPI, 50 Employment Situation): column `time`."""
+    """The days FRED published a release (10 CPI, 50 Employment Situation): column `time`.
+    FOMC is deliberately not served here -- release 101's date list is every business
+    day (its only series are the daily target-range series); FOMC statement dates are
+    the frozen table in fomc_calendar.py (spec 2026-11-08, Amendment 2)."""
     import json
 
     from tradehub.data.alfred_vintages import FRED_API_KEY_ENV, default_get_text

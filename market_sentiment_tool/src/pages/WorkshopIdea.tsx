@@ -686,9 +686,19 @@ function SaveRunBar({ ideaId, run, onSaved }: { ideaId: string; run: Run; onSave
 
 const sgn = (v: number | null | undefined, d = 2) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}`);
 
-/** An event study's verdict: the claim on built vs unseen events, random dates, shrunk per-ticker means, events. */
+const EVENT_LEG_LABELS: Record<string, string> = {
+  built_direction: "Built span points the claimed way",
+  t_unseen: "Unseen events: cross-event t",
+  hit_unseen: "Unseen events: hit rate",
+};
+
+/** An event study's verdict: the claim on built vs unseen events, the event
+ * battery's legs (the verdict since Amendment 2), the legacy random-dates gate
+ * as a control line, shrunk per-ticker means, events. */
 function EventVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   const r = run.result;
+  const bat = r.battery?.type === "event" ? r.battery : null;
+  const legacy = r.legacy_event_gate ?? null;
   const spec = run.spec as unknown as EventSpec;
   const [error, setError] = useState<string | null>(null);
   const events = r.events ?? [];
@@ -706,16 +716,36 @@ function EventVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; ru
       <SaveRunBar ideaId={ideaId} run={run} onSaved={onSaved} />
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
 
-      {r.claim && r.shuffle && (
+      {r.claim && (
         <table className="mt-4 w-full text-sm">
           <tbody className="divide-y divide-slate-800/80">
             <tr><td className="py-1.5 text-slate-300">On the events it was built on</td><td className="py-1.5 text-slate-400">{r.claim.built.label}</td><td><Mark ok={r.claim.built.holds} /></td></tr>
             <tr><td className="py-1.5 text-slate-300">On the newest events (unseen)</td><td className="py-1.5 text-slate-400">{r.claim.unseen.label}</td><td><Mark ok={r.claim.unseen.holds} /></td></tr>
-            <tr><td className="py-1.5 text-slate-300">Better than random dates</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} random dates · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.holds ?? null} /></td></tr>
-            {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, unseen events</td><td className="py-1.5 text-slate-400">t = {r.t_test.t.toFixed(2)} · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.holds ?? null} /></td></tr>}
-            {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each stretch of events</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.holds ?? null} /></td></tr>}
+            {!legacy && r.shuffle && (
+              <>
+                <tr><td className="py-1.5 text-slate-300">Better than random dates</td><td className="py-1.5 text-slate-400">beats {r.shuffle.beats_pct.toFixed(0)}% of {r.shuffle.permutations.toLocaleString()} random dates · p = {r.shuffle.p.toFixed(3)}, needs &lt; {r.shuffle.bar.toFixed(4).replace(/0+$/, "")}</td><td><Mark ok={r.shuffle.holds ?? null} /></td></tr>
+                {r.t_test && <tr><td className="py-1.5 text-slate-300">t-test, unseen events</td><td className="py-1.5 text-slate-400">t = {r.t_test.t.toFixed(2)} · p = {r.t_test.p.toFixed(3)}</td><td><Mark ok={r.t_test.holds ?? null} /></td></tr>}
+                {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each stretch of events</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.holds ?? null} /></td></tr>}
+              </>
+            )}
           </tbody>
         </table>
+      )}
+      {bat && (bat.legs?.length ?? 0) > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{legacy ? "Event battery — this run's verdict" : "Event battery — reported read"}</div>
+          <table className="mt-1 w-full text-sm">
+            <tbody className="divide-y divide-slate-800/80">
+              {(bat.legs ?? []).map((leg) => (
+                <tr key={leg.name}><td className="py-1.5 text-slate-300">{EVENT_LEG_LABELS[leg.name] ?? leg.name}</td><td className="py-1.5 text-slate-400">{leg.detail}</td><td><Mark ok={leg.holds} /></td></tr>
+              ))}
+            </tbody>
+          </table>
+          {bat.spans?.unseen?.peer && <p className="mt-1 text-xs text-slate-500">Peer control (reported, not judged): the names beat the median of the study's other tickers by {sgn(bat.spans.unseen.peer.mean)}% per unseen event, over {bat.spans.unseen.peer.n} events.</p>}
+        </div>
+      )}
+      {legacy && (
+        <p className="mt-3 text-xs text-slate-500">Legacy random-dates gate (control): {legacy.verdict} · beats {legacy.shuffle.beats_pct.toFixed(0)}% of {legacy.shuffle.permutations.toLocaleString()} random dates · p = {legacy.shuffle.p.toFixed(3)}</p>
       )}
       {(r.per_ticker ?? []).length > 0 && (
         <div className="mt-4 overflow-x-auto">
