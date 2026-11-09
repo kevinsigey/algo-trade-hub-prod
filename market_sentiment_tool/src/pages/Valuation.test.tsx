@@ -109,7 +109,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Valuation tab", () => {
+describe("Guidance tab", () => {
+  it("is titled Guidance, not Valuation", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Guidance" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Valuation" })).not.toBeInTheDocument();
+  });
+
   it("states plainly that zones are display-only, not trade recommendations", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);

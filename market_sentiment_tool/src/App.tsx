@@ -83,7 +83,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
     { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
     { to: "/strategies", label: "Strategies", icon: Target },
-    { to: "/valuation", label: "Valuation", icon: Scale },
+    { to: "/valuation", label: "Guidance", icon: Scale },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
     { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
