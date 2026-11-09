@@ -100,6 +100,8 @@ describe("Strategies", () => {
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     expect(tile!.id).toBe("fifteen-rule");
+    // The per-market bars render only once the fifteen payload lands; wait for them.
+    await within(tile!).findByText(/2 gated trades · \+5\.0¢ a contract · 50% win/);
     for (const label of ["WTI", "Brent", "Natural gas"]) {
       // In the tile's summary bars; the per-market numbers live there, not in a second table below.
       expect(within(tile!).getAllByText(label).length).toBeGreaterThan(0);
@@ -119,6 +121,8 @@ describe("Strategies", () => {
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
+    // Several of these blocks render only once the fifteen payload lands; wait for one.
+    await within(tile!).findByText("The trade record", { selector: "summary" });
     for (const title of ["The rule", "Settlements scoring — the forecasts vs Kalshi's price", "The trade record",
                          "Decisions — every window gets one", "Entry timing — what entering at each minute has paid",
                          "Trading hours vs closed hours"]) {
@@ -143,7 +147,7 @@ describe("Strategies", () => {
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
-    expect(within(tile!).getByText(/7 of 300 settled gated trades in 7 separate 15-minute windows/)).toBeInTheDocument();
+    expect(await within(tile!).findByText(/7 of 300 settled gated trades in 7 separate 15-minute windows/)).toBeInTheDocument();
     expect(within(tile!).getByText(/still ahead at the low end of its 95% range \(now \+2\.1¢\)/)).toBeInTheDocument();
     expect(within(tile!).getByText(/2 waiting to settle/)).toBeInTheDocument();
     expect(within(tile!).getByText(/On the original gross-edge record, kept as a control: 10 trades, \+5\.0¢ a contract, win rate 50%/)).toBeInTheDocument();
@@ -173,7 +177,7 @@ describe("Strategies", () => {
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
-    const summary = within(tile!).getByText("Oil shadow — the minute-1 variant", { selector: "summary" });
+    const summary = await within(tile!).findByText("Oil shadow — the minute-1 variant", { selector: "summary" });
     expect(summary.closest("details")).not.toBeNull();
     expect(within(tile!).getByText(/decided at minute 1 on the live tick read/)).toBeInTheDocument();
     expect(within(tile!).getByText(/12 fresh trades · \+29\.5¢ a contract · win rate 80% · low end \+18\.1¢/)).toBeInTheDocument();
