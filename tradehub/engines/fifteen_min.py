@@ -1,10 +1,13 @@
-"""Fifteen-minute direction math for Kalshi's KXWTI15M / KXBRENT15M / KXNATGAS15M.
+"""Fifteen-minute direction math for Kalshi's KXWTI15M / KXBRENT15M / KXNATGAS15M
+and, since 2026-11-09, the metals complex KXGOLD15M / KXSILVER15M / KXCOPPER15M.
 
 These markets exist (verified live 2026-11-04; the older claim in the hourly
 oil files that the 15-minute ladders are crypto-only is wrong). Each window is
 a single contract: YES iff the close of the settlement source's 1-minute candle
 at the window's end is at least the close at its start (Pyth PYTHOIL / BRENT /
-NATGAS respectively). A direct direction bet, not a strike ladder.
+NATGAS respectively; Pyth Metal.Index.1OZGOLD / Metal.Index.SILVER /
+Commodities.Index.CU for the metals, verified live 2026-11-09 in the scoping
+`research/metals_15m/RESULTS.md`). A direct direction bet, not a strike ladder.
 
 The model (preregistered 2026-11-04, `*-15m-v1`; sampling superseded the
 same day by `*-15m-v2`, Kevin's call -- the math is unchanged): by freeze
@@ -34,7 +37,11 @@ from __future__ import annotations
 import math
 import statistics
 
-SERIES_COINS = {"KXWTI15M": "xyz:CL", "KXBRENT15M": "xyz:BRENTOIL", "KXNATGAS15M": "xyz:NATGAS"}
+SERIES_COINS = {"KXWTI15M": "xyz:CL", "KXBRENT15M": "xyz:BRENTOIL", "KXNATGAS15M": "xyz:NATGAS",
+                # The metals family (preregistration 2026-11-09,
+                # docs/superpowers/specs/2026-11-09-metals-fifteen-prereg.md):
+                # same math, same anchor arrangement, its own record.
+                "KXGOLD15M": "xyz:GOLD", "KXSILVER15M": "xyz:SILVER", "KXCOPPER15M": "xyz:COPPER"}
 WINDOW_MINUTES = 15.0
 SIGMA_FLOOR = 0.0002      # 2bp per minute: a dead-flat tape never prices at exactly 0/1
 MIN_RETURNS = 30          # trailing 1-minute returns before the sigma is allowed to speak

@@ -17,6 +17,12 @@ runner, additively -- the journal and the tick tape are never touched:
   "best entry minute" question is answered from.
 
 A record only: nothing here places an order or changes a forecast.
+
+Amendment 2026-11-09: the passes are generalized over a series set -- the
+metals family (tradehub/metals_fifteen_rule.py, its own preregistration)
+writes its decisions and offsets through the same functions into the same
+tables, which are keyed by series and target. The oil promotion state is
+consulted only for the oil family's pass.
 """
 
 from __future__ import annotations
@@ -115,12 +121,18 @@ def _promoted_decision(tick: dict | None, *, ref: str) -> tuple[dict[str, Any], 
     return ev, round(float(tick["prob_up"]), 5)
 
 
-def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK) -> dict[str, Any]:
-    """One gated decision per targeted window in the lookback: the buy, or the skip and why."""
+def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK,
+                     series_set=None, live_gate: bool = True) -> dict[str, Any]:
+    """One gated decision per targeted window in the lookback: the buy, or the skip and why.
+
+    `series_set` selects the family (default: the oil family's `rule.SERIES`);
+    the metals family passes its own SERIES with `live_gate=False` -- the oil
+    gate's promotion state is an oil fact and never consulted for metals,
+    whose rows are stamped with their own frozen gate version, 'v1'."""
     candles_fn = candles_fn or _candles_or_empty
     rows: list[dict] = []
-    gate_version, gate_since = _live_gate(supa)
-    for name, version, _label in rule.SERIES:
+    gate_version, gate_since = _live_gate(supa) if live_gate else ("v1", None)
+    for name, version, _label in (rule.SERIES if series_set is None else series_set):
         series = _BY_NAME[name]["series"]
         coin = SERIES_COINS[series]
         targets = fetch_targets(supa, name, now - lookback, now)
@@ -129,7 +141,7 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
         names = [t["target"] for t in targets]
         first = _first_forecasts(supa, name, version, names)
         settled = store.fetch_settlements(supa, names)
-        promoted = (gate_version == "v2-oil" and gate_since is not None
+        promoted = (live_gate and gate_version == "v2-oil" and gate_since is not None
                     and name in ("oil_wti_15m", "oil_brent_15m"))
         tick_buckets: dict[str, dict[int, dict]] = {}
         if promoted:
@@ -217,12 +229,14 @@ def _tick_buckets(ticks: list[dict]) -> dict[int, dict]:
     return out
 
 
-def record_offsets(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK) -> dict[str, Any]:
-    """The per-offset shadow track for every settled window in the lookback not yet tracked."""
+def record_offsets(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK,
+                   series_set=None) -> dict[str, Any]:
+    """The per-offset shadow track for every settled window in the lookback not yet tracked.
+    `series_set` selects the family, exactly as in record_decisions."""
     candles_fn = candles_fn or _candles_or_empty
     rows: list[dict] = []
     windows = 0
-    for name, version, _label in rule.SERIES:
+    for name, version, _label in (rule.SERIES if series_set is None else series_set):
         series = _BY_NAME[name]["series"]
         coin = SERIES_COINS[series]
         targets = [t for t in fetch_targets(supa, name, now - lookback, now)]

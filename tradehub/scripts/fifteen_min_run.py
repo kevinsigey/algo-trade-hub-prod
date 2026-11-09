@@ -20,6 +20,14 @@ variant's grid and its once-a-day promotion evaluation
 (tradehub/fifteen_shadow.py, preregistration
 docs/superpowers/specs/2026-11-09-fifteen-shadow-oil-minute1-prereg.md),
 under the same fail-soft rule.
+
+Amendment 2026-11-09 (metals): the roster itself now carries the metals
+forecasters (gold/silver/copper-15m-v1, preregistration
+docs/superpowers/specs/2026-11-09-metals-fifteen-prereg.md), so the freeze
+pass covers them with no new invocation; the same run additionally writes
+their tracking through the generalized fifteen_tracking passes, under the
+same fail-soft rule. Their record is separate and is read from
+tradehub/metals_fifteen_rule.py.
 """
 
 from __future__ import annotations
@@ -29,7 +37,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from tradehub import fifteen_shadow, fifteen_tracking
+from tradehub import fifteen_shadow, fifteen_tracking, metals_fifteen_rule
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
@@ -42,7 +50,13 @@ def run(supa, forecasters, now: datetime) -> dict[str, Any]:
     for key, fn in (("fifteen_decisions", fifteen_tracking.record_decisions),
                     ("fifteen_offsets", fifteen_tracking.record_offsets),
                     ("fifteen_shadow", fifteen_shadow.record_shadow),
-                    ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily)):
+                    ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily),
+                    ("fifteen_metals_decisions",
+                     lambda s, n: fifteen_tracking.record_decisions(
+                         s, n, series_set=metals_fifteen_rule.SERIES, live_gate=False)),
+                    ("fifteen_metals_offsets",
+                     lambda s, n: fifteen_tracking.record_offsets(
+                         s, n, series_set=metals_fifteen_rule.SERIES))):
         try:
             summary[key] = fn(supa, now)
         except Exception as exc:  # noqa: BLE001 -- tracking reports, it never blocks the freeze

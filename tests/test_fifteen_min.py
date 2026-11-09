@@ -136,14 +136,19 @@ def test_no_open_candle_no_forecast():
     assert model.forecast(entry, now) is None
 
 
-def test_the_build_covers_all_three_series_and_their_market_rows():
+def test_the_build_covers_all_six_series_and_their_market_rows():
     built = build_fifteen_min(_Live([]), inputs=FifteenMinInputs(candles_fn=lambda c, s, e: []))
     assert {f.name for f in built} == {
         "oil_wti_15m", "oil_brent_15m", "natgas_15m",
-        "kalshi_implied_oil_wti_15m", "kalshi_implied_oil_brent_15m", "kalshi_implied_natgas_15m"}
+        "kalshi_implied_oil_wti_15m", "kalshi_implied_oil_brent_15m", "kalshi_implied_natgas_15m",
+        # The metals family (2026-11-09 preregistration): its own forecasters
+        # and market rows beside the oil family's, never instead of them.
+        "gold_15m", "silver_15m", "copper_15m",
+        "kalshi_implied_gold_15m", "kalshi_implied_silver_15m", "kalshi_implied_copper_15m"}
     assert all(f.cadence == "15min" for f in built if hasattr(f, "cadence"))
     assert {f.version for f in built if not f.name.startswith("kalshi_implied")} == {
-        "wti-15m-v2", "brent-15m-v2", "natgas-15m-v2"}
+        "wti-15m-v2", "brent-15m-v2", "natgas-15m-v2",
+        "gold-15m-v1", "silver-15m-v1", "copper-15m-v1"}
 
 
 # ── the live read on the Oil page ─────────────────────────────────────────────
