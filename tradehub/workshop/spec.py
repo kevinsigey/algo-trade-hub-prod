@@ -170,6 +170,11 @@ class IdeaSpec(BaseModel):
     rules: Rules | None = None
     otherwise: str = CASH
     claim: Literal["beats_benchmark", "beats_benchmark_when", "ballast", "smoother_ride"]
+    # Which gate battery judges the claim (spec 2026-11-08, claim-typed gates). `timing`
+    # is the original gate and the default for every existing idea; `basket` grades an
+    # always-in allocation relatively; `event`/`overlay` are declared types whose
+    # batteries are design-only in this pass (the run path refuses them).
+    claim_type: Literal["timing", "basket", "event", "overlay"] = "timing"
     benchmark: str = "SPY"
     cost_bps: float = Field(10, ge=0, le=200)  # commission per switch
     slippage_bps: float = Field(0, ge=0, le=200)  # extra fill cost per switch, on top of cost_bps
@@ -246,6 +251,18 @@ class IdeaSpec(BaseModel):
                 raise ValueError("intraday mode needs a price exit (stop-loss, trailing or take-profit)")
         if self.claim == "beats_benchmark_when" and self.rules is None:
             raise ValueError("beats_benchmark_when needs a buy rule")
+        if self.claim_type == "basket":
+            # The allocation itself is the claim (spec 2026-11-08): an enter/exit rule is a
+            # timing claim in allocation clothes, and option legs are model-priced timing
+            # claims in this pass. Declaring basket with either is gate-shopping.
+            if self.claim != "beats_benchmark":
+                raise ValueError("a basket idea's claim is beats_benchmark: the allocation against its benchmark")
+            if self.rules is not None:
+                raise ValueError("a basket idea has no enter/exit rule: the allocation is the claim "
+                                 "(a rule makes it a timing idea)")
+            if self.options:
+                raise ValueError("a basket idea holds no option legs in this pass: legs are model-priced "
+                                 "timing claims, judged by the timing gate")
         if self.benchmark == CASH:
             raise ValueError("the benchmark must be a ticker")
         return self
@@ -253,5 +270,6 @@ class IdeaSpec(BaseModel):
 
 def blank_spec() -> dict:
     """The hand-fill template: what the form starts from when the AI cannot draft."""
-    return {"title": "", "hold": [], "short": [], "rules": None, "otherwise": CASH, "claim": "beats_benchmark", "benchmark": "SPY",
+    return {"title": "", "hold": [], "short": [], "rules": None, "otherwise": CASH, "claim": "beats_benchmark",
+            "claim_type": "timing", "benchmark": "SPY",
             "cost_bps": 10, "start": "2006-01-03", "unseen_fraction": 0.3, "assumptions": []}

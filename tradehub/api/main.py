@@ -1307,6 +1307,13 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     if found is None:
         raise HTTPException(status_code=404, detail="no such idea")
     spec = body.spec
+    if spec.claim_type in ("event", "overlay"):
+        # Design-only claim types (spec 2026-11-08): their batteries are not built, and
+        # this path must not grade them with the timing instrument. Event ideas have
+        # their own endpoint; overlay has none yet.
+        raise HTTPException(status_code=422,
+                            detail=f"claim_type {spec.claim_type!r} is design-only in this pass "
+                                   "(spec 2026-11-08): its battery is not built yet")
     try:
         prices = with_rule_bars(spec, workshop_closes(tickers_for(spec), spec.start), spec.start,
                                 bars_fn=workshop_bars)
