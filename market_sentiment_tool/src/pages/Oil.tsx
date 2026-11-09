@@ -664,12 +664,13 @@ export default function Oil() {
   const t = totals(rows);
 
   return (
-    // One screen and a bit (2026-11-06): the 15-minute read and the record on the left, the hour on the right.
-    <div className="grid gap-3 xl:grid-cols-12">
-      {/* Reading order follows the page: the 15-minute read, the hour, then the record; the grid places them. */}
-      <div className="min-w-0 xl:col-span-5 xl:row-start-1"><FifteenMinutePanel /></div>
-      <div className="min-w-0 xl:col-span-7 xl:col-start-6 xl:row-span-2 xl:row-start-1"><LiveHero /></div>
-      <div className="flex min-w-0 flex-col gap-3 xl:col-span-5 xl:row-start-2">
+    // Stacked at every width (Kevin, 2026-11-08): the split xl grid squeezed the
+    // 15-minute calls into a narrow column; the hour module now sits underneath it.
+    <div className="flex flex-col gap-3">
+      {/* Reading order follows the page: the 15-minute read, the hour, then the record. */}
+      <div className="min-w-0"><FifteenMinutePanel /></div>
+      <div className="min-w-0"><LiveHero /></div>
+      <div className="flex min-w-0 flex-col gap-3">
 
       <section aria-label="Track record" className="space-y-2">
         <h2 className="text-lg font-semibold text-white">Track record</h2>
