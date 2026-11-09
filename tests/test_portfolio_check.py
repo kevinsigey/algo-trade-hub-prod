@@ -81,6 +81,48 @@ def test_a_ballast_member_sold_below_the_2_percent_floor_blocks():
     assert any("DBC" in b["detail"] for b in out["blocks"])
 
 
+# ── Kevin's ruling (2026-11-09): exits win over the member floor ──────────────
+
+def test_an_exit_trim_below_the_floor_warns_and_does_not_block():
+    book = {**BIG, "DBC": 20_000.0}                     # 2.2% of 870k
+    out = evaluate(book, {"DBC": -5_000.0}, is_exit=True)   # -> 1.7%: under the floor
+    assert out["outcome"] != "block"
+    assert out["blocks"] == []
+    warn = next(w for w in out["warnings"] if "DBC" in w["detail"])
+    assert warn["rule"] == "member_floor_exit"
+    assert "floor" in warn["detail"] and "exit" in warn["detail"]
+    assert "Kevin's ruling" in warn["detail"]           # the warning names the ruling
+
+
+def test_the_same_trim_without_exit_classification_still_blocks():
+    book = {**BIG, "DBC": 20_000.0}
+    out = evaluate(book, {"DBC": -5_000.0}, is_exit=False)
+    assert out["outcome"] == "block"
+    assert any(b["rule"] == "member_floor" for b in out["blocks"])
+
+
+def test_exit_classification_downgrades_only_the_floor_never_a_cap():
+    # is_exit is not a general pass: a delta that ADDS to an over-cap member
+    # still blocks (the classifier upstream never calls such an order an exit;
+    # the engine's cap rules are untouched by the ruling either way).
+    out = evaluate(BIG, {"XLP": 25_000.0}, is_exit=True)    # 75k/925k = 8.1%
+    assert out["outcome"] == "block"
+
+
+def test_check_order_threads_the_exit_flag_and_defaults_to_blocking(monkeypatch):
+    # The activation path calls check_order with no exit flag (main.py) and must
+    # keep the shipped floor behavior; the machine door passes its classification.
+    book = {**BIG, "DBC": 20_000.0}
+    monkeypatch.setattr(pc, "positions_by_underlying", lambda book_name: _book(book))
+    out = pc.check_order(None, "main", {"DBC": -5_000.0}, source="activation",
+                         record=False)
+    assert out["outcome"] == "block"
+    out = pc.check_order(None, "main", {"DBC": -5_000.0}, source="machine_preflight",
+                         record=False, is_exit=True)
+    assert out["outcome"] != "block"
+    assert any(w["rule"] == "member_floor_exit" for w in out["warnings"])
+
+
 def test_a_ballast_member_bought_back_toward_the_band_passes():
     book = {**BIG, "DBC": 10_000.0}                     # 1.1%: under the floor already
     out = evaluate(book, {"DBC": 10_000.0})             # buying back toward the band

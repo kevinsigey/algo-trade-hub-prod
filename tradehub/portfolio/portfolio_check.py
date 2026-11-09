@@ -17,6 +17,12 @@ The rules, as configured (the config is the law -- see load_config):
   order itself moves the capped entity deeper into breach -- an exit that reduces an
   over-cap position always passes, because the exit is the cure, never a new breach.
 - IBIT is EXIT-ONLY: any order that increases IBIT exposure blocks; closes pass.
+- Kevin's ruling (2026-11-09, "exits always win over the floor"): when the machine
+  door's exit classification (the #440 book math -- never a caller flag, threaded in
+  as `is_exit`) says the order is an exit, a member-FLOOR breach it causes is a
+  WARNING, not a block. The floor still blocks every non-exit reduction, and caps
+  are untouched by the ruling. Activations pass no exit flag: their floor behavior
+  is exactly as originally shipped.
 - WARNINGS (never blocking): a cluster (rates trio, AI complex, gold) whose share of
   invested rises more than 2 points on one order; gold over 12% of invested.
 - Correlation is informational: the order sleeve's stored daily-return series
@@ -256,12 +262,16 @@ def _clusters(mv_by_name: dict[str, float], invested: float, config: dict) -> di
 
 
 def evaluate(positions: dict[str, dict], deltas: dict[str, float], config: dict, *,
-             tag: str | None = None, series: dict | None = None) -> dict:
+             tag: str | None = None, series: dict | None = None,
+             is_exit: bool = False) -> dict:
     """Judge one order (or one activation envelope) against the book.
 
     `positions`: underlying -> {"qty", "mv"} as positions_by_underlying returns.
     `deltas`: underlying -> signed market-value change the order makes (a buy is
     positive, whatever wrapper it arrives in -- shares, a leg, a whole package).
+    `is_exit`: the machine door's exit classification (book math, #440) for THIS
+    order; it downgrades a member-floor breach to a named warning and nothing
+    else (Kevin's ruling, 2026-11-09). Activation envelopes never pass it.
     Pure: no reads, no writes, so every caller and every test sees the same math."""
     mv_pre = {s: float(p.get("mv") or 0.0) for s, p in positions.items()
               if not s.startswith("__")}
@@ -339,10 +349,23 @@ def evaluate(positions: dict[str, dict], deltas: dict[str, float], config: dict,
             else sleeve.get("member_min_pct")
         if floor is not None and post_w < float(floor) and not deeper(symbol) \
                 and mv_post.get(symbol, 0.0) < mv_pre.get(symbol, 0.0):
-            blocks.append({"rule": "member_floor",
-                           "detail": f"{symbol} would be {post_w:.1f}% of invested after "
-                                     f"this order, under the {sleeve.get('label', symbol)} "
-                                     f"floor of {float(floor):g}%"})
+            if is_exit:
+                # Kevin's ruling (2026-11-09): exits win over the floor. The
+                # breach is still named -- in the block and, via the recorded
+                # event, in the card's recent outcomes -- but it cannot refuse
+                # an order the book math classifies as an exit.
+                warnings.append({"rule": "member_floor_exit",
+                                 "detail": f"{symbol} would be {post_w:.1f}% of invested "
+                                           f"after this order, under the "
+                                           f"{sleeve.get('label', symbol)} floor of "
+                                           f"{float(floor):g}% -- an exit crossing a "
+                                           "member floor, allowed per Kevin's ruling: "
+                                           "exits win over the floor"})
+            else:
+                blocks.append({"rule": "member_floor",
+                               "detail": f"{symbol} would be {post_w:.1f}% of invested after "
+                                         f"this order, under the {sleeve.get('label', symbol)} "
+                                         f"floor of {float(floor):g}%"})
 
     # Sleeve caps.
     for sleeve_id, sleeve in config["sleeves"].items():
@@ -410,7 +433,8 @@ def record_event(supa, book: str, source: str, symbol: str | None, block: dict) 
 
 def check_order(supa, book: str, deltas: dict[str, float], *, source: str,
                 symbol: str | None = None, tag: str | None = None,
-                idea_id: int | None = None, record: bool = True) -> dict:
+                idea_id: int | None = None, record: bool = True,
+                is_exit: bool = False) -> dict:
     """The gate, end to end: read the book, evaluate, record. An unreadable book
     (AccountNotConnected, a failed read) yields outcome "unavailable" and NO
     block: placement itself is impossible without the account, and the entry is
@@ -439,7 +463,8 @@ def check_order(supa, book: str, deltas: dict[str, float], *, source: str,
         if record:
             record_event(supa, book, source, symbol, block)
         return block
-    block = evaluate(positions, deltas, config, tag=tag, series=series)
+    block = evaluate(positions, deltas, config, tag=tag, series=series,
+                     is_exit=is_exit)
     if record:
         record_event(supa, book, source, symbol, block)
     return block
