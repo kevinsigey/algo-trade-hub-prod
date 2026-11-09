@@ -1,5 +1,12 @@
 # Claim-typed gates — design (Kevin approved 2026-11-08)
 
+**Amendment, same night (2026-11-08, 23:04 CT):** Kevin extended the scope — the
+`event` and `overlay` batteries are built in this pass too, not specced only. Their
+frozen constants are preregistered below (§Event battery, §Overlay battery) before
+the code. Grandfathering is unchanged: the event battery is *reported inside* every
+event run while the run's own verdict stays the existing event gate's; the overlay
+battery, like the basket battery, judges only ideas that declare it.
+
 ## Why
 
 The Workshop has one gate, and it judges every idea's claim as a **timing** claim: a rule
@@ -31,8 +38,8 @@ all round, and a verdict battery assembled per claim type.
 |---|---|---|---|
 | `timing` | "My rule / entry-exit logic beats the benchmark beyond chance timing." | The existing gate, **unchanged** (mask shuffle for rule ideas, sign-flip for rule-less ones; verdict_of with walk-forward + registry bars). | Live; the default for every existing idea. |
 | `basket` | "This always-in allocation outruns its benchmark, after costs, without falling into a deeper hole." | **New, built in this pass** (§Basket battery). | Live with this change. |
-| `event` | "Around this event class, the name drifts abnormally vs its context." | Per-event excess vs matched peers/index frozen at event time, cross-event significance, hit rate. The event-study path (`events.py`) already computes per-event reads; the typed battery formalizes its verdict. | **Design only in this pass.** `claim_type="event"` on an IdeaSpec is stored, but the rule-run path refuses it (422): event ideas run through the event-study endpoint. |
-| `overlay` | "Bolted onto the book, this sleeve improves the combined portfolio." | With-vs-without comparison on the combined portfolio (Sharpe and max-DD deltas), never standalone return. | **Design only in this pass.** Stored, refused on the rule-run path (422). |
+| `event` | "Around this event class, the name drifts abnormally vs its context." | Per-event excess vs the index and vs matched peers, both frozen at event time; cross-event t and hit rate per span (§Event battery). Runs on the event-study path (`EventSpec` / `run_event_test`), which already computes the per-event reads. | **Live with the amendment.** The battery is reported in every event run's result; the run's headline verdict remains the existing event gate's (grandfathering — §Event battery). `claim_type="event"` on an *IdeaSpec* stays refused on the rule-run path (422): an IdeaSpec has no event windows. |
+| `overlay` | "Bolted onto the book, this sleeve improves the combined portfolio." | With-vs-without on the combined portfolio: the run's benchmark blended with the sleeve at a frozen weight; drawdown margin, Sharpe guard, return budget (§Overlay battery). Never standalone return. | **Live with the amendment.** Dispatched in `run_test` like `basket`; requires a `ballast` or `smoother_ride` claim. |
 
 `claim_type` lives on `IdeaSpec` (default `"timing"`, a Literal, so it is validated,
 stored in every run's spec JSON, and surfaced wherever the spec is read). No database
@@ -47,9 +54,16 @@ migration: specs are JSON on `idea_runs`.
 - An existing idea keeps `timing` unless Kevin re-registers it. Switching type is a
   re-registration, not an edit: it happens by running the idea under the new type, in
   the open, where the run record shows both.
-- `event` / `overlay` declarations are data until their batteries are preregistered
-  and built; the run path refuses them loudly rather than grading them with the
-  wrong instrument.
+- `overlay` requires the claim it answers: `claim` must be `ballast` or
+  `smoother_ride` — the two claims that are statements about a host portfolio, not
+  about standalone return. Validation rejects any other pairing. Rules and option
+  legs stay allowed: a sleeve is graded as specified (a protective-put overlay is
+  the canonical case; its legs are model-priced and the run's options block already
+  says so).
+- `event` is not an IdeaSpec type at all: event studies are declared by their
+  `EventSpec` (`kind="event"`) and run on the event-study endpoint. Setting
+  `claim_type="event"` on an IdeaSpec is refused (422) with that explanation, not
+  graded by the rule engine.
 
 ## The common core (all batteries)
 
@@ -68,9 +82,12 @@ migration: specs are JSON on `idea_runs`.
 5. **Multiple-testing accounting.** Every run — any idea, any battery — is inserted
    through `store.insert_run`, which stamps the hub-wide test number: every
    idea×battery run counts in the family log. The registry's Benjamini-Hochberg
-   adjustment is defined over the timing family's shuffle p-values; battery runs are
-   **exempt from registry demotion** (their stored verdict stands in the adjusted
-   view) until a cross-battery FDR treatment is itself preregistered. A battery
+   adjustment is defined over the timing family's shuffle p-values; **basket and
+   overlay battery runs are exempt from registry demotion** (their stored verdict
+   stands in the adjusted view) until a cross-battery FDR treatment is itself
+   preregistered. Event runs are *not* exempt: their battery is a reported read
+   inside a run whose verdict still comes from the timing-family event gate, so
+   they keep flowing through the BH adjustment exactly as before. A battery
    PASS therefore cannot feed a go-live decision until that treatment exists —
    see Grandfathering.
 
@@ -112,24 +129,84 @@ allocation as specified and stay in the series).
   they were), and adds `battery`: `{type, constants, spans: {built, unseen},
   ew_reference, p, legs: [{name, holds, detail}]}` plus `claim_type` at top level.
 
-## Event battery (design only)
+## Event battery (frozen constants)
 
-Per event (earnings print, FOMC/CPI/jobs release, gap): the name's abnormal return
-over the preregistered window, minus the matched peer median and the index over the
-identical window, both frozen at event time (valuation §6's peer-relative rule,
-applied per event). Verdict from the cross-event distribution: mean abnormal excess
-with a cross-event t / bootstrap CI excluding 0, hit rate reported, minimum event
-count in place of the unseen-days minimum. The existing event-study engine already
-produces per-event reads; what remains to build is the typed verdict assembly and
-its frozen peer sets.
+Computed inside `run_event_test` from the per-event rows the event engine already
+measures — no new data, no new windows. Spans are the event path's own split (by
+event day, newest `unseen_fraction` of event days unseen), and every event is
+assigned wholly to the span containing its reaction day.
 
-## Overlay battery (design only)
+- **Index excess (the judged series):** per event, the signed abnormal return the
+  engine already computes — the study's window return minus the benchmark's over
+  the identical window, signed by the claimed direction, in %. This is valuation
+  §6's index leg, frozen at event time by construction.
+- **Peer excess (reported control, not a verdict leg):** per event, the name's
+  window return minus the **median window return of the study's other tickers**
+  over the identical window — the matched peers are the study's own names, frozen
+  at event time because the window is contemporaneous. Reported per span (n,
+  mean, cross-event t, hit rate). Not a verdict leg, for the same reason the
+  basket battery's equal-weight reference is not: for the canonical single-name
+  studies (FOMC drift on SPY) no in-study peer exists, so a peer verdict leg
+  would grade the study's ticker list, not its claim. Single-name studies report
+  the peer block as n/a.
+- **Cross-event significance:** per span, the one-sample t of the signed index
+  excess, `mean / (sd/√n)` with sd at ddof=1 — events, not days, are the sample,
+  so no block correction is needed across well-separated events. The battery also
+  reports the one-sided t p-value on the unseen span as `p` (family log only).
+- **Hit rate:** per span, the share of events whose signed index excess is > 0.
+- **Frozen bar.** Minimum counts are adopted unchanged from the event engine
+  (frozen there since 2026-10-31; a parity test pins the two modules' constants
+  together so they cannot drift): **MIN_EVENTS 20** total, **MIN_UNSEEN_EVENTS
+  10** — below either, the battery verdict is NOT ENOUGH DATA. PASS requires, on
+  the **unseen** span: mean > 0, **t ≥ 2.0**, **hit rate ≥ 0.55**; and on the
+  **built** span: mean > 0 with **t ≥ 1.0** (the built span formed the hypothesis,
+  so it confirms direction at a lower bar; the verdict bar lives on unseen data).
+  FAIL otherwise, with the failing legs named.
+- **Cost treatment (inherited, stated):** per-event windows are gross of switch
+  costs, exactly as the event gate has always measured them — the event path has
+  no cost model. The battery does not change that in this pass; netting event
+  windows is a separate preregistration.
+- **Grandfathering, applied literally:** the battery rides in the run's result as
+  `battery` (both the NOT ENOUGH DATA early return and the full return), and the
+  run's own verdict, headline and shuffle remain the existing event gate's,
+  untouched. Event runs are not registry-exempt (see core §5). Promoting the
+  battery to *be* the event verdict is a re-registration decision for Kevin, not
+  something this build does silently.
 
-An overlay is graded only in combination: run the host portfolio (or benchmark
-sleeve) with and without the overlay over identical spans; the claim holds when the
-combined series' Sharpe improves and/or its max drawdown shrinks by a preregistered
-margin, with the overlay's standalone return reported as context and never judged.
-Costs double-counted nowhere: the combined series is built once, from legs.
+## Overlay battery (frozen constants)
+
+Computed per span (built, unseen) in `run_test` for `claim_type="overlay"`, from
+the same daily frame as every other battery. The host is the run's benchmark —
+the portfolio the sleeve would accompany, in the only terms the Workshop can
+measure — and the combined series is built once, from the two return series:
+
+- **Combined series:** `c = (1 − W) × benchmark + W × idea`, daily, with
+  **SLEEVE_WEIGHT W = 0.20** frozen. A sleeve is a minority allocation: a fifth
+  of the book is the smallest share at which protection is measurable at
+  portfolio scale, and the largest that leaves the host dominant. Both series
+  are already net of the idea's house costs; the benchmark is costless, as
+  everywhere in the core. Nothing is double-counted: the blend is one series,
+  computed once.
+- **Per span, host vs combined:** Sharpe (annualized, the house convention),
+  max drawdown and CAGR, in points where the quantity is a percent.
+- **Frozen bar, per span** (must hold on **both** spans):
+  - **Drawdown margin:** `|maxDD_host| − |maxDD_combined| ≥ 3.0` points
+    (**DD_MARGIN_PP**). When the host's span drawdown is under **5.0** points
+    (**DD_MIN_HOST_PP**, the basket battery's convention) there was no fall to
+    protect against: the leg is recorded not-binding and does not gate.
+  - **Sharpe guard:** combined Sharpe ≥ host Sharpe − **0.05**
+    (**SHARPE_TOLERANCE**) — protection may not be bought with a meaningfully
+    worse risk-adjusted ride.
+  - **Return budget:** host CAGR − combined CAGR ≤ **2.0** points/yr
+    (**RETURN_BUDGET_PP**) — the most return the sleeve may give back.
+- **Verdict:** PASS iff every binding leg holds on both spans (the shared
+  504-unseen-day gate fires upstream, as for every battery). FAIL otherwise,
+  with the failing legs named. The sleeve's standalone numbers appear only in
+  the shared `claim`/`context` blocks, as context — never as legs.
+- **Result shape:** identical discipline to the basket battery — the timing
+  result's top-level keys, `shuffle`/`t_test` null, `claim_type: "overlay"`,
+  and `battery`: `{type, constants, spans: {built, unseen} (host vs combined),
+  legs, verdict}`. Registry treatment matches basket (exempt; core §5).
 
 ## Grandfathering (hard rule)
 
@@ -152,3 +229,9 @@ re-run with `claim_type="basket"` set on their run specs (both benchmark
 variations), and the old-gate vs new-gate verdicts reported side by side with the
 battery's numbers. If the honest basket verdict is still FAIL, FAIL is the report:
 the framework's job is to measure the right thing, not to pass the trackers.
+
+With the amendment, two more demonstrations, both additional runs, both reported
+only: idea 65 (Post-FOMC drift — a PASS under the existing event gate) re-run on
+the event path so its new run carries the event battery's read beside the gate's;
+and idea 61 (W18, a `smoother_ride` frozen basket — the support sleeve) re-run
+with `claim_type="overlay"`. Neither idea's state changes.

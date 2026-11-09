@@ -23,6 +23,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from scipy import stats
 
+from tradehub.workshop import event_gate
 from tradehub.workshop.engine import HEADLINES, _clean, p_value, verdict_of
 from tradehub.workshop.spec import _ticker
 
@@ -180,6 +181,30 @@ def _event_rows(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.Data
     return pd.concat(rows).sort_values(["day", "ticker"]).reset_index(drop=True)
 
 
+def _peer_excess(spec: EventSpec, closes: pd.DataFrame, rows: pd.DataFrame, col: str,
+                 sign: float) -> np.ndarray | None:
+    """Each event's window return minus the median window return of the study's OTHER
+    tickers over the identical window (in %, signed by the claimed direction): the
+    matched-peer control for the event battery, frozen at event time because the window
+    is contemporaneous. None for a single-name study (no in-study peer exists)."""
+    if len(spec.tickers) < 2 or not len(rows):
+        return None
+    frame = closes[closes.index >= pd.Timestamp(spec.start)]
+    r = frame.pct_change()
+    W = {t: _windows(r[t].to_numpy(dtype=float))[col] for t in spec.tickers if t in r}
+    if len(W) < 2:
+        return None
+    pos = frame.index.get_indexer(pd.DatetimeIndex(rows["day"]))
+    out = np.full(len(rows), np.nan)
+    for i, (t, p) in enumerate(zip(rows["ticker"], pos)):
+        if t not in W or p < 0 or not np.isfinite(W[t][p]):
+            continue
+        peers = [W[u][p] for u in W if u != t and np.isfinite(W[u][p])]
+        if peers:
+            out[i] = sign * (W[t][p] - float(np.median(peers)))
+    return out
+
+
 def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.DataFrame], *, variations: int,
                    seed: int, permutations: int = 1000) -> dict:
     """Did the window move the claimed way after these events, on the newest events, beyond random dates?"""
@@ -198,14 +223,17 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
             "events": [{"date": str(d.date()), "ticker": t, "surprise": s, **{c: v[c] for c in COLUMNS}}
                        for d, t, s, v in zip(rows["day"], rows["ticker"], rows["surprise"],
                                              rows[list(COLUMNS)].to_dict("records"))][-2000:]}
+    # The claim-typed event battery (spec 2026-11-08): a reported read riding in the
+    # result — cross-event t and hit rate on the signed index excess, the in-study peer
+    # median as control. The verdict below stays this gate's own (grandfathering).
+    signed = sign * rows[col].to_numpy(dtype=float)
+    bat = event_gate.battery(signed, _peer_excess(spec, closes, rows, col, sign), split=k)
     if n < MIN_EVENTS or n - k < MIN_UNSEEN_EVENTS:
         reason = (f"only {n} events ({n - k} unseen); at least {MIN_EVENTS} ({MIN_UNSEEN_EVENTS} unseen) are "
                   f"needed")
         return _clean({**base, "verdict": "NOT ENOUGH DATA", "headline": HEADLINES["nodata"], "reason": reason,
                        "claim": None, "shuffle": None, "t_test": None, "periods": None, "per_ticker": [],
-                       "context": [], "curve": []})
-
-    signed = sign * rows[col].to_numpy(dtype=float)
+                       "context": [], "curve": [], "battery": bat})
 
     def claim(x: np.ndarray) -> tuple[bool, float, str]:
         v = float(np.mean(x))
@@ -245,5 +273,5 @@ def run_event_test(spec: EventSpec, closes: pd.DataFrame, events: dict[str, pd.D
         "t_test": {"mean_daily_diff": float(np.mean(signed[k:])), "t": float(t.statistic), "p": float(t.pvalue),
                    "holds": bool(t.pvalue < 0.05)},
         "periods": {"held": held, "of": 5, "holds": True if held >= 4 else False if held <= 1 else None},
-        "per_ticker": per.to_dict("records"), "context": [], "curve": [],
+        "per_ticker": per.to_dict("records"), "context": [], "curve": [], "battery": bat,
     })
