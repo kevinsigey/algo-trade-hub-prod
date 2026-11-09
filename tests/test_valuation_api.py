@@ -77,3 +77,24 @@ def test_get_one_and_404(monkeypatch):
     r = client.get("/api/valuation-bands/amgn")
     assert r.status_code == 200 and r.json()["ticker"] == "AMGN"
     assert client.get("/api/valuation-bands/ZZZZ").status_code == 404
+
+
+def test_revenue_basis_row_surfaces_its_basis(monkeypatch):
+    # Phase B: a revenue-basis sheet is labeled wherever bands are shown --
+    # the read API returns the stored basis and implied revenue verbatim.
+    from tradehub.api.dependencies import get_supabase as real_get_supabase
+    rows = [{"ticker": "GILD", "tier": "watch", "status": "banded",
+             "band_basis": "revenue", "implied_revenue": 31.5e9,
+             "implied_eps": None, "baseline_verdict": "neutral",
+             "computed_at": "2026-11-09T18:00:00Z",
+             "bands": {"bear": 150.0, "base": 170.0, "bull": 175.0}}]
+    main.app.dependency_overrides[admin.require_admin] = (
+        lambda: {"email": "k@example.com", "is_admin": True})
+    main.app.dependency_overrides[real_get_supabase] = lambda: _Supa(rows)
+    client = TestClient(main.app)
+    r = client.get("/api/valuation-bands/GILD")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["band_basis"] == "revenue"
+    assert body["implied_revenue"] == 31.5e9
+    assert body["implied_eps"] is None

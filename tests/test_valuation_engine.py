@@ -269,6 +269,146 @@ def test_no_peer_multiple_status():
     assert s["bands"] is None
 
 
+# --- revenue basis (Phase B amendment, 2026-11-09) -----------------------------
+
+def rev_rec(ticker="ACME", period="FY2027", low=90e9, high=110e9, unit="usd",
+            consensus=98e9, created="2026-11-01T00:00:00+00:00",
+            consensus_period="0y"):
+    return {"ticker": ticker, "metric": "revenue", "period": period,
+            "low": low, "high": high, "unit": unit, "consensus": consensus,
+            "consensus_period": consensus_period,
+            "created_at": created, "accession": "0002"}
+
+
+REV_FUND = {"shares_diluted": {"value": 10e9, "as_of": "2026-09-30"},
+            "revenue": {"value": 95e9, "as_of": "2026-09-30"}}
+
+
+def rev_sheet(records, price=50.0, sales=5.0, **kw):
+    kw.setdefault("fundamentals", REV_FUND)
+    return sheet(records, price=price, sales_multiple=sales, sales_count=6, **kw)
+
+
+def test_revenue_bands_from_fy_revenue_guide():
+    # guide 90-110B, peer P/S 5.0, 10B diluted shares -> bear 40.5, base 50, bull 55
+    s = rev_sheet([rev_rec()])
+    assert s["status"] == "banded"
+    assert s["band_basis"] == "revenue"
+    assert s["bands"] == {"bear": 40.5, "base": 50.0, "bull": 55.0}
+    assert s["anchor"]["metric"] == "revenue"
+    # price 50 -> implied revenue 50 * 10e9 / 5 = 100B = the guide mid -> gap 0
+    assert s["implied"]["revenue"] == pytest.approx(100e9)
+    assert s["gap_range_widths"] == pytest.approx(0.0)
+    assert s["baseline_verdict"] == "buy_zone"
+
+
+def test_revenue_zone_short_side_mirrors_eps():
+    s = rev_sheet([rev_rec()], price=60.0)  # implied 120B > guide high; price > bull
+    assert s["baseline_verdict"] == "short_zone_strong"
+
+
+def test_revenue_point_guide_gap_is_null():
+    s = rev_sheet([rev_rec(low=100e9, high=100e9)])
+    assert s["status"] == "banded"
+    assert s["gap_range_widths"] is None
+    assert s["anchor"]["point_guide"] is True
+    assert s["bands"] == {"bear": 45.0, "base": 50.0, "bull": 50.0}
+
+
+def test_eps_basis_wins_when_both_bases_exist():
+    s = rev_sheet([rec(), rev_rec()])
+    assert s["status"] == "banded"
+    assert s["band_basis"] == "eps"
+    assert s["anchor"]["metric"] == "eps_adjusted"
+
+
+def test_revenue_anchor_picks_consolidated_over_segment_rows():
+    # ADBE shape: one filing cohort carries segment rows beside the total; the
+    # segments pass the magnitude guards (0.69x consensus) but a part never
+    # exceeds the whole -- the largest guard-passing midpoint is consolidated.
+    seg = rev_rec(low=18.2e9, high=18.3e9, consensus=26.6e9)
+    total = rev_rec(low=26.5e9, high=26.6e9, consensus=26.6e9)
+    s = rev_sheet([seg, total], fundamentals={
+        "shares_diluted": {"value": 0.43e9, "as_of": "2026-09-30"},
+        "revenue": {"value": 24e9, "as_of": "2026-09-30"}})
+    assert s["status"] == "banded"
+    assert s["anchor"]["low"] == 26.5e9
+
+
+def test_revenue_anchor_prefers_the_latest_cohort():
+    older = rev_rec(low=90e9, high=100e9, created="2026-08-01T00:00:00+00:00")
+    newer = rev_rec(low=100e9, high=110e9, created="2026-11-01T00:00:00+00:00")
+    s = rev_sheet([older, newer])
+    assert s["anchor"]["low"] == 100e9
+
+
+def test_revenue_midpoint_tie_goes_to_the_widest_range():
+    point = rev_rec(low=14.65e9, high=14.65e9, consensus=14.7e9)
+    rng = rev_rec(low=14.45e9, high=14.85e9, consensus=14.7e9)
+    s = rev_sheet([point, rng])
+    assert s["anchor"]["low"] == 14.45e9 and s["anchor"]["high"] == 14.85e9
+
+
+def test_revenue_zero_row_rejected():
+    # BKNG shape: a 0.0/0.0 row is not a guide.
+    s = rev_sheet([rev_rec(low=0.0, high=0.0, consensus=28.6e9)])
+    assert s["status"] == "guide_rejected"
+    assert s["bands"] is None
+
+
+def test_revenue_segment_noise_fails_both_references():
+    # KO shape: a 5B row against 50.4B consensus and ~47B trailing revenue.
+    s = rev_sheet([rev_rec(low=5e9, high=None, consensus=50.4e9)],
+                  fundamentals={"shares_diluted": {"value": 4.3e9,
+                                                   "as_of": "2026-09-30"},
+                                "revenue": {"value": 47e9,
+                                            "as_of": "2026-09-30"}})
+    assert s["status"] == "guide_rejected"
+
+
+def test_revenue_stale_trailing_reference_is_no_reference():
+    # PFE shape: the served trailing revenue is FY2023 (as-of > 550 days old at
+    # compute). It cannot judge the guide; the consensus reference governs and
+    # corroborates -> banded.
+    stale = {"shares_diluted": {"value": 5.6e9, "as_of": "2026-09-30"},
+             "revenue": {"value": 50.9e9, "as_of": "2023-12-31"}}
+    s = rev_sheet([rev_rec(low=62e9, high=64e9, consensus=63e9)],
+                  fundamentals=stale)
+    assert s["status"] == "banded"
+    # ...but a guide its live reference rejects still fails: consensus 30B vs
+    # a 62-64B guide is 2.1x -- inside the wide band, so use 20B (3.15x, fails).
+    s2 = rev_sheet([rev_rec(low=62e9, high=64e9, consensus=20e9)],
+                   fundamentals=stale)
+    assert s2["status"] == "guide_rejected"
+
+
+def test_revenue_no_sales_multiple_status():
+    s = rev_sheet([rev_rec()], sales=None)
+    assert s["status"] == "no_peer_multiple"
+    assert s["bands"] is None
+
+
+def test_revenue_no_shares_cannot_form_per_share_bands():
+    s = rev_sheet([rev_rec()], fundamentals={
+        "revenue": {"value": 95e9, "as_of": "2026-09-30"}})
+    assert s["status"] == "no_peer_multiple"
+    assert s["bands"] is None
+    assert "shares" in s["falsifier"]
+
+
+def test_revenue_quarterly_only_no_bands():
+    s = rev_sheet([rev_rec(period="Q4 2026")])
+    assert s["status"] == "no_full_year_guide"
+    assert s["bands"] is None
+
+
+def test_revenue_pct_growth_row_is_not_a_candidate():
+    # ABT shape: a growth-rate row (unit pct) is a different statement, not a
+    # rejected dollar guide.
+    s = rev_sheet([rev_rec(unit="pct", low=6.5, high=7.5, consensus=None)])
+    assert s["status"] == "no_full_year_guide"
+
+
 # --- percentile -----------------------------------------------------------------
 
 def test_guidance_relative_percentile():
