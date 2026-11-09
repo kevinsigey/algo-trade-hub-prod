@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { ArrowRight, ChevronDown } from "lucide-react";
 
 import { FifteenSettlements } from "@/components/FifteenSettlements";
-import GapDesk from "@/components/GapDesk";
 import { SniperRecord } from "@/components/SniperRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
 import { getJson } from "@/lib/getJson";
@@ -19,12 +18,13 @@ function useJson<T>(url: string): T | null {
   return data;
 }
 
-type Stage = "Live paper account" | "Paper record" | "Picks only" | "Retired";
+type Stage = "Live paper account" | "Paper record" | "Picks only" | "Retired" | "Paused";
 const STAGE_TONE: Record<Stage, string> = {
   "Live paper account": "border-emerald-500/50 text-emerald-300",
   "Paper record": "border-sky-500/50 text-sky-300",
   "Picks only": "border-slate-600 text-slate-300",
   Retired: "border-slate-700 text-slate-500",
+  Paused: "border-amber-500/50 text-amber-300",
 };
 
 const signed = (v: number, digits = 1) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
@@ -32,9 +32,21 @@ const cent1 = (v: number) => `${signed(v * 100)}¢`;
 const cents = (v: number) => `${cent1(v)} a contract`;
 const pts1 = (v: number) => `${signed(v * 100)} pts`;
 const usd = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
+const usdPlain = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const toneOf = (v: number | null | undefined) => (v == null ? undefined : v >= 0 ? "text-emerald-300" : "text-rose-300");
 
 interface GapCategoryLedger { closed: number; realized: number; win_rate: number | null; median_pnl: number | null }
+interface GapPosition { ticker: string; category: string; side: string; model_at_entry: number;
+                        entry_price: number; gap_pts: number; contracts: number;
+                        exit_state: string | null; exit_reason?: string | null; pnl?: number | null;
+                        settles_at?: string }
+/** How a gap position ended, in the order the post-mortem reads them. */
+const GAP_EXIT_LABELS: [string, string][] = [
+  ["gap_closed", "Gap closed"], ["model_moved", "Model moved"],
+  ["near_settlement", "Under an hour left"], ["settlement", "Held to settlement"],
+];
+const gapExitLabel = (reason: string | null | undefined): string =>
+  GAP_EXIT_LABELS.find(([k]) => k === reason)?.[1] ?? (reason ? reason.replace(/_/g, " ") : "—");
 interface SeriesStats { n: number; net_per_contract: number | null; win_rate: number | null;
                         total?: number; low95?: number | null; windows?: number }
 interface FifteenTrade { series: string; target: string; frozen_at: string; side: "yes" | "no";
@@ -172,7 +184,7 @@ function SeriesBars({ labels, fifteen, lines }: {
 }
 
 interface TileSpec {
-  id: string; name: string; stage: Stage; muted?: boolean; defaultOpen?: boolean;
+  id: string; name: string; stage: Stage; chipLabel?: string; muted?: boolean; defaultOpen?: boolean;
   visual: ReactNode; stats: ReactNode; children: ReactNode;
 }
 
@@ -184,7 +196,7 @@ function Tile({ spec }: { spec: TileSpec }) {
         <summary className="cursor-pointer list-none p-4 [&::-webkit-details-marker]:hidden">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-white">{spec.name}</span>
-            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STAGE_TONE[spec.stage]}`}>{spec.stage}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STAGE_TONE[spec.stage]}`}>{spec.chipLabel ?? spec.stage}</span>
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-slate-400">
               Details <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
             </span>
@@ -211,6 +223,42 @@ function SubDetails({ title, children }: { title: string; children: ReactNode })
   );
 }
 
+/** The gap tracker's positions as a closed book reads them: how each trade ended, or that it is still open. */
+function GapPositionsTable({ rows, open = false }: { rows: GapPosition[]; open?: boolean }) {
+  return (
+    <div className="-mx-4 overflow-x-auto px-4">
+      <table className="w-full min-w-[34rem] text-left text-xs tabular-nums">
+        <thead className="text-slate-500">
+          <tr>
+            <th scope="col" className="py-1 pr-3 font-medium">Contract</th>
+            <th scope="col" className="py-1 pr-3 font-medium">Desk</th>
+            <th scope="col" className="py-1 pr-3 font-medium">Side</th>
+            <th scope="col" className="py-1 pr-3 text-right font-medium">Contracts</th>
+            <th scope="col" className="py-1 pr-3 text-right font-medium">Entry</th>
+            <th scope="col" className="py-1 pr-3 text-right font-medium">Entry gap</th>
+            <th scope="col" className="py-1 font-medium">{open ? "State" : "Result"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.ticker} className="border-t border-slate-800/80 text-slate-300">
+              <td className="whitespace-nowrap py-1.5 pr-3 font-medium text-slate-100">{p.ticker}</td>
+              <td className="py-1.5 pr-3 capitalize">{p.category}</td>
+              <td className="py-1.5 pr-3">{p.side}</td>
+              <td className="py-1.5 pr-3 text-right">{p.contracts}</td>
+              <td className="py-1.5 pr-3 text-right">{Math.round(p.entry_price * 100)}¢</td>
+              <td className="py-1.5 pr-3 text-right">{p.gap_pts.toFixed(1)} pts</td>
+              <td className={`py-1.5 ${open ? "text-amber-300" : toneOf(p.pnl) ?? ""}`}>
+                {open ? "open · resolving" : p.pnl == null ? "—" : `${usd(p.pnl)} · ${gapExitLabel(p.exit_reason).toLowerCase()}`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** A headline record line: the same composed string the glance list used to carry, kept whole. */
 function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
   return (
@@ -226,8 +274,10 @@ function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
  * numbers, and every sentence of explanation under the tile's expansion. The 15-minute oil & gas
  * expansion is itself split into small titled blocks (rule, settlements, record, decisions,
  * timing, sessions, shadow), each fact stated once — the single mega-dropdown repeated itself
- * (Kevin, 2026-11-09). The market pages keep the live reads; the Track record keeps whether the
- * reads are right; this page keeps whether trading on them pays.
+ * (Kevin, 2026-11-09). The gap tracker, paused 2026-11-09, sits with the muted entries at the
+ * bottom as a closed book: the final record on the tile, the post-mortem in its one expansion.
+ * The market pages keep the live reads; the Track record keeps whether the reads are right;
+ * this page keeps whether trading on them pays.
  */
 export default function Strategies() {
   const portfolio = useJson<{ scoreboard?: { return_pct: number | null; ahead_pts: number | null };
@@ -235,7 +285,12 @@ export default function Strategies() {
   const ideas = useJson<{ live_books?: string[] }[]>("/api/ideas");
   const fifteen = useJson<FifteenPayload>("/api/oil/fifteen-rule");
   const strike = useJson<{ settled?: number; hits?: number; hit_rate?: number | null; net_per_contract?: number | null }>("/api/oil/itm-record");
-  const gaps = useJson<{ closed_positions?: { category: string; pnl: number | null }[];
+  const gaps = useJson<{ as_of?: string | null; entries_paused?: boolean;
+                         grade?: { oil?: { n: number; brier_delta: number | null };
+                                   crypto?: { n: number; brier_delta: number | null } };
+                         ledger?: { bankroll: number; resolved: number; open: number };
+                         open_positions?: GapPosition[];
+                         closed_positions?: GapPosition[];
                          ledger_by_category?: Record<string, GapCategoryLedger> }>("/api/gaps/desk");
   const sniper = useJson<{ overall?: { count: number; hit_rate: number } }>("/api/crypto/sniper-verdict");
 
@@ -331,6 +386,26 @@ export default function Strategies() {
              tone: toneOf(led.realized) };
   };
 
+  // How one desk's closed trades ended, grouped by exit reason. The payload's closed page
+  // holds the whole book here: the tracker is paused, so only the still-open positions can
+  // still join it, and they cannot push it past the page.
+  const exitBreakdown = (category: string): { key: string; label: string; n: number; pnl: number }[] => {
+    const byReason = new Map<string, { n: number; pnl: number }>();
+    for (const p of gaps?.closed_positions ?? []) {
+      if (p.category !== category || p.pnl == null) continue;
+      const key = p.exit_reason ?? "unknown";
+      const cur = byReason.get(key) ?? { n: 0, pnl: 0 };
+      cur.n += 1;
+      cur.pnl += p.pnl;
+      byReason.set(key, cur);
+    }
+    const known = GAP_EXIT_LABELS.filter(([k]) => byReason.has(k))
+      .map(([k, label]) => ({ key: k, label, ...byReason.get(k)! }));
+    const rest = [...byReason.entries()].filter(([k]) => !GAP_EXIT_LABELS.some(([kk]) => kk === k))
+      .map(([k, v]) => ({ key: k, label: gapExitLabel(k), ...v }));
+    return [...known, ...rest];
+  };
+
   const OIL_LABELS = ["WTI", "Brent", "Natural gas"];
   const METAL_LABELS = ["Gold", "Silver", "Copper"];
   const hasMetals = !!fifteen?.metals;
@@ -371,6 +446,16 @@ export default function Strategies() {
   const gapOil = gapStats("oil"), gapCrypto = gapStats("crypto");
   const gapMaxAbs = Math.max(0.01, Math.abs(gapOil?.realized ?? 0), Math.abs(gapCrypto?.realized ?? 0));
   const gapTotalRealized = (gapOil || gapCrypto) ? (gapOil?.realized ?? 0) + (gapCrypto?.realized ?? 0) : null;
+  const gapClosedTotal = (gapOil || gapCrypto) ? (gapOil?.closed ?? 0) + (gapCrypto?.closed ?? 0) : null;
+  // The pause lane's switch, read off the desk payload: entries are paused unless the payload
+  // says otherwise (Kevin paused the desk 2026-11-09; the flag confirms it once that lane lands).
+  const gapPaused = gaps?.entries_paused !== false;
+  const gapOpen = gaps?.open_positions ?? [];
+  const gapOilExits = exitBreakdown("oil"), gapCryptoExits = exitBreakdown("crypto");
+  const gapDelta = (d: number | null | undefined) => (d == null ? null : `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(3)}`);
+  const cryptoMoved = gapCryptoExits.find((r) => r.key === "model_moved") ?? null;
+  const oilGapClosed = gapOilExits.find((r) => r.key === "gap_closed") ?? null;
+  const oilSettled = gapOilExits.find((r) => r.key === "settlement") ?? null;
   const strikeShare = strike?.settled ? (strike.hits ?? 0) / strike.settled : null;
 
   const tiles: TileSpec[] = [
@@ -658,48 +743,6 @@ export default function Strategies() {
       ),
     },
     {
-      id: "gap-tracker", name: "Kalshi gap tracker", stage: "Paper record",
-      visual: (
-        <div className="space-y-3">
-          {([["Oil", gapOil], ["Crypto", gapCrypto]] as const).map(([label, led]) => (
-            <div key={label} className="flex items-center gap-2">
-              <span className="w-14 shrink-0 text-[11px] text-slate-400">{label}</span>
-              <SignedBar value={led?.realized ?? null} maxAbs={gapMaxAbs} />
-              <span className={`w-24 shrink-0 text-right text-xs tabular-nums ${toneOf(led?.realized) ?? "text-slate-400"}`}>
-                {led ? usd(led.realized) : "—"}
-              </span>
-            </div>
-          ))}
-        </div>
-      ),
-      stats: (
-        <p className="text-sm tabular-nums text-slate-300">
-          <span className={`text-xl font-semibold ${toneOf(gapTotalRealized) ?? "text-slate-200"}`}>
-            {gapTotalRealized == null ? "—" : usd(gapTotalRealized)}
-          </span>
-          {" realized · both desks"}
-        </p>
-      ),
-      children: (
-        <div>
-          <section id="gap-oil" aria-label="Oil gap tracker" className="scroll-mt-6">
-            <p className="text-sm text-slate-400">
-              Brent and WTI hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points (fees come out of the trade's P&L, not the test) — only with 2+ hours to settlement and a book deep enough to exit — one trade per event; exit when the gap narrows to 2 points, the model moves more than 5 points from entry, or under an hour is left.
-            </p>
-            <RecordLine text={gapRecord("oil").record} tone={gapRecord("oil").tone} />
-            <div className="mt-3"><GapDesk category="oil" /></div>
-          </section>
-          <section id="gap-crypto" aria-label="Crypto gap tracker" className="mt-6 scroll-mt-6">
-            <p className="text-sm text-slate-400">
-              Bitcoin and Ethereum hourly and daily contracts on Kalshi: buy when the model's chance beats the price you can actually pay by 8+ points (fees come out of the trade's P&L, not the test) — only with 2+ hours to settlement and a book deep enough to exit — one trade per event; exit when the gap narrows to 2 points, the model moves more than 5 points from entry, or under an hour is left.
-            </p>
-            <RecordLine text={gapRecord("crypto").record} tone={gapRecord("crypto").tone} />
-            <div className="mt-3"><GapDesk category="crypto" /></div>
-          </section>
-        </div>
-      ),
-    },
-    {
       id: "sports-picks", name: "Sports picks", stage: "Picks only", muted: true,
       visual: null,
       stats: <RecordLine text="Graded in the Track record" />,
@@ -735,6 +778,132 @@ export default function Strategies() {
           </p>
           <h2 className="mt-4 text-lg font-semibold text-white">Crypto sniper, retired</h2>
           <SniperRecord />
+        </section>
+      ),
+    },
+    {
+      // Paused 2026-11-09 and demoted out of the live grid: the tile is the final
+      // record, and its one expansion is the post-mortem, not a desk.
+      id: "gap-tracker", name: "Kalshi gap tracker", stage: gapPaused ? "Paused" : "Paper record",
+      chipLabel: gapPaused ? "Paused · Nov 9, 2026" : undefined, muted: gapPaused,
+      visual: (
+        <div className="space-y-3">
+          {([["Oil", gapOil], ["Crypto", gapCrypto]] as const).map(([label, led]) => (
+            <div key={label} className="flex items-center gap-2">
+              <span className="w-14 shrink-0 text-[11px] text-slate-400">{label}</span>
+              <SignedBar value={led?.realized ?? null} maxAbs={gapMaxAbs} />
+              <span className={`w-24 shrink-0 text-right text-xs tabular-nums ${toneOf(led?.realized) ?? "text-slate-400"}`}>
+                {led ? usd(led.realized) : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+      stats: (
+        <div>
+          <p className="text-sm tabular-nums text-slate-300">
+            <span className={`text-xl font-semibold ${toneOf(gapTotalRealized) ?? "text-slate-200"}`}>
+              {gapTotalRealized == null ? "—" : usd(gapTotalRealized)}
+            </span>
+            {" realized · the final record"}
+          </p>
+          <p className="mt-1 text-xs tabular-nums text-slate-400">
+            {gapClosedTotal == null
+              ? "Record unavailable"
+              : `${gapClosedTotal} closed${gaps?.ledger ? ` · pot ${usdPlain(gaps.ledger.bankroll)} of $10,000` : ""}${gapOpen.length > 0 ? ` · ${gapOpen.length} open, resolving` : ""}`}
+          </p>
+          {gaps?.as_of && <p className="mt-0.5 text-xs text-slate-500">As of {etShort(gaps.as_of)} ET</p>}
+        </div>
+      ),
+      children: (
+        <section aria-label="Kalshi gap tracker — the record">
+          <p className="text-sm text-slate-400">
+            Paused on Kevin's call, Nov 9, 2026. It takes no new trades;{" "}
+            {gapOpen.length > 0
+              ? <>the {gapOpen.length} position{gapOpen.length === 1 ? "" : "s"} still open run{gapOpen.length === 1 ? "s" : ""} to the old exits, and then the book is final.</>
+              : "every position has resolved, and the book is final."}
+          </p>
+          {gaps?.grade && (gaps.grade.oil?.brier_delta != null || gaps.grade.crypto?.brier_delta != null) && (
+            <p className="mt-2 text-sm text-slate-400">
+              Why it was paused: on the paired forecasts, each desk's fair values graded worse than Kalshi's
+              own price — Brier worse by {gapDelta(gaps.grade.oil?.brier_delta)} on oil and {gapDelta(gaps.grade.crypto?.brier_delta)} on
+              crypto (model minus market; positive is worse). A gap measured against a price that forecasts
+              better than the model is mostly the model's own error, and the record below is what that cost.
+            </p>
+          )}
+          {cryptoMoved && gapCrypto && (
+            <p className="mt-2 text-sm text-slate-400">
+              Crypto's exits churned: {cryptoMoved.n} of its {gapCrypto.closed} trade{gapCrypto.closed === 1 ? "" : "s"} ended because the model
+              moved, not because the gap closed ({usd(cryptoMoved.pnl)}) — it kept repricing its own fair value
+              and paying to leave.
+            </p>
+          )}
+          {oilGapClosed && (
+            <p className="mt-2 text-sm text-slate-400">
+              Oil's gap-closed exits were the one working piece: {oilGapClosed.n} trade{oilGapClosed.n === 1 ? "" : "s"}, {usd(oilGapClosed.pnl)}
+              {oilSettled ? <>. Against them, {oilSettled.n} position{oilSettled.n === 1 ? "" : "s"} held to settlement cost {usd(oilSettled.pnl)} — more than the working piece made</> : ""}.
+            </p>
+          )}
+          <p className="mt-2 text-sm text-slate-400">
+            The WTI hourly lane never fired: by the pause it had read 2,013 snapshots of the hourly series and
+            flagged none — the entry gate demanded 2+ hours to settlement, which an hourly contract's tradable
+            life never offers.
+          </p>
+          <p className="mt-2 text-sm text-slate-400">
+            What it was: it bought Brent and WTI, Bitcoin and Ethereum hourly and daily contracts when the
+            model's chance beat the price it could actually pay by 8+ points, with the fee outside the entry
+            test — fees came out of the trade's P&L, not the test — only with 2+ hours to settlement and a book
+            deep enough to exit in full, one trade per event. It exited when the gap narrowed to 2 points, the
+            model moved more than 5 points from entry, or under an hour was left.
+          </p>
+          <div className="mt-3 space-y-1">
+            {([["Oil", gapRecord("oil")], ["Crypto", gapRecord("crypto")]] as const).map(([label, line]) => (
+              <div key={label} className="flex items-baseline gap-2">
+                <span className="w-14 shrink-0 text-sm text-slate-400">{label}</span>
+                <RecordLine text={line.record} tone={line.tone} />
+              </div>
+            ))}
+          </div>
+          {(gapOilExits.length > 0 || gapCryptoExits.length > 0) && (
+            <div className="mt-4">
+              <h3 className="mb-1 text-xs font-medium text-slate-300">How the trades ended</h3>
+              <div className="-mx-4 overflow-x-auto px-4">
+                <table className="w-full min-w-[26rem] text-left text-xs tabular-nums">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th scope="col" className="py-1 pr-3 font-medium">Desk</th>
+                      <th scope="col" className="py-1 pr-3 font-medium">Exit</th>
+                      <th scope="col" className="py-1 pr-3 text-right font-medium">Trades</th>
+                      <th scope="col" className="py-1 text-right font-medium">P&amp;L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {([["Oil", gapOilExits], ["Crypto", gapCryptoExits]] as const).flatMap(([label, rows]) =>
+                      rows.map((r) => (
+                        <tr key={`${label}-${r.key}`} className="border-t border-slate-800/80 text-slate-300">
+                          <td className="py-1.5 pr-3">{label}</td>
+                          <td className="py-1.5 pr-3">{r.label}</td>
+                          <td className="py-1.5 pr-3 text-right">{r.n}</td>
+                          <td className={`py-1.5 text-right ${toneOf(r.pnl) ?? ""}`}>{usd(r.pnl)}</td>
+                        </tr>
+                      )))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {gapOpen.length > 0 && (
+            <div className="mt-4">
+              <h3 className="mb-1 text-xs font-medium text-slate-300">Still open — resolving under the old exits</h3>
+              <GapPositionsTable rows={gapOpen} open />
+            </div>
+          )}
+          {(gaps?.closed_positions ?? []).length > 0 && (
+            <div className="mt-4">
+              <h3 className="mb-1 text-xs font-medium text-slate-300">Closed trades</h3>
+              <GapPositionsTable rows={gaps?.closed_positions ?? []} />
+            </div>
+          )}
         </section>
       ),
     },
