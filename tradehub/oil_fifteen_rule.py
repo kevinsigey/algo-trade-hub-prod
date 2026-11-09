@@ -15,10 +15,14 @@ Amendment (2026-11-08, Kevin; spec docs/superpowers/specs/2026-11-08-fifteen-rul
 the 10-point bar above was measured GROSS -- the taker fee was charged in the PnL but never in the
 gate, so a "10-point edge" at a 50c cost was really 8.25 points. The gate now measures the edge NET
 of the fee (`pick_net` / `evaluate` below): the same 0.10 bar, honestly netted. The reconstruction
-above is NOT rewritten -- it stays as the record the go-live bar reads -- and the gated record is
-reported beside it. Every targeted window also gets a persisted decision (buy, or skip with its
-reason) and every settled window a per-minute shadow track, written by
-`tradehub/fifteen_tracking.py`, so the best entry minute can be read off data.
+above is NOT rewritten, and the gated record is reported beside it. Every targeted window also gets
+a persisted decision (buy, or skip with its reason) and every settled window a per-minute shadow
+track, written by `tradehub/fifteen_tracking.py`, so the best entry minute can be read off data.
+
+Amendment (2026-11-09, Kevin; same spec doc): the go-live bar moved to the gated record. The 300
+settled trades it counts are the gated record's -- re-derived over the full forward history, so the
+count did not restart -- and the raw reconstruction stays reported as the control the bar is
+checked against (`go_live_bar` below).
 """
 
 from __future__ import annotations
@@ -155,6 +159,18 @@ def summarize(trades: list[dict]) -> dict[str, Any]:
             "forward": _stats([t for t in trades if t["frozen_at"] >= PREREG_AT])}
 
 
+def go_live_bar(gated_forward: dict[str, Any], raw_forward: dict[str, Any], *,
+                pending: int = 0) -> dict[str, Any]:
+    """The go-live bar (amendment 2026-11-09): READY_TRADES settled forward trades, still ahead at
+    the low end of the 95% range, counted on the GATED record -- the trades the live gate would
+    actually have taken. The raw record's figures ride along as the control."""
+    return {"basis": "gated", "trades": gated_forward["n"], "ready_trades": READY_TRADES,
+            "ready": gated_forward["ready"], "low95": gated_forward["low95"],
+            "windows": gated_forward["windows"], "pending": pending,
+            "control": {"basis": "raw", "trades": raw_forward["n"],
+                        "ready": raw_forward["ready"], "low95": raw_forward["low95"]}}
+
+
 def _series_trades(supa, first: dict[str, dict], label: str, picker) -> tuple[list[dict], int]:
     """Settled trades one picker takes on one series' first-frozen rows, and how many of its
     picks are still waiting to settle. The picker returns (side, cost[, edge]) or None."""
@@ -239,26 +255,29 @@ def _offsets_summary(supa) -> dict[str, Any]:
 
 def record(supa) -> dict[str, Any]:
     """The public read: every settled trade the rule would have taken, replay and forward apart."""
-    trades, gated, pending = [], [], 0
+    trades, gated, pending, gated_pending = [], [], 0, 0
     for forecaster, version, label in SERIES:
         rows = store.fetch_forecasts(supa, forecaster, version)
         first: dict[str, dict] = {}
         for r in sorted(rows, key=lambda r: r["frozen_at"]):
             first.setdefault(r["target"], r)  # the freeze the rule acts on is the first one
         raw_t, raw_p = _series_trades(supa, first, label, pick)
-        gated_t, _ = _series_trades(supa, first, label,
-                                    lambda p, *, yes_ask, yes_bid: (c[:2] if (c := pick_net(
-                                        p, yes_ask=yes_ask, yes_bid=yes_bid)) else None))
+        gated_t, gated_p = _series_trades(supa, first, label,
+                                          lambda p, *, yes_ask, yes_bid: (c[:2] if (c := pick_net(
+                                              p, yes_ask=yes_ask, yes_bid=yes_bid)) else None))
         trades += raw_t
         gated += gated_t
         pending += raw_p
+        gated_pending += gated_p
     trades.sort(key=lambda t: t["frozen_at"], reverse=True)
     by_series = {label: _stats([t for t in trades if t["series"] == label and t["frozen_at"] >= PREREG_AT])
                  for _, _, label in SERIES}
     # by_session split for forward trades only (frozen_at >= PREREG_AT)
+    raw = summarize(trades)
     gate = {"rule": GATE_RULE, "min_edge": MIN_EDGE, **summarize(gated),
             "by_session": _session_split(gated)}
-    return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize(trades),
+    return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **raw,
             "by_series": by_series, "by_session": _session_split(trades), "pending": pending,
             "recent": trades[:12], "gate": gate,
+            "bar": go_live_bar(gate["forward"], raw["forward"], pending=gated_pending),
             "decisions": _decisions_summary(supa), "offsets": _offsets_summary(supa)}
