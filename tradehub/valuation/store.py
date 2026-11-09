@@ -68,3 +68,25 @@ def latest_sheet(client, ticker: str) -> dict | None:
             .eq("ticker", ticker).order("computed_at", desc=True)
             .limit(1).execute().data) or []
     return rows[0] if rows else None
+
+
+def with_peer_members(row: dict) -> dict:
+    """Read-side detail enrichment: the frozen peer group's member tickers,
+    derived from the same frozen map the engine used (tradehub.valuation.
+    peers) -- never stored on the sheet, so the list endpoint stays the
+    stored rows verbatim. A 'sector:<name>' group resolves to that sector's
+    members; anything unknown resolves to an empty list rather than a guess.
+    `peer_count` on the sheet remains the count that actually contributed a
+    usable multiple, which can be smaller than the group's membership."""
+    from tradehub.valuation import peers
+
+    out = dict(row)
+    group = row.get("peer_group")
+    members: list[str] = []
+    if group:
+        if group.startswith("sector:"):
+            members = peers.sector_members(group[len("sector:"):])
+        else:
+            members = peers.group_members(group)
+    out["peer_members"] = members
+    return out

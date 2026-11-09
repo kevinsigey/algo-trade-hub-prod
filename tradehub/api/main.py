@@ -3834,7 +3834,7 @@ def valuation_bands_get(ticker: str, _admin: dict = Depends(admin.require_admin)
     row = val_store.latest_sheet(supabase, ticker.strip().upper())
     if row is None:
         raise HTTPException(status_code=404, detail="no fact sheet for ticker")
-    return row
+    return val_store.with_peer_members(row)
 
 
 mount_frontend(app, FRONTEND_DIST)

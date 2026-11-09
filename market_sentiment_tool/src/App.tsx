@@ -28,6 +28,7 @@ import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
 import Debates from "@/pages/Debates";
 import Strategies from "@/pages/Strategies";
+import Valuation from "@/pages/Valuation";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { fmtUsd, stateLabel, type PortfolioPayload } from "@/lib/paperPortfolio";
@@ -58,6 +59,7 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Scale,
   Target,
   Trophy,
   Wallet,
@@ -81,6 +83,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
     { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
     { to: "/strategies", label: "Strategies", icon: Target },
+    { to: "/valuation", label: "Valuation", icon: Scale },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
     { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
@@ -383,6 +386,7 @@ function App() {
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />
+          <Route path="/valuation" element={<RequireAdmin><Valuation /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
