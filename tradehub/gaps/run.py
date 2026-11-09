@@ -22,6 +22,8 @@ from tradehub.markets import parse_market
 log = logging.getLogger(__name__)
 
 SNAPSHOTS, POSITIONS, OUTCOMES, RUNS = "gap_snapshots", "gap_positions", "gap_outcomes", "gap_runs"
+CONTROLS = "gap_controls"
+_MISSING_TABLE = ("PGRST205", "schema cache", "Could not find the table")
 DEPTH_CAP = 30
 RESOLVE_CAP = 200
 EXIT_CONDITION = ("gap at or under 2 points or sign flip; model moves over 5 points from entry; "
@@ -211,6 +213,26 @@ def open_positions(supa) -> list[dict]:
     return supa.table(POSITIONS).select("*").eq("status", "open").execute().data or []
 
 
+def entries_enabled(supa) -> bool:
+    """The desks' entry switch: the gap_controls 'global' row, read on every pass.
+
+    Entries are ON unless the row says otherwise — Kevin's pause (2026-11-09) is the row
+    saying otherwise. Only the entry step reads this; settlement and exits never do, so
+    open positions resolve exactly as before while the desk is paused. A table that does
+    not exist yet reads as on: the switch arrived after the desks, and an unmigrated
+    database keeps the old behavior rather than silently never trading. Any other read
+    failure reads as OFF — a pause Kevin set must never be undone by a transient error.
+    """
+    try:
+        rows = supa.table(CONTROLS).select("entries_enabled").eq("scope", "global").execute().data or []
+    except Exception as exc:  # noqa: BLE001 -- which failure it is decides the default
+        if any(marker in str(exc) for marker in _MISSING_TABLE):
+            return True
+        log.exception("gap tracker: entry switch unreadable; holding entries closed")
+        return False
+    return bool(rows[0]["entries_enabled"]) if rows else True
+
+
 def _maybe_open(supa, row: dict, contracts: int, *, now: datetime, fees_known: bool, held: set[str]) -> bool:
     still_open = open_positions(supa)
     same_event = [p for p in still_open if logic.event_of(p["ticker"]) == logic.event_of(row["ticker"])]
@@ -246,8 +268,9 @@ def run_tracker(supa, now: datetime, *, live=None, sources=None, read_book=None,
     read_market = read_market or (lambda t: (live._get(f"/markets/{t}") or {}).get("market"))
     read_series = read_series or (lambda s: (live._get(f"/series/{s}") or {}).get("series") or {})
 
+    paused = not entries_enabled(supa)
     summary: dict[str, Any] = {"settled": settle_unresolved(supa, now, read_market), "logged": 0, "flagged": 0,
-                               "opened": 0, "errors": []}
+                               "opened": 0, "entries_paused": paused, "errors": []}
     ledger = all_positions(supa)
     bankroll = logic.summarize_ledger([r for r in ledger if r["status"] == "closed"])["bankroll"]
     held_ever = {r["ticker"] for r in ledger}
@@ -301,9 +324,12 @@ def run_tracker(supa, now: datetime, *, live=None, sources=None, read_book=None,
             summary["errors"].append(f"{source['series']}: {error}")
         supa.table(RUNS).insert({"taken_at": now.isoformat(), "series": source["series"],
                                  "category": source["category"], **counts, "error": error}).execute()
-    # Exits ran above, so capacity they freed is available. Biggest gap first.
-    for row, contracts, fees_known in sorted(candidates, key=lambda c: -c[0]["gap_pts"]):
-        summary["opened"] += _maybe_open(supa, row, contracts, now=now, fees_known=fees_known, held=held_ever)
+    # Exits ran above, so capacity they freed is available. Biggest gap first. A paused desk
+    # skips only this step: settlements and exits already ran, so its open positions still
+    # resolve and the record completes while no new position opens.
+    if not paused:
+        for row, contracts, fees_known in sorted(candidates, key=lambda c: -c[0]["gap_pts"]):
+            summary["opened"] += _maybe_open(supa, row, contracts, now=now, fees_known=fees_known, held=held_ever)
     return summary
 
 

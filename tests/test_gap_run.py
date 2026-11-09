@@ -265,6 +265,60 @@ def test_one_bad_series_is_reported_and_others_continue():
     assert "series down" in summary["errors"][0] and "series down" in db.db[RUNS][0]["error"]
 
 
+# ── the entry switch (Kevin's pause, 2026-11-09) ──
+
+CONTROLS = "gap_controls"
+
+
+def _set_entries(db, enabled):
+    db.table(CONTROLS).insert({"scope": "global", "entries_enabled": enabled}).execute()
+
+
+def test_paused_tracker_logs_and_flags_but_opens_nothing():
+    db = Store()
+    _set_entries(db, False)
+    summary = _run(db, [raw()])
+    assert summary["entries_paused"] is True and summary["opened"] == 0
+    assert summary["logged"] == 1 and summary["flagged"] == 1  # the scan and its record continue
+    assert POSITIONS not in db.db or db.db[POSITIONS] == []
+
+
+def test_paused_tracker_still_exits_and_settles_open_positions():
+    db = Store()
+    _run(db, [raw()])  # opened while entries were on (no controls row yet)
+    pos = db.db[POSITIONS][0]
+    _set_entries(db, False)
+    _run(db, [raw(bid="0.72", ask="0.74", no_bid="0.26", no_ask="0.28")], now=NOW + timedelta(hours=1))
+    assert pos["status"] == "closed" and pos["exit_reason"] == "gap_closed"
+
+    db2 = Store()
+    _run(db2, [raw()])
+    pos2 = db2.db[POSITIONS][0]
+    _set_entries(db2, False)
+    db2.unresolved = ["KXBTC-A"]
+    _run(db2, [], market=lambda t: {"result": "yes"}, now=NOW + timedelta(hours=6))
+    assert pos2["status"] == "closed" and pos2["exit_reason"] == "settlement"
+
+
+def test_entries_resume_when_the_switch_says_so():
+    db = Store()
+    _set_entries(db, False)
+    assert _run(db, [raw()])["opened"] == 0
+    db.table(CONTROLS).update({"entries_enabled": True}).eq("scope", "global").execute()
+    assert _run(db, [raw()], now=NOW + timedelta(minutes=5))["opened"] == 1
+
+
+def test_an_unreadable_switch_holds_entries_closed():
+    class BoomStore(Store):
+        def table(self, name):
+            if name == CONTROLS:
+                raise RuntimeError("postgrest down")
+            return super().table(name)
+
+    summary = _run(BoomStore(), [raw()])
+    assert summary["entries_paused"] is True and summary["opened"] == 0
+
+
 # ── the desk read ──
 
 class ReportStore(Store):
@@ -284,6 +338,15 @@ def test_pairs_page_past_the_row_cap(monkeypatch):
     db.rpc = lambda name, params=None: SimpleNamespace(execute=lambda: SimpleNamespace(
         data=pages[params["after_ticker"]] if name == "gap_first_pairs" else []))
     assert desk(db, NOW)["evidence"]["pairs"] == 3
+
+
+def test_the_desk_reports_the_pause_state():
+    db = ReportStore()
+    assert desk(db, NOW)["entries_paused"] is False  # no row: the long-standing default
+    _set_entries(db, False)
+    assert desk(db, NOW)["entries_paused"] is True
+    db.table(CONTROLS).update({"entries_enabled": True}).eq("scope", "global").execute()
+    assert desk(db, NOW)["entries_paused"] is False
 
 
 def test_mixed_fees_are_labelled_mixed():
