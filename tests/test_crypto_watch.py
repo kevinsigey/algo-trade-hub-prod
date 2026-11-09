@@ -311,7 +311,11 @@ def test_no_cached_payload_waits_for_lock_with_timeout(monkeypatch):
     release_lock.set()
     t.join()
     
-    # Now normal operation should work
+    # Now normal operation should work (payload build faked, as everywhere
+    # in this file -- the lock/cache path is what is under test, not the
+    # live sources, which are unreachable from CI and the sandbox alike)
+    monkeypatch.setattr(cw, "build_watch",
+                        lambda **_kw: {"coins": {}, "market": [], "stress": None})
     cw._cache.update(at=0.0, payload=None)
     result = cw.watch()
     assert "coins" in result
