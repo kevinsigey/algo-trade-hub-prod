@@ -691,16 +691,32 @@ function ManualActions({ book }: { book: string }) {
 const CHECK_STATUS_TONE: Record<string, string> = {
   ok: "text-slate-100", over: "text-rose-300", under: "text-amber-300",
 };
+const CHECK_BAR_FILL: Record<string, string> = {
+  ok: "bg-slate-400", over: "bg-rose-400", under: "bg-amber-400",
+};
+const CHECK_CLUSTER_GLYPH: Record<string, string> = {
+  rates: "◐", ai_complex: "●", gold: "■",
+};
+// Gold's hard flag, from the check's own seed config (tradehub/portfolio/
+// portfolio_check.py): over 12% of invested warns. The card payload carries no
+// per-cluster cap, so the gold chip tints on this documented number.
+const GOLD_FLAG_PCT = 12;
 const CHECK_OUTCOME_TONE: Record<string, string> = {
   pass: "text-emerald-300", warn: "text-amber-300", block: "text-rose-300", unavailable: "text-slate-400",
 };
 
 /**
- * The portfolio check, as a card (Kevin, 2026-11-09): thesis weights against the caps and
- * targets, the three factor clusters, cash, and the most recent check outcomes. One engine
- * with the preflight gate and the activation gate (tradehub.portfolio.portfolio_check) and
- * the same stored targets and series, so the card can never disagree with the gates.
- * Weights are % of invested. Signed-in only: signed out, it renders nothing.
+ * The portfolio check, as a card (Kevin, 2026-11-09; compact visual pass, same day):
+ * one horizontal weight bar per sleeve, plus a bar for each member that carries a cap
+ * or is off status -- the bar filled to its weight with floor / target / cap ticks on
+ * the same track, so an over-cap name reads instantly: its fill crosses the cap tick.
+ * The three factor clusters ride as chips under the bars, cash is the last bar, and the
+ * latest check outcome sits in the card header. The full member table, the correlation
+ * readout and every recent check outcome stay behind the panel's open view.
+ * One engine with the preflight gate and the activation gate
+ * (tradehub.portfolio.portfolio_check) and the same stored targets and series, so the
+ * card can never disagree with the gates. Weights are % of invested (cash: % of
+ * equity). Signed-in only: signed out, it renders nothing.
  */
 function PortfolioCheckBox({ book }: { book: string }) {
   const [state, setState] = useState<PortfolioCheckState | null>(null);
@@ -722,12 +738,55 @@ function PortfolioCheckBox({ book }: { book: string }) {
   if (state === null) return null;
 
   const pct = (v: number, dp = 1) => `${v.toFixed(dp)}%`;
-  const memberNote = (m: PortfolioCheckState["sleeves"][number]["members"][number]) =>
-    [
-      m.target_pct != null ? `target ${m.target_pct}%` : null,
-      m.min_pct != null ? `floor ${m.min_pct}%` : null,
-      m.max_pct != null ? `cap ${m.max_pct}%` : null,
-    ].filter(Boolean).join(" · ");
+  type CheckBar = {
+    key: string; label: string; nested?: boolean; weight: number;
+    floor: number | null; target: number | null; cap: number | null;
+    status: string; note?: string; neutral?: boolean;
+  };
+  const bars: CheckBar[] = [];
+  for (const s of state.sleeves) {
+    bars.push({
+      key: s.id, label: s.label, weight: s.weight_pct, floor: null, target: null,
+      cap: s.exit_only ? null : s.sleeve_max_pct, status: s.status,
+      note: s.exit_only ? "exit-only" : undefined,
+    });
+    for (const m of s.members) {
+      // A member earns its own bar when a cap binds it or it is off status; the rest
+      // live in the open view's member table.
+      if (m.max_pct == null && m.status === "ok") continue;
+      bars.push({
+        key: `${s.id}-${m.symbol}`, label: m.symbol, nested: true, weight: m.weight_pct,
+        floor: m.min_pct, target: m.target_pct, cap: m.max_pct, status: m.status,
+      });
+    }
+  }
+  if (state.cash_pct != null) {
+    bars.push({
+      key: "cash", label: "Cash", weight: state.cash_pct, floor: null, target: null,
+      cap: null, status: "ok", neutral: true,
+    });
+  }
+  // One shared scale so bar lengths compare across rows; the floor keeps a small
+  // book's bars from stretching to full width over a few percent.
+  const scale = Math.max(20, ...bars.flatMap((b) => [b.weight, b.cap ?? 0, b.target ?? 0]));
+  const at = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
+  const tick = (v: number | null, cls: string, name: string) =>
+    v == null ? null : (
+      <span key={name} title={`${name} ${v}%`} aria-hidden="true"
+        className={`absolute -top-[2px] h-[14px] w-[2px] ${cls}`} style={{ left: at(v) }} />
+    );
+
+  const last = state.recent_checks[0];
+  const right = last ? (
+    <span className="text-[11px] text-slate-400">
+      last check{" "}
+      <span className={`font-semibold uppercase ${CHECK_OUTCOME_TONE[last.outcome ?? "unavailable"]}`}>
+        {last.outcome ?? "unavailable"}
+      </span>
+      {last.symbol ? <span> · {last.symbol}</span> : null}
+    </span>
+  ) : undefined;
+
   const full = (
     <div>
       <table className="w-full text-left text-xs">
@@ -735,7 +794,8 @@ function PortfolioCheckBox({ book }: { book: string }) {
           <tr className="text-[11px] uppercase tracking-wide text-slate-500">
             <th className="py-1 pr-3">Name</th><th className="py-1 pr-3">Weight</th>
             <th className="py-1 pr-3">Target</th><th className="py-1 pr-3">Floor</th>
-            <th className="py-1 pr-3">Cap</th><th className="py-1">Status</th>
+            <th className="py-1 pr-3">Cap</th><th className="py-1 pr-3">Corr to book</th>
+            <th className="py-1">Status</th>
           </tr>
         </thead>
         <tbody>
@@ -745,6 +805,7 @@ function PortfolioCheckBox({ book }: { book: string }) {
               <td className="py-1 pr-3 tabular-nums">{pct(s.weight_pct, 2)}</td>
               <td className="py-1 pr-3">—</td><td className="py-1 pr-3">—</td>
               <td className="py-1 pr-3">{s.exit_only ? "exit-only" : s.sleeve_max_pct != null ? pct(s.sleeve_max_pct, 0) : "—"}</td>
+              <td className="py-1 pr-3 tabular-nums">{s.correlation_to_book != null ? s.correlation_to_book.toFixed(2) : "—"}</td>
               <td className={`py-1 ${CHECK_STATUS_TONE[s.status]}`}>{s.status}</td>
             </tr>,
             ...s.members.map((m) => (
@@ -754,6 +815,7 @@ function PortfolioCheckBox({ book }: { book: string }) {
                 <td className="py-1 pr-3">{m.target_pct != null ? pct(m.target_pct) : "—"}</td>
                 <td className="py-1 pr-3">{m.min_pct != null ? pct(m.min_pct) : "—"}</td>
                 <td className="py-1 pr-3">{m.max_pct != null ? pct(m.max_pct) : "—"}</td>
+                <td className="py-1 pr-3">—</td>
                 <td className={`py-1 ${CHECK_STATUS_TONE[m.status]}`}>{m.status}</td>
               </tr>
             )),
@@ -763,7 +825,7 @@ function PortfolioCheckBox({ book }: { book: string }) {
               <td className="py-1 pr-3 pl-4">{u.symbol} (unassigned)</td>
               <td className="py-1 pr-3 tabular-nums">{pct(u.weight_pct, 2)}</td>
               <td className="py-1 pr-3">—</td><td className="py-1 pr-3">—</td>
-              <td className="py-1 pr-3">5%</td>
+              <td className="py-1 pr-3">5%</td><td className="py-1 pr-3">—</td>
               <td className="py-1 text-slate-100">ok</td>
             </tr>
           ))}
@@ -790,68 +852,53 @@ function PortfolioCheckBox({ book }: { book: string }) {
   );
 
   return (
-    <Box title="Portfolio check" className="lg:col-span-2" full={full}>
-      <ul className="space-y-1.5">
-        {state.sleeves.map((s) => (
-          <li key={s.id} className="text-xs">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-slate-300">{s.label}</span>
-              <span className={`tabular-nums font-medium ${CHECK_STATUS_TONE[s.status]}`}>
-                {pct(s.weight_pct)}
-                <span className="ml-2 font-normal text-slate-500">
-                  {s.exit_only ? "exit-only" : s.sleeve_max_pct != null ? `cap ${s.sleeve_max_pct}%` : ""}
-                  {s.correlation_to_book != null ? ` · corr ${s.correlation_to_book.toFixed(2)} to book` : ""}
-                </span>
-              </span>
+    <Box title="Portfolio check" className="lg:col-span-2" full={full} right={right}>
+      <div className="space-y-1">
+        {bars.map((b) => (
+          <div key={b.key} className="flex items-center gap-2 text-xs">
+            <span className={`w-40 shrink-0 truncate ${b.nested ? "pl-4 text-slate-400" : "text-slate-300"}`}>
+              {b.label}
+              {b.note ? <span className="text-slate-500"> · {b.note}</span> : null}
+            </span>
+            <div className="relative h-2.5 min-w-0 flex-1 rounded bg-slate-800">
+              <div className={`h-full rounded ${b.neutral ? "bg-slate-500" : CHECK_BAR_FILL[b.status]}`}
+                style={{ width: at(b.weight) }} />
+              {tick(b.floor, "bg-slate-500", "floor")}
+              {tick(b.target, "bg-sky-300", "target")}
+              {tick(b.cap, "bg-white", "cap")}
             </div>
-            <p className="mt-0.5 text-[11px] text-slate-500">
-              {s.members.map((m) => (
-                <span key={m.symbol} className="mr-2">
-                  <span className={m.status !== "ok" ? CHECK_STATUS_TONE[m.status] : undefined}>
-                    {m.symbol} {pct(m.weight_pct)}
-                  </span>
-                  {memberNote(m) ? <span className="text-slate-600"> ({memberNote(m)})</span> : null}
-                </span>
-              ))}
-            </p>
-          </li>
-        ))}
-      </ul>
-      <dl className="mt-2 grid grid-cols-4 gap-x-3 gap-y-1 border-t border-slate-800 pt-2">
-        {Object.values(state.clusters).map((c) => (
-          <div key={c.label}>
-            <dt className="truncate text-[11px] text-slate-400">{c.label}</dt>
-            <dd className="mt-0.5 text-sm font-semibold tabular-nums text-white">
-              {pct(c.pct)}
-              {c.with_flagged_pct != null && c.with_flagged_pct !== c.pct
-                ? <span className="ml-1 text-[11px] font-normal text-slate-500">({pct(c.with_flagged_pct)} incl. GLD)</span>
-                : null}
-            </dd>
+            <span className={`w-14 shrink-0 text-right tabular-nums font-medium ${CHECK_STATUS_TONE[b.status]}`}>
+              {pct(b.weight)}
+            </span>
           </div>
         ))}
-        <div>
-          <dt className="truncate text-[11px] text-slate-400">Cash</dt>
-          <dd className="mt-0.5 text-sm font-semibold tabular-nums text-white">
-            {state.cash_pct != null ? pct(state.cash_pct) : "—"}
-          </dd>
-        </div>
-      </dl>
-      {state.recent_checks.length > 0 && (
-        <ul className="mt-2 space-y-1 border-t border-slate-800 pt-2">
-          {state.recent_checks.slice(0, 3).map((e, i) => (
-            <li key={i} className="text-xs text-slate-300">
-              <span className={`font-semibold uppercase ${CHECK_OUTCOME_TONE[e.outcome ?? "unavailable"]}`}>
-                {e.outcome ?? "unavailable"}
-              </span>{" "}
-              {e.symbol ? <span className="text-slate-400">{e.symbol} · </span> : null}
-              {e.detail}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="mt-2 text-[11px] text-slate-500">
-        Weights are % of invested. The same check gates machine orders and idea activations.
+      </div>
+      <p className="mt-1.5 text-[11px] text-slate-500">
+        Bars: % of invested (cash: % of equity). Ticks on a bar:{" "}
+        <span className="text-slate-400">floor</span> · <span className="text-sky-300">target</span> ·{" "}
+        <span className="text-slate-100">cap</span> — a fill past the white tick is over its cap.
       </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {Object.entries(state.clusters).map(([id, c]) => {
+          // The payload carries no per-cluster cap; the one state-level flag the
+          // engine documents is gold's hard flag at 12% of invested (the check's own
+          // seed config -- the same 12% the GLD bar shows as its cap tick).
+          const flagged = id === "gold" && c.pct > GOLD_FLAG_PCT;
+          return (
+            <span key={id}
+              className={`inline-flex items-baseline gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${
+                flagged ? "border-amber-500/60 bg-amber-400/10 text-amber-200" : "border-slate-700 text-slate-300"
+              }`}>
+              <span aria-hidden="true">{CHECK_CLUSTER_GLYPH[id] ?? "●"}</span>
+              {c.label}
+              <span className="font-semibold tabular-nums">{pct(c.pct)}</span>
+              {c.with_flagged_pct != null && c.with_flagged_pct !== c.pct
+                ? <span className={flagged ? "text-amber-200/70" : "text-slate-500"}>{pct(c.with_flagged_pct)} incl. GLD</span>
+                : null}
+            </span>
+          );
+        })}
+      </div>
     </Box>
   );
 }
