@@ -748,6 +748,23 @@ function StagedOrders({ book }: { book: string }) {
 const inputCls = "rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-white";
 const labelCls = "flex flex-col gap-1 text-xs text-slate-400";
 
+type ComboLegState = { symbol: string; side: string; qty: string; intent: string };
+
+const OCC_INPUT = /^[A-Z]{1,6}\d{6}[CP]\d{8}$/;
+
+function cleanOcc(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function intentFor(side: string, intent: string): string {
+  return `${side}_to_${intent}`;
+}
+
+const kindBtnCls = (active: boolean) =>
+  `rounded-md px-3 py-1.5 text-sm font-semibold ${active
+    ? "bg-slate-700 text-white"
+    : "border border-slate-700 bg-slate-900 text-slate-400"}`;
+
 function OrderForm({ book }: { book: string }) {
   const [signedIn, setSignedIn] = useState(false);
   const [ideas, setIdeas] = useState<{ id: number; title: string }[]>([]);
@@ -757,6 +774,13 @@ function OrderForm({ book }: { book: string }) {
   const [orderType, setOrderType] = useState("market");
   const [limitPrice, setLimitPrice] = useState("");
   const [tif, setTif] = useState("day");
+  const [intent, setIntent] = useState("open");
+  const [kind, setKind] = useState("single");
+  const [comboLegs, setComboLegs] = useState<ComboLegState[]>([
+    { symbol: "", side: "buy", qty: "1", intent: "open" },
+    { symbol: "", side: "sell", qty: "1", intent: "open" },
+  ]);
+  const [netLimit, setNetLimit] = useState("");
   const [ideaId, setIdeaId] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -781,21 +805,55 @@ function OrderForm({ book }: { book: string }) {
 
   if (!signedIn) return null;
 
+  const cleaned = cleanOcc(symbol);
+  const isOcc = OCC_INPUT.test(cleaned);
+  const contractText = isOcc ? contractLabel(cleaned) : null;
+  const comboReady = comboLegs.every((l) => OCC_INPUT.test(cleanOcc(l.symbol))) && netLimit.trim() !== "";
+  const canPlace = kind === "combo" ? comboReady : Boolean(symbol.trim());
+
+  function setLeg(i: number, patch: Partial<ComboLegState>) {
+    setComboLegs((legs) => legs.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  }
+
   async function place() {
     setBusy(true);
     setNote(null);
     setError(null);
     try {
-      const body: Record<string, unknown> = {
-        symbol: symbol.trim().toUpperCase(), qty: Number(qty), side, order_type: orderType, time_in_force: tif,
-      };
-      if (orderType === "limit") body.limit_price = Number(limitPrice);
+      let body: Record<string, unknown>;
+      let summary: string;
+      if (kind === "combo") {
+        body = {
+          legs: comboLegs.map((l) => ({
+            symbol: cleanOcc(l.symbol), side: l.side, qty: Number(l.qty),
+            position_intent: intentFor(l.side, l.intent),
+          })),
+          order_type: "limit", limit_price: Number(netLimit), time_in_force: "day",
+        };
+        summary = `combo of ${comboLegs.length} legs`;
+      } else if (isOcc) {
+        // An option is a day order with an explicit open/close intent; the API
+        // refuses opg/cls on options rather than downgrading them, so the form
+        // never offers them for a contract.
+        body = {
+          symbol: cleaned, qty: Number(qty), side, order_type: orderType, time_in_force: "day",
+          position_intent: intentFor(side, intent),
+        };
+        if (orderType === "limit") body.limit_price = Number(limitPrice);
+        summary = `${side} ${qty} ${cleaned}`;
+      } else {
+        body = {
+          symbol: symbol.trim().toUpperCase(), qty: Number(qty), side, order_type: orderType, time_in_force: tif,
+        };
+        if (orderType === "limit") body.limit_price = Number(limitPrice);
+        summary = `${side} ${qty} ${body.symbol as string}`;
+      }
       if (ideaId) body.idea_id = Number(ideaId);
       body.book = book;
       const placed = await adminJson<{ client_order_id: string }>("/api/portfolio/orders", {
         method: "POST", body: JSON.stringify(body),
       });
-      setNote(`Order sent: ${side} ${qty} ${body.symbol as string} (${placed.client_order_id})`);
+      setNote(`Order sent: ${summary} (${placed.client_order_id})`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Order failed");
     } finally {
@@ -808,13 +866,20 @@ function OrderForm({ book }: { book: string }) {
       <>
       <p className="text-xs text-slate-400">
         Paper account, market or limit. Tag it with an idea and it lands in that idea&apos;s order log.
+        Options trade too: paste an OCC contract (e.g. SPY261113P00570000) for a single leg, or build a
+        combo. Every short leg must be covered -- the same defined-risk rule the machine API enforces.
       </p>
+      <div className="mt-3 flex gap-2" role="group" aria-label="Order kind">
+        <button type="button" onClick={() => setKind("single")} className={kindBtnCls(kind === "single")}>Single</button>
+        <button type="button" onClick={() => setKind("combo")} className={kindBtnCls(kind === "combo")}>Combo (spread)</button>
+      </div>
+      {kind === "single" ? (
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className={labelCls}>Symbol
           <input aria-label="Symbol" className={inputCls} value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="XLE" />
         </label>
-        <label className={labelCls}>Shares
-          <input aria-label="Shares" className={`${inputCls} w-24`} type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
+        <label className={labelCls}>{isOcc ? "Contracts" : "Shares"}
+          <input aria-label={isOcc ? "Contracts" : "Shares"} className={`${inputCls} w-24`} type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
         <label className={labelCls}>Side
           <select aria-label="Side" className={inputCls} value={side} onChange={(e) => setSide(e.target.value)}>
@@ -834,23 +899,95 @@ function OrderForm({ book }: { book: string }) {
           </label>
         )}
         <label className={labelCls}>Time in force
-          <select aria-label="Time in force" className={inputCls} value={tif} onChange={(e) => setTif(e.target.value)}>
+          <select aria-label="Time in force" className={inputCls} value={isOcc ? "day" : tif} onChange={(e) => setTif(e.target.value)}>
             <option value="day">Day</option>
-            <option value="opg">At the open (expires if it misses)</option>
-            <option value="cls">At the close</option>
+            {!isOcc && <option value="opg">At the open (expires if it misses)</option>}
+            {!isOcc && <option value="cls">At the close</option>}
           </select>
         </label>
+        {isOcc && (
+          <label className={labelCls}>Intent
+            <select aria-label="Intent" className={inputCls} value={intent} onChange={(e) => setIntent(e.target.value)}>
+              <option value="open">Open a position</option>
+              <option value="close">Close a position</option>
+            </select>
+          </label>
+        )}
         <label className={labelCls}>Idea (optional)
           <select aria-label="Idea" className={inputCls} value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
             <option value="">No idea</option>
             {ideas.map((i) => <option key={i.id} value={i.id}>{i.title}</option>)}
           </select>
         </label>
-        <button type="button" disabled={busy || !symbol.trim()} onClick={place}
+        <button type="button" disabled={busy || !canPlace} onClick={place}
           className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40">
           {busy ? "Sending…" : "Place order"}
         </button>
       </div>
+      ) : (
+      <div className="mt-3 flex flex-col gap-2">
+        {comboLegs.map((leg, i) => (
+          <div key={i} className="flex flex-wrap items-end gap-3">
+            <label className={labelCls}>Leg {i + 1} contract
+              <input aria-label={`Leg ${i + 1} symbol`} className={inputCls} value={leg.symbol}
+                onChange={(e) => setLeg(i, { symbol: e.target.value })} placeholder="SPY261113P00570000" />
+            </label>
+            <label className={labelCls}>Side
+              <select aria-label={`Leg ${i + 1} side`} className={inputCls} value={leg.side}
+                onChange={(e) => setLeg(i, { side: e.target.value })}>
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
+              </select>
+            </label>
+            <label className={labelCls}>Contracts
+              <input aria-label={`Leg ${i + 1} qty`} className={`${inputCls} w-24`} type="number" min={1} value={leg.qty}
+                onChange={(e) => setLeg(i, { qty: e.target.value })} />
+            </label>
+            <label className={labelCls}>Intent
+              <select aria-label={`Leg ${i + 1} intent`} className={inputCls} value={leg.intent}
+                onChange={(e) => setLeg(i, { intent: e.target.value })}>
+                <option value="open">Open</option>
+                <option value="close">Close</option>
+              </select>
+            </label>
+            {comboLegs.length > 2 && (
+              <button type="button" onClick={() => setComboLegs(comboLegs.filter((_, j) => j !== i))}
+                className="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300">
+                Remove leg
+              </button>
+            )}
+          </div>
+        ))}
+        <div className="flex flex-wrap items-end gap-3">
+          {comboLegs.length < 4 && (
+            <button type="button"
+              onClick={() => setComboLegs([...comboLegs, { symbol: "", side: "buy", qty: "1", intent: "open" }])}
+              className="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300">
+              Add leg
+            </button>
+          )}
+          <label className={labelCls}>Net limit price (debit + / credit −)
+            <input aria-label="Net limit price" className={`${inputCls} w-28`} type="number" step="0.01" value={netLimit}
+              onChange={(e) => setNetLimit(e.target.value)} />
+          </label>
+          <label className={labelCls}>Idea (optional)
+            <select aria-label="Idea" className={inputCls} value={ideaId} onChange={(e) => setIdeaId(e.target.value)}>
+              <option value="">No idea</option>
+              {ideas.map((i) => <option key={i.id} value={i.id}>{i.title}</option>)}
+            </select>
+          </label>
+          <button type="button" disabled={busy || !canPlace} onClick={place}
+            className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-40">
+            {busy ? "Sending…" : "Place order"}
+          </button>
+        </div>
+        <p className="text-xs text-slate-400">
+          One order, one net price for the whole package, day only. Quantities are absolute:
+          buy 6 / sell 3 places a 3-lot at ratios 2/1.
+        </p>
+      </div>
+      )}
+      {contractText && kind === "single" && <p className="mt-2 text-xs text-slate-300">{contractText}</p>}
       {note && <p className="mt-3 text-sm text-emerald-300">{note}</p>}
       {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
       </>

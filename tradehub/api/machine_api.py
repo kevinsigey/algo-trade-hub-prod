@@ -273,6 +273,9 @@ def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
             **session_fields(order, now=now)}
     if order.get("legs"):  # a combo carries its legs or it is not fully read
         view.update(_leg_readback(order, num))
+        # The package's own net fill price, named as what it is (2026-11-09):
+        # per contract of the parent, on the debit-positive convention.
+        view["net_fill_price"] = num(order.get("filled_avg_price"))
     return view
 
 
@@ -379,7 +382,8 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
 
     checks: list[dict] = []
     out: dict = {"refusal": None, "price": None, "chunks": [], "checks": checks,
-                 "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None}
+                 "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None,
+                 "option": None}
 
     def gate(name: str, ok: bool, detail: str, refusal: tuple | None = None) -> bool:
         checks.append({"name": name, "ok": ok, "detail": detail, "blocking": True})
@@ -396,6 +400,14 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
                 else "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)",
                 ("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")):
         return out
+    # Options (2026-11-09): an OCC symbol or a legs[] body leaves the share path
+    # entirely -- a 21-char contract symbol is not a too-long ticker. The branch
+    # runs the shared option_orders validation the Portfolio hand-order form also
+    # runs, plus this door's own caps.
+    from tradehub.portfolio import option_orders as _option_orders
+
+    if spec.get("legs") or _option_orders.is_option_symbol(spec.get("symbol")):
+        return _validate_option_order(supa, key, spec, out, gate, dry_run=dry_run)
     symbol = str(spec.get("symbol") or "").strip().upper()
     out["symbol"] = symbol
     if not gate("symbol", bool(TICKER.match(symbol)), f"{symbol} is a ticker",
@@ -432,6 +444,9 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
             shape = ("order_type", 422, "limit_price is for limit orders")
     if not gate("order_shape", shape is None,
                 "the order shape is one the machine door takes", shape):
+        return out
+    if not gate("qty", qty >= 1, "qty is a positive whole number of shares",
+                ("validation", 422, "qty must be at least 1")):
         return out
     if split:
         gate("max_qty", True, f"the total {qty} is chunked under the per-order cap of {key['max_qty']}")
@@ -514,6 +529,212 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     gate("circuit_breaker", True,
          "the book's circuit breaker is not tripped" if not breaker["tripped"]
          else "the breaker is tripped but this order closes or protects a position")
+    return out
+
+
+def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_run: bool = False) -> dict:
+    """The options branch of validate_order (Kevin, 2026-11-09): single-leg OCC
+    orders and 2-4 leg combos. The contract, defined-risk and max-loss checks are
+    tradehub.portfolio.option_orders -- the same code the Portfolio hand-order
+    form runs, so the two doors cannot diverge. This branch adds the machine
+    door's own fences: per-leg caps, buying power against defined-risk max loss,
+    the daily cap counting a combo ONCE, and the circuit breaker. On success
+    out["option"] carries the normalized placement the route submits."""
+    from tradehub.portfolio import breakers, option_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+    from tradehub.portfolio.options import fetch_mid
+
+    checks = out["checks"]
+    book = out["book"]
+
+    # ── shape: normalize (a single-leg order is a one-leg list) ──
+    raw_legs = spec.get("legs")
+    try:
+        if raw_legs:
+            legs = option_orders.normalize_legs(raw_legs)
+            kind = "combo"
+        else:
+            legs = [option_orders.normalize_leg(
+                {"symbol": spec.get("symbol"), "side": spec.get("side"),
+                 "qty": spec.get("qty"), "position_intent": spec.get("position_intent")})]
+            kind = "single"
+    except option_orders.OptionOrderError as exc:
+        gate("option_shape", False, str(exc), ("validation", 422, str(exc)))
+        return out
+    gate("option_shape", True,
+         f"a {kind} option order: " + ", ".join(
+             f"{leg['side']} {leg['qty']} x {leg['symbol']} ({leg['position_intent']})"
+             for leg in legs))
+    out["symbol"] = legs[0]["symbol"] if kind == "single" else legs[0]["parsed"]["underlying"]
+
+    order_type = spec.get("order_type") or "market"
+    tif = spec.get("time_in_force") or "day"
+    limit_price = spec.get("limit_price")
+    shape: tuple | None = None
+    if spec.get("split"):
+        shape = ("validation", 422, "split is for share orders; an option order places as one order")
+    elif spec.get("stop_price") is not None:
+        shape = ("order_type", 422, "stop_price is for stop orders; option orders here are market or limit")
+    elif order_type not in ("market", "limit"):
+        shape = ("order_type", 422, "option orders are market or limit only")
+    elif tif != "day":
+        shape = ("order_type", 422,
+                 f"option orders are day orders through this door: Alpaca paper does not take "
+                 f"{tif} on an option order, and the door will not silently downgrade it to day")
+    elif kind == "combo" and order_type != "limit":
+        shape = ("order_type", 422, "a combo is placed at one net limit price; market combos are not taken")
+    elif kind == "combo" and (limit_price is None or float(limit_price) == 0):
+        shape = ("order_type", 422,
+                 "a combo needs one net limit_price (positive is a debit paid, negative a credit taken)")
+    elif kind == "single" and order_type == "limit" and limit_price is None:
+        shape = ("order_type", 422, "a limit order needs a limit_price")
+    elif kind == "single" and order_type == "limit" and float(limit_price) <= 0:
+        shape = ("order_type", 422, "a single-leg limit_price must be positive")
+    elif kind == "single" and order_type == "market" and limit_price is not None:
+        shape = ("order_type", 422, "limit_price is for limit orders")
+    if not gate("order_shape", shape is None, "the option order shape is one this door takes", shape):
+        return out
+
+    # ── contracts exist and are tradable on this book ──
+    for symbol in dict.fromkeys(leg["symbol"] for leg in legs):
+        try:
+            row = option_orders.contract(symbol, book)
+        except AccountNotConnected:
+            gate("contract", False, "the paper account is not connected",
+                 ("account", 424, "the paper account is not connected"))
+            return out
+        except Exception:  # noqa: BLE001 -- unverifiable is unplaceable: fail closed
+            gate("contract", False, f"the contract read failed for {symbol}",
+                 ("contract_unverified", 424, f"the contract for {symbol} could not be verified"))
+            return out
+        if row is None:
+            gate("contract", False, f"{symbol} is not a tradable contract on this book",
+                 ("contract", 422, f"{symbol} is not a tradable option contract on this paper account"))
+            return out
+    first = legs[0]["parsed"]
+    gate("contract", True,
+         f"contracts verified on the {book} book ({first['underlying']} expiring {first['expiry']})")
+
+    # ── held positions: the defined-risk guard's cover ledger ──
+    try:
+        held = option_orders.positions_map(book)
+    except AccountNotConnected:
+        gate("position", False, "the paper account is not connected",
+             ("account", 424, "the paper account is not connected"))
+        return out
+    except Exception:  # noqa: BLE001
+        gate("position", False, "positions could not be read; the defined-risk check cannot run",
+             ("position_unverified", 424, "positions could not be read; the defined-risk check cannot run"))
+        return out
+
+    # ── defined risk: no naked shorts, closes backed by holdings ──
+    reason = option_orders.check_defined_risk(legs, held)
+    if not gate("defined_risk", reason is None,
+                "defined-risk: every short is covered by a long in the package or the book"
+                if reason is None else reason,
+                ("defined_risk", 422, reason or "")):
+        return out
+
+    # ── pricing + per-leg caps ──
+    prices: dict[str, float] = {}
+    for leg in legs:
+        symbol = leg["symbol"]
+        if symbol not in prices:
+            if kind == "single" and order_type == "limit":
+                prices[symbol] = float(limit_price)
+            else:
+                try:
+                    mid = fetch_mid(symbol, book=book)
+                except AccountNotConnected:
+                    gate("pricing", False, "the paper account is not connected",
+                         ("account", 424, "the paper account is not connected"))
+                    return out
+                except Exception:  # noqa: BLE001 -- an unpriceable leg is an uncheckable cap
+                    mid = None
+                if mid is None:
+                    gate("pricing", False, f"no usable quote for {symbol}; the caps cannot be checked",
+                         ("notional_unpriced", 424,
+                          f"no usable quote for {symbol}; the notional cap cannot be checked"))
+                    return out
+                prices[symbol] = float(mid)
+        leg_price = prices[symbol]
+        if not gate("max_qty", leg["qty"] <= int(key["max_qty"]),
+                    f"{leg['qty']} contracts within the per-order cap of {key['max_qty']}",
+                    ("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")):
+            return out
+        notional = leg_price * leg["qty"] * 100
+        if not gate("max_notional", notional <= float(key["max_notional"]),
+                    f"${notional:,.0f} under the ${float(key['max_notional']):,.0f} per-order cap",
+                    ("max_notional", 429,
+                     f"cap exceeded: max_notional is ${float(key['max_notional']):,.0f} per order for this key")):
+            return out
+    checks.append({"name": "pricing", "ok": True, "blocking": True,
+                   "detail": "legs priced at " + ", ".join(f"{s} {p:g}" for s, p in prices.items())})
+
+    # ── max loss (defined-risk math) vs options buying power ──
+    if kind == "combo":
+        parent, ratios = option_orders.parent_and_ratios(legs)
+        # The package's premium is its net limit, not the sum of leg mids: the
+        # limit is the worst price the caller agreed to pay.
+        premium = float(limit_price) * parent * 100
+    else:
+        parent, ratios = legs[0]["qty"], [1]
+        premium = option_orders.opening_premium(legs, prices)
+    max_loss = option_orders.max_loss(legs, held, premium)
+    opening = any(leg["position_intent"] in option_orders.OPEN_INTENTS for leg in legs)
+    obp: float | None = None
+    if opening:
+        try:
+            obp = option_orders.options_buying_power(book)
+        except AccountNotConnected:
+            gate("buying_power", False, "the paper account is not connected",
+                 ("account", 424, "the paper account is not connected"))
+            return out
+        except Exception:  # noqa: BLE001
+            gate("buying_power", False, "buying power could not be read; the max-loss check cannot run",
+                 ("buying_power_unverified", 424,
+                  "buying power could not be read; the max-loss check cannot run"))
+            return out
+        if obp is None or max_loss > obp:
+            detail = (f"max loss ${max_loss:,.0f} exceeds the book's options buying power ${obp:,.0f}"
+                      if obp is not None else "the account reports no options buying power")
+            gate("buying_power", False, detail, ("buying_power", 422, detail))
+            return out
+    gate("buying_power", True,
+         f"max loss ${max_loss:,.0f} within options buying power ${obp:,.0f}" if opening
+         else "a closing order risks nothing new")
+    out["price"] = float(limit_price) if kind == "combo" else prices[legs[0]["symbol"]]
+
+    # ── daily cap: the package counts once, never per leg ──
+    used = placed_today(supa, key["id"])
+    out["daily_used"] = used
+    out["chunks"] = [1]
+    if not gate("daily_cap", used + 1 <= int(key["daily_cap"]),
+                f"{used} placed today, 1 planned (a combo counts once), cap {key['daily_cap']}",
+                ("daily_cap", 429, f"cap exceeded: daily_cap is {key['daily_cap']} orders/day for this key")):
+        return out
+
+    # ── circuit breaker: only a pure close passes a tripped book ──
+    breaker = breakers.check(supa, book)
+    out["breaker"] = breaker
+    if breaker["tripped"]:
+        closing_only = all(leg["position_intent"] in option_orders.CLOSE_INTENTS for leg in legs)
+        if not closing_only:
+            if not dry_run:
+                breakers.notify(supa, book, breaker)
+            gate("circuit_breaker", False,
+                 f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass.",
+                 ("circuit_breaker", 409,
+                  f"circuit breaker: {'; '.join(breaker['reasons'])}. Only closing orders pass."))
+            return out
+    gate("circuit_breaker", True,
+         "the book's circuit breaker is not tripped" if not breaker["tripped"]
+         else "the breaker is tripped but this order only closes positions")
+
+    out["option"] = {"kind": kind, "legs": legs, "parent_qty": parent, "ratios": ratios,
+                     "net_limit_price": float(limit_price) if kind == "combo" else None,
+                     "max_loss": max_loss, "options_buying_power": obp,
+                     "order_type": order_type}
     return out
 
 
