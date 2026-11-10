@@ -71,6 +71,28 @@ def _select_edgar_row(rows: list[dict]) -> dict | None:
     return max(pool, key=key)
 
 
+def _annual_series(rows: list[dict]) -> list[tuple[str, float]]:
+    """Full-year values of a duration concept: [(period_end, value)] ascending,
+    one per period end. Full-year = fp 'FY' AND a ~1-year span (a two-year
+    comparative column never counts); per period end the latest-filed row
+    wins, so a restatement supersedes the original filing."""
+    best: dict[str, dict] = {}
+    for r in rows:
+        if not r.get("start") or not r.get("end") or r.get("val") is None:
+            continue
+        try:
+            span = (datetime.fromisoformat(str(r["end"])[:10])
+                    - datetime.fromisoformat(str(r["start"])[:10])).days
+        except ValueError:
+            continue
+        if r.get("fp") != "FY" or not (300 <= span <= 400):
+            continue
+        end = str(r["end"])[:10]
+        if end not in best or str(r.get("filed") or "") > str(best[end].get("filed") or ""):
+            best[end] = r
+    return sorted((end, float(r["val"])) for end, r in best.items())
+
+
 def _http_get(url: str, headers: dict, timeout: int = 30) -> bytes:
     """GET via requests when available (proxy/redirect handling on this VM
     stalls under bare urllib for some hosts, e.g. fred.stlouisfed.org),
@@ -317,6 +339,52 @@ class DataStore:
         self.cache.set("cikmap", out)
         return out
 
+    def _edgar_rows(self, ticker: str, concept: str) -> list[dict]:
+        """Every 10-K/10-Q row EDGAR carries for a us-gaap concept (all units
+        merged), cached. [] -- with a missing note -- when the ticker has no
+        CIK or the concept is unreported; raises on transport failure so the
+        caller's own failure handling applies."""
+        key = f"edgarrows|{ticker}|{concept}"
+        hit = self.cache.get(key, TTL["edgar"])
+        if hit is not None:
+            self._note_asof("edgar")
+            return hit
+        cik = self._cik_map().get(ticker.upper())
+        if cik is None:
+            self.note_missing(ticker, f"edgar.{concept}", "no CIK for ticker")
+            self.cache.set(key, [])
+            return []
+        url = (f"https://data.sec.gov/api/xbrl/companyconcept/"
+               f"CIK{cik:010d}/us-gaap/{concept}.json")
+        data = json.loads(_http_get(url, _UA))
+        time.sleep(0.15)  # EDGAR fair-use: stay well under 10 req/s
+        rows = []
+        for unit_rows in (data.get("units") or {}).values():
+            rows.extend(unit_rows)
+        rows = [r for r in rows if r.get("form") in ("10-K", "10-Q")]
+        if not rows:
+            self.note_missing(ticker, f"edgar.{concept}", "concept not reported")
+        self.cache.set(key, rows)
+        self._note_asof("edgar")
+        return rows
+
+    def edgar_annual_series(self, ticker: str, concept: str) -> list[tuple[str, float]] | None:
+        """Full-year values for a duration concept, [(period_end, value)]
+        ascending (see _annual_series for the selection rule). None when
+        EDGAR has no usable annual row for the concept."""
+        key = f"edgar_series|{ticker}|{concept}"
+        hit = self.cache.get(key, TTL["edgar"])
+        if hit is not None:
+            self._note_asof("edgar")
+            return [tuple(x) for x in hit] if hit else None
+        try:
+            series = _annual_series(self._edgar_rows(ticker, concept))
+        except Exception as e:
+            self.note_missing(ticker, f"edgar.{concept}", e)
+            return None
+        self.cache.set(key, [list(x) for x in series])
+        return series or None
+
     def edgar_concept(self, ticker: str, concept: str) -> tuple[float, str] | None:
         """Latest value for a us-gaap concept: (value, period_end) or None.
 
@@ -335,23 +403,10 @@ class DataStore:
             self._note_asof("edgar")
             return tuple(hit) if hit else None
         try:
-            cik = self._cik_map().get(ticker.upper())
-            if cik is None:
-                self.note_missing(ticker, f"edgar.{concept}", "no CIK for ticker")
-                self.cache.set(key, [])
-                return None
-            url = (f"https://data.sec.gov/api/xbrl/companyconcept/"
-                   f"CIK{cik:010d}/us-gaap/{concept}.json")
-            data = json.loads(_http_get(url, _UA))
-            time.sleep(0.15)  # EDGAR fair-use: stay well under 10 req/s
-            rows = []
-            for unit_rows in (data.get("units") or {}).values():
-                rows.extend(unit_rows)
+            rows = self._edgar_rows(ticker, concept)
             if not rows:
-                self.note_missing(ticker, f"edgar.{concept}", "concept not reported")
                 self.cache.set(key, [])
                 return None
-            rows = [r for r in rows if r.get("form") in ("10-K", "10-Q")]
             row = _select_edgar_row(rows)
             if row is None:
                 self.cache.set(key, [])
