@@ -36,7 +36,17 @@ export interface Catalog {
   universe_builders: string[];
   ops: { op: string; doc?: string }[];
   cards: CardFn[];
+  computed_at?: string;
   universe_refresh?: Record<string, { as_of: string; source: string; count: number } | null>;
+}
+
+export interface NearMiss {
+  ticker: string;
+  fn: string;
+  column: string;
+  value: number;
+  op: string;
+  threshold: unknown;
 }
 
 export interface RunFooter {
@@ -46,9 +56,11 @@ export interface RunFooter {
   universe_size?: number;
   universe_capped?: { cap: number; universe_size_full: number };
   survivors?: number;
+  near_misses?: NearMiss[];
+  near_miss_count?: number;
   columns?: Record<string, { fn?: string; source?: string; as_of?: string }>;
   context?: Record<string, unknown>;
-  missing?: { field: string; reason?: string }[];
+  missing?: { ticker: string; field: string; reason?: string }[];
   spec_echo?: Record<string, unknown>;
 }
 

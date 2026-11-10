@@ -40,18 +40,33 @@ def _series(tickers, values):
     return pd.Series(values, index=pd.Index(tickers, name="ticker"), dtype="float64")
 
 
-def _info_field(store, tickers, key, fname):
+def _info_field(store, tickers, key, fname, sentinel: str | None = None):
+    """One yfinance.info value per ticker. `sentinel` guards the multiples
+    where a non-positive number is missing data encoded as zero, not a
+    reading (Kevin, 2026-11-09: AEHL's trailing P/E of 0 passed Graham's
+    "P/E < 7" as its sole survivor): "positive" drops v <= 0, "nonnegative"
+    drops v < 0 (debt/equity, where exactly 0 is a real debt-free company).
+    The drop is logged as missing with the reason — missing fails its
+    filter, never reads as a number."""
     out = {}
     for t in tickers:
         v = store.info(t).get(key)
         if v is None:
             store.note_missing(t, fname, f"info field '{key}' absent")
             out[t] = np.nan
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            out[t] = np.nan
+            continue
+        if (sentinel == "positive" and v <= 0) or (sentinel == "nonnegative" and v < 0):
+            store.note_missing(t, fname, f"info field '{key}' is {v:g}: a non-positive "
+                                         f"value here is a sentinel for missing data, "
+                                         f"not a reading")
+            out[t] = np.nan
         else:
-            try:
-                out[t] = float(v)
-            except (TypeError, ValueError):
-                out[t] = np.nan
+            out[t] = v
     return _series(tickers, out)
 
 
@@ -119,7 +134,7 @@ def industry(store, tickers):
 @register("market_cap", "identity", {}, "usd",
           "Market capitalization, USD.", "yfinance.info")
 def market_cap(store, tickers):
-    return _info_field(store, tickers, "marketCap", "market_cap")
+    return _info_field(store, tickers, "marketCap", "market_cap", sentinel="positive")
 
 
 @register("price", "identity", {}, "usd",
@@ -163,32 +178,35 @@ def is_major_exchange(store, tickers):
 @register("pe_ratio", "valuation", {}, "x",
           "Trailing price/earnings multiple.", "yfinance.info")
 def pe_ratio(store, tickers):
-    return _info_field(store, tickers, "trailingPE", "pe_ratio")
+    return _info_field(store, tickers, "trailingPE", "pe_ratio", sentinel="positive")
 
 
 @register("forward_pe", "valuation", {}, "x",
           "Forward price/earnings multiple.", "yfinance.info")
 def forward_pe(store, tickers):
-    return _info_field(store, tickers, "forwardPE", "forward_pe")
+    return _info_field(store, tickers, "forwardPE", "forward_pe", sentinel="positive")
 
 
 @register("price_to_sales", "valuation", {}, "x",
           "Price / trailing-12-month sales.", "yfinance.info")
 def price_to_sales(store, tickers):
-    return _info_field(store, tickers, "priceToSalesTrailing12Months", "price_to_sales")
+    return _info_field(store, tickers, "priceToSalesTrailing12Months", "price_to_sales",
+                       sentinel="positive")
 
 
 @register("price_to_book", "valuation", {}, "x",
-          "Price / book value (quote field; can be negative when equity is).",
+          "Price / book value. A non-positive value (zero book data, or "
+          "negative equity) is missing data, not a cheap multiple.",
           "yfinance.info")
 def price_to_book(store, tickers):
-    return _info_field(store, tickers, "priceToBook", "price_to_book")
+    return _info_field(store, tickers, "priceToBook", "price_to_book", sentinel="positive")
 
 
 @register("ev_to_ebitda", "valuation", {}, "x",
           "Enterprise value / EBITDA.", "yfinance.info")
 def ev_to_ebitda(store, tickers):
-    return _info_field(store, tickers, "enterpriseToEbitda", "ev_to_ebitda")
+    return _info_field(store, tickers, "enterpriseToEbitda", "ev_to_ebitda",
+                       sentinel="positive")
 
 
 @register("dividend_yield", "valuation", {}, "pct",
@@ -234,7 +252,8 @@ def roe(store, tickers):
           "Total debt / equity (info convention: percent, returned here as x).",
           "yfinance.info")
 def debt_to_equity(store, tickers):
-    s = _info_field(store, tickers, "debtToEquity", "debt_to_equity")
+    s = _info_field(store, tickers, "debtToEquity", "debt_to_equity",
+                    sentinel="nonnegative")
     return s / 100.0
 
 
@@ -250,8 +269,13 @@ def lt_debt_to_equity(store, tickers):
                            "Long Term Debt", "LongTermDebt"))
         eq = _latest(_row(bal, "Total Equity Gross Minority Interest",
                           "Stockholders Equity", "Common Stock Equity"))
-        if np.isnan(ltd) or np.isnan(eq) or eq == 0:
+        if np.isnan(ltd) or np.isnan(eq):
             store.note_missing(t, "lt_debt_to_equity", "LT debt or equity row absent")
+            out[t] = np.nan
+        elif eq <= 0:
+            store.note_missing(t, "lt_debt_to_equity",
+                               f"total equity is {eq:g}: a leverage ratio on "
+                               f"non-positive equity is a sentinel, not low leverage")
             out[t] = np.nan
         else:
             out[t] = ltd / eq
@@ -261,7 +285,8 @@ def lt_debt_to_equity(store, tickers):
 @register("current_ratio", "fundamentals", {}, "x",
           "Current assets / current liabilities.", "yfinance.info")
 def current_ratio(store, tickers):
-    return _info_field(store, tickers, "currentRatio", "current_ratio")
+    return _info_field(store, tickers, "currentRatio", "current_ratio",
+                       sentinel="positive")
 
 
 @register("revenue_growth_yoy", "fundamentals", {}, "pct",

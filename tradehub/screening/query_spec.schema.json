@@ -70,6 +70,15 @@
    "minimum": 1,
    "type": "integer"
   },
+  "max_universe": {
+   "description": "This screen's own enrichment cap, overriding the standard 300-name run cap (the classic watchlist screens carry it for their wider index-union universe). Absent = the standard cap; the run footer discloses whichever cap applied.",
+   "minimum": 1,
+   "type": "integer"
+  },
+  "membership_diff": {
+   "description": "Watchlist screens (the classic three): each recorded run diffs survivors vs the stored membership and appends dated entrance/exit events to the screen row. Display only.",
+   "type": "boolean"
+  },
   "name": {
    "minLength": 1,
    "type": "string"
@@ -192,6 +201,42 @@
       "type",
       "index"
      ]
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "indexes": {
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1,
+       "type": "array"
+      },
+      "type": {
+       "const": "index_union"
+      }
+     },
+     "required": [
+      "type",
+      "indexes"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "base": {
+       "type": "object"
+      },
+      "type": {
+       "const": "common_equity"
+      }
+     },
+     "required": [
+      "type",
+      "base"
+     ],
+     "type": "object"
     }
    ]
   },

@@ -96,8 +96,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 71 | `20261109000006_band_crossing.sql` |
 | 72 | `20261109000007_level_watcher.sql` |
 | 73 | `20261109000008_guidance_snapshots.sql` |
+| 74 | `20261109000009_screen_membership.sql` |
 
-**Watermark: `20261109000008_guidance_snapshots.sql`**
+**Watermark: `20261109000009_screen_membership.sql`**
 
 ## How to record a new one
 

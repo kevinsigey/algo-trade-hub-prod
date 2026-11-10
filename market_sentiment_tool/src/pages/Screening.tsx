@@ -6,7 +6,7 @@ import { adminJson, type ScreenRow } from "@/lib/workshop";
 import { ctDateTimeYear } from "@/lib/format";
 import {
   OP_LABELS, PRESETS, UNIVERSES, specFromState, trayFromSpec,
-  type CardFn, type Catalog, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
+  type CardFn, type Catalog, type NearMiss, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
 } from "@/lib/screening";
 
 export function survivorText(n: number): string {
@@ -18,6 +18,33 @@ function fmtCell(v: unknown): string {
   if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 })
     : v.toLocaleString("en-US", { maximumFractionDigits: 3 });
   return String(v);
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-11-10" (or an ISO timestamp) -> "Nov 10", by string split — no Date
+ * object, so no timezone can shift the day. */
+function fmtDay(iso: string): string {
+  const [, m, d] = (iso ?? "").slice(0, 10).split("-").map(Number);
+  return m >= 1 && m <= 12 && d >= 1 ? `${MONTHS[m - 1]} ${d}` : iso;
+}
+
+/** The right-hand side of a near-miss comparison: "< 7", "≥ 20", "between 3–5". */
+function cmpText(op: string, thr: unknown): string {
+  const v = Array.isArray(thr) ? thr.map((x) => fmtCell(x)).join("–") : fmtCell(thr);
+  switch (op) {
+    case "lt": return `< ${v}`;
+    case "le": return `≤ ${v}`;
+    case "gt": return `> ${v}`;
+    case "ge": return `≥ ${v}`;
+    case "eq": return `= ${v}`;
+    case "ne": return `≠ ${v}`;
+    case "between": return `between ${v}`;
+    case "pct_gte": case "pct_ge": return `top slice ≥ ${v}%`;
+    case "pct_lte": case "pct_le": return `bottom slice ≤ ${v}%`;
+    case "in": return `one of ${v}`;
+    default: return `${op} ${v}`;
+  }
 }
 
 /** Screening: describe it or build it from filter cards (the prototype's
@@ -96,6 +123,37 @@ export default function Screening() {
   const numericFields = useMemo(
     () => (catalog?.functions ?? []).filter((f) => f.kind === "field" && f.returns !== "str"),
     [catalog]);
+  /** Field units from the catalog's own returns vocabulary (pct -> %, x -> ×):
+   * results tables carried bare numbers until the classic-screens audit. */
+  const unitFor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of catalog?.functions ?? []) {
+      if (f.returns === "pct") m.set(f.name, "%");
+      else if (f.returns === "x") m.set(f.name, "×");
+    }
+    return m;
+  }, [catalog]);
+  const labelForFn = useMemo(() => new Map(cards.map((c) => [c.fn, c.label])), [cards]);
+  const colUnit = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const c of result?.columns ?? []) {
+      const fn = result?.footer.columns?.[c]?.fn ?? c.split("(")[0];
+      const u = unitFor.get(fn);
+      if (u) out[c] = u;
+    }
+    return out;
+  }, [result, unitFor]);
+  /** The missing-data record, grouped per ticker with its fields — the old
+   * render was a wall of repeated field names with no tickers or counts. */
+  const missingByTicker = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const m of result?.footer.missing ?? []) {
+      const arr = map.get(m.ticker) ?? [];
+      if (!arr.includes(m.field)) arr.push(m.field);
+      map.set(m.ticker, arr);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [result]);
 
   useEffect(() => {
     if (!openRow) { setQuote(null); return; }
@@ -283,6 +341,7 @@ export default function Screening() {
                     <th key={c} className="px-3 py-2">
                       <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-slate-200">
                         {c}
+                        {colUnit[c] && <span className="normal-case text-slate-500">({colUnit[c]})</span>}
                         {sort?.col === c && (sort.dir === 1
                           ? <ArrowUp className="h-3 w-3" aria-hidden="true" />
                           : <ArrowDown className="h-3 w-3" aria-hidden="true" />)}
@@ -353,10 +412,23 @@ export default function Screening() {
               </tbody>
             </table>
           </div>
-          {result.footer.missing && result.footer.missing.length > 0 && (
-            <p className="mt-2 text-xs text-slate-500">
-              Missing data (fails its filter, never zero): {result.footer.missing.map((m) => m.field).join(", ")}
-            </p>
+          {missingByTicker.length > 0 && (
+            <div className="mt-2 text-xs text-slate-500">
+              <p>
+                Missing data (fails its filter, never zero): {missingByTicker.length} names ·{" "}
+                {result.footer.missing?.length ?? 0} field gaps
+              </p>
+              <details className="mt-1">
+                <summary className="cursor-pointer hover:text-slate-300">Per-ticker record</summary>
+                <ul className="mt-1 space-y-0.5">
+                  {missingByTicker.map(([t, fields]) => (
+                    <li key={t}>
+                      <span className="font-mono text-slate-400">{t}</span> — {fields.join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
           )}
         </section>
       )}
@@ -593,6 +665,55 @@ export default function Screening() {
                     + (sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
                   : "not run yet"}
               </div>
+              {sc.membership?.tracked_since && (
+                <div className="mt-1 text-xs text-slate-500">
+                  membership tracked since {fmtDay(sc.membership.tracked_since)}
+                  {(!sc.membership_events || sc.membership_events.length === 0) && " · no entrances or exits yet"}
+                </div>
+              )}
+              {(sc.membership_events ?? []).length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-xs">
+                  {[...(sc.membership_events ?? [])].slice(-6).reverse().map((e, i) => (
+                    <li key={`${e.ticker}-${e.date}-${e.kind}-${i}`}
+                        className={e.kind === "entered" ? "text-emerald-300/90" : "text-rose-300/90"}>
+                      <span className="font-mono font-medium">{e.ticker}</span>
+                      {e.kind === "entered"
+                        ? ` entered · ${fmtDay(e.date)}`
+                        : ` exited · was member since ${fmtDay(e.since ?? e.date)}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(sc.last_run?.near_misses ?? []).length > 0 && (
+                <div className="mt-1 text-xs text-slate-500">
+                  Near misses — one filter away ({sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length}):
+                  <ul className="mt-0.5 space-y-0.5">
+                    {(sc.last_run?.near_misses ?? []).slice(0, 6).map((n: NearMiss) => (
+                      <li key={`${n.ticker}-${n.column}`}>
+                        <span className="font-mono text-slate-300">{n.ticker}</span>
+                        {" — "}{labelForFn.get(n.fn) ?? n.column} {fmtCell(n.value)}
+                        {unitFor.get(n.fn) ? ` ${unitFor.get(n.fn)}` : ""} vs {cmpText(n.op, n.threshold)}
+                      </li>
+                    ))}
+                  </ul>
+                  {(sc.last_run?.near_misses?.length ?? 0) > 6 && (
+                    <details>
+                      <summary className="cursor-pointer hover:text-slate-300">
+                        all {sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length} near misses
+                      </summary>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {(sc.last_run?.near_misses ?? []).slice(6).map((n: NearMiss) => (
+                          <li key={`${n.ticker}-${n.column}`}>
+                            <span className="font-mono text-slate-300">{n.ticker}</span>
+                            {" — "}{labelForFn.get(n.fn) ?? n.column} {fmtCell(n.value)}
+                            {unitFor.get(n.fn) ? ` ${unitFor.get(n.fn)}` : ""} vs {cmpText(n.op, n.threshold)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <button type="button" onClick={() => applySpec(sc.spec as ScreenSpec, `Loaded saved screen "${sc.name}" into the cards.`)}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Load into cards</button>
@@ -611,6 +732,7 @@ export default function Screening() {
         <details className="mt-4">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400">
             Full catalog ({catalog?.functions.length ?? 0} functions, reference)
+            {catalog?.computed_at ? ` · computed ${catalog.computed_at.replace("T", " ").slice(0, 16)} UTC` : ""}
           </summary>
           <ul className="mt-3 space-y-2 text-sm">
             {(catalog?.functions ?? []).map((f) => (
