@@ -40,6 +40,7 @@ describe("MachineKeys page", () => {
     render(<MachineKeys />);
     await screen.findByText("No keys yet.");
     fireEvent.change(screen.getByPlaceholderText("mac scripts"), { target: { value: "mac scripts" } });
+    fireEvent.click(screen.getByLabelText("orders:place"));
     fireEvent.click(screen.getByText("Create key"));
     expect(await screen.findByText("thk_0123456789abcdef0123456789abcdef")).toBeTruthy();
     expect(screen.getByText(/Copy this key now/)).toBeTruthy();
@@ -59,9 +60,8 @@ describe("MachineKeys page", () => {
     // The scope is offered in the New key form…
     const clsBox = screen.getByLabelText("classifications:write") as HTMLInputElement;
     expect(clsBox.type).toBe("checkbox");
-    // …and grantable on its own: uncheck the orders:place default, check only it.
+    // …and grantable on its own: tick only it (no scope is ticked by default).
     fireEvent.change(screen.getByPlaceholderText("mac scripts"), { target: { value: "muse classifications" } });
-    fireEvent.click(screen.getByLabelText("orders:place"));
     fireEvent.click(clsBox);
     const createButton = screen.getByText("Create key") as HTMLButtonElement;
     expect(createButton.disabled).toBe(false);
@@ -85,5 +85,29 @@ describe("MachineKeys page", () => {
       expect(mockAdmin.mock.calls.some((c) => c[0] === "/api/admin/keys/3/revoke")).toBe(true),
     );
     expect(await screen.findByText(/Revoked/)).toBeTruthy();
+  });
+
+  it("starts with no scope ticked and cannot create a key until one is picked", async () => {
+    mockAdmin.mockResolvedValue({ keys: [] });
+    render(<MachineKeys />);
+    await screen.findByText("No keys yet.");
+    fireEvent.change(screen.getByPlaceholderText("mac scripts"), { target: { value: "mac scripts" } });
+    for (const box of screen.getAllByRole("checkbox")) {
+      expect((box as HTMLInputElement).checked).toBe(false);
+    }
+    const createButton = screen.getByText("Create key") as HTMLButtonElement;
+    expect(createButton.disabled).toBe(true);
+    expect(screen.getByText("Pick at least one scope.")).toBeTruthy();
+  });
+
+  it("enables creation once a scope is ticked", async () => {
+    mockAdmin.mockResolvedValue({ keys: [] });
+    render(<MachineKeys />);
+    await screen.findByText("No keys yet.");
+    fireEvent.change(screen.getByPlaceholderText("mac scripts"), { target: { value: "mac scripts" } });
+    fireEvent.click(screen.getByLabelText("orders:read"));
+    const createButton = screen.getByText("Create key") as HTMLButtonElement;
+    expect(createButton.disabled).toBe(false);
+    expect(screen.queryByText("Pick at least one scope.")).toBeNull();
   });
 });
