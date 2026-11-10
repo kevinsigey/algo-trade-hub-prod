@@ -33,6 +33,34 @@ from tradehub.valuation import store as val_store
 STRONG_ZONES = cand.STRONG_ZONES
 _EPS = 1e-9
 
+# Round 6 accounting: a filtered view must account for every name its
+# count promises. A classified or held name that is not on the board
+# carries the reason it is not banded, read from its stored sheet.
+NO_SHEET_REASON = ("not in the guidance universe / "
+                   "no fact sheet in this snapshot")
+_NOT_BANDED_REASONS = {
+    "no_full_year_guide": "no full-year guide on file — no bands computed",
+    "guide_rejected": "guide rejected by the sheet guards — no bands computed",
+    "no_peer_multiple": "no peer multiple — no bands computed",
+}
+
+
+def _sheet_account(sheet: dict | None) -> tuple[bool, str | None, str | None]:
+    """(banded, sheet_status, reason) for one name, from its stored
+    sheet in the snapshot (sheet None when the name has no sheet there).
+    Banded is the board's own test — the sheet's status — so the
+    accounting reconciles with the board the page renders."""
+    if sheet is None:
+        return False, None, NO_SHEET_REASON
+    status = sheet.get("status")
+    if status == "banded":
+        return True, status, None
+    reason = _NOT_BANDED_REASONS.get(status)
+    if reason is None:
+        reason = (f"sheet status {status} — no bands computed" if status
+                  else NO_SHEET_REASON)
+    return False, status, reason
+
 
 def previous_snapshot(client) -> dict | None:
     """The second-newest COMPLETED snapshot, or None. An in-flight
@@ -195,10 +223,14 @@ def build_summary(client, *, positions_fn=None,
         return {"snapshot_id": None, "previous_snapshot_id": None,
                 "counts": empty_counts, "feed_state": "no_snapshot",
                 "feed": [], "classified_names": [], "crossings": [],
-                "held": {}, "held_positions_unavailable": False}
+                "held": {}, "held_names": [],
+                "held_positions_unavailable": False}
     snapshot_id = snap["id"]
     prev = previous_snapshot(client)
     latest_hist = val_store.snapshot_history(client, snapshot_id)
+    sheet_by = {s["ticker"]: s
+                for s in val_store.snapshot_sheets(client, snapshot_id)
+                if s.get("ticker")}
     prev_hist = (val_store.snapshot_history(client, prev["id"])
                  if prev else [])
     banded_rows = [r for r in latest_hist if _banded(r)]
@@ -224,6 +256,24 @@ def build_summary(client, *, positions_fn=None,
     counts["classified_prints"] = len(classified_list)
     classified = {c["ticker"]: c for c in classified_list}
     held = cand.held_positions(client, positions_fn)
+    # Round 6 accounting (additive): every classified and every held
+    # name carries its board standing — banded, or the stored sheet
+    # status that says why not — so the page's filtered views reconcile
+    # with the counts they promise instead of silently dropping names.
+    for entry in classified_list:
+        banded, status, reason = _sheet_account(
+            sheet_by.get(entry["ticker"]))
+        entry.update({"banded": banded, "sheet_status": status,
+                      "reason": reason})
+    held_names = []
+    for ticker in sorted(held or {}):
+        banded, status, reason = _sheet_account(sheet_by.get(ticker))
+        held_names.append({"ticker": ticker,
+                           "books": held[ticker].get("books", []),
+                           "qty": held[ticker].get("qty"),
+                           "sleeves": held[ticker].get("sleeves", []),
+                           "banded": banded, "sheet_status": status,
+                           "reason": reason})
     # ── the feed: conjunctions pinned, then crossings, then the diff ──
     feed: list[dict] = []
     for item in _conjunctions(client, latest_hist, now=now,
@@ -246,5 +296,5 @@ def build_summary(client, *, positions_fn=None,
             "previous_snapshot_id": prev["id"] if prev else None,
             "counts": counts, "feed_state": feed_state, "feed": feed,
             "classified_names": classified_list, "crossings": crossings,
-            "held": held or {},
+            "held": held or {}, "held_names": held_names,
             "held_positions_unavailable": held is None}
