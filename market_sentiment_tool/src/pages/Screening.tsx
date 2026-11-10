@@ -110,6 +110,97 @@ function PriceChart({ closes }: { closes: { date: string; close: number }[] }) {
   );
 }
 
+/** The stored record exactly as the single-screen read returns it: the
+ * raw last_run payload (footer + columns + rows), not the list view's
+ * counts-only summary shape. */
+interface StoredRunRecord {
+  footer?: { run_at?: string | null; survivors?: number | null;
+             displayed?: number | null; data_as_of?: string | null;
+             columns?: Record<string, { fn?: string }> };
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  survivors?: string[];
+}
+
+type RecordedState = { status: "loading" | "ready" | "error"; run?: StoredRunRecord | null };
+
+/** Round 4: a saved run's recorded results, rendered from the record
+ * itself. Read-only by construction -- this component only ever receives
+ * fetched data. A record from before row-keeping holds counts only and
+ * says so, rather than reconstructing rows it never stored. */
+function RecordedRunView({ state, chips, unitFor }: {
+  state: RecordedState | undefined;
+  chips: Record<string, VerdictChip>;
+  unitFor: Map<string, string>;
+}) {
+  if (!state || state.status === "loading")
+    return <p className="text-xs text-slate-500">Loading the recorded run…</p>;
+  if (state.status === "error")
+    return <p className="text-xs text-rose-300">Could not load the recorded run.</p>;
+  const run = state.run;
+  const rows = run?.rows;
+  if (!rows || rows.length === 0) {
+    return (
+      <p className="text-xs text-slate-500">
+        This run&apos;s row values were not kept — the record holds counts only
+        (runs recorded before row-keeping). Re-run re-executes the screen and
+        records its rows.
+      </p>
+    );
+  }
+  const columns = run?.columns ?? Object.keys(rows[0]);
+  const f = run?.footer ?? {};
+  return (
+    <div>
+      <p className="text-xs text-slate-500">
+        recorded {f.run_at ? ctDateTimeYear(f.run_at) : "—"}
+        {f.survivors != null && <> · {survivorText(f.survivors)}</>}
+        {f.displayed != null && f.survivors != null && f.displayed < f.survivors && (
+          <span className="text-amber-300"> · showing {f.displayed} of {f.survivors} recorded rows (the run&apos;s display limit)</span>
+        )}
+        {f.data_as_of && <> · data as of {String(f.data_as_of).replace("T", " ").slice(0, 16)}</>}
+        {" "}· read from the record — nothing re-ran
+      </p>
+      <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800">
+        <table className="w-full min-w-[480px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
+              {columns.map((c) => {
+                const unit = unitFor.get(f.columns?.[c]?.fn ?? c.split("(")[0]);
+                return (
+                  <th key={c} className="px-3 py-2">
+                    {c}
+                    {unit && <span className="normal-case text-slate-500"> ({unit})</span>}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const t = String(r.ticker);
+              return (
+                <tr key={t} className="border-b border-slate-800/70">
+                  {columns.map((c) => (
+                    <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
+                      {c === "ticker" ? (
+                        <span>
+                          <span className="font-mono font-medium text-white">{t}</span>
+                          <VerdictChipLine chip={chips[t]} ticker={t} />
+                        </span>
+                      ) : fmtCell(r[c])}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Screening() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState("");
@@ -200,6 +291,8 @@ export default function Screening() {
   }, [openRow ]);
 
   const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+  const [recordedOpen, setRecordedOpen] = useState<Record<number, boolean>>({});
+  const [recorded, setRecorded] = useState<Record<number, RecordedState>>({});
 
   const loadScreens = () => adminJson<ScreenRow[]>("/api/screening/screens").then(setScreens).catch(() => setScreens([]));
   useEffect(() => {
@@ -300,6 +393,20 @@ export default function Screening() {
     const d = await adminJson<RunPayload>("/api/screening/run", { method: "POST", body: JSON.stringify({ spec: sp }) });
     setResult(d); setSort(null); setOpenRow(null);
   });
+
+  /** Round 4: view a saved run's RECORDED results -- a pure read of the
+   * stored record (the single-screen GET). It never runs the screen;
+   * Re-run stays the only re-execution path. */
+  const toggleRecorded = (sc: ScreenRow) => {
+    const open = !recordedOpen[sc.id];
+    setRecordedOpen((m) => ({ ...m, [sc.id]: open }));
+    if (!open || recorded[sc.id]) return;
+    setRecorded((m) => ({ ...m, [sc.id]: { status: "loading" } }));
+    adminJson<{ last_run?: StoredRunRecord | null }>(`/api/screening/screens/${sc.id}`)
+      .then((row) => setRecorded((m) => ({
+        ...m, [sc.id]: { status: "ready", run: row.last_run ?? null } })))
+      .catch(() => setRecorded((m) => ({ ...m, [sc.id]: { status: "error" } })));
+  };
 
   const runSaved = (sc: ScreenRow) => act("run", async () => {
     const d = await adminJson<RunPayload>(`/api/screening/screens/${sc.id}/run`, { method: "POST", body: "{}" });
@@ -823,6 +930,10 @@ export default function Screening() {
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Load into cards</button>
                 <button type="button" onClick={() => runSaved(sc)} disabled={!!busy}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500 disabled:opacity-50">Re-run</button>
+                {sc.last_run && (
+                  <button type="button" onClick={() => toggleRecorded(sc)}
+                    className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Recorded results</button>
+                )}
                 {!sc.promoted_idea_id && sc.last_run && (
                   <button type="button" onClick={() => promote(sc)} disabled={!!busy}
                     className="rounded-md border border-emerald-600/60 px-2 py-1 text-emerald-300 hover:border-emerald-400 disabled:opacity-50">Promote to tracked idea</button>
@@ -830,6 +941,11 @@ export default function Screening() {
                 <button type="button" onClick={() => remove(sc)} disabled={!!busy}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-400 hover:border-rose-400 hover:text-rose-300 disabled:opacity-50">Delete</button>
               </div>
+              {recordedOpen[sc.id] && (
+                <div className="mt-2">
+                  <RecordedRunView state={recorded[sc.id]} chips={chips} unitFor={unitFor} />
+                </div>
+              )}
             </li>
           ))}
         </ul>

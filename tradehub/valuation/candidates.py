@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from tradehub.valuation import store as val_store
 
 CANDIDATES = "debate_candidates"
+EXCLUSIONS = "debate_candidate_exclusions"
 STRONG_ZONES = ("buy_zone_strong", "short_zone_strong")
 DIRECTIONAL_ZONES = ("buy_zone", "short_zone") + STRONG_ZONES
 ENTRANT_WINDOW_DAYS = 31     # an entrance is "recent" inside a month
@@ -299,6 +300,21 @@ def generate_candidates(client, *, now: datetime | None = None,
         client.table(CANDIDATES).insert(row).execute()
         inserted += 1
 
+    # Round 4: the named exclusions are persisted per snapshot too, so the
+    # queue is legible in aggregate (who was considered and why not) instead
+    # of living only in this return value. Upsert on (snapshot_id, ticker)
+    # keeps regeneration idempotent; the read side drops any row whose name
+    # has since become a candidate for the same snapshot.
+    try:
+        for row in excluded:
+            client.table(EXCLUSIONS).upsert(
+                {"ticker": row["ticker"], "snapshot_id": snapshot_id,
+                 "reason": row["reason"], "computed_at": now.isoformat()},
+                on_conflict="snapshot_id,ticker").execute()
+    except Exception as exc:  # noqa: BLE001 -- pre-migration: skip silently
+        if not any(m in str(exc) for m in _MISSING_TABLE):
+            raise
+
     counts = {
         "entrants": sum(1 for r in candidates if r["sources"]["entrants"]),
         "zone_names": sum(1 for r in candidates if r["sources"]["zone"]),
@@ -336,6 +352,25 @@ def candidates_for_snapshot(client, snapshot_id) -> list[dict]:
         if any(m in str(exc) for m in _MISSING_TABLE):
             return []
         raise
+
+
+def exclusions_for_snapshot(client, snapshot_id) -> list[dict]:
+    """The snapshot's persisted named exclusions, minus any name that has
+    since become a candidate for the same snapshot (a regeneration can
+    flip a name between the two sets; the candidate wins)."""
+    try:
+        rows = (client.table(EXCLUSIONS).select("*")
+                .eq("snapshot_id", snapshot_id)
+                .order("ticker").execute().data) or []
+    except Exception as exc:  # noqa: BLE001
+        if any(m in str(exc) for m in _MISSING_TABLE):
+            return []
+        raise
+    candidate_tickers = {r["ticker"]
+                         for r in candidates_for_snapshot(client, snapshot_id)}
+    return [{"ticker": r["ticker"], "reason": r.get("reason"),
+             "computed_at": r.get("computed_at")}
+            for r in rows if r["ticker"] not in candidate_tickers]
 
 
 def _mark(client, candidate_id: int, state: str, *,

@@ -6,6 +6,7 @@ import { adminJson } from "@/lib/workshop";
 import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
 import LevelWatcher from "@/pages/LevelWatcher";
+import DebateQueue from "@/components/DebateQueue";
 import NameDecision from "@/components/NameDecision";
 import { VerdictChipLine } from "@/components/VerdictChip";
 import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
@@ -45,9 +46,13 @@ const FUND_LABELS: Record<string, string> = {
   shares_diluted: "Diluted shares",
 };
 
-function fmtFund(key: string, v: number): string {
-  if (key === "shares_diluted") return `${(v / 1e6).toFixed(1)}M`;
-  if (key === "eps_diluted") return v.toFixed(2);
+/** Unit labels on every value (F5 discipline; Round 4): the EDGAR concepts
+ * behind this line are EarningsPerShareDiluted (USD per share) and
+ * WeightedAverageNumberOfDilutedSharesOutstanding (a share count) -- a
+ * bare "Diluted EPS 1.02" hid both. Money fields carry their $. */
+export function fmtFund(key: string, v: number): string {
+  if (key === "shares_diluted") return `${(v / 1e6).toFixed(1)}M shares`;
+  if (key === "eps_diluted") return `$${v.toFixed(2)} per share`;
   return v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : `$${(v / 1e6).toFixed(1)}M`;
 }
 
@@ -560,6 +565,8 @@ export default function Valuation() {
           <BandCrossings />
 
           <LevelWatcher />
+
+          <DebateQueue />
 
           <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
             <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
