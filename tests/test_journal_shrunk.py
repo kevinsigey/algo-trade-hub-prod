@@ -105,7 +105,9 @@ def test_end_to_end_the_cautious_row_scores_beside_the_pure_one_on_the_same_targ
 
 
 def test_the_registry_wraps_every_market_linked_model_and_no_pseudo_forecaster():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     names = [f.name for f in FORECASTERS]
     for expected in ("cpi_nowcast_cautious", "labor_nowcast_cautious",

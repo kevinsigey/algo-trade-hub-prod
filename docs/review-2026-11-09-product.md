@@ -65,3 +65,37 @@ fixed in advance, and failures stay on the record.
    README still describes the old architecture (Vercel UI reading Supabase directly).
 
 Scale, for the portfolio pitch: about 54,000 lines of Python, 21,000 of TypeScript, 283 test files, 71 migrations.
+
+---
+
+# Addendum, Nov 10: the admin pages (Claude)
+
+Reviewed **from the source code, not the rendered pages** (I do not sign in as Kevin). Layout, spacing and real
+data states are therefore unchecked; wording, structure, flow and the key-handling code are.
+
+| Page | Verdict | Main problems |
+|---|---|---|
+| Workshop (list) | Good | One-sentence intro, clear empty states. Four tabs is right. |
+| Workshop idea page | Most capable page in the hub, and the most crowded | One 1,496-line screen stacks the draft form, event study, option legs, portfolio blend, verdict tables, loss autopsy, lifecycle, tracking, the live gate, manual legs, the $1M book gate and a JSON import. The gate panel is written twice, once per book. |
+| Screening | Good flow (words → filter cards → saved screen → tracked idea) | Headings show a literal `--` ("Filter library -- pick cards, nudge numbers"). Placeholders expose field names (`cash_per_debt`, "numerator field"). |
+| Guidance | Useful, confusingly named | Four names for one thing: menu "Guidance", address `/valuation`, "valuation sheets", "fact sheets". The banner says "not trade recommendations" while the zones are called "buy zone" and "short zone". Three paragraphs, a legend and a snapshot line ("Unversioned legacy read…") sit above the first number. Ten columns. |
+| Deals and IPOs | Skilled work, disconnected | The intro says "the paper apparatus" and "the paper's three rules" without saying which paper. Two prefilled cases (Tesla–SpaceX, Anthropic IPO). Nothing here is graded or feeds another page. |
+| Agent debates | Honest, wordy | Three paragraphs before the ticker box. It says itself that it feeds no score, gate or order. The same debates also appear inside Guidance. |
+| Health | Works | Its heading is uppercase italic, unlike every other page. The legend ends with an internal note ("The orderbooks timer has no history source and is not drawn"). `/api/health` took 15 s on Nov 9. |
+| Machine keys | Sound | Keys are stored hashed, compared in constant time, shown once, capped per order and per day, rate-limited and logged. One fault: a new key defaults to the `orders:place` scope. Uses a different set of style classes from the rest of the site. |
+
+## What to change, in order
+1. **Machine keys: default a new key to no scopes** (or read-only), so placing orders is always a deliberate tick.
+2. **Split the idea page into steps**: Draft → Verdict → Go live. Each exists already as a block; they only need
+   tabs. Build the gate panel once and pass it the book.
+3. **Guidance: one name, neutral zone words.** Call it Guidance everywhere, and rename the zones to "below
+   guidance value / in line / above", which matches the "display only" banner.
+4. **One intro sentence per page**, with the rest behind a "How this works" toggle (Debates, Guidance, Deals).
+5. **One heading style.** Four are in use across these seven pages.
+6. **Fold Agent debates into Guidance** and drop the separate page; move Deals to the lab archive unless it
+   gets a graded record.
+
+## For the portfolio question
+Screening and the Workshop are the part of the hub a stranger could use: type an idea, see it tested against
+unseen years with the bar raised for every retry. That is the piece to demo publicly (read-only examples first,
+then rate-limited runs with no trading), ahead of any model page.

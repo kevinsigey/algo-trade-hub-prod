@@ -206,7 +206,9 @@ def test_persistence_anchors_on_the_last_settled_hour():
 
 
 def test_registry_carries_the_hourly_rows_with_unique_keys():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     keys = [(f.name, f.version) for f in FORECASTERS]
     assert ("oil_wti_hourly", "wti-hourly-v1") in keys

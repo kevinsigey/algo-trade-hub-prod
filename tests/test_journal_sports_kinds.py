@@ -80,7 +80,9 @@ def test_a_total_forecast_is_the_probability_of_the_over():
 
 
 def test_the_registry_adds_spread_and_total_for_both_sports_without_touching_the_winner_keys():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     keys = [(f.name, f.version) for f in FORECASTERS]
     for sport in ("nfl", "cfb"):

@@ -203,3 +203,34 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # Natural gas daily (2026-11-03): the day-one cautious row, pinned to natgas-v1.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
                 if f.name == "natgas_daily" and getattr(f, "version", None) == "natgas-v1"]
+
+
+# Retired 2026-11-10 (Kevin's call; evidence in docs/review-2026-11-10-models-deep-dive.md).
+# Each of these is behind its own Kalshi price with no sign of information the price lacks:
+# daily WTI / Brent / natural gas / gasoline, weather highs and lows (every version), ERCOT peak,
+# sports spreads and totals, every sports "+cal" row, and every hourly-WTI line except the
+# live-feed v4. Their market and baseline rows go with them where the whole family is retired.
+# RETIRED rows are never frozen again; the journal job still settles and scores what they
+# already froze, so no record is cut off mid-flight. Journal history is untouched.
+_RETIRED_FAMILIES = {"weather_high", "weather_low", "ercot_peak", "gas", "oil_wti", "oil", "oil_brent",
+                     "brent", "natgas_daily", "sports_nfl_spread", "sports_nfl_total",
+                     "sports_cfb_spread", "sports_cfb_total"}
+_KEPT_HOURLY = "wti-hourly-v4-hl-shadow"
+
+
+def _retired(f: Forecaster) -> bool:
+    name = f.name
+    if name.endswith("_cal") or name == "oil_wti_hourly_cautious":
+        return True
+    if name == "oil_wti_hourly":
+        return getattr(f, "version", None) != _KEPT_HOURLY
+    core = name
+    for prefix in ("kalshi_implied_", "baseline_climatology_", "baseline_persistence_"):
+        core = core.removeprefix(prefix)
+    for suffix in ("_cautious", "_nbm"):
+        core = core.removesuffix(suffix)
+    return core in _RETIRED_FAMILIES
+
+
+RETIRED: list[Forecaster] = [f for f in FORECASTERS if _retired(f)]
+FORECASTERS = [f for f in FORECASTERS if not _retired(f)]
