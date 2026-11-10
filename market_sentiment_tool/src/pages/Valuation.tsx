@@ -300,6 +300,42 @@ function ZoneBoard({ sheets, summary, filter, onFilter, onSelect }: {
     .map((g) => ({ ...g, visible: g.sheets.filter(matches) }))
     .filter((g) => g.visible.length > 0);
   const visibleCount = groups.reduce((n, g) => n + g.visible.length, 0);
+  // Round 6 accounting: the classified and held views must account for
+  // every name their counts promise — tile/filter total == the names on
+  // the board + the names accounted under it, each with the stored
+  // sheet status that says why it carries no bands. The server stamps
+  // banded / sheet_status / reason on both lists; the fallbacks below
+  // only cover payloads served before the stamps existed.
+  const boardedTickers = new Set(
+    sheets.filter((s) => s.status === "banded").map((s) => s.ticker));
+  const reasonFor = (status: string | null | undefined,
+                     reason: string | null | undefined): string =>
+    reason ?? (status == null
+      ? "not in the guidance universe / no fact sheet in this snapshot"
+      : status === "no_full_year_guide"
+        ? "no full-year guide on file — no bands computed"
+        : status === "guide_rejected"
+          ? "guide rejected by the sheet guards — no bands computed"
+          : status === "no_peer_multiple"
+            ? "no peer multiple — no bands computed"
+            : `sheet status ${status} — no bands computed`);
+  const classifiedEntries = (summary?.classified_names ?? []).map((c) => ({
+    ...c, banded: c.banded ?? boardedTickers.has(c.ticker),
+  }));
+  const classifiedBoarded = classifiedEntries.filter((c) => c.banded).length;
+  const classifiedAccounted = classifiedEntries.filter((c) => !c.banded);
+  const heldEntries = summary?.held_names ?? Object.entries(held).map(
+    ([ticker, e]) => ({
+      ticker, books: e.books, qty: e.qty, sleeves: e.sleeves,
+      banded: boardedTickers.has(ticker),
+      sheet_status: sheets.find((s) => s.ticker === ticker)?.status ?? null,
+      reason: null as string | null,
+    }));
+  const heldBoarded = heldEntries.filter((h) => h.banded).length;
+  const heldAccounted = heldEntries.filter((h) => !h.banded);
+  const accountingShown =
+    (filter === "classified" && classifiedEntries.length > 0)
+    || (filter === "held" && heldEntries.length > 0);
   const chipCls = (active: boolean) =>
     `rounded-full px-3 py-1 text-xs font-medium ${active
       ? "bg-slate-100 text-slate-900" : "border border-slate-700 text-slate-300 hover:border-slate-500"}`;
@@ -371,10 +407,48 @@ function ZoneBoard({ sheets, summary, filter, onFilter, onSelect }: {
             </div>
           </div>
         ))}
-        {visibleCount === 0 && (
+        {visibleCount === 0 && !accountingShown && (
           <p className="text-sm text-slate-400">No names match this view.</p>
         )}
       </div>
+      {filter === "classified" && classifiedEntries.length > 0 && (
+        <div data-testid="classified-accounting"
+             className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <p className="text-sm text-slate-300">
+            {`${classifiedEntries.length} classified prints · ${classifiedBoarded} on the board · ${classifiedAccounted.length} accounted below — a classified name is either on the board or named here.`}
+          </p>
+          {classifiedAccounted.length > 0 && (
+            <ul className="mt-1.5 space-y-1">
+              {classifiedAccounted.map((c) => (
+                <li key={c.ticker} className="text-sm text-slate-400">
+                  <span className="font-semibold text-slate-200">{c.ticker}</span>
+                  {` · ${c.classification}${c.as_of ? ` · ${c.as_of}` : ""} · not banded: ${reasonFor(c.sheet_status, c.reason)}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {filter === "held" && heldEntries.length > 0 && (
+        <div data-testid="held-accounting"
+             className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <p className="text-sm text-slate-300">
+            {heldBoarded === 0
+              ? `${heldEntries.length} held names, none currently banded — every held name is accounted below.`
+              : `${heldEntries.length} held names · ${heldBoarded} on the board · ${heldAccounted.length} not currently banded — a held name is either on the board or named here.`}
+          </p>
+          {heldAccounted.length > 0 && (
+            <ul className="mt-1.5 space-y-1">
+              {heldAccounted.map((h) => (
+                <li key={h.ticker} className="text-sm text-slate-400">
+                  <span className="font-semibold text-slate-200">{h.ticker}</span>
+                  {` · held in ${h.books.join(", ")} · not banded: ${reasonFor(h.sheet_status, h.reason)}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </section>
   );
 }

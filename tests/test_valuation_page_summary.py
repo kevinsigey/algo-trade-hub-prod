@@ -232,6 +232,91 @@ def test_summary_held_map_rides_along_for_board_markers():
     assert out["held_positions_unavailable"] is False
 
 
+# ── Round 6: filtered-view reconciliation ───────────────────────────────────
+# Every filtered view must account for every name its count promises:
+# tile count == boarded names + accounted names. The summary therefore
+# stamps each classified / held entry with whether it is banded (i.e. on
+# the board) and, when it is not, the stored sheet status that says why.
+
+def _sheet(ticker, status, snapshot_id, *, verdict=None):
+    return {"snapshot_id": snapshot_id, "ticker": ticker, "status": status,
+            "baseline_verdict": verdict or (
+                "neutral" if status == "banded" else "no_bands"),
+            "stale": False}
+
+
+def test_classified_entries_carry_banded_flag_status_and_reason():
+    db = DB()
+    s1, s2 = _snapshots(db, 2)
+    db.db["valuation_band_history"] = [
+        _hist("AAA", zone="neutral", snapshot_id=s2)]
+    db.db["valuation_fact_sheets"] = [
+        _sheet("AAA", "banded", s2), _sheet("BBB", "no_full_year_guide", s2)]
+    db.db["forward_file_classifications"] = [
+        {"ticker": "AAA", "classification": "improved",
+         "as_of": "2026-11-09"},
+        {"ticker": "BBB", "classification": "intact", "as_of": "2026-11-09"},
+        {"ticker": "CCC", "classification": "deteriorated",
+         "as_of": "2026-11-09"},
+    ]
+    out = page_summary.build_summary(db, positions_fn=lambda book: {},
+                                     now=NOW)
+    # The strip count itself does not move: all three classifications count.
+    assert out["counts"]["classified_prints"] == 3
+    entries = {c["ticker"]: c for c in out["classified_names"]}
+    assert entries["AAA"]["banded"] is True
+    assert entries["AAA"]["sheet_status"] == "banded"
+    assert entries["AAA"]["reason"] is None
+    assert entries["BBB"]["banded"] is False
+    assert entries["BBB"]["sheet_status"] == "no_full_year_guide"
+    assert "full-year guide" in entries["BBB"]["reason"]
+    assert entries["CCC"]["banded"] is False
+    assert entries["CCC"]["sheet_status"] is None
+    assert entries["CCC"]["reason"] == (
+        "not in the guidance universe / no fact sheet in this snapshot")
+    boarded = sum(1 for c in entries.values() if c["banded"])
+    accounted = sum(1 for c in entries.values() if not c["banded"])
+    assert boarded + accounted == out["counts"]["classified_prints"]
+
+
+def test_held_names_account_for_every_held_ticker():
+    db = DB()
+    s1, s2 = _snapshots(db, 2)
+    db.db["valuation_band_history"] = [
+        _hist("AAA", zone="neutral", snapshot_id=s2)]
+    db.db["valuation_fact_sheets"] = [
+        _sheet("AAA", "banded", s2), _sheet("BBB", "no_full_year_guide", s2)]
+    positions = lambda book: ({"AAA": 5, "BBB": 7, "ZZZ": 3}
+                              if book == "big" else {})
+    out = page_summary.build_summary(db, positions_fn=positions, now=NOW)
+    held_names = {h["ticker"]: h for h in out["held_names"]}
+    assert sorted(held_names) == ["AAA", "BBB", "ZZZ"]
+    assert held_names["AAA"]["banded"] is True
+    assert held_names["AAA"]["books"] == ["big"]
+    assert held_names["BBB"]["banded"] is False
+    assert held_names["BBB"]["sheet_status"] == "no_full_year_guide"
+    assert "full-year guide" in held_names["BBB"]["reason"]
+    assert held_names["ZZZ"]["banded"] is False
+    assert held_names["ZZZ"]["sheet_status"] is None
+    assert held_names["ZZZ"]["reason"] == (
+        "not in the guidance universe / no fact sheet in this snapshot")
+    # The held map the board markers read is unchanged.
+    assert out["held"]["AAA"]["books"] == ["big"]
+    assert out["held_positions_unavailable"] is False
+
+
+def test_held_names_empty_when_the_book_read_is_unavailable():
+    db = DB()
+    _snapshots(db, 2)
+
+    def boom(book):
+        raise RuntimeError("book read down")
+
+    out = page_summary.build_summary(db, positions_fn=boom, now=NOW)
+    assert out["held_positions_unavailable"] is True
+    assert out["held_names"] == []
+
+
 # ── the API block ───────────────────────────────────────────────────────────
 
 def test_bands_payload_carries_the_summary_block(monkeypatch):

@@ -255,3 +255,99 @@ describe("Guidance re-presentation", () => {
     expect(within(board).getByText(/no names match this view/i)).toBeInTheDocument();
   });
 });
+
+// ── Round 6: filtered views reconcile with their counts ──────────────────
+// The classified tile promises 3 names; only AMGN is banded. KKR has no
+// fact sheet in the snapshot and TTWO's sheet carries no full-year guide:
+// both must be accounted under the board, with the reason, not dropped.
+// The held set has banded and non-banded members alike.
+const NO_SHEET = "not in the guidance universe / no fact sheet in this snapshot";
+const NO_GUIDE = "no full-year guide on file — no bands computed";
+
+const R6_SUMMARY = {
+  ...SUMMARY,
+  counts: { ...SUMMARY.counts, classified_prints: 3 },
+  classified_names: [
+    { ticker: "AMGN", classification: "improved", as_of: "2026-11-09",
+      banded: true, sheet_status: "banded", reason: null },
+    { ticker: "KKR", classification: "intact", as_of: "2026-11-09",
+      banded: false, sheet_status: null, reason: NO_SHEET },
+    { ticker: "TTWO", classification: "improved", as_of: "2026-11-09",
+      banded: false, sheet_status: "no_full_year_guide", reason: NO_GUIDE },
+  ],
+  held: {
+    CVS: { books: ["big"], qty: 120, sleeves: ["T8 AI winners core"] },
+    AAPL: { books: ["main"], qty: 26, sleeves: [] },
+    GLD: { books: ["big"], qty: 349, sleeves: [] },
+  },
+  held_names: [
+    { ticker: "AAPL", books: ["main"], qty: 26, sleeves: [],
+      banded: false, sheet_status: "no_full_year_guide", reason: NO_GUIDE },
+    { ticker: "CVS", books: ["big"], qty: 120,
+      sleeves: ["T8 AI winners core"], banded: true,
+      sheet_status: "banded", reason: null },
+    { ticker: "GLD", books: ["big"], qty: 349, sleeves: [],
+      banded: false, sheet_status: null, reason: NO_SHEET },
+  ],
+};
+
+describe("Guidance filtered-view reconciliation (Round 6)", () => {
+  it("classified view: tile count == boarded chips + accounted names, each with its reason", async () => {
+    serve(R6_SUMMARY);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const board = await screen.findByTestId("zone-board");
+    expect(within(screen.getByTestId("verdict-strip")).getByTestId("tile-classified"))
+      .toHaveTextContent("3");
+    fireEvent.click(screen.getByTestId("filter-classified"));
+    const chips = within(board).getAllByTestId(/^board-chip-/);
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("AMGN");
+    const acct = screen.getByTestId("classified-accounting");
+    expect(acct).toHaveTextContent("3 classified prints");
+    expect(acct).toHaveTextContent("1 on the board");
+    expect(acct).toHaveTextContent("2 accounted");
+    // 3 (the tile) == 1 boarded + 2 accounted: nothing silently dropped.
+    expect(acct).toHaveTextContent("KKR");
+    expect(acct).toHaveTextContent(/intact/);
+    expect(acct).toHaveTextContent("2026-11-09");
+    expect(acct).toHaveTextContent(NO_SHEET);
+    expect(acct).toHaveTextContent("TTWO");
+    expect(acct).toHaveTextContent(/improved/);
+    expect(acct).toHaveTextContent(NO_GUIDE);
+  });
+
+  it("held view: boarded held names carry the marker; non-banded held names are accounted with status", async () => {
+    serve(R6_SUMMARY);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const board = await screen.findByTestId("zone-board");
+    fireEvent.click(screen.getByTestId("filter-held"));
+    const chips = within(board).getAllByTestId(/^board-chip-/);
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("CVS");
+    expect(chips[0]).toHaveTextContent(/held/i);
+    const acct = screen.getByTestId("held-accounting");
+    expect(acct).toHaveTextContent("3 held names");
+    expect(acct).toHaveTextContent("1 on the board");
+    expect(acct).toHaveTextContent("2 not currently banded");
+    expect(acct).toHaveTextContent("AAPL");
+    expect(acct).toHaveTextContent(NO_GUIDE);
+    expect(acct).toHaveTextContent("GLD");
+    expect(acct).toHaveTextContent(NO_SHEET);
+  });
+
+  it("held view with a genuinely empty intersection says so with the full accounting", async () => {
+    serve({
+      ...R6_SUMMARY,
+      held: { AAPL: R6_SUMMARY.held.AAPL, GLD: R6_SUMMARY.held.GLD },
+      held_names: R6_SUMMARY.held_names.filter((h) => !h.banded),
+    });
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const board = await screen.findByTestId("zone-board");
+    fireEvent.click(screen.getByTestId("filter-held"));
+    expect(within(board).queryAllByTestId(/^board-chip-/)).toHaveLength(0);
+    const acct = screen.getByTestId("held-accounting");
+    expect(acct).toHaveTextContent("2 held names, none currently banded");
+    expect(acct).toHaveTextContent("AAPL");
+    expect(acct).toHaveTextContent("GLD");
+  });
+});

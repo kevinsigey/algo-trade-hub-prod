@@ -131,9 +131,15 @@ export interface PageSummary {
   };
   feed_state: "ok" | "no_previous_snapshot" | "no_snapshot" | string;
   feed: FeedItem[];
-  classified_names: { ticker: string; classification: string; as_of: string | null }[];
+  classified_names: { ticker: string; classification: string; as_of: string | null;
+    banded?: boolean; sheet_status?: string | null; reason?: string | null }[];
   crossings: { ticker: string; book: string | null; zone: string | null; action: string | null; created_at: string | null }[];
   held: Record<string, { books: string[]; qty: number; sleeves: (string | null)[] }>;
+  /** Round 6 accounting: every held name with its board standing —
+   * banded, or the stored sheet status that says why not — so the held
+   * view reconciles: held total == boarded + accounted. */
+  held_names?: { ticker: string; books: string[]; qty: number; sleeves: (string | null)[];
+    banded: boolean; sheet_status: string | null; reason: string | null }[];
   held_positions_unavailable: boolean;
 }
 
