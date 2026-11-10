@@ -41,7 +41,7 @@ export default function MachineKeys() {
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [label, setLabel] = useState("");
-  const [scopes, setScopes] = useState<string[]>(["orders:place"]);
+  const [scopes, setScopes] = useState<string[]>([]);
   const [maxQty, setMaxQty] = useState(100);
   const [maxNotional, setMaxNotional] = useState(25000);
   const [dailyCap, setDailyCap] = useState(50);
@@ -169,6 +169,7 @@ export default function MachineKeys() {
               onChange={(e) => setDailyCap(Number(e.target.value))} />
           </label>
         </div>
+        {scopes.length === 0 && <p className="text-sm text-muted-foreground">Pick at least one scope.</p>}
         <button
           type="button"
           className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"

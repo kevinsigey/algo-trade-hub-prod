@@ -378,15 +378,15 @@ export default function Screening() {
     setDerived([]);
     setName(preset.id.replace(/-/g, "_"));
     setResult(null);
-    setNotice(`${preset.name} loaded -- nudge any number, then run it.`);
+    setNotice(`${preset.name} loaded: nudge any number, then run it.`);
   };
 
   const translate = () => act("translate", async () => {
     const d = await adminJson<{ spec: ScreenSpec; model: string }>("/api/screening/translate",
       { method: "POST", body: JSON.stringify({ query }) });
     applySpec(d.spec, d.model.startsWith("rules")
-      ? `Built by the built-in rules (${d.model}) -- the cards below are set; nudge any number, then run.`
-      : `Translated by ${d.model} -- the cards below are set; nudge any number, then run.`);
+      ? `Built by the built-in rules (${d.model}): the cards below are set; nudge any number, then run.`
+      : `Translated by ${d.model}: the cards below are set; nudge any number, then run.`);
   });
 
   const runSpec = (sp: ScreenSpec) => act("run", async () => {
@@ -424,7 +424,7 @@ export default function Screening() {
     await adminJson("/api/screening/screens", { method: "POST",
       body: JSON.stringify({ spec, name }) });
     loadScreens();
-    setNotice("Screen saved -- use Re-run on the saved screen to record a run; it promotes once into a tracked idea.");
+    setNotice("Screen saved: use Re-run on the saved screen to record a run; it promotes once into a tracked idea.");
   });
 
   const promote = (sc: ScreenRow) => act("promote", async () => {
@@ -778,7 +778,7 @@ export default function Screening() {
       </section>
 
       <section aria-label="Filter library" className="mt-8">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Filter library -- pick cards, nudge numbers</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Filter library: pick cards, nudge numbers</h2>
         {/* The library lives behind dropdowns (Kevin, 2026-11-03): one closed
             row per group instead of 36 cards of scroll. */}
         {groups.map(([group, gcards]) => (
@@ -805,7 +805,7 @@ export default function Screening() {
         ))}
 
         <div className="mt-4 rounded-xl border border-violet-500/30 bg-slate-900/60 px-3.5 py-3">
-          <h3 className="text-sm font-medium text-violet-200">Derived ratio -- compose a field from two others</h3>
+          <h3 className="text-sm font-medium text-violet-200">Derived ratio: compose a field from two others</h3>
           <p className="mt-1 text-xs text-slate-400">
             Name it, pick numerator and denominator; it becomes a column you can filter and rank on, and the formula is stored in the spec.
           </p>
