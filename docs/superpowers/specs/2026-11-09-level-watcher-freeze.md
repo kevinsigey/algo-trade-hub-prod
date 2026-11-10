@@ -307,3 +307,24 @@ reason.
 
 Explicitly NOT watches: IBIT/GLD breakeven exits — broker-resting
 limit orders do that job better and stay as they are.
+
+## Amendment D-A1 (2026-11-09, build time): band snapshot provenance
+
+Coordinated with the Guidance Reliability lane (building in
+parallel: persisted band-history/snapshots, and Spec C's scanner
+reading from those snapshots):
+
+- Watcher-written crossing rows carry **`snapshot_id`** — the
+  persisted band snapshot the sheet's bands came from — alongside
+  the `scan_kind = 'watcher'` source stamp. The Stage 1 migration
+  adds the (nullable) `snapshot_id` column to `band_crossings` so
+  the field exists under one shared name for the reliability lane
+  to adopt; there is no competing provenance scheme.
+- The value is read off the sheet (`sheet.snapshot_id`, which that
+  lane's compute will stamp); until then it is **null — never an
+  invented id**. Scan-written rows omit the key entirely: the scans'
+  inserts are unchanged.
+- This build adds **no** band-history or snapshot mechanism of its
+  own; band state is read through Spec C's module, whose interface
+  the reliability lane keeps unchanged while it swaps the storage
+  underneath.

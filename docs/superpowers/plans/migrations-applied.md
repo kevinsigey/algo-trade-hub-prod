@@ -94,8 +94,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 69 | `20261109000004_portfolio_check.sql` |
 | 70 | `20261109000005_gap_pause.sql` |
 | 71 | `20261109000006_band_crossing.sql` |
+| 72 | `20261109000007_level_watcher.sql` |
 
-**Watermark: `20261109000006_band_crossing.sql`**
+**Watermark: `20261109000007_level_watcher.sql`**
 
 ## How to record a new one
 
