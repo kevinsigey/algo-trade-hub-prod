@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from tradehub.journal import runner
+from tradehub.journal.contract import Settlement
 
 
 def test_retired_and_live_are_disjoint_and_keep_the_right_rows():
@@ -23,7 +24,9 @@ def test_retired_and_live_are_disjoint_and_keep_the_right_rows():
         assert key in live, key
 
 
-def test_a_retired_forecaster_takes_no_new_targets(monkeypatch):
+def test_a_retired_forecaster_takes_no_new_targets_but_still_settles_and_scores(monkeypatch):
+    settle_calls = []
+
     class Fc:
         name, version, cadence = "x", "v1", "daily"
 
@@ -31,15 +34,21 @@ def test_a_retired_forecaster_takes_no_new_targets(monkeypatch):
             raise AssertionError("a retired forecaster must not be asked for targets")
 
         def settle(self, target, now):
-            return None
+            settle_calls.append(target)
+            return Settlement(target, 1, "test")
 
-    calls = []
+    stored = [{"target": "t1"}]
+    scored = []
     monkeypatch.setattr(runner.store, "register_calendar", lambda supa, entries, now: len(entries))
-    monkeypatch.setattr(runner.store, "fetch_forecasts", lambda *a, **k: [])
-    monkeypatch.setattr(runner.store, "fetch_calendar", lambda *a, **k: {})
+    monkeypatch.setattr(runner.store, "fetch_forecasts", lambda *a, **k: stored)
+    monkeypatch.setattr(runner.store, "fetch_calendar", lambda *a, **k: {"t1": {"cutoff_at": "2026-11-09T00:00:00+00:00"}})
     monkeypatch.setattr(runner.store, "fetch_settlements", lambda *a, **k: {})
-    monkeypatch.setattr(runner.store, "upsert_score", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(runner.store, "settle", lambda supa, result: True)
+    monkeypatch.setattr(runner, "score", lambda rows, settled, calendar, cadence, name: scored.append(dict(settled)) or {"gate_status": "SHADOW"})
+    monkeypatch.setattr(runner.store, "upsert_score", lambda *a, **k: None)
     out = runner.run_journal(None, [], datetime(2026, 11, 10, tzinfo=UTC), retired=[Fc()])
     assert out["failures"] == []
     assert out["forecasters"]["x@v1"]["frozen"] == 0
-    assert len(calls) == 1  # still scored
+    assert out["forecasters"]["x@v1"]["settled"] == 1
+    assert settle_calls == ["t1"]
+    assert scored == [{"t1": 1}]  # the scorecard sees the target it just settled
