@@ -90,6 +90,78 @@ export interface FactSheet {
   peer_members?: string[]; // detail endpoint only (read-side derivation)
 }
 
+/** ── The re-presentation summary block (additive on /api/valuation-bands):
+ * one stamped block computed server-side from persisted band history of
+ * completed snapshots only — counts for the verdict strip, the attention
+ * feed (genuine diffs only), and the held map for board markers. */
+export interface SummaryBands { bear: number | string | null; base: number | string | null; bull: number | string | null }
+
+export interface FeedItem {
+  kind: "conjunction" | "crossing" | "zone_change" | "guide_revision" | "new_banded" | string;
+  ticker: string;
+  zone?: string | null;
+  from_zone?: string | null;
+  to_zone?: string | null;
+  classification?: string | null;
+  as_of?: string | null;
+  screens?: string[];
+  book?: string | null;
+  action?: string | null;
+  created_at?: string | null;
+  metric?: string | null;
+  direction?: string | null;
+  from_low?: number | null;
+  from_high?: number | null;
+  to_low?: number | null;
+  to_high?: number | null;
+  bands?: SummaryBands | null;
+  price?: number | string | null;
+}
+
+export interface PageSummary {
+  snapshot_id: number | null;
+  previous_snapshot_id: number | null;
+  counts: {
+    banded: number;
+    buy_zones: number;
+    strong_short_zones: number;
+    crossings_since_last_snapshot: number;
+    pending_debates: number;
+    classified_prints: number;
+  };
+  feed_state: "ok" | "no_previous_snapshot" | "no_snapshot" | string;
+  feed: FeedItem[];
+  classified_names: { ticker: string; classification: string; as_of: string | null }[];
+  crossings: { ticker: string; book: string | null; zone: string | null; action: string | null; created_at: string | null }[];
+  held: Record<string, { books: string[]; qty: number; sleeves: (string | null)[] }>;
+  held_positions_unavailable: boolean;
+}
+
+/** The zone board's columns, in display order. Every banded name lands
+ * in exactly one column: the five zone columns the build names, plus a
+ * held/other column that exists so a stale or unpriced banded name is
+ * never dropped from the board to make the columns tidy. */
+export const BOARD_COLUMNS: { key: string; label: string; zones: string[] }[] = [
+  { key: "strong_buy", label: "Strong buy", zones: ["buy_zone_strong"] },
+  { key: "buy", label: "Buy", zones: ["buy_zone"] },
+  { key: "neutral", label: "Neutral", zones: ["neutral", "no_chase_long"] },
+  { key: "short", label: "Short", zones: ["short_zone"] },
+  { key: "strong_short", label: "Strong short", zones: ["short_zone_strong"] },
+  { key: "held_other", label: "Zone held / other", zones: ["stale", "no_price"] },
+];
+
+export function boardGroups(sheets: FactSheet[]): { key: string; label: string; sheets: FactSheet[] }[] {
+  const banded = sheets.filter((s) => s.status === "banded");
+  const groups = BOARD_COLUMNS.map((c) => ({ key: c.key, label: c.label, sheets: [] as FactSheet[] }));
+  const byZone = new Map<string, number>();
+  BOARD_COLUMNS.forEach((c, i) => c.zones.forEach((z) => byZone.set(z, i)));
+  const fallback = groups.length - 1;
+  for (const s of [...banded].sort((a, b) => a.ticker.localeCompare(b.ticker))) {
+    groups[byZone.get(s.baseline_verdict ?? "") ?? fallback].sheets.push(s);
+  }
+  return groups;
+}
+
 /** The consensus period arrives as a yfinance relative tag ("0y", "+1y"):
  * cryptic on the page, so render the human form. The tag DOES carry
  * meaning -- which forecast year the consensus belongs to -- so it is

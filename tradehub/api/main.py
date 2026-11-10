@@ -4339,7 +4339,19 @@ def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=D
     from tradehub.valuation import store as val_store
 
     snap, sheets = val_store.latest_snapshot_sheets(supabase)
-    return {"snapshot": _snapshot_stamp(snap), "sheets": sheets}
+    # Re-presentation build: ONE additive summary block (verdict strip,
+    # attention feed, board markers), computed from persisted history
+    # of COMPLETED snapshots only. A summary failure must never take
+    # the sheets down -- the block reads null and the page says so.
+    summary = None
+    try:
+        from tradehub.valuation import page_summary
+
+        summary = page_summary.build_summary(supabase)
+    except Exception:  # noqa: BLE001 -- sheets are the payload; summary is additive
+        summary = None
+    return {"snapshot": _snapshot_stamp(snap), "sheets": sheets,
+            "summary": summary}
 
 
 @app.get("/api/valuation-bands/{ticker}", tags=["Valuation"])
