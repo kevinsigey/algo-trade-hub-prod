@@ -11,9 +11,9 @@ import NameDecision from "@/components/NameDecision";
 import { VerdictChipLine } from "@/components/VerdictChip";
 import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
-  consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
+  boardGroups, consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
-  type FactSheet, type GuidanceRecord, type SnapshotStamp,
+  type FactSheet, type FeedItem, type GuidanceRecord, type PageSummary, type SnapshotStamp,
 } from "@/lib/valuation";
 
 /**
@@ -116,6 +116,266 @@ function RangeStrip({ lo, hi, mid, marker, aria, fmt }: {
               className="fill-amber-400">{fmt(marker)}</text>
       )}
     </svg>
+  );
+}
+
+/** Move 4: the band position as a visual. A mini track — bear/base/bull
+ * ticks on one axis, the price as a dot positioned by value. The scale
+ * extends 10% past the bands on each side and the dot CLAMPS at the
+ * ends: a price beyond the bull band sits at the track's end, it never
+ * runs off it or pretends to a position it doesn't have. No text lives
+ * on the track (labels cannot overlap at any width); the numbers ride
+ * the chip's title and adjacent text. */
+export function BandTrack({ bands, price, ticker }: {
+  bands: { bear: number | string | null; base: number | string | null; bull: number | string | null } | null;
+  price: number | string | null; ticker: string;
+}) {
+  const bear = num(bands?.bear), base = num(bands?.base), bull = num(bands?.bull);
+  const p = num(price);
+  if (bear == null || base == null || bull == null) return null;
+  const span = bull - bear || 1;
+  const lo = bear - span * 0.1, hi = bull + span * 0.1;
+  const pct = (v: number) => Math.min(100, Math.max(0, ((v - lo) / (hi - lo)) * 100));
+  return (
+    <div data-testid={`band-track-${ticker}`} role="img"
+         aria-label={`Band track: bear ${priceText(bear)}, base ${priceText(base)}, bull ${priceText(bull)}, price ${priceText(p)}`}
+         className="relative h-4 w-full">
+      <div className="absolute top-1/2 h-0.5 -translate-y-1/2 rounded bg-slate-600"
+           style={{ left: `${pct(bear)}%`, width: `${Math.max(1, pct(bull) - pct(bear))}%` }} />
+      {[bear, base, bull].map((v, i) => (
+        <div key={i} className="absolute top-1/2 h-2 w-px -translate-y-1/2 bg-slate-300"
+             style={{ left: `${pct(v)}%` }} />
+      ))}
+      {p != null && (
+        <div data-price-dot className="absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-400"
+             style={{ left: `${pct(p)}%` }} />
+      )}
+    </div>
+  );
+}
+
+type BoardFilter = "all" | "strong_zones" | "crossings" | "classified" | "held" | "buy_zones" | "strong_short";
+
+const STRONG_ZONES = ["buy_zone_strong", "short_zone_strong"];
+
+/** Move 1: the verdict strip. Every tile is one count from the served
+ * summary block, stamped with the snapshot it derives from, and every
+ * tile click-throughs to the board filtered to that count's names (or,
+ * for pending debates, to the queue panel that owns them). */
+function VerdictStrip({ summary, snapshot, onTile }: {
+  summary: PageSummary; snapshot: SnapshotStamp | null;
+  onTile: (filter: BoardFilter | null, targetId: string) => void;
+}) {
+  const c = summary.counts;
+  const tiles: { id: string; label: string; value: number; filter: BoardFilter | null; target: string }[] = [
+    { id: "tile-banded", label: "Banded names", value: c.banded, filter: "all", target: "zone-board" },
+    { id: "tile-buy-zones", label: "In buy zones", value: c.buy_zones, filter: "buy_zones", target: "zone-board" },
+    { id: "tile-strong-short", label: "In strong short zones", value: c.strong_short_zones, filter: "strong_short", target: "zone-board" },
+    { id: "tile-crossings", label: "Crossings since last snapshot", value: c.crossings_since_last_snapshot, filter: "crossings", target: "zone-board" },
+    { id: "tile-pending-debates", label: "Debate verdicts pending", value: c.pending_debates, filter: null, target: "debate-queue-anchor" },
+    { id: "tile-classified", label: "Print classifications on file", value: c.classified_prints, filter: "classified", target: "zone-board" },
+  ];
+  return (
+    <section data-testid="verdict-strip" aria-label="Verdict summary" className="mt-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {tiles.map((t) => (
+          <button key={t.id} type="button" data-testid={t.id}
+                  onClick={() => onTile(t.filter, t.target)}
+                  className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2.5 text-left hover:border-slate-600">
+            <span className="block text-xl font-semibold text-white">{t.value}</span>
+            <span className="block text-xs text-slate-400">{t.label}</span>
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-xs text-slate-500">
+        {`Snapshot #${summary.snapshot_id} · computed ${snapshot?.computed_at ? ctDateTimeYear(snapshot.computed_at) : "—"}`}
+        {summary.previous_snapshot_id != null
+          ? ` · changes measured against snapshot #${summary.previous_snapshot_id}`
+          : " · no previous completed snapshot yet"}
+        {" — every tile derives from this one stamped snapshot."}
+      </p>
+    </section>
+  );
+}
+
+function feedFigure(metric: string | null | undefined, v: number | null | undefined): string {
+  if (v == null) return "—";
+  return metric === "revenue" ? `$${(v / 1e9).toFixed(2)}B` : v.toFixed(2);
+}
+
+function feedText(item: FeedItem): string {
+  switch (item.kind) {
+    case "conjunction":
+      return `Conjunction — ${zoneInfo(item.zone).label} × ${item.classification} print`
+        + (item.as_of ? ` (${item.as_of})` : "")
+        + ` × recorded screen membership`
+        + (item.screens?.length ? ` (${item.screens.join(", ")})` : "");
+    case "crossing":
+      return `Crossing — ${item.book ? `${item.book} book · ` : ""}${zoneInfo(item.zone).label}`
+        + (item.action && item.action !== "none" ? ` · would-be action: ${item.action}` : "");
+    case "zone_change":
+      return `Zone change — ${zoneInfo(item.from_zone).label} → ${zoneInfo(item.to_zone).label}`;
+    case "guide_revision":
+      return `Guide revised — ${metricLabel(item.metric ?? "")} `
+        + `${feedFigure(item.metric, item.from_low)}–${feedFigure(item.metric, item.from_high)}`
+        + ` → ${feedFigure(item.metric, item.to_low)}–${feedFigure(item.metric, item.to_high)}`
+        + (item.direction ? ` (${item.direction})` : "");
+    case "new_banded":
+      return `Newly banded — ${zoneInfo(item.zone).label}`;
+    default:
+      return item.kind;
+  }
+}
+
+/** Move 2: the needs-attention feed — only genuine changes vs the
+ * previous completed snapshot, in the served (ranked) order with
+ * conjunctions pinned first. The empty state is an acceptance item:
+ * when nothing changed, it says so plainly and invents nothing. */
+function AttentionFeed({ summary }: { summary: PageSummary }) {
+  return (
+    <section data-testid="attention-feed" aria-label="Needs attention" className="mt-6">
+      <h2 className="text-lg font-semibold text-white">Needs attention — what changed</h2>
+      {summary.feed_state === "no_previous_snapshot" ? (
+        <p className="mt-2 text-sm text-slate-400">
+          No previous completed snapshot to compare against yet — the feed starts
+          with the next snapshot.
+        </p>
+      ) : summary.feed.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-400">
+          Nothing changed since the previous snapshot
+          {summary.previous_snapshot_id != null ? ` (#${summary.previous_snapshot_id})` : ""}.
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {summary.feed.map((item, i) => (
+            <li key={`${item.kind}-${item.ticker}-${i}`}
+                data-testid={`feed-item-${item.ticker}`}
+                className={`rounded-lg border px-3 py-2 ${item.kind === "conjunction"
+                  ? "border-amber-500/40 bg-amber-500/5" : "border-slate-800 bg-slate-900/40"}`}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-semibold text-white">{item.ticker}</span>
+                {item.kind === "conjunction" && (
+                  <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-xs font-medium text-amber-300">Pinned</span>
+                )}
+                <span className="text-sm text-slate-300">{feedText(item)}</span>
+              </div>
+              {item.bands && (
+                <div className="mt-1 max-w-md">
+                  <BandTrack bands={item.bands} price={item.price ?? null} ticker={item.ticker} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** Moves 3 + 5: the zone board and its one-click views. Banded names as
+ * compact chips in zone columns; every banded name appears exactly once
+ * (boardGroups guarantees it); the four filter chips — plus any tile-set
+ * view — actually filter the chips shown. Held is a marker and a
+ * filter, never a column: display context only. */
+function ZoneBoard({ sheets, summary, filter, onFilter, onSelect }: {
+  sheets: FactSheet[]; summary: PageSummary | null;
+  filter: BoardFilter; onFilter: (f: BoardFilter) => void;
+  onSelect: (s: FactSheet) => void;
+}) {
+  const held = summary?.held ?? {};
+  const crossingTickers = new Set((summary?.crossings ?? []).map((c) => c.ticker));
+  const classifiedTickers = new Set((summary?.classified_names ?? []).map((c) => c.ticker));
+  const matches = (s: FactSheet): boolean => {
+    switch (filter) {
+      case "strong_zones": return STRONG_ZONES.includes(s.baseline_verdict ?? "");
+      case "crossings": return crossingTickers.has(s.ticker);
+      case "classified": return classifiedTickers.has(s.ticker);
+      case "held": return !!held[s.ticker];
+      case "buy_zones": return ["buy_zone", "buy_zone_strong"].includes(s.baseline_verdict ?? "");
+      case "strong_short": return s.baseline_verdict === "short_zone_strong";
+      default: return true;
+    }
+  };
+  const groups = boardGroups(sheets)
+    .map((g) => ({ ...g, visible: g.sheets.filter(matches) }))
+    .filter((g) => g.visible.length > 0);
+  const visibleCount = groups.reduce((n, g) => n + g.visible.length, 0);
+  const chipCls = (active: boolean) =>
+    `rounded-full px-3 py-1 text-xs font-medium ${active
+      ? "bg-slate-100 text-slate-900" : "border border-slate-700 text-slate-300 hover:border-slate-500"}`;
+  const filters: { id: string; label: string; value: BoardFilter }[] = [
+    { id: "filter-all", label: "All banded", value: "all" },
+    { id: "filter-strong-zones", label: "Strong zones", value: "strong_zones" },
+    { id: "filter-crossings", label: "Crossings", value: "crossings" },
+    { id: "filter-classified", label: "Classified prints", value: "classified" },
+    { id: "filter-held", label: "Held in the books", value: "held" },
+  ];
+  return (
+    <section aria-label="Zone board" className="mt-8">
+      <h2 className="text-lg font-semibold text-white">Zone board</h2>
+      <p className="mt-0.5 text-sm text-slate-400">
+        Every banded name, once, in the zone its price sits in. A chip opens the
+        name's full fact sheet in the reference table below.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {filters.map((f) => (
+          <button key={f.id} type="button" data-testid={f.id} aria-pressed={filter === f.value}
+                  onClick={() => onFilter(f.value)} className={chipCls(filter === f.value)}>
+            {f.label}
+          </button>
+        ))}
+        {(filter === "buy_zones" || filter === "strong_short") && (
+          <button type="button" data-testid={`filter-${filter === "buy_zones" ? "buy-zones" : "strong-short"}`}
+                  aria-pressed={true} onClick={() => onFilter("all")} className={chipCls(true)}>
+            {filter === "buy_zones" ? "Buy zones ✕" : "Strong short ✕"}
+          </button>
+        )}
+      </div>
+      {summary?.held_positions_unavailable && (
+        <p className="mt-2 text-xs text-amber-300/80">
+          Held positions could not be read for this load — held markers and the
+          held view are unavailable rather than guessed.
+        </p>
+      )}
+      <div data-testid="zone-board" id="zone-board"
+           className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        {groups.map((g) => (
+          <div key={g.key} data-testid={`board-col-${g.key}`}
+               className="rounded-xl border border-slate-800 bg-slate-900/40 p-2">
+            <h3 className="px-1 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {g.label} ({g.visible.length})
+            </h3>
+            <div className="space-y-1.5">
+              {g.visible.map((s) => {
+                const heldEntry = held[s.ticker];
+                return (
+                  <button key={s.ticker} type="button" data-testid={`board-chip-${s.ticker}`}
+                          title={`Bear ${priceText(s.bands?.bear)} · Base ${priceText(s.bands?.base)} · Bull ${priceText(s.bands?.bull)} · Price ${priceText(s.price)}`}
+                          onClick={() => onSelect(s)}
+                          className="block w-full min-w-0 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1.5 text-left hover:border-slate-600">
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold text-white">{s.ticker}</span>
+                      {heldEntry && (
+                        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">
+                          {`Held · ${heldEntry.books.join(", ")}`}
+                        </span>
+                      )}
+                    </span>
+                    <BandTrack bands={s.bands} price={s.price} ticker={s.ticker} />
+                    <span className="block text-xs text-slate-400">
+                      {`Price ${priceText(s.price)} · bear ${priceText(s.bands?.bear)} · bull ${priceText(s.bands?.bull)}`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {visibleCount === 0 && (
+          <p className="text-sm text-slate-400">No names match this view.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -453,6 +713,9 @@ function onFileText(sheet: FactSheet): string {
 export default function Valuation() {
   const [sheets, setSheets] = useState<FactSheet[] | null>(null);
   const [snapshot, setSnapshot] = useState<SnapshotStamp | null>(null);
+  const [pageSummary, setPageSummary] = useState<PageSummary | null>(null);
+  const [boardFilter, setBoardFilter] = useState<BoardFilter>("all");
+  const [refOpen, setRefOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, string[]>>({});
@@ -462,11 +725,12 @@ export default function Valuation() {
 
   useEffect(() => {
     let live = true;
-    adminJson<{ snapshot: SnapshotStamp | null; sheets: FactSheet[] }>("/api/valuation-bands")
+    adminJson<{ snapshot: SnapshotStamp | null; sheets: FactSheet[]; summary?: PageSummary | null }>("/api/valuation-bands")
       .then((env) => {
         if (!live) return;
         setSnapshot(env.snapshot);
         setSheets(env.sheets);
+        setPageSummary(env.summary ?? null);
       })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The valuation sheets could not be loaded"); });
     // The verdict chips ride beside the sheets: a name with no rendered
@@ -478,12 +742,27 @@ export default function Valuation() {
   }, []);
 
   // Deep link from a Screening row (?decision=TICKER): open that name's
-  // sheet expansion, where its decision view lives.
+  // sheet expansion, where its decision view lives. The expansion sits
+  // inside the reference-table disclosure now, so open that too.
   useEffect(() => {
     if (!decisionParam || !sheets) return;
     const sheet = sheets.find((s) => s.ticker === decisionParam);
-    if (sheet) setExpanded(sheet.ticker);
+    if (sheet) {
+      setExpanded(sheet.ticker);
+      setRefOpen(true);
+    }
   }, [decisionParam, sheets]);
+
+  const onTile = (filter: BoardFilter | null, targetId: string) => {
+    if (filter) setBoardFilter(filter);
+    document.getElementById(targetId)?.scrollIntoView?.();
+  };
+
+  const selectFromBoard = (sheet: FactSheet) => {
+    setRefOpen(true);
+    toggle(sheet);
+    document.getElementById("reference-table")?.scrollIntoView?.();
+  };
 
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
 
@@ -546,6 +825,21 @@ export default function Valuation() {
             </p>
           )}
 
+          {pageSummary ? (
+            <>
+              <VerdictStrip summary={pageSummary} snapshot={snapshot} onTile={onTile} />
+              <AttentionFeed summary={pageSummary} />
+            </>
+          ) : (
+            <p className="mt-3 text-xs text-amber-300/80">
+              The summary block did not ride this load — the board and tables below
+              still serve the stamped snapshot; the strip and feed return with it.
+            </p>
+          )}
+
+          <ZoneBoard sheets={sheets} summary={pageSummary} filter={boardFilter}
+                     onFilter={setBoardFilter} onSelect={selectFromBoard} />
+
           <div data-testid="zone-legend" className="mt-4 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3">
             <h2 className="text-sm font-medium text-slate-200">What the zones mean</h2>
             <ul className="mt-2 grid gap-x-6 gap-y-1 text-xs text-slate-400 md:grid-cols-2">
@@ -566,7 +860,21 @@ export default function Valuation() {
 
           <LevelWatcher />
 
-          <DebateQueue />
+          <div id="debate-queue-anchor">
+            <DebateQueue />
+          </div>
+
+          <details data-testid="reference-table" id="reference-table" open={refOpen}
+                   onToggle={(e) => setRefOpen((e.target as HTMLDetailsElement).open)}
+                   className="mt-10">
+            <summary className="cursor-pointer text-lg font-semibold text-white">
+              {`Reference table — every fact sheet in full (${summary.total} sheets)`}
+            </summary>
+            <p className="mt-1 max-w-3xl text-sm text-slate-400">
+              The board above is the read; this is the record it summarizes — the full
+              fact-sheet tables, unchanged, with every name's decision view in its
+              expansion.
+            </p>
 
           <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
             <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
@@ -644,6 +952,7 @@ export default function Valuation() {
               </table>
             </div>
           </section>
+          </details>
         </>
       )}
     </div>
