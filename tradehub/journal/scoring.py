@@ -6,6 +6,7 @@ everything every run. Rebuilt rows are displayed elsewhere but never reach these
 
 from __future__ import annotations
 
+from statistics import correlation, linear_regression
 from typing import Any
 
 from tradehub.journal.costs import cost_summary
@@ -16,10 +17,44 @@ from tradehub.track_record import BUCKETS, bucketize
 MIN_SETTLED = {"hourly": 200, "daily": 200, "weekly": 50, "monthly": 50, "meeting": 50, "15min": 200}
 MIN_BUCKET_TARGETS = 20
 MURPHY_BINS = 10
+EW_LO, EW_HI = 0.10, 0.90
+EW_MIN, EW_MIN_HALF = 30, 15
 
 
 def _brier(prob: float, outcome: int) -> float:
     return (prob - outcome) ** 2
+
+
+def _slope_corr(xs: list[float], ys: list[float]) -> tuple[float, float] | None:
+    if len(xs) < 2 or len(set(xs)) < 2:
+        return None
+    slope = linear_regression(xs, ys).slope
+    try:
+        info = correlation(xs, ys)
+    except Exception:  # noqa: BLE001 - zero variance in y: no information
+        info = 0.0
+    return slope, info
+
+
+def earned_weight(rows) -> dict[str, Any] | None:
+    """Share of the model to mix with the market price. rows: (probability, market_prob, outcome), time-ordered.
+
+    On contested rows only (0.10 <= market <= 0.90, settled 0/1, market present), regress
+    y = outcome - market on x = probability - market. 0 = the model adds nothing the price lacks.
+    """
+    xy = [(p - m, o - m) for p, m, o in rows
+          if m is not None and o in (0, 1) and EW_LO <= m <= EW_HI]
+    full = _slope_corr([x for x, _ in xy], [y for _, y in xy]) if len(xy) >= EW_MIN else None
+    if full is None:
+        return None
+
+    def half(part):
+        r = _slope_corr([x for x, _ in part], [y for _, y in part]) if len(part) >= EW_MIN_HALF else None
+        return round(r[0], 4) if r else None
+
+    mid = len(xy) // 2
+    return {"n_contested": len(xy), "weight": round(full[0], 4), "info": round(full[1], 4),
+            "weight_first_half": half(xy[:mid]), "weight_second_half": half(xy[mid:])}
 
 
 def settled_pairs(forecasts: list[dict[str, Any]], settlements: dict[str, int]) -> list[dict[str, Any]]:
