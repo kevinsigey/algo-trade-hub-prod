@@ -4410,6 +4410,24 @@ def band_crossings_list(_admin: dict = Depends(admin.require_admin), supabase=De
     return bc.read_surface(supabase)
 
 
+# ── Level watcher (Spec D, Stage 1 — Rung 1 alerts only) ───────────────────
+# The watcher evaluates price levels with conditions and alerts; Stage 1
+# has no order path. This endpoint is its read surface: stage and rung
+# cap stated up front, watcher health from the heartbeat record, the
+# watches, the trigger log, pending alerts (the outbox an agent-side
+# poller carries into the Trading Thesis Testing chat), family grading,
+# and the governor state.
+
+@app.get("/api/level-watcher", tags=["Valuation"])
+def level_watcher_surface(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """The Level Watcher's state: health, watches, trigger log, alert
+    outbox, grading families, governors. Read-only; Stage 1 is
+    alert-only (Kevin, 2026-11-09)."""
+    from tradehub import level_watcher as lw
+
+    return lw.read_surface(supabase)
+
+
 mount_frontend(app, FRONTEND_DIST)
 
 

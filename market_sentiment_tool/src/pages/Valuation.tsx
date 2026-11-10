@@ -4,6 +4,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { adminJson } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
+import LevelWatcher from "@/pages/LevelWatcher";
 import {
   gapText, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
@@ -430,6 +431,8 @@ export default function Valuation() {
           </div>
 
           <BandCrossings />
+
+          <LevelWatcher />
 
           <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
             <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
