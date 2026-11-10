@@ -9,15 +9,17 @@ Not checked: whether the standard errors account for forecasts made on the same 
 every z below is overstated.
 
 ## The headline
-**No model has information the market lacks, and the scoreboard shows it.** Of 53 measured models, 3 beat the Kalshi
-price; 2 of them are the same rain model. The other 50 are level with or worse than the market, 27 of them at z > 2.
+**On the Kalshi scoreboard, almost nothing beats the market price.** Of 53 measured models, 3 beat the Kalshi price;
+2 of them are the same rain model. The other 50 are level with or worse than the market, 27 of them at z > 2. This
+covers the forecast models only (not stock ideas or the earnings-outlook work), and a gap that is not significant is
+"no difference shown", not proof of equality.
 
 ## What the table says, by family
 
 | Family | Best row | Verdict |
 |---|---|---|
 | Weather: rain | `weather_rain` ens-v2.1: gap −0.021, z −2.6, +14¢ a simulated trade over 69. Its 25% blend: z −3.5. | The one statistically real skill in the hub. Held in SHADOW only because a calibration bucket has under 20 forecasts. |
-| 15-minute: natural gas | `natgas_15m`: gap −0.0015, z −0.2, +8¢ a trade over 249. PROMOTED. | Accuracy equals the market; the money comes from picking moments. Under-confident: says 65%, happens 72%; says 75%, happens 82%. |
+| 15-minute: natural gas | `natgas_15m`: gap −0.0015, z −0.2, +8¢ a trade over 249. PROMOTED. | Accuracy not shown to differ from the market; the money comes from picking moments. Under-confident: says 65%, happens 72%; says 75%, happens 82%. |
 | 15-minute: WTI, Brent | gap +0.006 (z +2.0), +0.003 | Slightly worse than the market. The trade rule's WTI/Brent profit is not backed by model skill. |
 | Oil hourly (5 versions live) | v4: gap +0.003. v6 (newest): +0.006. v1, v2, v5: +0.022 to +0.024, z ≈ +10. | Six iterations have not beaten the market; the newest is worse than v4. |
 | Crypto hourly | BTC gap +0.0015, ETH +0.0035, both z > 2 | 29,132 of BTC's 29,670 scored forecasts sit in the 90–100% bucket (far strikes that are never in doubt). About 540 were real calls. |
@@ -29,12 +31,14 @@ price; 2 of them are the same rain model. The other 50 are level with or worse t
 ## Five structural findings
 1. **The 134,212 "scored forecasts" headline is mostly easy strikes.** Crypto hourly alone is ~76,000 of them and
    ~98% are near-certain. Count contested forecasts (say 10–90%) instead; the honest number is a few thousand.
-2. **The "cautious" variants answer the main question.** Blending 25% model with 75% market beats the raw model in
-   nearly every family. That says the best weight on our model is near zero there. Rain is the exception: the raw model
-   beats its own blend.
-3. **Profit without accuracy needs a fill check.** natgas_15m makes money in simulation at market-level accuracy. That
-   is either a real timing edge (Kalshi's 15-minute quotes lag the futures) or quotes that could not be filled at the
-   recorded price. The minute tape started Nov 6 can settle it: record the size on offer at the decision minute.
+2. **The "cautious" variants hint at the answer, but do not measure it.** Blending 25% model with 75% market beats
+   the raw model in nearly every family (rain is the exception: the raw model beats its own blend). That shows the raw
+   models are over-weighted; it does not show the best weight is zero. Fit the weight per family on one period and
+   check it on another.
+3. **Profit without accuracy needs two checks.** natgas_15m makes money in simulation at market-level accuracy. That
+   is a real timing edge (Kalshi's 15-minute quotes lag the futures), unfillable quotes, or luck over 249 trades. The
+   minute tape started Nov 6 can test the fills (record the size on offer at the decision minute); the forward record
+   with its 95% range tests the luck.
 4. **Version sprawl is silent multiple testing.** Five oil-hourly versions and three weather-high versions all score on
    overlapping data. With 100 models, two or three at z < −2 are expected by luck alone; only the rain blend (z −3.5)
    clears that.

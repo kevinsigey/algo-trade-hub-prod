@@ -323,7 +323,19 @@ def test_macro_is_served_from_memory_for_the_same_client_and_rebuilt_for_another
     builds = []
     monkeypatch.setattr("tradehub.macro.build_macro", lambda **kw: builds.append(1) or {"cards": [len(builds)]})
     db = FakeJournalDB(lambda: T0)
+    db.tables["jobs_scorecard"] = []  # every source readable: a clean build
     assert _client(db).get("/api/macro").json() == {"cards": [1]}
     assert _client(db).get("/api/macro").json() == {"cards": [1]}
     assert len(builds) == 1
-    assert _client(FakeJournalDB(lambda: T0)).get("/api/macro").json() == {"cards": [2]}
+    other = FakeJournalDB(lambda: T0)
+    other.tables["jobs_scorecard"] = []
+    assert _client(other).get("/api/macro").json() == {"cards": [2]}
+
+
+def test_macro_built_after_a_failed_read_is_not_kept(monkeypatch):
+    """A degraded build (one source down) is served once; the next visit rebuilds instead of repeating it for 5 minutes."""
+    builds = []
+    monkeypatch.setattr("tradehub.macro.build_macro", lambda **kw: builds.append(1) or {"cards": [len(builds)]})
+    db = FakeJournalDB(lambda: T0)  # this fake has no jobs_scorecard table: that read fails
+    assert _client(db).get("/api/macro").json() == {"cards": [1]}
+    assert _client(db).get("/api/macro").json() == {"cards": [2]}

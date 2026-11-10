@@ -53,12 +53,14 @@ const portfolio = {
   positions: [{ symbol: "XLE", qty: 100, side: "long", market_value: 6900, pct_of_book: 6.9, unrealized_pl: 40, idea: null }],
 };
 
+let previews: unknown[] = [];
+
 function stubFetch() {
   vi.stubGlobal("fetch", vi.fn((url: string) => {
     const body = url.includes("/api/journal/series")
       ? { series }
       : url.includes("/api/journal/previews")
-        ? { previews: [] }
+        ? { previews }
         : url.includes("/api/portfolio")
           ? portfolio
           : url.includes("/api/admin/me")
@@ -96,6 +98,16 @@ describe("Overview page", () => {
     expect(await screen.findByText(/improving/)).toBeInTheDocument();
     expect(screen.getByText(/1,420 forecasts locked in/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open the Model Tracker/ })).toHaveAttribute("href", "/journal");
+  });
+
+  it("shows Coming up with its card when a preview exists", async () => {
+    previews = [{ target: "KXPAYROLLS-26NOV-T100000", forecaster: "labor_nowcast", forecaster_version: "jobs-v1", family: "labor",
+                  close_at: "2026-12-04T13:30:00+00:00", probability: 0.6, market_prob: 0.5, payload: { mu_k: 120 }, computed_at: "2026-11-09T00:00:00+00:00" }];
+    stubFetch();
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    expect(await screen.findByText("Coming up")).toBeInTheDocument();
+    expect(await screen.findByText("Next jobs report")).toBeInTheDocument();
+    previews = [];
   });
 
   it("shows no Coming up heading when nothing is coming up", async () => {

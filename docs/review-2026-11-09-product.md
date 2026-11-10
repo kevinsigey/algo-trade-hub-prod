@@ -49,7 +49,8 @@ fixed in advance, and failures stay on the record.
 2. **Visitor-facing defects** (fixed in the PR that adds this file unless marked):
    - "Coming up" heading with nothing under it — fixed.
    - Unknown addresses render blank — fixed (not-found page).
-   - Macro and Weather take 8–10 s — fixed (5-minute in-memory reuse per endpoint).
+   - Macro and Weather take 8–10 s — improved: repeat visits within 5 minutes are instant; the first visit after
+     expiry still pays the full build (precompute it in the hourly job to finish this).
    - Tracker totals without commas — fixed.
    - Sharpe on under a month of days — fixed (shows "after 1 month").
    - Oil: "YES costs 0c" rows when unquoted, and the "0 forecasts locked in" box — **left for Muse** (Oil page is in
