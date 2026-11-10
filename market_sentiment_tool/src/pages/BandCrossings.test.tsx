@@ -17,7 +17,7 @@ const PAYLOAD = {
   orders_enabled: false,
   falsifier: { gate: 20, graded: 0, mean_score: null, status: "accruing" },
   scans: [{ id: 1, kind: "baseline", started_at: "2026-11-09T13:00:00Z",
-            banded_names: 21, crossings_written: 0 }],
+            banded_names: 21, crossings_written: 0, snapshot_id: 3 }],
   crossings: [
     { id: 2, created_at: "2026-11-10T13:00:00Z", scan_kind: "event", book: "main",
       ticker: "CVS", industry: "health_care_services", band_basis: "eps",
@@ -27,6 +27,7 @@ const PAYLOAD = {
       held_mv: "0", guide_status: "intact", guide_direction: "first",
       t1_classification: null, suppress_reason: null,
       pc_outcome: "would_pass", pc_detail: "portfolio check passes",
+      snapshot_id: 3, source: "scan",
       mode: "log_only", outcome_20: null, score_20: null },
     { id: 1, created_at: "2026-11-10T13:00:00Z", scan_kind: "event", book: "big",
       ticker: "CEG", industry: "Utilities", band_basis: "eps",
@@ -60,7 +61,8 @@ describe("Band crossings section", () => {
     render(<BandCrossings />);
     const section = await screen.findByTestId("band-crossings");
     expect(await within(section).findByText(/LOG-ONLY/)).toBeTruthy();
-    expect(within(section).getByText(/0\/20 graded/)).toBeTruthy();
+    expect(within(section).getByText(/0 of first 20 crossings graded/)).toBeTruthy();
+    expect(within(section).getByText(/snapshot #3/)).toBeTruthy();
     expect(within(section).getByText("CVS")).toBeTruthy();
     expect(within(section).getByText(/Starter to 2% of book/)).toBeTruthy();
     expect(within(section).getByText("would pass")).toBeTruthy();
@@ -78,6 +80,7 @@ describe("Band crossings section", () => {
       expect(within(section).getByText(/Portfolio check: portfolio check passes/)).toBeTruthy();
     });
     expect(within(section).getByText(/bands bear 82.11 \/ base 91.23 \/ bull 91.23/)).toBeTruthy();
+    expect(within(section).getByText(/snapshot #3 · via scan/)).toBeTruthy();
   });
 
   it("renders the empty state before any crossing exists", async () => {
@@ -85,5 +88,24 @@ describe("Band crossings section", () => {
     render(<BandCrossings />);
     const section = await screen.findByTestId("band-crossings");
     expect(await within(section).findByText(/No crossings yet/)).toBeTruthy();
+  });
+});
+
+describe("Band crossings freshness (Round 2)", () => {
+  it("labels the section when a newer completed snapshot is pending a scan", async () => {
+    serve({ ...PAYLOAD, latest_snapshot_id: 5 });
+    render(<BandCrossings />);
+    const section = await screen.findByTestId("band-crossings");
+    // The last scan read snapshot #3 (the fixture's scan row); the page's
+    // sheets come from #5 -- the header must say so, never silently stale.
+    expect(within(section).getByText(/snapshot #5 pending/)).toBeTruthy();
+  });
+
+  it("shows no pending label when the last scan read the latest snapshot", async () => {
+    serve({ ...PAYLOAD, latest_snapshot_id: 3 });
+    render(<BandCrossings />);
+    const section = await screen.findByTestId("band-crossings");
+    expect(await within(section).findByText(/snapshot #3/)).toBeTruthy();
+    expect(within(section).queryByText(/pending/)).toBeNull();
   });
 });

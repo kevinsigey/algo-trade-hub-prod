@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
-import { ctDateTime } from "@/lib/format";
+import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
+import LevelWatcher from "@/pages/LevelWatcher";
+import DebateQueue from "@/components/DebateQueue";
+import NameDecision from "@/components/NameDecision";
+import { VerdictChipLine } from "@/components/VerdictChip";
+import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
-  gapText, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
+  consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
-  type FactSheet, type GuidanceRecord,
+  type FactSheet, type GuidanceRecord, type SnapshotStamp,
 } from "@/lib/valuation";
 
 /**
@@ -40,9 +46,13 @@ const FUND_LABELS: Record<string, string> = {
   shares_diluted: "Diluted shares",
 };
 
-function fmtFund(key: string, v: number): string {
-  if (key === "shares_diluted") return `${(v / 1e6).toFixed(1)}M`;
-  if (key === "eps_diluted") return v.toFixed(2);
+/** Unit labels on every value (F5 discipline; Round 4): the EDGAR concepts
+ * behind this line are EarningsPerShareDiluted (USD per share) and
+ * WeightedAverageNumberOfDilutedSharesOutstanding (a share count) -- a
+ * bare "Diluted EPS 1.02" hid both. Money fields carry their $. */
+export function fmtFund(key: string, v: number): string {
+  if (key === "shares_diluted") return `${(v / 1e6).toFixed(1)}M shares`;
+  if (key === "eps_diluted") return `$${v.toFixed(2)} per share`;
   return v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : `$${(v / 1e6).toFixed(1)}M`;
 }
 
@@ -56,10 +66,13 @@ function zoneBadge(verdict: string | null) {
 }
 
 /** One horizontal strip: a range bar, an optional mid tick, and a price-style
- * marker. All words live in the chip row beneath, so labels can never collide
- * on the bar itself. */
-function RangeStrip({ lo, hi, mid, marker, aria }: {
-  lo: number; hi: number; mid?: number | null; marker: number | null; aria: string;
+ * marker. The axis row beneath carries the scale (min/max of the strip) and
+ * the marker's own value, so an off-band marker reads as a measured distance,
+ * not a floating dot. All other words live in the chip row, so labels can
+ * never collide on the bar itself. */
+function RangeStrip({ lo, hi, mid, marker, aria, fmt }: {
+  lo: number; hi: number; mid?: number | null; marker: number | null;
+  aria: string; fmt: (v: number) => string;
 }) {
   const vals = [lo, hi, ...(mid != null ? [mid] : []), ...(marker != null ? [marker] : [])];
   const rawLo = Math.min(...vals), rawHi = Math.max(...vals);
@@ -67,8 +80,24 @@ function RangeStrip({ lo, hi, mid, marker, aria }: {
   const x0 = rawLo - span * 0.05, x1 = rawHi + span * 0.05;
   const W = 680;
   const X = (v: number) => 6 + ((v - x0) / (x1 - x0)) * (W - 12);
+  const markerAnchor = marker == null ? "middle"
+    : X(marker) < 70 ? "start" : X(marker) > W - 70 ? "end" : "middle";
+  // Collision check (Kevin's standing rule: chart labels never overlap).
+  // The axis min/max labels and the marker label share the bottom row; when
+  // the marker sits near an edge, its end/start-anchored label lands on the
+  // axis label's ground. Estimate widths at 11px and, on a collision, drop
+  // the marker label to its own row -- no overlap by construction.
+  const labelW = (s: string) => s.length * 6.6;
+  const spanOf = (x: number, w: number, anchor: string): [number, number] =>
+    anchor === "start" ? [x, x + w] : anchor === "end" ? [x - w, x] : [x - w / 2, x + w / 2];
+  const minSpan: [number, number] = [6, 6 + labelW(fmt(x0))];
+  const maxSpan: [number, number] = [W - 6 - labelW(fmt(x1)), W - 6];
+  const markerSpan = marker != null ? spanOf(X(marker), labelW(fmt(marker)), markerAnchor) : null;
+  const collides = markerSpan != null
+    && (markerSpan[0] < minSpan[1] + 4 || markerSpan[1] > maxSpan[0] - 4);
+  const H = collides ? 74 : 58;
   return (
-    <svg viewBox={`0 0 ${W} 44`} className="w-full" role="img" aria-label={aria}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={aria}>
       <rect x={X(lo)} y={16} width={Math.max(2, X(hi) - X(lo))} height={12}
             className="fill-slate-600" rx={2} />
       {mid != null && (
@@ -79,6 +108,12 @@ function RangeStrip({ lo, hi, mid, marker, aria }: {
           <line x1={X(marker)} y1={4} x2={X(marker)} y2={40} stroke="#f59e0b" strokeWidth={2} />
           <path d={`M ${X(marker) - 5} 0 L ${X(marker) + 5} 0 L ${X(marker)} 7 Z`} fill="#f59e0b" />
         </>
+      )}
+      <text x={6} y={54} fontSize={11} className="fill-slate-500">{fmt(x0)}</text>
+      <text x={W - 6} y={54} fontSize={11} textAnchor="end" className="fill-slate-500">{fmt(x1)}</text>
+      {marker != null && (
+        <text x={X(marker)} y={collides ? 70 : 54} fontSize={11} textAnchor={markerAnchor}
+              className="fill-amber-400">{fmt(marker)}</text>
       )}
     </svg>
   );
@@ -102,7 +137,7 @@ function BandChart({ sheet }: { sheet: FactSheet }) {
   return (
     <div data-testid={`band-chart-${sheet.ticker}`} className="space-y-3">
       <div>
-        <RangeStrip lo={bands.bear} hi={bands.bull} mid={bands.base} marker={price}
+        <RangeStrip lo={bands.bear} hi={bands.bull} mid={bands.base} marker={price} fmt={priceText}
                     aria={`Band chart: bear ${priceText(bands.bear)}, base ${priceText(bands.base)}, bull ${priceText(bands.bull)}, price ${priceText(price)}`} />
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
           <Chip dot="bg-slate-400">{`Bear ${priceText(bands.bear)}`}</Chip>
@@ -113,7 +148,7 @@ function BandChart({ sheet }: { sheet: FactSheet }) {
       </div>
       {a && implied != null && (
         <div>
-          <RangeStrip lo={a.low} hi={a.high} marker={implied}
+          <RangeStrip lo={a.low} hi={a.high} marker={implied} fmt={guideFmt}
                       aria={`Guide chart: guide ${guideFmt(a.low)} to ${guideFmt(a.high)}, implied at the current price ${guideFmt(implied)}`} />
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
             <Chip dot="bg-slate-400">{`Guide low ${guideFmt(a.low)}`}</Chip>
@@ -156,7 +191,7 @@ function RecordsTable({ records }: { records: GuidanceRecord[] }) {
               </td>
               <td className="py-1 pr-3">{r.consensus == null ? "—" : fmt(r, r.consensus)}</td>
               <td className="py-1 pr-3">{r.accession ?? "—"}</td>
-              <td className="py-1">{r.created_at ? ctDateTime(r.created_at) : "—"}</td>
+              <td className="py-1">{r.created_at ? ctDateTimeYear(r.created_at) : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -206,11 +241,13 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
             <Kv k="Guide">{guideText(sheet)}</Kv>
             <Kv k="Metric">{metricLabel(a.metric)}</Kv>
             <Kv k="Filing (accession)">{a.accession ?? "—"}</Kv>
-            <Kv k="Recorded">{a.recorded_at ? ctDateTime(a.recorded_at) : "—"}</Kv>
+            <Kv k="Recorded">{a.recorded_at ? ctDateTimeYear(a.recorded_at) : "—"}</Kv>
             <Kv k="Consensus">{a.consensus == null ? "—" : a.metric === "revenue"
               ? `$${(a.consensus / 1e9).toFixed(2)}B` : a.consensus.toFixed(2)}</Kv>
+            <Kv k="Consensus source">{a.consensus_source ?? "—"}
+              {a.consensus_period ? ` · ${consensusPeriodText(a.consensus_period)}` : ""}</Kv>
             {sheet.guidance_percentile != null && (
-              <Kv k="Guide percentile">{`${num(sheet.guidance_percentile)?.toFixed(0)}th among guided peers`}</Kv>
+              <Kv k="Guide percentile">{`${ordinal(Math.round(num(sheet.guidance_percentile) ?? 0))} among guided peers`}</Kv>
             )}
             <Kv k="Tier">{sheet.tier === "watch" ? "Watch (S&P 500)" : "Open (any recorded guide)"}</Kv>
           </FactBlock>
@@ -219,6 +256,7 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
           <FactBlock title="The peer group behind the multiple">
             <Kv k="Group">{humanizeGroup(sheet.peer_group)}</Kv>
             <Kv k="Median multiple">{multipleText(sheet)}</Kv>
+            <Kv k="Multiple frozen">{ctDateTimeYear(sheet.computed_at)}</Kv>
             <Kv k="Peers used">{sheet.peer_count ?? "—"}</Kv>
             <Kv k="Basis">{sheet.peer_basis === "industry_group" ? "Frozen industry group"
               : sheet.peer_basis === "sector_widened" ? "Industry group, widened to the sector"
@@ -255,22 +293,40 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
           </FactBlock>
         )}
       </div>
+      {(sheet.ingest_notes ?? []).length > 0 && (
+        <FactBlock title="Ingest notes — read these before the guide">
+          {(sheet.ingest_notes ?? []).map((n, i) => (
+            <p key={i} className="text-amber-300">{n}</p>
+          ))}
+        </FactBlock>
+      )}
+      {(sheet.guard_rejections ?? []).length > 0 && (
+        <FactBlock title="Guard decisions on this name's records">
+          {(sheet.guard_rejections ?? []).map((g, i) => (
+            <p key={i} className="text-slate-300">{g}</p>
+          ))}
+        </FactBlock>
+      )}
       {sheet.falsifier && (
         <FactBlock title={sheet.status === "banded" ? "What would falsify this sheet" : "Why there are no bands — the sheet's recorded note"}>
-          <p className="text-slate-300">{sheet.falsifier}</p>
+          <p className="whitespace-pre-line break-words text-slate-300">{sheet.falsifier}</p>
         </FactBlock>
       )}
       <FactBlock title={`Guidance records on file (${records.length})`}>
         <RecordsTable records={records} />
       </FactBlock>
-      <p className="text-xs text-slate-500">Sheet computed {ctDateTime(sheet.computed_at)}.</p>
+      <p className="text-xs text-slate-500">
+        Sheet computed {ctDateTimeYear(sheet.computed_at)}
+        {sheet.snapshot_id != null && ` · snapshot #${sheet.snapshot_id}`}.
+      </p>
     </div>
   );
 }
 
-function BandedTable({ sheets, basis, expanded, onToggle, members }: {
+function BandedTable({ sheets, basis, expanded, onToggle, members, chips }: {
   sheets: FactSheet[]; basis: string; expanded: string | null;
   onToggle: (t: string) => void; members: Record<string, string[]>;
+  chips: Record<string, VerdictChip>;
 }) {
   const rows = sheets
     .filter((s) => s.status === "banded" && s.band_basis === basis)
@@ -316,6 +372,7 @@ function BandedTable({ sheets, basis, expanded, onToggle, members }: {
                   {multipleText(s)}
                   <span className="block text-xs text-slate-500">
                     {humanizeGroup(s.peer_group)} · {s.peer_count ?? "—"} peers
+                    {" "}· frozen {ctDateYear(s.computed_at)}
                   </span>
                 </td>
                 <td className="px-3 py-2 text-slate-300">{priceText(s.bands?.bear)}</td>
@@ -323,15 +380,21 @@ function BandedTable({ sheets, basis, expanded, onToggle, members }: {
                 <td className="px-3 py-2 text-slate-300">{priceText(s.bands?.bull)}</td>
                 <td className="px-3 py-2 text-slate-200">
                   {priceText(s.price)}
-                  <span className="block text-xs text-slate-500">as of {s.price_as_of ?? "—"}</span>
+                  <span className="block text-xs text-slate-500">
+                    daily close as of {s.price_as_of ?? "—"} · {s.price_vendor ?? "Yahoo Finance"}
+                  </span>
                 </td>
-                <td className="px-3 py-2">{zoneBadge(s.baseline_verdict)}</td>
-                <td className="px-3 py-2 text-slate-300">{gapText(s.gap_range_widths)}</td>
+                <td className="px-3 py-2">
+                  {zoneBadge(s.baseline_verdict)}
+                  <VerdictChipLine chip={chips[s.ticker]} ticker={s.ticker} />
+                </td>
+                <td className="px-3 py-2 text-slate-300">{gapDisplay(s)}</td>
               </tr>,
               open ? (
                 <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
                   <td colSpan={10} className="px-3 py-3">
                     <SheetDetail sheet={s} members={members[s.ticker]} />
+                    <NameDecision ticker={s.ticker} />
                   </td>
                 </tr>
               ) : null,
@@ -343,6 +406,43 @@ function BandedTable({ sheets, basis, expanded, onToggle, members }: {
   );
 }
 
+/** The not-banded reason, specific before generic: the guard's own recorded
+ * reasons first (they say exactly which check fired), then ingest notes,
+ * and only then the sheet's summary note. */
+function unbandedNote(sheet: FactSheet): string {
+  const guards = sheet.guard_rejections ?? [];
+  if (guards.length) {
+    const head = guards.slice(0, 2).join("; ");
+    return guards.length > 2 ? `${head} (+${guards.length - 2} more)` : head;
+  }
+  const notes = sheet.ingest_notes ?? [];
+  if (notes.length) return notes[0];
+  return sheet.falsifier ?? "—";
+}
+
+/** The not-banded table cell: the first two guard reasons inline, the rest
+ * behind an expandable tail -- the "(+N more)" text used to be a dead end
+ * that summarized the remaining reasons away. */
+function UnbandedNote({ sheet }: { sheet: FactSheet }) {
+  const guards = sheet.guard_rejections ?? [];
+  if (guards.length > 2) {
+    return (
+      <span>
+        {guards.slice(0, 2).join("; ")}
+        <details className="mt-1">
+          <summary className="cursor-pointer text-slate-300 hover:text-white">
+            +{guards.length - 2} more
+          </summary>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {guards.slice(2).map((g, i) => <li key={i}>{g}</li>)}
+          </ul>
+        </details>
+      </span>
+    );
+  }
+  return <>{unbandedNote(sheet)}</>;
+}
+
 function onFileText(sheet: FactSheet): string {
   const records = sheet.inputs?.guidance_records ?? [];
   if (!records.length) return "Nothing on file";
@@ -352,17 +452,38 @@ function onFileText(sheet: FactSheet): string {
 
 export default function Valuation() {
   const [sheets, setSheets] = useState<FactSheet[] | null>(null);
+  const [snapshot, setSnapshot] = useState<SnapshotStamp | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, string[]>>({});
+  const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+  const [searchParams] = useSearchParams();
+  const decisionParam = searchParams.get("decision")?.toUpperCase() ?? null;
 
   useEffect(() => {
     let live = true;
-    adminJson<FactSheet[]>("/api/valuation-bands")
-      .then((rows) => { if (live) setSheets(rows); })
+    adminJson<{ snapshot: SnapshotStamp | null; sheets: FactSheet[] }>("/api/valuation-bands")
+      .then((env) => {
+        if (!live) return;
+        setSnapshot(env.snapshot);
+        setSheets(env.sheets);
+      })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The valuation sheets could not be loaded"); });
+    // The verdict chips ride beside the sheets: a name with no rendered
+    // verdict is simply absent from the map, and its cell says so.
+    adminJson<ChipsPayload>("/api/verdict-chips")
+      .then((env) => { if (live && env?.chips) setChips(env.chips); })
+      .catch(() => { /* absence renders as "No debate verdict yet" */ });
     return () => { live = false; };
   }, []);
+
+  // Deep link from a Screening row (?decision=TICKER): open that name's
+  // sheet expansion, where its decision view lives.
+  useEffect(() => {
+    if (!decisionParam || !sheets) return;
+    const sheet = sheets.find((s) => s.ticker === decisionParam);
+    if (sheet) setExpanded(sheet.ticker);
+  }, [decisionParam, sheets]);
 
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
 
@@ -406,17 +527,29 @@ export default function Valuation() {
             {" "}— one for every name with recorded guidance ·{" "}
             <span className="font-medium text-white">{summary.banded} banded</span>
             {` (${summary.epsBanded} EPS basis · ${summary.revenueBanded} revenue basis)`} ·{" "}
-            {summary.buyZones} in a buy zone{summary.buyZones === 1 ? "" : "s"} ·{" "}
-            {summary.shortZones} in short zone{summary.shortZones === 1 ? "" : "s"}
+            {summary.buyZones} {summary.buyZones === 1 ? "in a buy zone" : "in buy zones"} ·{" "}
+            {summary.shortZones} {summary.shortZones === 1 ? "in a short zone" : "in short zones"}
             {summary.flatZones > 0 && ` · ${summary.flatZones} neutral or no-chase`}
             {summary.stale > 0 && ` · ${summary.stale} stale (zone held)`}
             {` · ${summary.unbanded} not banded`}
           </p>
+          {snapshot ? (
+            <p data-testid="snapshot-stamp" className="mt-1 text-xs text-slate-500">
+              {`Snapshot #${snapshot.id} · computed ${snapshot.computed_at ? ctDateTimeYear(snapshot.computed_at) : "—"}`}
+              {` · ${snapshot.sheet_count ?? summary.total} sheets / ${snapshot.banded_count ?? summary.banded} banded`}
+              {" — one consistent snapshot; a recompute publishes a new snapshot, it never edits this one."}
+            </p>
+          ) : (
+            <p data-testid="snapshot-stamp" className="mt-1 text-xs text-amber-300/80">
+              Unversioned legacy read — no snapshot stamp on this data yet; figures can
+              change between loads until the first stamped compute lands.
+            </p>
+          )}
 
           <div data-testid="zone-legend" className="mt-4 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3">
             <h2 className="text-sm font-medium text-slate-200">What the zones mean</h2>
             <ul className="mt-2 grid gap-x-6 gap-y-1 text-xs text-slate-400 md:grid-cols-2">
-              {(["buy_zone_strong", "buy_zone", "neutral", "no_chase_long", "short_zone", "short_zone_strong"] as const).map((v) => (
+              {(["buy_zone_strong", "buy_zone", "neutral", "no_chase_long", "short_zone", "short_zone_strong", "stale"] as const).map((v) => (
                 <li key={v} className="flex gap-2">
                   <span className="shrink-0">{zoneBadge(v)}</span>
                   <span>{zoneInfo(v).blurb}</span>
@@ -431,6 +564,10 @@ export default function Valuation() {
 
           <BandCrossings />
 
+          <LevelWatcher />
+
+          <DebateQueue />
+
           <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
             <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
             <p className="mt-0.5 text-sm text-slate-400">
@@ -440,7 +577,7 @@ export default function Valuation() {
             <div className="mt-3">
               <BandedTable sheets={sheets} basis="eps" expanded={expanded}
                            onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} />
+                           members={members} chips={chips} />
             </div>
           </section>
 
@@ -454,7 +591,7 @@ export default function Valuation() {
             <div className="mt-3">
               <BandedTable sheets={sheets} basis="revenue" expanded={expanded}
                            onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} />
+                           members={members} chips={chips} />
             </div>
           </section>
 
@@ -491,12 +628,13 @@ export default function Valuation() {
                         </td>
                         <td className="px-3 py-2 text-slate-300">{STATE_LABELS[s.status] ?? s.status}</td>
                         <td className="px-3 py-2 text-slate-300">{onFileText(s)}</td>
-                        <td className="px-3 py-2 text-slate-400">{s.falsifier ?? "—"}</td>
+                        <td className="px-3 py-2 text-slate-400"><UnbandedNote sheet={s} /></td>
                       </tr>,
                       open ? (
                         <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
                           <td colSpan={4} className="px-3 py-3">
                             <SheetDetail sheet={s} members={members[s.ticker]} />
+                            <NameDecision ticker={s.ticker} />
                           </td>
                         </tr>
                       ) : null,

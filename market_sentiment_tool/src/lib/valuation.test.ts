@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  gapText, guideDirection, guideText, humanizeGroup, metricLabel, num,
+  consensusPeriodText, gapText, guideDirection, guideText, humanizeGroup, metricLabel, num,
   summarize, zoneInfo, type FactSheet,
 } from "@/lib/valuation";
 
@@ -142,5 +142,20 @@ describe("labels", () => {
     expect(gapText(-10.32)).toBe("−10.3 guide widths");
     expect(gapText(0)).toBe("0.0 guide widths");
     expect(gapText(null)).toBe("—");
+  });
+});
+
+describe("consensusPeriodText", () => {
+  it("humanizes the yfinance relative period tags", () => {
+    expect(consensusPeriodText("0y")).toBe("current year");
+    expect(consensusPeriodText("+1y")).toBe("next year");
+    expect(consensusPeriodText("0q")).toBe("current quarter");
+    expect(consensusPeriodText("+1q")).toBe("next quarter");
+  });
+
+  it("passes an unknown tag through rather than hiding it", () => {
+    expect(consensusPeriodText("+2y")).toBe("+2y");
+    expect(consensusPeriodText(null)).toBeNull();
+    expect(consensusPeriodText(undefined)).toBeNull();
   });
 });

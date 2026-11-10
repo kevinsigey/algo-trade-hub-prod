@@ -2590,6 +2590,60 @@ def get_machine_portfolio(book: str | None = None, authorization: str | None = H
     return payload
 
 
+class _ClassificationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(min_length=1, max_length=12)
+    classification: str
+    as_of: str
+    source: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/v1/forward-file/classifications", tags=["Machine API"],
+          status_code=201)
+def machine_record_classification(body: _ClassificationIn,
+                                  authorization: str | None = Header(None),
+                                  supabase=Depends(get_supabase)):
+    """Append one print classification to the forward-file store (Loop
+    Round 4). The write contract: bearer machine key with the
+    `classifications:write` scope (hashed storage, scope-checked and
+    audited like every machine route; keys are minted in the admin UI and
+    are NOT book-bound for this route -- classifications are reference
+    data, not orders, so the orders kill switch does not gate them).
+    Body: {ticker, classification in improved|intact|deteriorated, as_of
+    (the print/event date, ISO), source?, note?}. The response carries the
+    stored row plus `current` -- what the Spec C reader
+    (band_crossing.t1_classification) now returns for the name -- so the
+    writer verifies the read-back in the same call. Validation failures
+    are 422s with the accepted values named; nothing is stored."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.valuation import band_crossing, classifications
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    route = "POST /api/v1/forward-file/classifications"
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "classifications:write", route)
+    try:
+        row = classifications.record_classification(
+            supabase, ticker=body.ticker, classification=body.classification,
+            as_of=body.as_of, source=body.source, note=body.note,
+            recorded_by=key.get("label"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    machine_keys.record_event(
+        supabase, key["id"], route, "recorded",
+        detail=f"{row['ticker']} {row['classification']} {row['as_of']}")
+    recorded = {k: row.get(k) for k in
+                ("ticker", "classification", "as_of", "source", "note",
+                 "recorded_by", "recorded_at")}
+    return {"recorded": recorded,
+            "current": band_crossing.t1_classification(supabase,
+                                                       row["ticker"])}
+
+
 # ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
 # audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
 # a 403 -- the API does not confirm the order exists.
@@ -4068,8 +4122,10 @@ class _ScreenRunIn(BaseModel):
 def screening_catalog():
     from tradehub.screening.cards import cards_payload
     from tradehub.screening.catalog import catalog_dict
+    from tradehub.screening.universes import refresh_info
 
-    return {**catalog_dict(), "cards": cards_payload()}
+    return {**catalog_dict(), "cards": cards_payload(),
+            "universe_refresh": refresh_info()}
 
 
 class _ScreenIn(BaseModel):
@@ -4145,8 +4201,18 @@ def screening_run_screen(screen_id: int, _admin: dict = Depends(admin.require_ad
     except (SpecError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     payload = _run_payload(result)
+    # The recorded survivor list is the run's FULL cohort from the footer
+    # (Round 3): payload["rows"] is display-truncated whenever the spec
+    # carries a limit, and a truncated list recorded here would shrink
+    # the membership baseline diffed from it.
+    # Round 4: the record also keeps the run's ROWS, so the saved card can
+    # render the recorded results read-only. The rows are the display rows
+    # the run returned -- a spec limit still caps what was displayed, and
+    # the footer's survivors/displayed keep that cut honest in the view.
     last_run = {"footer": payload["footer"], "columns": payload["columns"],
-                "survivors": [r["ticker"] for r in payload["rows"]]}
+                "rows": payload["rows"],
+                "survivors": payload["footer"].get("survivor_tickers")
+                             or [r["ticker"] for r in payload["rows"]]}
     screen_store.record_run(supabase, screen_id, last_run)
     return payload
 
@@ -4245,15 +4311,27 @@ def screening_quote(ticker: str, _admin: dict = Depends(admin.require_admin)):
     return payload
 
 
+def _snapshot_stamp(snap: dict | None) -> dict | None:
+    if snap is None:
+        return None
+    return {"id": snap.get("id"), "computed_at": snap.get("computed_at"),
+            "completed_at": snap.get("completed_at"),
+            "sheet_count": snap.get("sheet_count"),
+            "banded_count": snap.get("banded_count"),
+            "source": snap.get("source")}
+
+
 @app.get("/api/valuation-bands", tags=["Valuation"])
 def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
-    """Latest fact sheet per ticker (valuation Spec v1, Phase 0).
-
-    Deterministic bands off the recorded guidance file; display data only --
-    no debate, judge, book, or order state is read or written here."""
+    """The latest COMPLETED snapshot's fact sheets, stamped (reliability
+    pass F1): one compute's dataset served whole under its snapshot id +
+    computed-at -- a recompute in flight never swaps figures under the
+    reader. snapshot is null only for pre-fix legacy data, and the page
+    says so rather than inventing a version. Display data only."""
     from tradehub.valuation import store as val_store
 
-    return val_store.latest_sheets(supabase)
+    snap, sheets = val_store.latest_snapshot_sheets(supabase)
+    return {"snapshot": _snapshot_stamp(snap), "sheets": sheets}
 
 
 @app.get("/api/valuation-bands/{ticker}", tags=["Valuation"])
@@ -4261,10 +4339,18 @@ def valuation_bands_get(ticker: str, _admin: dict = Depends(admin.require_admin)
                         supabase=Depends(get_supabase)):
     from tradehub.valuation import store as val_store
 
-    row = val_store.latest_sheet(supabase, ticker.strip().upper())
+    snap, _sheets = val_store.latest_snapshot_sheets(supabase)
+    row = None
+    if snap is not None:
+        row = val_store.snapshot_sheet(supabase, snap["id"],
+                                       ticker.strip().upper())
+    if row is None:
+        row = val_store.latest_sheet(supabase, ticker.strip().upper())
     if row is None:
         raise HTTPException(status_code=404, detail="no fact sheet for ticker")
-    return val_store.with_peer_members(row)
+    view = val_store.with_peer_members(row)
+    view["snapshot"] = _snapshot_stamp(snap)
+    return view
 
 
 # ── Valuation verdicts (Phase 1: the forked debate over Exhibit A) ─────────
@@ -4430,6 +4516,125 @@ def band_crossings_list(_admin: dict = Depends(admin.require_admin), supabase=De
     from tradehub.valuation import band_crossing as bc
 
     return bc.read_surface(supabase)
+
+
+# ── Level watcher (Spec D, Stage 1 — Rung 1 alerts only) ───────────────────
+# The watcher evaluates price levels with conditions and alerts; Stage 1
+# has no order path. This endpoint is its read surface: stage and rung
+# cap stated up front, watcher health from the heartbeat record, the
+# watches, the trigger log, pending alerts (the outbox an agent-side
+# poller carries into the Trading Thesis Testing chat), family grading,
+# and the governor state.
+
+@app.get("/api/level-watcher", tags=["Valuation"])
+def level_watcher_surface(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
+    """The Level Watcher's state: health, watches, trigger log, alert
+    outbox, grading families, governors. Read-only; Stage 1 is
+    alert-only (Kevin, 2026-11-09)."""
+    from tradehub import level_watcher as lw
+
+    return lw.read_surface(supabase)
+
+
+# ── Debate candidates + the per-name decision view (Loop Batch 2) ──────────
+# Candidates are generated from RECORDED screen runs/membership and the
+# latest completed snapshot's band history — never ad-hoc builder runs.
+# The decision view is one read surface per name: fact sheet, systems,
+# judgment, named gaps. Display-only, like the rest of the layer.
+
+@app.get("/api/debate-candidates", tags=["Valuation"])
+def debate_candidates_list(_admin: dict = Depends(admin.require_admin),
+                           supabase=Depends(get_supabase)):
+    """The persisted candidate queue for the latest completed snapshot:
+    counts by source class (entrants / zone names / conjunctions) and the
+    queue rows with their sources and states."""
+    from tradehub.valuation import candidates as cand_mod
+    from tradehub.valuation import store as val_store
+
+    snap = val_store.latest_snapshot(supabase)
+    if snap is None:
+        return {"snapshot": None, "counts": {"entrants": 0, "zone_names": 0,
+                                             "conjunctions": 0, "total": 0},
+                "candidates": [], "excluded": [],
+                "pending_by_class": {"conjunction": 0, "entrant": 0,
+                                     "zone": 0},
+                "generated_at": None}
+    rows = cand_mod.candidates_for_snapshot(supabase, snap["id"])
+    counts = {
+        "entrants": sum(1 for r in rows if (r.get("sources") or {})
+                        .get("entrants")),
+        "zone_names": sum(1 for r in rows if (r.get("sources") or {})
+                          .get("zone")),
+        "conjunctions": sum(1 for r in rows
+                            if r.get("candidate_class") == "conjunction"),
+        "total": len(rows)}
+    # Round 4: the aggregate queue view -- pending counts by class, the
+    # persisted named exclusions, and the generation stamp (scar tissue
+    # #9: the panel serves stamped data, never a silent live recompute).
+    excluded = cand_mod.exclusions_for_snapshot(supabase, snap["id"])
+    pending_by_class = {cls: sum(1 for r in rows
+                                  if r.get("candidate_class") == cls
+                                  and r.get("state") == "pending")
+                        for cls in ("conjunction", "entrant", "zone")}
+    generated = [r.get("computed_at") for r in rows + excluded
+                 if r.get("computed_at")]
+    return {"snapshot": _snapshot_stamp(snap), "counts": counts,
+            "candidates": rows, "excluded": excluded,
+            "pending_by_class": pending_by_class,
+            "generated_at": max(generated) if generated else None}
+
+
+@app.post("/api/debate-candidates/run", tags=["Valuation"], status_code=202)
+def debate_candidates_run(_admin: dict = Depends(admin.require_admin),
+                          supabase=Depends(get_supabase)):
+    """Generate candidates from the recorded flow, then drain the queue
+    into debate renders on a background thread (shared daily budget,
+    fail-closed LLM chain — a capacity decline leaves candidates pending
+    and stores nothing). Returns the generation summary immediately."""
+    from tradehub.valuation import candidates as cand_mod
+
+    summary = cand_mod.generate_candidates(supabase)
+
+    def _go() -> None:
+        from tradehub.screening.sources import DataStore
+
+        cand_mod.run_candidate_debates(supabase, DataStore())
+
+    threading.Thread(target=_go, daemon=True,
+                     name="debate-candidates-drain").start()
+    return {"generation": {k: summary[k] for k in
+                           ("snapshot", "counts", "inserted", "excluded")}}
+
+
+@app.get("/api/verdict-chips", tags=["Valuation"])
+def verdict_chips_list(_admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    """The compact per-name verdict read for the pages: latest rendered
+    verdict per ticker (verdict, confidence, dissent, judge identity,
+    exhibit snapshot id). Names without a rendered verdict are absent —
+    the pages render that absence honestly, never a placeholder."""
+    from tradehub.valuation import decisions
+
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "chips": decisions.verdict_chips(supabase)}
+
+
+@app.get("/api/name-decision/{ticker}", tags=["Valuation"])
+def name_decision_get(ticker: str,
+                      _admin: dict = Depends(admin.require_admin),
+                      supabase=Depends(get_supabase)):
+    """One name's decision view: what we know (fact sheet), what the
+    systems say (recorded screens, zone, crossings, print classification),
+    the judgment (debate verdict + falsifier standing), and what is
+    missing — named gaps, never proxied. 404 when the hub knows nothing
+    about the name at all."""
+    from tradehub.valuation import decisions
+
+    view = decisions.name_decision(supabase, ticker)
+    if view is None:
+        raise HTTPException(status_code=404,
+                            detail="nothing on record for that name")
+    return view
 
 
 mount_frontend(app, FRONTEND_DIST)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .functions import REGISTRY
@@ -30,7 +31,11 @@ def catalog_dict() -> dict:
                     "kind": e["kind"], "params": e["params"],
                     "returns": e["returns"], "doc": e["doc"],
                     "source": e["source"]})
-    return {"functions": fns, "universe_builders": UNIVERSE_BUILDERS, "ops": OPS}
+    # The catalog is computed live from the registry on every call, so its
+    # function count moves as fields land — stamp when THIS payload was
+    # computed (Kevin, 2026-11-09: the count read 45 then 49 with no stamp).
+    return {"functions": fns, "universe_builders": UNIVERSE_BUILDERS, "ops": OPS,
+            "computed_at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
 def write_catalog(out_dir: str | Path) -> tuple[Path, Path]:

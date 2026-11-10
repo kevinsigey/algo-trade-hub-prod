@@ -1,6 +1,7 @@
 /** The Workshop (Trading HQ step 2): payload types, the signed-in fetch, and the plain words for each claim. */
 import { sessionToken } from "@/components/RequireAdmin";
 import { buildApiUrl } from "@/lib/api";
+import type { NearMiss } from "@/lib/screening";
 
 export type Claim = "beats_benchmark" | "beats_benchmark_when" | "ballast" | "smoother_ride";
 export type Verdict = "PASS" | "FAIL" | "NOT ENOUGH DATA";
@@ -706,10 +707,28 @@ export interface WorkshopDashboard {
   manual_actions_open: number;
 }
 
+export interface ScreenMembershipEvent {
+  ticker: string;
+  /** Every share-class ticker of the issuer when the event spans classes
+   * (Round 2 issuer-keyed diffing); absent for single-ticker events. */
+  tickers?: string[];
+  kind: "entered" | "exited";
+  date: string;
+  since?: string;
+}
+
 export interface ScreenRow {
   id: number;
   name: string;
   spec: Record<string, unknown>;
-  last_run: { run_at: string | null; survivors: number | null } | null;
+  last_run: { run_at: string | null; survivors: number | null;
+              survivor_issuers?: number | null;
+              universe_selection?: string;
+              data_as_of?: string | null; sources?: string[];
+              column_sources?: Record<string, string>;
+              near_misses?: NearMiss[]; near_miss_count?: number } | null;
+  membership?: { tracked_since: string; as_of: string;
+                 members: Record<string, string> } | null;
+  membership_events?: ScreenMembershipEvent[] | null;
   promoted_idea_id: number | null;
 }

@@ -238,7 +238,13 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
             {book ? (collapsed ? compactUsd(book.scoreboard.equity) : fmtUsd(book.scoreboard.equity, { whole: true }))
               : loading ? "—" : collapsed ? "off" : "Not connected"}
           </div>
-          {book && !collapsed && <div className="mt-0.5 text-[11px] text-slate-500">{stateLabel(book.state, book.as_of)}</div>}
+          {book && !collapsed && (
+            <div className="mt-0.5 text-[11px] text-slate-500">
+              {/* The card header above already says "Paper account" — the
+                  state line carries only the state, not the label twice. */}
+              {stateLabel(book.state, book.as_of).replace(/^Paper account · /, "")}
+            </div>
+          )}
         </NavLink>
       </div>
     </>

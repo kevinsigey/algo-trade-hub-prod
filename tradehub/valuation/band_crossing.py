@@ -27,6 +27,11 @@ returns None until a source exists, so the T1-dependent rules (shorts,
 the review escalation) cannot fire and the reason is recorded wherever
 they would have been evaluated. Classifications are never invented or
 inferred from guide direction.
+
+Spec D's level watcher (Stage 1) drives this same state machine at
+intraday prices through run_watcher_evaluation — the Spec C amendment
+to Spec D: one band-crossing detector, ever. The watcher adds the
+real-time trigger/alert layer; it does not fork the transition logic.
 """
 from __future__ import annotations
 
@@ -206,17 +211,152 @@ def _default_pc(client, book: str, ticker: str, delta: float):
     return outcome, block.get("detail")
 
 
+# ── the transition step (shared by the scans and Spec D's watcher) ──────────
+
+_OMIT = object()  # sentinel: leave the key out of the insert entirely
+
+
+def _evaluate_book(client, *, sheet: dict, ticker: str, book: str,
+                   price: float, price_as_of, zone: str,
+                   guide_status: str, guide_raw, t1: str | None,
+                   positions: dict, equity: float,
+                   scan_id, scan_kind: str, mode: str,
+                   now: datetime, pc_runner,
+                   snapshot_id=_OMIT, source: str = "scan") -> dict | None:
+    """One (name, book) step of the crossing state machine: evaluate the
+    candidate at `price`, compare to the stored state, write a crossing
+    row on a transition, and save the new state. Returns the crossing
+    row written, or None (no transition — or a first sighting, which
+    establishes state silently: a crossing is a transition, and there
+    is nothing to transition from). This is the single implementation
+    of the transition logic — run_scan drives it at sheet prices on
+    the scan cadence, and Spec D's level watcher drives it at intraday
+    prices through run_watcher_evaluation. Same code, same row shape;
+    only the price and the scan_kind stamp differ."""
+    bands = sheet["bands"]
+    held_mv = float((positions.get(ticker) or {}).get("mv") or 0.0)
+    cand = candidate(zone=zone, guide_status=guide_status, t1=t1,
+                     held_mv=held_mv, equity=equity)
+    prev = _state_row(client, ticker, book)
+    state = {"zone": zone, "action": cand["action"],
+             "target_pct": cand["target_pct"],
+             "guide_status": guide_status,
+             "t1_classification": t1, "held": held_mv > 0,
+             "sheet_computed_at": sheet.get("computed_at"),
+             "updated_at": now.isoformat()}
+    if prev is None:
+        _save_state(client, ticker, book, state)
+        return None
+    changed = ((cand["action"], cand["target_pct"])
+               != (prev.get("action"), prev.get("target_pct")))
+    gated_transition = (
+        zone != prev.get("zone") and cand["action"] is None
+        and cand["suppress_reason"] in _GATE_REASONS)
+    row = None
+    if changed or gated_transition:
+        reason = cand["suppress_reason"]
+        if cand["action"] is None and reason is None:
+            reason = "zone_exit"
+        pc_outcome, pc_detail = None, None
+        if cand["action"] == "review_full_exit":
+            pc_outcome = "not_run"
+            pc_detail = ("review flag — no would-be order; Kevin's "
+                         "call, never an auto-exit")
+        elif cand["action"] is not None:
+            pc_outcome, pc_detail = pc_runner(
+                book, ticker, cand["delta_usd"])
+        payload = {
+            "scan_id": scan_id, "scan_kind": scan_kind,
+            "book": book, "ticker": ticker,
+            "industry": industry_of(sheet),
+            "band_basis": sheet.get("band_basis", "eps"),
+            "bear": float(bands["bear"]),
+            "base": float(bands["base"]),
+            "bull": float(bands["bull"]),
+            "price": price, "price_as_of": price_as_of,
+            "zone": zone, "prev_action": prev.get("action"),
+            "action": cand["action"] or "none",
+            "target_pct": cand["target_pct"],
+            "delta_usd": cand["delta_usd"],
+            "held_mv": held_mv,
+            "held_weight_pct": (round(held_mv / equity * 100, 4)
+                                if equity > 0 else None),
+            "guide_status": guide_status,
+            "guide_direction": guide_raw,
+            "t1_classification": t1,
+            "suppress_reason": reason if cand["action"] is None
+                               else None,
+            "pc_outcome": pc_outcome, "pc_detail": pc_detail,
+            "mode": mode, "source": source,
+            "created_at": now.isoformat(),
+        }
+        if snapshot_id is not _OMIT:
+            # Provenance (Guidance Reliability F4): every crossing row
+            # records the persisted band snapshot its bands came from —
+            # scan rows carry the snapshot the scanner read, watcher
+            # rows the snapshot stamped on the sheet (null until the
+            # first stamped compute lands). One population for the
+            # falsifier, separated by the source stamp.
+            payload["snapshot_id"] = snapshot_id
+        inserted = client.table(CROSSINGS).insert(payload).execute()
+        row = (inserted.data or [None])[0]
+    _save_state(client, ticker, book, state)
+    return row
+
+
 # ── the scan ─────────────────────────────────────────────────────────────────
+
+def _snapshot_sheets(client) -> tuple[list[dict], object]:
+    """The scanner's input (reliability pass F4): the latest COMPLETED
+    snapshot's band history, shaped as fact sheets — the scanner reads
+    the persisted snapshot record, never a live recompute, and every
+    crossing it writes carries that snapshot's id as provenance. When no
+    snapshot has completed yet (pre-fix deployment), falls back to the
+    legacy latest-per-ticker sheets with snapshot id None; the state
+    machine, rules, and grading are identical either way."""
+    from tradehub.valuation import store as val_store
+
+    snap = val_store.latest_snapshot(client)
+    if snap is None:
+        return val_store.latest_sheets(client), None
+    sheets: list[dict] = []
+    for row in val_store.snapshot_history(client, snap["id"]):
+        bands = None
+        if row.get("bear") is not None:
+            bands = {"bear": float(row["bear"]), "base": float(row["base"]),
+                     "bull": float(row["bull"])}
+        metric = row.get("guide_metric")
+        directions = ({metric: {"direction": row.get("direction")}}
+                      if metric and row.get("direction") else {})
+        sheets.append({
+            "ticker": row.get("ticker"),
+            # The compact record carries no status/peer columns: banded is
+            # "has bands", staleness is the held zone, industry is not a
+            # history field (peer detail is current-state on the sheet).
+            "status": "banded" if bands is not None else "no_bands",
+            "band_basis": row.get("band_basis"), "bands": bands,
+            "price": row.get("price"),
+            "price_as_of": (str(snap.get("computed_at"))[:10]
+                            if snap.get("computed_at") else None),
+            "stale": row.get("zone") == "stale",
+            "peer_group": None,
+            "anchor": {"metric": metric},
+            "directions": directions,
+            "computed_at": snap.get("computed_at"),
+            "snapshot_id": snap["id"],
+        })
+    return sheets, snap["id"]
+
 
 def run_scan(client, *, kind: str, now: datetime | None = None,
              books: tuple[str, ...] = BOOKS,
              positions_reader=None, equity_reader=None,
              t1_reader=None, pc_runner=None) -> dict:
-    """One scan over the latest banded sheets, per book. Writes crossing
-    rows only on transitions (freeze doc: the state machine), updates
-    every state row, and audits itself in band_crossing_scans. Places
-    nothing — there is no order path in this module."""
-    from tradehub.valuation import store as val_store
+    """One scan over the latest completed snapshot's banded names, per
+    book. Writes crossing rows only on transitions (freeze doc: the
+    state machine), updates every state row, and audits itself in
+    band_crossing_scans. Places nothing — there is no order path in
+    this module."""
 
     now = now or datetime.now(timezone.utc)
     positions_reader = positions_reader or _default_positions
@@ -224,7 +364,7 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
     t1_reader = t1_reader or t1_classification
     pc_runner = pc_runner or _default_pc
 
-    sheets = val_store.latest_sheets(client)
+    sheets, snapshot_id = _snapshot_sheets(client)
     state_empty = not (client.table(STATE).select("ticker").limit(1)
                        .execute().data or [])
     effective_kind = "baseline" if state_empty else kind
@@ -232,7 +372,8 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
 
     scan_rows = (client.table(SCANS).insert({
         "kind": effective_kind, "requested_kind": kind,
-        "started_at": now.isoformat(), "mode": mode}).execute().data) or []
+        "started_at": now.isoformat(), "mode": mode,
+        "snapshot_id": snapshot_id}).execute().data) or []
     scan_id = scan_rows[0]["id"] if scan_rows else None
 
     book_cache: dict[str, tuple[dict, float] | Exception] = {}
@@ -282,67 +423,16 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
                                              f"{type(got).__name__}"})
                 continue
             positions, equity = got
-            held_mv = float((positions.get(ticker) or {}).get("mv") or 0.0)
-            cand = candidate(zone=zone, guide_status=guide_status, t1=t1,
-                             held_mv=held_mv, equity=equity)
-            prev = _state_row(client, ticker, book)
-            state = {"zone": zone, "action": cand["action"],
-                     "target_pct": cand["target_pct"],
-                     "guide_status": guide_status,
-                     "t1_classification": t1, "held": held_mv > 0,
-                     "sheet_computed_at": computed,
-                     "updated_at": now.isoformat()}
-            if prev is None:
-                # First sighting (the baseline, or a name banded later):
-                # state is established silently — a crossing is a
-                # transition, and there is nothing to transition from.
-                _save_state(client, ticker, book, state)
-                state_rows += 1
-                continue
-            changed = ((cand["action"], cand["target_pct"])
-                       != (prev.get("action"), prev.get("target_pct")))
-            gated_transition = (
-                zone != prev.get("zone") and cand["action"] is None
-                and cand["suppress_reason"] in _GATE_REASONS)
-            if changed or gated_transition:
-                reason = cand["suppress_reason"]
-                if cand["action"] is None and reason is None:
-                    reason = "zone_exit"
-                pc_outcome, pc_detail = None, None
-                if cand["action"] == "review_full_exit":
-                    pc_outcome = "not_run"
-                    pc_detail = ("review flag — no would-be order; Kevin's "
-                                 "call, never an auto-exit")
-                elif cand["action"] is not None:
-                    pc_outcome, pc_detail = pc_runner(
-                        book, ticker, cand["delta_usd"])
-                client.table(CROSSINGS).insert({
-                    "scan_id": scan_id, "scan_kind": effective_kind,
-                    "book": book, "ticker": ticker,
-                    "industry": industry_of(sheet),
-                    "band_basis": sheet.get("band_basis", "eps"),
-                    "bear": float(bands["bear"]),
-                    "base": float(bands["base"]),
-                    "bull": float(bands["bull"]),
-                    "price": price, "price_as_of": sheet.get("price_as_of"),
-                    "zone": zone, "prev_action": prev.get("action"),
-                    "action": cand["action"] or "none",
-                    "target_pct": cand["target_pct"],
-                    "delta_usd": cand["delta_usd"],
-                    "held_mv": held_mv,
-                    "held_weight_pct": (round(held_mv / equity * 100, 4)
-                                        if equity > 0 else None),
-                    "guide_status": guide_status,
-                    "guide_direction": guide_raw,
-                    "t1_classification": t1,
-                    "suppress_reason": reason if cand["action"] is None
-                                       else None,
-                    "pc_outcome": pc_outcome, "pc_detail": pc_detail,
-                    "mode": mode,
-                    "created_at": now.isoformat(),
-                }).execute()
+            row = _evaluate_book(
+                client, sheet=sheet, ticker=ticker, book=book,
+                price=price, price_as_of=sheet.get("price_as_of"),
+                zone=zone, guide_status=guide_status, guide_raw=guide_raw,
+                t1=t1, positions=positions, equity=equity,
+                scan_id=scan_id, scan_kind=effective_kind, mode=mode,
+                now=now, pc_runner=pc_runner,
+                snapshot_id=sheet.get("snapshot_id"), source="scan")
+            if row is not None:
                 crossings_written += 1
-            _save_state(client, ticker, book, state)
             state_rows += 1
 
     summary = {"banded_names": banded, "state_rows": state_rows,
@@ -354,6 +444,126 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
             .eq("id", scan_id).execute()
     return {"kind": effective_kind, "requested_kind": kind, "mode": mode,
             "crossings_written": crossings_written, **summary}
+
+
+# ── Spec D's real-time driver over this state machine ───────────────────────
+
+def run_watcher_evaluation(client, *, prices: dict, now: datetime | None = None,
+                           books: tuple[str, ...] = BOOKS,
+                           positions_reader=None, equity_reader=None,
+                           t1_reader=None, pc_runner=None) -> dict:
+    """Evaluate banded names at INTRADAY prices (Spec D's level watcher,
+    Stage 1) through the same transition step the scans run
+    (_evaluate_book): crossing rows land in this log with
+    scan_kind='watcher' and the state moves exactly as a scan would
+    move it, so a later scan at the same zone writes no duplicate.
+    Watcher rows are the same population the falsifier grades (the
+    grade_crossings pass below), stamped by source so reporting can
+    separate them.
+
+    Only names present in `prices` are evaluated (the watcher passes
+    the names whose live zone moved). The data-missing rules are the
+    scans': a stale sheet is skipped with its state untouched. The
+    watcher never establishes the baseline — with an empty state
+    table this writes nothing and says so (baselining belongs to the
+    scans, as frozen).
+
+    Provenance: watcher rows also carry `snapshot_id` — the persisted
+    band snapshot the sheet's bands came from (the Guidance
+    Reliability lane's snapshot table), read off the sheet; null
+    until that lane's compute stamps sheets with the id. Scan rows
+    carry the snapshot the scanner read. Both stamp `source`
+    ("watcher" here, "scan" in run_scan) alongside scan_kind."""
+    from zoneinfo import ZoneInfo
+
+    from tradehub.valuation import store as val_store
+
+    now = now or datetime.now(timezone.utc)
+    positions_reader = positions_reader or _default_positions
+    equity_reader = equity_reader or _default_equity
+    t1_reader = t1_reader or t1_classification
+    pc_runner = pc_runner or _default_pc
+
+    state_empty = not (client.table(STATE).select("ticker").limit(1)
+                       .execute().data or [])
+    if state_empty:
+        return {"ran": False, "reason": "no_baseline",
+                "crossings": [], "crossings_written": 0,
+                "state_rows": 0, "skipped": [], "book_skips": []}
+
+    mode = "log_only" if not orders_enabled(client) else "orders_enabled"
+    scan_rows = (client.table(SCANS).insert({
+        "kind": "watcher", "requested_kind": "watcher",
+        "started_at": now.isoformat(), "mode": mode}).execute().data) or []
+    scan_id = scan_rows[0]["id"] if scan_rows else None
+    price_as_of = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+    book_cache: dict[str, tuple[dict, float] | Exception] = {}
+
+    def book_state(book: str):
+        if book not in book_cache:
+            try:
+                book_cache[book] = (positions_reader(book),
+                                    float(equity_reader(book)))
+            except Exception as exc:  # noqa: BLE001 -- named in the audit row
+                book_cache[book] = exc
+        return book_cache[book]
+
+    evaluated = 0
+    state_rows = 0
+    crossings: list[dict] = []
+    skipped: list[dict] = []
+    book_skips: list[dict] = []
+    watermark = None
+
+    for sheet in val_store.latest_sheets(client):
+        computed = sheet.get("computed_at")
+        if computed and (watermark is None or str(computed) > watermark):
+            watermark = str(computed)
+        if sheet.get("status") != "banded" or not sheet.get("bands"):
+            continue
+        ticker = sheet["ticker"]
+        if ticker not in prices:
+            continue
+        evaluated += 1
+        if sheet.get("stale"):
+            skipped.append({"ticker": ticker, "reason": "stale_sheet"})
+            continue
+        price = float(prices[ticker])
+        zone = zone_of(price, sheet["bands"])
+        guide_status, guide_raw = guide_status_of(sheet)
+        t1 = t1_reader(client, ticker)
+        for book in books:
+            got = book_state(book)
+            if isinstance(got, Exception):
+                book_skips.append({"ticker": ticker, "book": book,
+                                   "reason": f"book_unreadable: "
+                                             f"{type(got).__name__}"})
+                continue
+            positions, equity = got
+            row = _evaluate_book(
+                client, sheet=sheet, ticker=ticker, book=book,
+                price=price, price_as_of=price_as_of,
+                zone=zone, guide_status=guide_status, guide_raw=guide_raw,
+                t1=t1, positions=positions, equity=equity,
+                scan_id=scan_id, scan_kind="watcher", mode=mode,
+                now=now, pc_runner=pc_runner,
+                snapshot_id=sheet.get("snapshot_id"), source="watcher")
+            if row is not None:
+                crossings.append(row)
+            state_rows += 1
+
+    summary = {"banded_names": evaluated, "state_rows": state_rows,
+               "skipped": skipped, "book_skips": book_skips}
+    if scan_id is not None:
+        client.table(SCANS).update({
+            "finished_at": now.isoformat(),
+            "sheets_watermark": watermark,
+            "crossings_written": len(crossings), **summary}) \
+            .eq("id", scan_id).execute()
+    return {"ran": True, "kind": "watcher", "mode": mode,
+            "crossings": crossings,
+            "crossings_written": len(crossings), **summary}
 
 
 # ── grading: the frozen falsifier computation ────────────────────────────────
@@ -465,6 +675,9 @@ def grade_crossings(client, ds, *, now: datetime | None = None) -> dict:
 def sheets_watermark(client) -> str | None:
     from tradehub.valuation import store as val_store
 
+    snap = val_store.latest_snapshot(client)
+    if snap is not None:
+        return str(snap["computed_at"]) if snap.get("computed_at") else None
     marks = [s.get("computed_at") for s in val_store.latest_sheets(client)]
     marks = [str(m) for m in marks if m]
     return max(marks) if marks else None
@@ -521,8 +734,23 @@ def read_surface(client, *, limit: int = 50) -> dict:
                         .select("action, score_20").execute().data) or []
         except Exception:  # noqa: BLE001
             all_rows = crossings
+    # Freshness (Round 2): the newest COMPLETED valuation snapshot rides
+    # beside the scan list, so the page can say plainly when the last scan
+    # predates the snapshot the rest of the page serves ("scan of #M --
+    # #N pending") instead of silently presenting a stale scan as current.
+    # The re-scan itself stays on the existing paths: the weekly scan and
+    # the watermark-driven event scan fire when the sheets watermark moves.
+    latest_snapshot_id = None
+    try:
+        from tradehub.valuation import store as _val_store
+
+        snap = _val_store.latest_snapshot(client)
+        latest_snapshot_id = snap["id"] if snap else None
+    except Exception:  # noqa: BLE001 -- pre-snapshot deployments read as unknown
+        latest_snapshot_id = None
     return {"mode": "orders_enabled" if enabled else "log_only",
             "orders_enabled": enabled,
             "falsifier": falsifier_summary(all_rows),
             "scans": scans,
-            "crossings": crossings}
+            "crossings": crossings,
+            "latest_snapshot_id": latest_snapshot_id}

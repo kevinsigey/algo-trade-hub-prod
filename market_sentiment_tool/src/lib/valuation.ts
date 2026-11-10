@@ -18,6 +18,8 @@ export interface GuideAnchor {
   mid: number;
   point_guide: boolean;
   consensus: number | null;
+  consensus_source?: string | null;
+  consensus_period?: string | null;
   recorded_at: string | null;
   accession: string | null;
 }
@@ -44,6 +46,18 @@ export interface GuidanceRecord {
   created_at: string | null;
 }
 
+/** The snapshot stamp on GET /api/valuation-bands (reliability pass F1):
+ * every figure on the page belongs to this one completed compute. Null
+ * only for pre-fix legacy data -- the page labels that state honestly. */
+export interface SnapshotStamp {
+  id: number;
+  computed_at: string | null;
+  completed_at: string | null;
+  sheet_count: number | null;
+  banded_count: number | null;
+  source: string | null;
+}
+
 export interface FactSheet {
   ticker: string;
   tier: string;
@@ -51,6 +65,11 @@ export interface FactSheet {
   band_basis: string; // eps | revenue
   price: number | string | null;
   price_as_of: string | null;
+  price_vendor?: string | null;
+  snapshot_id?: number | null;
+  guard_rejections?: string[] | null;
+  stale_reasons?: string[] | null;
+  ingest_notes?: string[] | null;
   peer_group: string | null;
   peer_multiple: number | string | null;
   peer_count: number | null;
@@ -71,9 +90,24 @@ export interface FactSheet {
   peer_members?: string[]; // detail endpoint only (read-side derivation)
 }
 
+/** The consensus period arrives as a yfinance relative tag ("0y", "+1y"):
+ * cryptic on the page, so render the human form. The tag DOES carry
+ * meaning -- which forecast year the consensus belongs to -- so it is
+ * translated, not dropped; an unknown tag passes through as recorded. */
+const CONSENSUS_PERIODS: Record<string, string> = {
+  "0y": "current year",
+  "+1y": "next year",
+  "0q": "current quarter",
+  "+1q": "next quarter",
+};
+
+export function consensusPeriodText(period: string | null | undefined): string | null {
+  if (!period) return null;
+  return CONSENSUS_PERIODS[period] ?? period;
+}
+
 /** PostgREST numerics arrive as strings; anything unparseable is missing. */
-export function num(v: number | string | null | undefined): number | null {
-  if (v == null) return null;
+export function num(v: number | string | null | undefined): number | null {  if (v == null) return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
@@ -190,6 +224,24 @@ export function gapText(gap: number | string | null): string {
   if (g == null) return "—";
   const sign = g > 0 ? "+" : g < 0 ? "−" : "";
   return `${sign}${Math.abs(g).toFixed(1)} guide widths`;
+}
+
+/**
+ * The gap as the table shows it (reliability pass F6): when the guide is
+ * a point or its width is under 1% of its midpoint, "range widths" is a
+ * division by almost-nothing and prints artifact numbers (PLTR +5262.9,
+ * ADBE −296.1) — render the honest "n/a (narrow guide)" instead.
+ */
+export function gapDisplay(sheet: FactSheet): string {
+  const a = sheet.anchor;
+  if (a) {
+    const lo = num(a.low), hi = num(a.high), mid = num(a.mid);
+    if (a.point_guide || (lo != null && hi != null && mid != null
+        && mid !== 0 && (hi - lo) < 0.01 * Math.abs(mid))) {
+      return "n/a (narrow guide)";
+    }
+  }
+  return gapText(sheet.gap_range_widths);
 }
 
 export function priceText(v: number | string | null): string {

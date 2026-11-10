@@ -67,6 +67,7 @@ const LLY = {
 const KO = {
   ...AMGN, ticker: "KO", status: "guide_rejected", bands: null, anchor: null,
   baseline_verdict: "no_bands", peer_group: "soft_drinks_and_non_alcoholic_beverages",
+  guard_rejections: ["eps_adjusted FY2026: guide midpoint 9.00 is 2.69x the recorded consensus 3.34 -- rejected"],
   falsifier: "No band to falsify: KO has no usable full-year guide on record on either basis (EPS or revenue). The next recorded full-year guide creates the bands.",
   directions: { eps_adjusted: { period: "Full Year 2026", mid: 9.0,
     direction: "first", recorded_at: "2026-10-27T10:58:13+00:00" } },
@@ -96,7 +97,12 @@ function serve() {
       return new Response(JSON.stringify(AMGN_DETAIL), { status: 200 });
     }
     if (url.includes("/api/valuation-bands")) {
-      return new Response(JSON.stringify(SHEETS), { status: 200 });
+      return new Response(JSON.stringify({
+        snapshot: { id: 3, computed_at: "2026-11-10T03:44:00Z",
+          completed_at: "2026-11-10T03:50:00Z", sheet_count: 5,
+          banded_count: 3, source: "valuation_run" },
+        sheets: SHEETS,
+      }), { status: 200 });
     }
     return new Response("{}", { status: 200 });
   });
@@ -179,6 +185,36 @@ describe("Guidance tab", () => {
     expect(within(un).getAllByText(/no usable full-year guide on record/i).length).toBeGreaterThan(0);
   });
 
+  it("stamps the page with the snapshot id and its computed-at", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const stamp = await screen.findByTestId("snapshot-stamp");
+    expect(stamp).toHaveTextContent("Snapshot #3");
+    expect(stamp).toHaveTextContent("2026");
+    expect(stamp).toHaveTextContent("one consistent snapshot");
+  });
+
+  it("shows the guard's own reason for a rejected name, not the template", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const un = await screen.findByTestId("unbanded");
+    expect(await within(un).findByText(/2\.69x the recorded consensus/)).toBeInTheDocument();
+  });
+
+  it("renders the gap as n/a for a point guide", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const eps = await screen.findByTestId("basis-eps");
+    expect(await within(eps).findByText("n/a (narrow guide)")).toBeInTheDocument();
+  });
+
+  it("defines the stale zone in the legend", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const legend = await screen.findByTestId("zone-legend");
+    expect(legend).toHaveTextContent("Stale — zone held");
+  });
+
   it("expands a banded row into the band chart and the full fact sheet", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
@@ -195,5 +231,90 @@ describe("Guidance tab", () => {
     expect(await screen.findByText(/ABBV/)).toBeInTheDocument();
     expect(screen.getByText(/Falsified if AMGN guides/)).toBeInTheDocument();
     expect(screen.getByText("Biotechnology")).toBeInTheDocument();
+  });
+});
+
+describe("Guidance tab (Round 2 hygiene)", () => {
+  function serveSheets(sheets: unknown[], detail?: unknown) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (/\/api\/valuation-bands\/[A-Z]/.test(url) && detail) {
+        return new Response(JSON.stringify(detail), { status: 200 });
+      }
+      if (url.includes("/api/valuation-bands")) {
+        return new Response(JSON.stringify({
+          snapshot: { id: 3, computed_at: "2026-11-10T03:44:00Z",
+            completed_at: "2026-11-10T03:50:00Z",
+            sheet_count: sheets.length, banded_count: 3, source: "valuation_run" },
+          sheets,
+        }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders the guide percentile with a correct ordinal and a human consensus period", async () => {
+    const detail = { ...AMGN, guidance_percentile: 33,
+      anchor: { ...AMGN.anchor, consensus: 18.5,
+        consensus_source: "yfinance", consensus_period: "0y" },
+      peer_members: ["ABBV", "AMGN"] };
+    serveSheets([detail, CVS, LLY, KO, AAPL], detail);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const eps = await screen.findByTestId("basis-eps");
+    fireEvent.click(within(eps).getByRole("button", { name: /AMGN/ }));
+    expect(await screen.findByText(/33rd among guided peers/)).toBeInTheDocument();
+    expect(screen.queryByText(/33th/)).not.toBeInTheDocument();
+    expect(screen.getByText(/yfinance · current year/)).toBeInTheDocument();
+    expect(screen.queryByText(/· 0y/)).not.toBeInTheDocument();
+  });
+
+  it("pluralizes the zone summary without the stray article", async () => {
+    const hum = { ...CVS, ticker: "HUM" };
+    serveSheets([CVS, hum]);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const strip = await screen.findByTestId("valuation-summary");
+    expect(strip).toHaveTextContent("2 in buy zones");
+    expect(strip).not.toHaveTextContent("in a buy zones");
+  });
+
+  it("moves the band-chart price label off the axis row when it would collide", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const eps = await screen.findByTestId("basis-eps");
+    fireEvent.click(within(eps).getByRole("button", { name: /AMGN/ }));
+    const chart = await screen.findByTestId("band-chart-AMGN");
+    // AMGN's price ($460) sits far past the bull band ($318): its label is
+    // end-anchored onto the axis max label's ground. The strip must grow a
+    // second label row instead of overlapping (labels never overlap).
+    const strip = chart.querySelector("svg");
+    expect(strip?.getAttribute("viewBox")).toBe("0 0 680 74");
+  });
+
+  it("keeps the single-row strip when the price label clears the axis labels", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const eps = await screen.findByTestId("basis-eps");
+    fireEvent.click(within(eps).getByRole("button", { name: /CVS/ }));
+    const chart = await screen.findByTestId("band-chart-CVS");
+    expect(chart.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 680 58");
+  });
+
+  it("expands a not-banded name's guard reasons past the (+N more) tail", async () => {
+    const guarded = { ...KO, ticker: "GUARD", guard_rejections: [
+      "eps_adjusted FY2026: guide midpoint 9.00 is 2.69x the recorded consensus 3.34 -- rejected",
+      "revenue FY2026: guide midpoint is outside the sanity band -- rejected",
+      "eps_gaap FY2026: stale guide, superseded by a newer filing -- rejected",
+      "revenue FY2025: prior-year guide, not a forward anchor -- rejected",
+    ] };
+    serveSheets([AMGN, CVS, LLY, guarded, AAPL]);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    expect(await screen.findByText(/2\.69x the recorded consensus/)).toBeInTheDocument();
+    // All four reasons are on the page (behind the expandable tail), not
+    // summarized away behind a "(+2 more)" dead end.
+    expect(screen.getByText(/stale guide, superseded/)).toBeInTheDocument();
+    expect(screen.getByText(/prior-year guide, not a forward anchor/)).toBeInTheDocument();
+    expect(screen.getByText(/\+2 more/)).toBeInTheDocument();
   });
 });

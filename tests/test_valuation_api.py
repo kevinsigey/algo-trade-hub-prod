@@ -64,10 +64,16 @@ def _client(monkeypatch):
 
 
 def test_list_returns_latest_per_ticker(monkeypatch):
+    # Reliability pass F1: the payload is a stamped envelope -- one
+    # snapshot's sheets, never a bare list. The stub has no completed
+    # snapshot, so the stamp is null (legacy fallback, honestly labeled)
+    # and the sheets are the latest-per-ticker rows.
     client = _client(monkeypatch)
     r = client.get("/api/valuation-bands")
     assert r.status_code == 200
-    rows = r.json()
+    body = r.json()
+    assert body["snapshot"] is None
+    rows = body["sheets"]
     assert [x["ticker"] for x in rows] == ["AMGN", "GILD"]
     assert rows[0]["baseline_verdict"] == "buy_zone"  # newest AMGN row wins
 

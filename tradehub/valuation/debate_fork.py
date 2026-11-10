@@ -152,12 +152,21 @@ def validate_packet(raw, ex: dict) -> dict:
     }
 
 
-def run_debate(ex: dict, *, chat) -> dict:
+def run_debate(ex: dict, *, chat, context_md: str | None = None) -> dict:
     """One forked debate over Exhibit A. chat(system, user, schema=None) ->
     (content, model_id), the valuation llm module's contract. Returns the
     bull/bear prose and the validated packet. PacketInvalid propagates (the
-    caller logs a void verdict); LLMUnavailable likewise."""
+    caller logs a void verdict); LLMUnavailable likewise.
+
+    context_md (Batch 2) is the RECORDED context that brought the name to
+    the debate — screen memberships, its band zone, its print
+    classification — appended after Exhibit A under its own heading. It
+    is context, not exhibit: packet validation still checks every choice
+    price against Exhibit A alone, so context can inform the argument but
+    can never mint a number the verdict is priced on."""
     exhibit_md = exhibit_mod.render_markdown(ex)
+    if context_md:
+        exhibit_md = f"{exhibit_md}\n\n{context_md}"
     bull, _m1 = chat(BULL_SYSTEM,
                      f"{exhibit_md}\n\nWrite the bull case.", schema=None)
     bear, _m2 = chat(BEAR_SYSTEM,

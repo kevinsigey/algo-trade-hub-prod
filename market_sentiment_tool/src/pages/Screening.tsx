@@ -3,16 +3,68 @@ import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, ChevronDown, Loader2, Plus, Trophy, X } from "lucide-react";
 
 import { adminJson, type ScreenRow } from "@/lib/workshop";
+import { ctDateTimeYear } from "@/lib/format";
+import { VerdictChipLine } from "@/components/VerdictChip";
+import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
   OP_LABELS, PRESETS, UNIVERSES, specFromState, trayFromSpec,
-  type CardFn, type Catalog, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
+  type CardFn, type Catalog, type NearMiss, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
 } from "@/lib/screening";
+
+export function survivorText(n: number): string {
+  return `${n} survivor${n === 1 ? "" : "s"}`;
+}
+
+/** Plain words for a universe the buttons cannot express (a loaded saved
+ * spec's union / wrapper chain), so the page says what will actually run. */
+export function universeWords(u: ScreenSpec["universe"]): string {
+  if (!u) return "the saved universe";
+  if (u.type === "common_equity") {
+    return `common equities only · ${universeWords(u.base as ScreenSpec["universe"])}`;
+  }
+  if (u.type === "sector") return universeWords(u.base as ScreenSpec["universe"]);
+  if (u.type === "index_union") {
+    const names: Record<string, string> = { sp500: "S&P 500", nasdaq100: "Nasdaq-100",
+                                            nasdaq_all: "all US listed" };
+    return `${(u.indexes ?? []).map((i) => names[i] ?? i).join(" + ")} union`;
+  }
+  if (u.type === "index") return u.index ?? "an index";
+  if (u.type === "list") return `${u.tickers?.length ?? 0} saved tickers`;
+  return u.type;
+}
 
 function fmtCell(v: unknown): string {
   if (v == null) return "—";
   if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 })
     : v.toLocaleString("en-US", { maximumFractionDigits: 3 });
   return String(v);
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-11-10" (or an ISO timestamp) -> "Nov 10", by string split — no Date
+ * object, so no timezone can shift the day. */
+function fmtDay(iso: string): string {
+  const [, m, d] = (iso ?? "").slice(0, 10).split("-").map(Number);
+  return m >= 1 && m <= 12 && d >= 1 ? `${MONTHS[m - 1]} ${d}` : iso;
+}
+
+/** The right-hand side of a near-miss comparison: "< 7", "≥ 20", "between 3–5". */
+function cmpText(op: string, thr: unknown): string {
+  const v = Array.isArray(thr) ? thr.map((x) => fmtCell(x)).join("–") : fmtCell(thr);
+  switch (op) {
+    case "lt": return `< ${v}`;
+    case "le": return `≤ ${v}`;
+    case "gt": return `> ${v}`;
+    case "ge": return `≥ ${v}`;
+    case "eq": return `= ${v}`;
+    case "ne": return `≠ ${v}`;
+    case "between": return `between ${v}`;
+    case "pct_gte": case "pct_ge": return `top slice ≥ ${v}%`;
+    case "pct_lte": case "pct_le": return `bottom slice ≤ ${v}%`;
+    case "in": return `one of ${v}`;
+    default: return `${op} ${v}`;
+  }
 }
 
 /** Screening: describe it or build it from filter cards (the prototype's
@@ -58,6 +110,97 @@ function PriceChart({ closes }: { closes: { date: string; close: number }[] }) {
   );
 }
 
+/** The stored record exactly as the single-screen read returns it: the
+ * raw last_run payload (footer + columns + rows), not the list view's
+ * counts-only summary shape. */
+interface StoredRunRecord {
+  footer?: { run_at?: string | null; survivors?: number | null;
+             displayed?: number | null; data_as_of?: string | null;
+             columns?: Record<string, { fn?: string }> };
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  survivors?: string[];
+}
+
+type RecordedState = { status: "loading" | "ready" | "error"; run?: StoredRunRecord | null };
+
+/** Round 4: a saved run's recorded results, rendered from the record
+ * itself. Read-only by construction -- this component only ever receives
+ * fetched data. A record from before row-keeping holds counts only and
+ * says so, rather than reconstructing rows it never stored. */
+function RecordedRunView({ state, chips, unitFor }: {
+  state: RecordedState | undefined;
+  chips: Record<string, VerdictChip>;
+  unitFor: Map<string, string>;
+}) {
+  if (!state || state.status === "loading")
+    return <p className="text-xs text-slate-500">Loading the recorded run…</p>;
+  if (state.status === "error")
+    return <p className="text-xs text-rose-300">Could not load the recorded run.</p>;
+  const run = state.run;
+  const rows = run?.rows;
+  if (!rows || rows.length === 0) {
+    return (
+      <p className="text-xs text-slate-500">
+        This run&apos;s row values were not kept — the record holds counts only
+        (runs recorded before row-keeping). Re-run re-executes the screen and
+        records its rows.
+      </p>
+    );
+  }
+  const columns = run?.columns ?? Object.keys(rows[0]);
+  const f = run?.footer ?? {};
+  return (
+    <div>
+      <p className="text-xs text-slate-500">
+        recorded {f.run_at ? ctDateTimeYear(f.run_at) : "—"}
+        {f.survivors != null && <> · {survivorText(f.survivors)}</>}
+        {f.displayed != null && f.survivors != null && f.displayed < f.survivors && (
+          <span className="text-amber-300"> · showing {f.displayed} of {f.survivors} recorded rows (the run&apos;s display limit)</span>
+        )}
+        {f.data_as_of && <> · data as of {String(f.data_as_of).replace("T", " ").slice(0, 16)}</>}
+        {" "}· read from the record — nothing re-ran
+      </p>
+      <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800">
+        <table className="w-full min-w-[480px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
+              {columns.map((c) => {
+                const unit = unitFor.get(f.columns?.[c]?.fn ?? c.split("(")[0]);
+                return (
+                  <th key={c} className="px-3 py-2">
+                    {c}
+                    {unit && <span className="normal-case text-slate-500"> ({unit})</span>}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const t = String(r.ticker);
+              return (
+                <tr key={t} className="border-b border-slate-800/70">
+                  {columns.map((c) => (
+                    <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
+                      {c === "ticker" ? (
+                        <span>
+                          <span className="font-mono font-medium text-white">{t}</span>
+                          <VerdictChipLine chip={chips[t]} ticker={t} />
+                        </span>
+                      ) : fmtCell(r[c])}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Screening() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [query, setQuery] = useState("");
@@ -76,6 +219,20 @@ export default function Screening() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ ticker: string; data?: QuotePayload; error?: string } | null>(null);
   const [screens, setScreens] = useState<ScreenRow[] | null>(null);
+  /** The parts of a loaded saved spec the card builder cannot express
+   * (a union/wrapped universe, max_universe, membership_diff, its sort):
+   * carried verbatim into the composed spec until the user picks a
+   * universe button, which replaces them. Without this, loading a saved
+   * classic screen silently rebuilt it as {index: sp500} under the
+   * default cap -- the loaded screen was not the saved screen. Round 3:
+   * the saved screen's own result limit rides along too (null = it has
+   * none) -- the builder's "show top" default of 25 must never leak into
+   * a loaded screen's run, where it masqueraded as the cohort count. */
+  const [carried, setCarried] = useState<{
+    universe: ScreenSpec["universe"]; max_universe?: number;
+    membership_diff?: boolean; sort?: ScreenSpec["sort"]; description?: string;
+    limit: number | null;
+  } | null>(null);
   const [dName, setDName] = useState("");
   const [dA, setDA] = useState("");
   const [dB, setDB] = useState("");
@@ -91,6 +248,37 @@ export default function Screening() {
   const numericFields = useMemo(
     () => (catalog?.functions ?? []).filter((f) => f.kind === "field" && f.returns !== "str"),
     [catalog]);
+  /** Field units from the catalog's own returns vocabulary (pct -> %, x -> ×):
+   * results tables carried bare numbers until the classic-screens audit. */
+  const unitFor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of catalog?.functions ?? []) {
+      if (f.returns === "pct") m.set(f.name, "%");
+      else if (f.returns === "x") m.set(f.name, "×");
+    }
+    return m;
+  }, [catalog]);
+  const labelForFn = useMemo(() => new Map(cards.map((c) => [c.fn, c.label])), [cards]);
+  const colUnit = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const c of result?.columns ?? []) {
+      const fn = result?.footer.columns?.[c]?.fn ?? c.split("(")[0];
+      const u = unitFor.get(fn);
+      if (u) out[c] = u;
+    }
+    return out;
+  }, [result, unitFor]);
+  /** The missing-data record, grouped per ticker with its fields — the old
+   * render was a wall of repeated field names with no tickers or counts. */
+  const missingByTicker = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const m of result?.footer.missing ?? []) {
+      const arr = map.get(m.ticker) ?? [];
+      if (!arr.includes(m.field)) arr.push(m.field);
+      map.set(m.ticker, arr);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [result]);
 
   useEffect(() => {
     if (!openRow) { setQuote(null); return; }
@@ -102,15 +290,35 @@ export default function Screening() {
     return () => { live = false; };
   }, [openRow ]);
 
+  const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+  const [recordedOpen, setRecordedOpen] = useState<Record<number, boolean>>({});
+  const [recorded, setRecorded] = useState<Record<number, RecordedState>>({});
+
   const loadScreens = () => adminJson<ScreenRow[]>("/api/screening/screens").then(setScreens).catch(() => setScreens([]));
   useEffect(() => {
     adminJson<Catalog>("/api/screening/catalog").then(setCatalog).catch(() => setCatalog(null));
     loadScreens();
+    // Verdict chips ride beside the results: the debate judgment sits
+    // with the name on this page too, not only in a debates corner.
+    adminJson<ChipsPayload>("/api/verdict-chips")
+      .then((env) => { if (env?.chips) setChips(env.chips); })
+      .catch(() => { /* absence renders as "No debate verdict yet" */ });
   }, []);
 
-  const spec = useMemo(
-    () => specFromState({ name, universeId, customTickers, tray, derived, score, limit: limitN }),
-    [name, universeId, customTickers, tray, derived, score, limitN]);
+  const spec = useMemo(() => {
+    const base = specFromState({ name, universeId, customTickers, tray, derived, score, limit: limitN });
+    if (!carried) return base;
+    const out: ScreenSpec = { ...base, universe: carried.universe };
+    if (carried.max_universe != null) out.max_universe = carried.max_universe;
+    if (carried.membership_diff != null) out.membership_diff = carried.membership_diff;
+    if (carried.description != null) out.description = carried.description;
+    if (carried.sort && !base.sort) out.sort = carried.sort;
+    // The saved screen's own limit governs its card runs -- including
+    // "no limit", which deletes the builder's show-top value outright.
+    if (carried.limit == null) delete out.limit;
+    else out.limit = carried.limit;
+    return out;
+  }, [name, universeId, customTickers, tray, derived, score, limitN, carried]);
 
   const act = async (label: string, fn: () => Promise<void>) => {
     setBusy(label); setError(null); setNotice(null);
@@ -123,8 +331,23 @@ export default function Screening() {
     setTray(t); setScore(s); setDerived(d);
     if (sp.name) setName(sp.name);
     const u = sp.universe;
-    if (u?.type === "index" && u.index && UNIVERSES.some((x) => x.id === u.index)) setUniverseId(u.index);
-    else if (u?.type === "list") { setUniverseId("custom"); setCustomTickers((u.tickers ?? []).join(" ")); }
+    if (u?.type === "index" && u.index && UNIVERSES.some((x) => x.id === u.index)) {
+      setUniverseId(u.index);
+      setCarried(null);
+    } else if (u?.type === "list") {
+      setUniverseId("custom"); setCustomTickers((u.tickers ?? []).join(" "));
+      setCarried(null);
+    } else if (u) {
+      // A universe the buttons cannot express (union, common_equity, ...):
+      // carry it verbatim -- never fall through to the sp500 default.
+      setUniverseId("");
+      setCarried({ universe: u, max_universe: sp.max_universe,
+        membership_diff: sp.membership_diff, sort: sp.sort,
+        description: typeof sp.description === "string" ? sp.description : undefined,
+        limit: typeof sp.limit === "number" ? sp.limit : null });
+    } else {
+      setCarried(null);
+    }
     if (typeof sp.limit === "number") setLimitN(sp.limit);
     setResult(null);
     setNotice(note);
@@ -148,6 +371,7 @@ export default function Screening() {
         op: item.op, value: item.value });
     }
     setTray(items);
+    setCarried(null);
     const sc = preset.scoreCard ? byCardId.get(preset.scoreCard) : undefined;
     setScore(sc ? [{ fn: sc.fn, params: sc.params, label: sc.label, weight: 1,
                      direction: preset.scoreDirection ?? "high" }] : []);
@@ -170,6 +394,20 @@ export default function Screening() {
     setResult(d); setSort(null); setOpenRow(null);
   });
 
+  /** Round 4: view a saved run's RECORDED results -- a pure read of the
+   * stored record (the single-screen GET). It never runs the screen;
+   * Re-run stays the only re-execution path. */
+  const toggleRecorded = (sc: ScreenRow) => {
+    const open = !recordedOpen[sc.id];
+    setRecordedOpen((m) => ({ ...m, [sc.id]: open }));
+    if (!open || recorded[sc.id]) return;
+    setRecorded((m) => ({ ...m, [sc.id]: { status: "loading" } }));
+    adminJson<{ last_run?: StoredRunRecord | null }>(`/api/screening/screens/${sc.id}`)
+      .then((row) => setRecorded((m) => ({
+        ...m, [sc.id]: { status: "ready", run: row.last_run ?? null } })))
+      .catch(() => setRecorded((m) => ({ ...m, [sc.id]: { status: "error" } })));
+  };
+
   const runSaved = (sc: ScreenRow) => act("run", async () => {
     const d = await adminJson<RunPayload>(`/api/screening/screens/${sc.id}/run`, { method: "POST", body: "{}" });
     applySpec(sc.spec as ScreenSpec, `Re-ran saved screen "${sc.name}".`);
@@ -178,12 +416,15 @@ export default function Screening() {
   });
 
   const save = () => act("save", async () => {
-    const last = result ? { footer: result.footer, columns: result.columns,
-                            survivors: result.rows.map((r) => String(r.ticker)) } : undefined;
+    // Round 3: a save stores the SPEC only. Builder runs are ad-hoc --
+    // they never become a screen's recorded run or membership baseline;
+    // only the saved-screen run path (Re-run) writes those. Pre-fix, the
+    // builder's current (possibly display-truncated) result rode along
+    // as the new screen's last_run.
     await adminJson("/api/screening/screens", { method: "POST",
-      body: JSON.stringify({ spec, name, last_run: last }) });
+      body: JSON.stringify({ spec, name }) });
     loadScreens();
-    setNotice("Screen saved -- it re-runs exactly as built, and promotes once into a tracked idea.");
+    setNotice("Screen saved -- use Re-run on the saved screen to record a run; it promotes once into a tracked idea.");
   });
 
   const promote = (sc: ScreenRow) => act("promote", async () => {
@@ -263,9 +504,20 @@ export default function Screening() {
           <p className="text-sm text-slate-400">
             <span className="font-medium text-slate-200">{result.footer.spec_name ?? "screen"}</span>
             {" "}· ran {result.footer.run_at?.replace("T", " ").slice(0, 16)} UTC · universe {result.footer.universe_size ?? "?"}
-            {" "}· <span className="text-slate-200">{result.footer.survivors ?? result.rows.length} survivors</span>
+            {" "}· <span className="text-slate-200">{survivorText(result.footer.survivors ?? result.rows.length)}</span>
+            {result.footer.survivor_issuers != null
+              && result.footer.survivor_issuers !== (result.footer.survivors ?? result.rows.length) && (
+              <span> · {result.footer.survivor_issuers} issuer{result.footer.survivor_issuers === 1 ? "" : "s"}</span>
+            )}
+            {result.footer.displayed != null && result.footer.survivors != null
+              && result.footer.displayed < result.footer.survivors && (
+              <span className="text-amber-300"> · showing {result.footer.displayed} of {result.footer.survivors}</span>
+            )}
             {result.footer.universe_capped && (
-              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names</span>
+              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names — the first {result.footer.universe_capped.cap} in sorted ticker order</span>
+            )}
+            {!result.footer.universe_capped && result.footer.universe_selection && (
+              <span> · {result.footer.universe_selection}</span>
             )}
             {result.footer.data_as_of && <> · data as of {result.footer.data_as_of.replace("T", " ").slice(0, 16)} UTC</>}
             {" "}· click a column to sort, a row for its quote and provenance
@@ -278,6 +530,7 @@ export default function Screening() {
                     <th key={c} className="px-3 py-2">
                       <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-slate-200">
                         {c}
+                        {colUnit[c] && <span className="normal-case text-slate-500">({colUnit[c]})</span>}
                         {sort?.col === c && (sort.dir === 1
                           ? <ArrowUp className="h-3 w-3" aria-hidden="true" />
                           : <ArrowDown className="h-3 w-3" aria-hidden="true" />)}
@@ -297,10 +550,13 @@ export default function Screening() {
                         {result.columns.map((c) => (
                           <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
                             {c === "ticker" ? (
-                              <span className="flex items-center gap-2 font-mono font-medium text-white">
-                                {t}
-                                {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
-                                  <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
+                              <span>
+                                <span className="flex items-center gap-2 font-mono font-medium text-white">
+                                  {t}
+                                  {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                    <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
+                                </span>
+                                <VerdictChipLine chip={chips[t]} ticker={t} />
                               </span>
                             ) : fmtCell(r[c])}
                           </td>
@@ -348,10 +604,23 @@ export default function Screening() {
               </tbody>
             </table>
           </div>
-          {result.footer.missing && result.footer.missing.length > 0 && (
-            <p className="mt-2 text-xs text-slate-500">
-              Missing data (fails its filter, never zero): {result.footer.missing.map((m) => m.field).join(", ")}
-            </p>
+          {missingByTicker.length > 0 && (
+            <div className="mt-2 text-xs text-slate-500">
+              <p>
+                Missing data (fails its filter, never zero): {missingByTicker.length} names ·{" "}
+                {result.footer.missing?.length ?? 0} field gaps
+              </p>
+              <details className="mt-1">
+                <summary className="cursor-pointer hover:text-slate-300">Per-ticker record</summary>
+                <ul className="mt-1 space-y-0.5">
+                  {missingByTicker.map(([t, fields]) => (
+                    <li key={t}>
+                      <span className="font-mono text-slate-400">{t}</span> — {fields.join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </div>
           )}
         </section>
       )}
@@ -361,11 +630,20 @@ export default function Screening() {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Universe</h2>
         <div className="mt-2 flex flex-wrap gap-2">
           {UNIVERSES.map((u) => (
-            <button key={u.id} type="button" onClick={() => setUniverseId(u.id)} aria-pressed={universeId === u.id}
+            <button key={u.id} type="button" onClick={() => { setUniverseId(u.id); setCarried(null); }} aria-pressed={universeId === u.id}
               className={`rounded-xl border px-3.5 py-2 text-left ${universeId === u.id
                 ? "border-emerald-400/70 bg-emerald-500/10" : "border-slate-700 bg-slate-900/60 hover:border-slate-500"}`}>
               <span className="block text-sm font-medium text-slate-100">{u.label}</span>
               <span className="block text-xs text-slate-500">{u.note}</span>
+              {(() => {
+                const r = catalog?.universe_refresh?.[u.id];
+                return (
+                  <span className="block text-xs text-slate-600">
+                    {r ? `refreshed ${ctDateTimeYear(r.as_of)} · ${r.source} · ${r.count} names`
+                        : "bundled proxy — not yet refreshed"}
+                  </span>
+                );
+              })()}
             </button>
           ))}
           {universeId === "custom" && (
@@ -373,6 +651,15 @@ export default function Screening() {
               placeholder="AAPL MSFT NVDA ..." className="min-w-56 flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-white placeholder:text-slate-500" />
           )}
         </div>
+        {carried && (
+          <p className="mt-2 text-xs text-amber-200/90">
+            Loaded universe: {universeWords(carried.universe)} — carried from the saved screen, so
+            running or re-saving keeps it. Pick a universe above to replace it.
+            {carried.limit == null
+              ? " The saved screen has no result limit of its own, so a run returns its full cohort — the builder's show-top does not apply."
+              : ` The saved screen's own result limit (${carried.limit}) applies to its runs.`}
+          </p>
+        )}
       </section>
 
       <section aria-label="Your screen" className="mt-6 rounded-2xl border border-slate-700/80 bg-slate-900/50 p-4">
@@ -480,7 +767,10 @@ export default function Screening() {
           {PRESETS.map((p) => (
             <button key={p.id} type="button" onClick={() => applyPreset(p.id)}
               className="rounded-xl border border-slate-800 bg-slate-900/60 px-3.5 py-3 text-left hover:border-slate-500">
-              <span className="block text-sm font-medium text-slate-100">{p.name}</span>
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-100">
+                {p.name}
+                <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">Preset</span>
+              </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">{p.blurb}</span>
             </button>
           ))}
@@ -560,19 +850,90 @@ export default function Screening() {
           {(screens ?? []).map((sc) => (
             <li key={sc.id} className="rounded-lg border border-slate-800 px-3 py-2.5 text-sm">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="font-medium text-slate-200">{sc.name}</span>
+                <span className="flex items-center gap-2 font-medium text-slate-200">
+                  {sc.name}
+                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Saved</span>
+                </span>
                 {sc.promoted_idea_id
                   ? <Link to={`/workshop/${sc.promoted_idea_id}`} className="text-xs text-emerald-300 hover:underline">tracked idea →</Link>
                   : <span className="text-xs text-slate-500">not promoted</span>}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {sc.last_run ? `last run ${sc.last_run.run_at?.slice(0, 10) ?? ""} · ${sc.last_run.survivors ?? 0} survivors` : "not run yet"}
+                {sc.last_run
+                  ? `last run ${sc.last_run.run_at ? ctDateTimeYear(sc.last_run.run_at) : "—"}`
+                    + ` · ${survivorText(sc.last_run.survivors ?? 0)}`
+                    + (sc.last_run.survivor_issuers != null && sc.last_run.survivors != null
+                        && sc.last_run.survivor_issuers !== sc.last_run.survivors
+                        ? ` · ${sc.last_run.survivor_issuers} issuer${sc.last_run.survivor_issuers === 1 ? "" : "s"}` : "")
+                    + (sc.last_run.data_as_of ? ` · data as of ${sc.last_run.data_as_of}` : "")
+                    + (sc.last_run.column_sources && Object.keys(sc.last_run.column_sources).length
+                        ? ` · sources: ${Object.entries(sc.last_run.column_sources)
+                            .map(([c, s]) => `${c} (${s})`).join(", ")}`
+                        : sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
+                  : "not run yet"}
               </div>
+              {sc.membership?.tracked_since && (
+                <div className="mt-1 text-xs text-slate-500">
+                  membership tracked since {fmtDay(sc.membership.tracked_since)}
+                  {(!sc.membership_events || sc.membership_events.length === 0) && " · no entrances or exits yet"}
+                </div>
+              )}
+              {(sc.membership_events ?? []).length > 0 && (
+                <ul className="mt-1 space-y-0.5 text-xs">
+                  {[...(sc.membership_events ?? [])].slice(-6).reverse().map((e, i) => (
+                    <li key={`${e.ticker}-${e.date}-${e.kind}-${i}`}
+                        className={e.kind === "entered" ? "text-emerald-300/90" : "text-rose-300/90"}>
+                      <span className="font-mono font-medium">{e.tickers && e.tickers.length > 1 ? e.tickers.join(" + ") : e.ticker}</span>
+                      {e.kind === "entered"
+                        ? ` entered · ${fmtDay(e.date)}`
+                        : ` exited · was member since ${fmtDay(e.since ?? e.date)}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(sc.last_run?.near_misses ?? []).length > 0 && (
+                <div className="mt-1 text-xs text-slate-500">
+                  Near misses — one filter away ({(sc.last_run?.near_miss_count ?? 0) > (sc.last_run?.near_misses?.length ?? 0)
+                    ? `${sc.last_run?.near_misses?.length} closest of ${sc.last_run?.near_miss_count}`
+                    : (sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length)}):
+                  <ul className="mt-0.5 space-y-0.5">
+                    {(sc.last_run?.near_misses ?? []).slice(0, 6).map((n: NearMiss) => (
+                      <li key={`${n.ticker}-${n.column}`}>
+                        <span className="font-mono text-slate-300">{n.ticker}</span>
+                        {" — "}{labelForFn.get(n.fn) ?? n.column} {fmtCell(n.value)}
+                        {unitFor.get(n.fn) ? ` ${unitFor.get(n.fn)}` : ""} vs {cmpText(n.op, n.threshold)}
+                      </li>
+                    ))}
+                  </ul>
+                  {(sc.last_run?.near_misses?.length ?? 0) > 6 && (
+                    <details>
+                      <summary className="cursor-pointer hover:text-slate-300">
+                        {(sc.last_run?.near_miss_count ?? 0) > (sc.last_run?.near_misses?.length ?? 0)
+                          ? `all ${sc.last_run?.near_misses?.length} stored near misses`
+                          : `all ${sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length} near misses`}
+                      </summary>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {(sc.last_run?.near_misses ?? []).slice(6).map((n: NearMiss) => (
+                          <li key={`${n.ticker}-${n.column}`}>
+                            <span className="font-mono text-slate-300">{n.ticker}</span>
+                            {" — "}{labelForFn.get(n.fn) ?? n.column} {fmtCell(n.value)}
+                            {unitFor.get(n.fn) ? ` ${unitFor.get(n.fn)}` : ""} vs {cmpText(n.op, n.threshold)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <button type="button" onClick={() => applySpec(sc.spec as ScreenSpec, `Loaded saved screen "${sc.name}" into the cards.`)}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Load into cards</button>
                 <button type="button" onClick={() => runSaved(sc)} disabled={!!busy}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500 disabled:opacity-50">Re-run</button>
+                {sc.last_run && (
+                  <button type="button" onClick={() => toggleRecorded(sc)}
+                    className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Recorded results</button>
+                )}
                 {!sc.promoted_idea_id && sc.last_run && (
                   <button type="button" onClick={() => promote(sc)} disabled={!!busy}
                     className="rounded-md border border-emerald-600/60 px-2 py-1 text-emerald-300 hover:border-emerald-400 disabled:opacity-50">Promote to tracked idea</button>
@@ -580,12 +941,18 @@ export default function Screening() {
                 <button type="button" onClick={() => remove(sc)} disabled={!!busy}
                   className="rounded-md border border-slate-700 px-2 py-1 text-slate-400 hover:border-rose-400 hover:text-rose-300 disabled:opacity-50">Delete</button>
               </div>
+              {recordedOpen[sc.id] && (
+                <div className="mt-2">
+                  <RecordedRunView state={recorded[sc.id]} chips={chips} unitFor={unitFor} />
+                </div>
+              )}
             </li>
           ))}
         </ul>
         <details className="mt-4">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400">
             Full catalog ({catalog?.functions.length ?? 0} functions, reference)
+            {catalog?.computed_at ? ` · computed ${catalog.computed_at.replace("T", " ").slice(0, 16)} UTC` : ""}
           </summary>
           <ul className="mt-3 space-y-2 text-sm">
             {(catalog?.functions ?? []).map((f) => (

@@ -40,18 +40,33 @@ def _series(tickers, values):
     return pd.Series(values, index=pd.Index(tickers, name="ticker"), dtype="float64")
 
 
-def _info_field(store, tickers, key, fname):
+def _info_field(store, tickers, key, fname, sentinel: str | None = None):
+    """One yfinance.info value per ticker. `sentinel` guards the multiples
+    where a non-positive number is missing data encoded as zero, not a
+    reading (Kevin, 2026-11-09: AEHL's trailing P/E of 0 passed Graham's
+    "P/E < 7" as its sole survivor): "positive" drops v <= 0, "nonnegative"
+    drops v < 0 (debt/equity, where exactly 0 is a real debt-free company).
+    The drop is logged as missing with the reason — missing fails its
+    filter, never reads as a number."""
     out = {}
     for t in tickers:
         v = store.info(t).get(key)
         if v is None:
             store.note_missing(t, fname, f"info field '{key}' absent")
             out[t] = np.nan
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            out[t] = np.nan
+            continue
+        if (sentinel == "positive" and v <= 0) or (sentinel == "nonnegative" and v < 0):
+            store.note_missing(t, fname, f"info field '{key}' is {v:g}: a non-positive "
+                                         f"value here is a sentinel for missing data, "
+                                         f"not a reading")
+            out[t] = np.nan
         else:
-            try:
-                out[t] = float(v)
-            except (TypeError, ValueError):
-                out[t] = np.nan
+            out[t] = v
     return _series(tickers, out)
 
 
@@ -119,7 +134,7 @@ def industry(store, tickers):
 @register("market_cap", "identity", {}, "usd",
           "Market capitalization, USD.", "yfinance.info")
 def market_cap(store, tickers):
-    return _info_field(store, tickers, "marketCap", "market_cap")
+    return _info_field(store, tickers, "marketCap", "market_cap", sentinel="positive")
 
 
 @register("price", "identity", {}, "usd",
@@ -163,32 +178,35 @@ def is_major_exchange(store, tickers):
 @register("pe_ratio", "valuation", {}, "x",
           "Trailing price/earnings multiple.", "yfinance.info")
 def pe_ratio(store, tickers):
-    return _info_field(store, tickers, "trailingPE", "pe_ratio")
+    return _info_field(store, tickers, "trailingPE", "pe_ratio", sentinel="positive")
 
 
 @register("forward_pe", "valuation", {}, "x",
           "Forward price/earnings multiple.", "yfinance.info")
 def forward_pe(store, tickers):
-    return _info_field(store, tickers, "forwardPE", "forward_pe")
+    return _info_field(store, tickers, "forwardPE", "forward_pe", sentinel="positive")
 
 
 @register("price_to_sales", "valuation", {}, "x",
           "Price / trailing-12-month sales.", "yfinance.info")
 def price_to_sales(store, tickers):
-    return _info_field(store, tickers, "priceToSalesTrailing12Months", "price_to_sales")
+    return _info_field(store, tickers, "priceToSalesTrailing12Months", "price_to_sales",
+                       sentinel="positive")
 
 
 @register("price_to_book", "valuation", {}, "x",
-          "Price / book value (quote field; can be negative when equity is).",
+          "Price / book value. A non-positive value (zero book data, or "
+          "negative equity) is missing data, not a cheap multiple.",
           "yfinance.info")
 def price_to_book(store, tickers):
-    return _info_field(store, tickers, "priceToBook", "price_to_book")
+    return _info_field(store, tickers, "priceToBook", "price_to_book", sentinel="positive")
 
 
 @register("ev_to_ebitda", "valuation", {}, "x",
           "Enterprise value / EBITDA.", "yfinance.info")
 def ev_to_ebitda(store, tickers):
-    return _info_field(store, tickers, "enterpriseToEbitda", "ev_to_ebitda")
+    return _info_field(store, tickers, "enterpriseToEbitda", "ev_to_ebitda",
+                       sentinel="positive")
 
 
 @register("dividend_yield", "valuation", {}, "pct",
@@ -234,7 +252,8 @@ def roe(store, tickers):
           "Total debt / equity (info convention: percent, returned here as x).",
           "yfinance.info")
 def debt_to_equity(store, tickers):
-    s = _info_field(store, tickers, "debtToEquity", "debt_to_equity")
+    s = _info_field(store, tickers, "debtToEquity", "debt_to_equity",
+                    sentinel="nonnegative")
     return s / 100.0
 
 
@@ -250,8 +269,13 @@ def lt_debt_to_equity(store, tickers):
                            "Long Term Debt", "LongTermDebt"))
         eq = _latest(_row(bal, "Total Equity Gross Minority Interest",
                           "Stockholders Equity", "Common Stock Equity"))
-        if np.isnan(ltd) or np.isnan(eq) or eq == 0:
+        if np.isnan(ltd) or np.isnan(eq):
             store.note_missing(t, "lt_debt_to_equity", "LT debt or equity row absent")
+            out[t] = np.nan
+        elif eq <= 0:
+            store.note_missing(t, "lt_debt_to_equity",
+                               f"total equity is {eq:g}: a leverage ratio on "
+                               f"non-positive equity is a sentinel, not low leverage")
             out[t] = np.nan
         else:
             out[t] = ltd / eq
@@ -261,7 +285,8 @@ def lt_debt_to_equity(store, tickers):
 @register("current_ratio", "fundamentals", {}, "x",
           "Current assets / current liabilities.", "yfinance.info")
 def current_ratio(store, tickers):
-    return _info_field(store, tickers, "currentRatio", "current_ratio")
+    return _info_field(store, tickers, "currentRatio", "current_ratio",
+                       sentinel="positive")
 
 
 @register("revenue_growth_yoy", "fundamentals", {}, "pct",
@@ -274,6 +299,95 @@ def revenue_growth_yoy(store, tickers):
           "Earnings growth, year over year, %.", "yfinance.info")
 def earnings_growth_yoy(store, tickers):
     return _info_field(store, tickers, "earningsGrowth", "earnings_growth_yoy") * 100.0
+
+
+def _stmt_growth(store, tickers, labels, lag, fname):
+    """% change of a quarterly income-statement row vs `lag` reported quarters
+    earlier. Unpopulated observations are skipped, not read as zero (yfinance
+    leaves the newest quarter's EPS row NaN until it populates). A non-positive
+    base makes the % change meaningless (a swing off a loss is not a growth
+    rate), so it is NaN plus a note -- never a number."""
+    out = {}
+    for t in tickers:
+        row = _row(_stmt(store, t)["income"], *labels)
+        vals = (pd.to_numeric(row, errors="coerce").dropna()
+                if row is not None else pd.Series(dtype=float))
+        if len(vals) <= lag:
+            store.note_missing(t, fname, f"only {len(vals)} reported quarters of {labels[0]}")
+            out[t] = np.nan
+            continue
+        latest, base = float(vals.iloc[0]), float(vals.iloc[lag])
+        if base <= 0:
+            store.note_missing(t, fname, f"base-period {labels[0]} is {base:g} (non-positive): "
+                                         "a % change on it is not a growth rate")
+            out[t] = np.nan
+        else:
+            out[t] = (latest / base - 1.0) * 100.0
+    return _series(tickers, out)
+
+
+@register("eps_growth_qoq", "fundamentals", {}, "pct",
+          "Diluted EPS growth vs the prior quarter, % (latest reported quarter; "
+          "NaN when the prior quarter's EPS was non-positive).",
+          "yfinance statements (quarterly income)")
+def eps_growth_qoq(store, tickers):
+    return _stmt_growth(store, tickers, ("Diluted EPS",), 1, "eps_growth_qoq")
+
+
+@register("eps_growth_yoy", "fundamentals", {}, "pct",
+          "Diluted EPS growth vs the same quarter a year ago, % (statement-based, "
+          "per-share -- distinct from the info field's earnings growth; NaN when "
+          "the year-ago quarter's EPS was non-positive).",
+          "yfinance statements (quarterly income)")
+def eps_growth_yoy(store, tickers):
+    return _stmt_growth(store, tickers, ("Diluted EPS",), 4, "eps_growth_yoy")
+
+
+@register("revenue_growth_qoq", "fundamentals", {}, "pct",
+          "Revenue growth vs the prior quarter, % (sequential, not seasonally "
+          "adjusted -- a December quarter reads high for seasonal names).",
+          "yfinance statements (quarterly income)")
+def revenue_growth_qoq(store, tickers):
+    return _stmt_growth(store, tickers, ("Total Revenue",), 1, "revenue_growth_qoq")
+
+
+@register("eps_growth_5y", "fundamentals", {}, "pct",
+          "Diluted EPS compound annual growth over the past ~5 fiscal years, "
+          "%/yr: (latest FY EPS / FY-5 EPS)^(1/years) - 1 on EDGAR annual "
+          "filings. NaN when either endpoint EPS is non-positive (a CAGR "
+          "across a loss base is not a growth rate) or no fiscal year sits "
+          "roughly five years back.",
+          "SEC EDGAR company facts")
+def eps_growth_5y(store, tickers):
+    from datetime import datetime, timedelta
+
+    out = {}
+    for t in tickers:
+        series = store.edgar_annual_series(t, "EarningsPerShareDiluted")
+        if not series or len(series) < 2:
+            store.note_missing(t, "eps_growth_5y",
+                               "fewer than two annual diluted-EPS filings on EDGAR")
+            out[t] = np.nan
+            continue
+        end_last, eps_last = series[-1]
+        last = datetime.fromisoformat(str(end_last)[:10])
+        target = last - timedelta(days=int(5 * 365.25))
+        end_old, eps_old = min(
+            series[:-1],
+            key=lambda p: abs((datetime.fromisoformat(str(p[0])[:10]) - target).days))
+        years = (last - datetime.fromisoformat(str(end_old)[:10])).days / 365.25
+        if abs(years - 5.0) > 1.0:
+            store.note_missing(t, "eps_growth_5y",
+                               f"nearest earlier fiscal year is {years:.1f}y back, not ~5y")
+            out[t] = np.nan
+        elif eps_old <= 0 or eps_last <= 0:
+            store.note_missing(t, "eps_growth_5y",
+                               f"endpoint EPS non-positive (FY-5 {eps_old:g}, latest {eps_last:g}): "
+                               "a CAGR across a loss base is not a growth rate")
+            out[t] = np.nan
+        else:
+            out[t] = ((eps_last / eps_old) ** (1.0 / years) - 1.0) * 100.0
+    return _series(tickers, out)
 
 
 @register("fcf_yield", "fundamentals", {}, "pct",

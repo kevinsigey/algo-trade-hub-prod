@@ -213,9 +213,76 @@ def _surprise(records: list[dict], now: datetime) -> float | None:
     return None
 
 
+def _fmt_guide_value(metric: str, value: float) -> str:
+    if metric == "revenue":
+        return f"${value / 1e9:.2f}B"
+    return f"{value:.2f}"
+
+
+def ingest_notes(records: list[dict], now: datetime) -> list[str]:
+    """Ingest-sanity notes for one name's records (reliability pass F3):
+    surface recorder artifacts AS artifacts, never as absent guidance.
+
+    Two named classes: (1) a full-year guide recorded as zero against a
+    real consensus -- an extraction parse failure (BKNG's FY2026 revenue
+    guide recorded $0.00B vs $28.61B consensus); (2) conflicting full-year
+    point guides for the same metric + period -- the signature of a
+    different period's figure ingested under the FY label (SO's FY2026
+    adjusted EPS recorded as both 4.40 and 1.94). Notes only: the records
+    themselves are never rewritten here."""
+    notes: list[str] = []
+    for rec in records:
+        period = rec.get("period") or ""
+        if not engine.is_full_year_period(period, now=now):
+            continue
+        low, high = rec.get("low"), rec.get("high")
+        cons = rec.get("consensus")
+        if (low is not None and high is not None and low == 0 and high == 0
+                and cons):
+            notes.append(
+                f"ingest parse failure: {rec.get('metric')} {period} guide "
+                f"recorded as {_fmt_guide_value(rec.get('metric'), 0.0)} "
+                f"against {_fmt_guide_value(rec.get('metric'), float(cons))} "
+                "consensus — guidance exists on the filing; the zero range "
+                "is an extraction artifact, not absent guidance")
+    by_key: dict[tuple, list[dict]] = {}
+    for rec in records:
+        period = rec.get("period") or ""
+        if not engine.is_full_year_period(period, now=now):
+            continue
+        low, high = rec.get("low"), rec.get("high")
+        if low is None or high is None or low != high or low <= 0:
+            continue
+        by_key.setdefault((rec.get("metric"), engine.period_key(period)),
+                          []).append(rec)
+    for (metric, pkey), rows in sorted(by_key.items()):
+        values = sorted({float(r["low"]) for r in rows}, reverse=True)
+        if len(values) < 2:
+            continue
+        top, other = values[0], values[1]
+        if other >= top * 0.99:
+            continue
+        notes.append(
+            f"conflicting full-year {metric} point guides on file for "
+            f"{pkey}: {_fmt_guide_value(metric, top)} vs "
+            f"{_fmt_guide_value(metric, other)} — one of these reads as a "
+            "different period's figure ingested under the full-year label; "
+            "the anchor takes the guard-passing latest")
+    return notes
+
+
 def compute(client, ds: DataStore, *, only: str | None = None,
-            dry_run: bool = False, now: datetime | None = None) -> list[dict]:
+            dry_run: bool = False, now: datetime | None = None,
+            source: str = "valuation_run") -> list[dict]:
     now = now or datetime.now(timezone.utc)
+    # Snapshot integrity (F1): a FULL compute opens a snapshot and stamps
+    # every sheet; readers serve the latest COMPLETED snapshot whole, so
+    # this run is invisible until its last sheet lands. Partial (--ticker)
+    # and dry runs never open one -- a one-name compute must not become
+    # the served snapshot.
+    snapshot_id = None
+    if only is None and not dry_run:
+        snapshot_id = store.begin_snapshot(client, now, source=source)
     grouped = store.all_records(client)
     tickers = [only] if only else sorted(grouped)
     sheets: list[dict] = []
@@ -269,9 +336,22 @@ def compute(client, ds: DataStore, *, only: str | None = None,
             sales_basis=sales_basis)
         sheet["peer_group"] = group
         sheet["inputs"]["peer_members_basis"] = basis
+        sheet["price_vendor"] = "Yahoo Finance"
+        sheet["ingest_notes"] = ingest_notes(records, now)
+        if snapshot_id is not None:
+            sheet["snapshot_id"] = snapshot_id
         if not dry_run:
             store.insert_sheet(client, sheet)
         sheets.append(sheet)
+    if snapshot_id is not None and not dry_run:
+        store.insert_history(client, [
+            store.history_row(s, snapshot_id=snapshot_id, computed_at=now)
+            for s in sheets])
+        store.complete_snapshot(
+            client, snapshot_id,
+            sheet_count=len(sheets),
+            banded_count=sum(1 for s in sheets if s.get("status") == "banded"),
+            completed_at=datetime.now(timezone.utc))
     return sheets
 
 
