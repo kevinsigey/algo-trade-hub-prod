@@ -276,6 +276,95 @@ def earnings_growth_yoy(store, tickers):
     return _info_field(store, tickers, "earningsGrowth", "earnings_growth_yoy") * 100.0
 
 
+def _stmt_growth(store, tickers, labels, lag, fname):
+    """% change of a quarterly income-statement row vs `lag` reported quarters
+    earlier. Unpopulated observations are skipped, not read as zero (yfinance
+    leaves the newest quarter's EPS row NaN until it populates). A non-positive
+    base makes the % change meaningless (a swing off a loss is not a growth
+    rate), so it is NaN plus a note -- never a number."""
+    out = {}
+    for t in tickers:
+        row = _row(_stmt(store, t)["income"], *labels)
+        vals = (pd.to_numeric(row, errors="coerce").dropna()
+                if row is not None else pd.Series(dtype=float))
+        if len(vals) <= lag:
+            store.note_missing(t, fname, f"only {len(vals)} reported quarters of {labels[0]}")
+            out[t] = np.nan
+            continue
+        latest, base = float(vals.iloc[0]), float(vals.iloc[lag])
+        if base <= 0:
+            store.note_missing(t, fname, f"base-period {labels[0]} is {base:g} (non-positive): "
+                                         "a % change on it is not a growth rate")
+            out[t] = np.nan
+        else:
+            out[t] = (latest / base - 1.0) * 100.0
+    return _series(tickers, out)
+
+
+@register("eps_growth_qoq", "fundamentals", {}, "pct",
+          "Diluted EPS growth vs the prior quarter, % (latest reported quarter; "
+          "NaN when the prior quarter's EPS was non-positive).",
+          "yfinance statements (quarterly income)")
+def eps_growth_qoq(store, tickers):
+    return _stmt_growth(store, tickers, ("Diluted EPS",), 1, "eps_growth_qoq")
+
+
+@register("eps_growth_yoy", "fundamentals", {}, "pct",
+          "Diluted EPS growth vs the same quarter a year ago, % (statement-based, "
+          "per-share -- distinct from the info field's earnings growth; NaN when "
+          "the year-ago quarter's EPS was non-positive).",
+          "yfinance statements (quarterly income)")
+def eps_growth_yoy(store, tickers):
+    return _stmt_growth(store, tickers, ("Diluted EPS",), 4, "eps_growth_yoy")
+
+
+@register("revenue_growth_qoq", "fundamentals", {}, "pct",
+          "Revenue growth vs the prior quarter, % (sequential, not seasonally "
+          "adjusted -- a December quarter reads high for seasonal names).",
+          "yfinance statements (quarterly income)")
+def revenue_growth_qoq(store, tickers):
+    return _stmt_growth(store, tickers, ("Total Revenue",), 1, "revenue_growth_qoq")
+
+
+@register("eps_growth_5y", "fundamentals", {}, "pct",
+          "Diluted EPS compound annual growth over the past ~5 fiscal years, "
+          "%/yr: (latest FY EPS / FY-5 EPS)^(1/years) - 1 on EDGAR annual "
+          "filings. NaN when either endpoint EPS is non-positive (a CAGR "
+          "across a loss base is not a growth rate) or no fiscal year sits "
+          "roughly five years back.",
+          "SEC EDGAR company facts")
+def eps_growth_5y(store, tickers):
+    from datetime import datetime, timedelta
+
+    out = {}
+    for t in tickers:
+        series = store.edgar_annual_series(t, "EarningsPerShareDiluted")
+        if not series or len(series) < 2:
+            store.note_missing(t, "eps_growth_5y",
+                               "fewer than two annual diluted-EPS filings on EDGAR")
+            out[t] = np.nan
+            continue
+        end_last, eps_last = series[-1]
+        last = datetime.fromisoformat(str(end_last)[:10])
+        target = last - timedelta(days=int(5 * 365.25))
+        end_old, eps_old = min(
+            series[:-1],
+            key=lambda p: abs((datetime.fromisoformat(str(p[0])[:10]) - target).days))
+        years = (last - datetime.fromisoformat(str(end_old)[:10])).days / 365.25
+        if abs(years - 5.0) > 1.0:
+            store.note_missing(t, "eps_growth_5y",
+                               f"nearest earlier fiscal year is {years:.1f}y back, not ~5y")
+            out[t] = np.nan
+        elif eps_old <= 0 or eps_last <= 0:
+            store.note_missing(t, "eps_growth_5y",
+                               f"endpoint EPS non-positive (FY-5 {eps_old:g}, latest {eps_last:g}): "
+                               "a CAGR across a loss base is not a growth rate")
+            out[t] = np.nan
+        else:
+            out[t] = ((eps_last / eps_old) ** (1.0 / years) - 1.0) * 100.0
+    return _series(tickers, out)
+
+
 @register("fcf_yield", "fundamentals", {}, "pct",
           "Free cash flow (TTM, from statements) / market cap, %.",
           "yfinance statements (quarterly cashflow) + info")
