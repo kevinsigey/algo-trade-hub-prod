@@ -131,10 +131,14 @@ export default function Screening() {
    * carried verbatim into the composed spec until the user picks a
    * universe button, which replaces them. Without this, loading a saved
    * classic screen silently rebuilt it as {index: sp500} under the
-   * default cap -- the loaded screen was not the saved screen. */
+   * default cap -- the loaded screen was not the saved screen. Round 3:
+   * the saved screen's own result limit rides along too (null = it has
+   * none) -- the builder's "show top" default of 25 must never leak into
+   * a loaded screen's run, where it masqueraded as the cohort count. */
   const [carried, setCarried] = useState<{
     universe: ScreenSpec["universe"]; max_universe?: number;
     membership_diff?: boolean; sort?: ScreenSpec["sort"]; description?: string;
+    limit: number | null;
   } | null>(null);
   const [dName, setDName] = useState("");
   const [dA, setDA] = useState("");
@@ -207,6 +211,10 @@ export default function Screening() {
     if (carried.membership_diff != null) out.membership_diff = carried.membership_diff;
     if (carried.description != null) out.description = carried.description;
     if (carried.sort && !base.sort) out.sort = carried.sort;
+    // The saved screen's own limit governs its card runs -- including
+    // "no limit", which deletes the builder's show-top value outright.
+    if (carried.limit == null) delete out.limit;
+    else out.limit = carried.limit;
     return out;
   }, [name, universeId, customTickers, tray, derived, score, limitN, carried]);
 
@@ -233,7 +241,8 @@ export default function Screening() {
       setUniverseId("");
       setCarried({ universe: u, max_universe: sp.max_universe,
         membership_diff: sp.membership_diff, sort: sp.sort,
-        description: typeof sp.description === "string" ? sp.description : undefined });
+        description: typeof sp.description === "string" ? sp.description : undefined,
+        limit: typeof sp.limit === "number" ? sp.limit : null });
     } else {
       setCarried(null);
     }
@@ -291,12 +300,15 @@ export default function Screening() {
   });
 
   const save = () => act("save", async () => {
-    const last = result ? { footer: result.footer, columns: result.columns,
-                            survivors: result.rows.map((r) => String(r.ticker)) } : undefined;
+    // Round 3: a save stores the SPEC only. Builder runs are ad-hoc --
+    // they never become a screen's recorded run or membership baseline;
+    // only the saved-screen run path (Re-run) writes those. Pre-fix, the
+    // builder's current (possibly display-truncated) result rode along
+    // as the new screen's last_run.
     await adminJson("/api/screening/screens", { method: "POST",
-      body: JSON.stringify({ spec, name, last_run: last }) });
+      body: JSON.stringify({ spec, name }) });
     loadScreens();
-    setNotice("Screen saved -- it re-runs exactly as built, and promotes once into a tracked idea.");
+    setNotice("Screen saved -- use Re-run on the saved screen to record a run; it promotes once into a tracked idea.");
   });
 
   const promote = (sc: ScreenRow) => act("promote", async () => {
@@ -380,6 +392,10 @@ export default function Screening() {
             {result.footer.survivor_issuers != null
               && result.footer.survivor_issuers !== (result.footer.survivors ?? result.rows.length) && (
               <span> · {result.footer.survivor_issuers} issuer{result.footer.survivor_issuers === 1 ? "" : "s"}</span>
+            )}
+            {result.footer.displayed != null && result.footer.survivors != null
+              && result.footer.displayed < result.footer.survivors && (
+              <span className="text-amber-300"> · showing {result.footer.displayed} of {result.footer.survivors}</span>
             )}
             {result.footer.universe_capped && (
               <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names — the first {result.footer.universe_capped.cap} in sorted ticker order</span>
@@ -520,6 +536,9 @@ export default function Screening() {
           <p className="mt-2 text-xs text-amber-200/90">
             Loaded universe: {universeWords(carried.universe)} — carried from the saved screen, so
             running or re-saving keeps it. Pick a universe above to replace it.
+            {carried.limit == null
+              ? " The saved screen has no result limit of its own, so a run returns its full cohort — the builder's show-top does not apply."
+              : ` The saved screen's own result limit (${carried.limit}) applies to its runs.`}
           </p>
         )}
       </section>
@@ -728,7 +747,10 @@ export default function Screening() {
                         && sc.last_run.survivor_issuers !== sc.last_run.survivors
                         ? ` · ${sc.last_run.survivor_issuers} issuer${sc.last_run.survivor_issuers === 1 ? "" : "s"}` : "")
                     + (sc.last_run.data_as_of ? ` · data as of ${sc.last_run.data_as_of}` : "")
-                    + (sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
+                    + (sc.last_run.column_sources && Object.keys(sc.last_run.column_sources).length
+                        ? ` · sources: ${Object.entries(sc.last_run.column_sources)
+                            .map(([c, s]) => `${c} (${s})`).join(", ")}`
+                        : sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
                   : "not run yet"}
               </div>
               {sc.membership?.tracked_since && (

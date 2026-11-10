@@ -59,6 +59,9 @@ export interface RunFooter {
   universe_union?: boolean;
   survivors?: number;
   survivor_issuers?: number;
+  survivor_tickers?: string[];
+  displayed?: number;
+  display_limit?: number;
   near_misses?: NearMiss[];
   near_miss_count?: number;
   columns?: Record<string, { fn?: string; source?: string; as_of?: string }>;

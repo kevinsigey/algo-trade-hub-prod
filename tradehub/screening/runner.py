@@ -281,8 +281,16 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
         if by in table.columns:
             table = table.sort_values(by, ascending=bool(sort.get("ascending", False)),
                                       na_position="last")
+    # Round 3: the spec's `limit` is a DISPLAY limit ("show top N"), never
+    # a cohort definition. The full filtered cohort is counted and listed
+    # first; only the rows handed back for drawing are cut. Pre-fix, the
+    # head() ran before the footer counted, so a builder limit of 25 made
+    # a 40-name cohort report -- and, on the record path, RECORD -- itself
+    # as 25.
+    full_tickers = [str(t) for t in table.index] if len(table) else []
     if spec.get("limit"):
         table = table.head(int(spec["limit"]))
+    displayed = int(len(table))
     table = table.reset_index()
 
     context = {}
@@ -310,7 +318,6 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     used_fns = {name.split("(")[0] for name in used}
     used_fns |= {c["fn"] for c in spec.get("context") or []}
     ages = [p["as_of"] for p in columns_prov.values() if p.get("as_of")]
-    survivor_tickers = [str(t) for t in table["ticker"]] if len(table) else []
     footer = {
         "spec_name": spec["name"],
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -320,11 +327,20 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
            if cap is not None and universe_full > cap else {}),
         "universe_selection": selection,
         **({"universe_union": True} if union_rooted else {}),
-        "survivors": int(len(table)),
+        # TRUE filter counts, computed on the full cohort before any
+        # display cut (Round 3). `displayed` says how many rows the
+        # payload carries; when it is smaller, `display_limit` names the
+        # limit that cut the display -- the header renders "showing
+        # displayed of survivors", never the cut as the count.
+        "survivors": len(full_tickers),
+        "survivor_tickers": full_tickers,
+        "displayed": displayed,
+        **({"display_limit": int(spec["limit"])}
+           if spec.get("limit") and displayed < len(full_tickers) else {}),
         # Rows and issuers both: dual-class names (GOOG + GOOGL) are two
         # rows of one issuer. Sidecar names only -- no fetch for a count.
-        **({"survivor_issuers": len({issuer_key(t) for t in survivor_tickers})}
-           if survivor_tickers else {}),
+        **({"survivor_issuers": len({issuer_key(t) for t in full_tickers})}
+           if full_tickers else {}),
         **({"near_misses": near_list, "near_miss_count": near_total} if near_total else {}),
         "filters": filter_report,
         "columns": columns_prov,

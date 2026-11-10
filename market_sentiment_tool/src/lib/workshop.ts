@@ -725,6 +725,7 @@ export interface ScreenRow {
               survivor_issuers?: number | null;
               universe_selection?: string;
               data_as_of?: string | null; sources?: string[];
+              column_sources?: Record<string, string>;
               near_misses?: NearMiss[]; near_miss_count?: number } | null;
   membership?: { tracked_since: string; as_of: string;
                  members: Record<string, string> } | null;
