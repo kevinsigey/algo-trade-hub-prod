@@ -2570,6 +2570,60 @@ def get_machine_portfolio(book: str | None = None, authorization: str | None = H
     return payload
 
 
+class _ClassificationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(min_length=1, max_length=12)
+    classification: str
+    as_of: str
+    source: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/v1/forward-file/classifications", tags=["Machine API"],
+          status_code=201)
+def machine_record_classification(body: _ClassificationIn,
+                                  authorization: str | None = Header(None),
+                                  supabase=Depends(get_supabase)):
+    """Append one print classification to the forward-file store (Loop
+    Round 4). The write contract: bearer machine key with the
+    `classifications:write` scope (hashed storage, scope-checked and
+    audited like every machine route; keys are minted in the admin UI and
+    are NOT book-bound for this route -- classifications are reference
+    data, not orders, so the orders kill switch does not gate them).
+    Body: {ticker, classification in improved|intact|deteriorated, as_of
+    (the print/event date, ISO), source?, note?}. The response carries the
+    stored row plus `current` -- what the Spec C reader
+    (band_crossing.t1_classification) now returns for the name -- so the
+    writer verifies the read-back in the same call. Validation failures
+    are 422s with the accepted values named; nothing is stored."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.valuation import band_crossing, classifications
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    route = "POST /api/v1/forward-file/classifications"
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "classifications:write", route)
+    try:
+        row = classifications.record_classification(
+            supabase, ticker=body.ticker, classification=body.classification,
+            as_of=body.as_of, source=body.source, note=body.note,
+            recorded_by=key.get("label"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    machine_keys.record_event(
+        supabase, key["id"], route, "recorded",
+        detail=f"{row['ticker']} {row['classification']} {row['as_of']}")
+    recorded = {k: row.get(k) for k in
+                ("ticker", "classification", "as_of", "source", "note",
+                 "recorded_by", "recorded_at")}
+    return {"recorded": recorded,
+            "current": band_crossing.t1_classification(supabase,
+                                                       row["ticker"])}
+
+
 # ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
 # audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
 # a 403 -- the API does not confirm the order exists.
@@ -4129,7 +4183,12 @@ def screening_run_screen(screen_id: int, _admin: dict = Depends(admin.require_ad
     # (Round 3): payload["rows"] is display-truncated whenever the spec
     # carries a limit, and a truncated list recorded here would shrink
     # the membership baseline diffed from it.
+    # Round 4: the record also keeps the run's ROWS, so the saved card can
+    # render the recorded results read-only. The rows are the display rows
+    # the run returned -- a spec limit still caps what was displayed, and
+    # the footer's survivors/displayed keep that cut honest in the view.
     last_run = {"footer": payload["footer"], "columns": payload["columns"],
+                "rows": payload["rows"],
                 "survivors": payload["footer"].get("survivor_tickers")
                              or [r["ticker"] for r in payload["rows"]]}
     screen_store.record_run(supabase, screen_id, last_run)
@@ -4474,7 +4533,10 @@ def debate_candidates_list(_admin: dict = Depends(admin.require_admin),
     if snap is None:
         return {"snapshot": None, "counts": {"entrants": 0, "zone_names": 0,
                                              "conjunctions": 0, "total": 0},
-                "candidates": []}
+                "candidates": [], "excluded": [],
+                "pending_by_class": {"conjunction": 0, "entrant": 0,
+                                     "zone": 0},
+                "generated_at": None}
     rows = cand_mod.candidates_for_snapshot(supabase, snap["id"])
     counts = {
         "entrants": sum(1 for r in rows if (r.get("sources") or {})
@@ -4484,8 +4546,20 @@ def debate_candidates_list(_admin: dict = Depends(admin.require_admin),
         "conjunctions": sum(1 for r in rows
                             if r.get("candidate_class") == "conjunction"),
         "total": len(rows)}
+    # Round 4: the aggregate queue view -- pending counts by class, the
+    # persisted named exclusions, and the generation stamp (scar tissue
+    # #9: the panel serves stamped data, never a silent live recompute).
+    excluded = cand_mod.exclusions_for_snapshot(supabase, snap["id"])
+    pending_by_class = {cls: sum(1 for r in rows
+                                  if r.get("candidate_class") == cls
+                                  and r.get("state") == "pending")
+                        for cls in ("conjunction", "entrant", "zone")}
+    generated = [r.get("computed_at") for r in rows + excluded
+                 if r.get("computed_at")]
     return {"snapshot": _snapshot_stamp(snap), "counts": counts,
-            "candidates": rows}
+            "candidates": rows, "excluded": excluded,
+            "pending_by_class": pending_by_class,
+            "generated_at": max(generated) if generated else None}
 
 
 @app.post("/api/debate-candidates/run", tags=["Valuation"], status_code=202)

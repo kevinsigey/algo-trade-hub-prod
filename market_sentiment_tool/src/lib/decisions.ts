@@ -63,6 +63,36 @@ export function chipJudgeText(chip: VerdictChip): string {
   return `Judge: ${chip.judge}`;
 }
 
+/** Round 4: the aggregate debate queue (GET /api/debate-candidates) --
+ * the candidates for the latest completed snapshot with their states,
+ * the pending counts by class, and the named exclusions generation
+ * persisted with their reasons. Stamped like everything else (scar #9):
+ * snapshot id + computed-at and the generation's own computed-at. */
+export interface DebateCandidateRow {
+  ticker: string;
+  candidate_class: "conjunction" | "entrant" | "zone";
+  priority: number;
+  state: string;
+  sources?: {
+    zone?: string | null;
+    entrants?: unknown[];
+    screens?: { name?: string }[];
+    held?: { books?: string[]; sleeves?: string[] } | null;
+  } | null;
+  verdict_id?: number | null;
+  computed_at?: string | null;
+}
+
+export interface DebateQueuePayload {
+  snapshot: { id: number; computed_at: string | null; completed_at: string | null;
+              sheet_count?: number | null; banded_count?: number | null } | null;
+  counts: { entrants: number; zone_names: number; conjunctions: number; total: number };
+  candidates: DebateCandidateRow[];
+  excluded: { ticker: string; reason: string | null; computed_at?: string | null }[];
+  pending_by_class: { conjunction: number; entrant: number; zone: number };
+  generated_at: string | null;
+}
+
 export interface NameDecision {
   ticker: string;
   snapshot: { id: number; computed_at: string | null; completed_at: string | null } | null;
