@@ -316,3 +316,14 @@ def test_macro_sees_its_forecasts_behind_a_flood_of_newer_rows(monkeypatch):
         db.tables["journal_forecasts"].append({"id": i, "forecaster": "crypto_btc_hourly", "frozen_at": "2026-11-03T00:00:00+00:00"})
     _client(db).get("/api/macro")
     assert [f["id"] for f in seen["journal_forecasts"]] == [1]
+
+
+def test_macro_is_served_from_memory_for_the_same_client_and_rebuilt_for_another(monkeypatch):
+    """/api/macro took ~10s a visit (2026-11-09). A repeat visit reuses the build; a different client never does."""
+    builds = []
+    monkeypatch.setattr("tradehub.macro.build_macro", lambda **kw: builds.append(1) or {"cards": [len(builds)]})
+    db = FakeJournalDB(lambda: T0)
+    assert _client(db).get("/api/macro").json() == {"cards": [1]}
+    assert _client(db).get("/api/macro").json() == {"cards": [1]}
+    assert len(builds) == 1
+    assert _client(FakeJournalDB(lambda: T0)).get("/api/macro").json() == {"cards": [2]}

@@ -11,6 +11,7 @@ Run locally:
 Then visit: http://localhost:8000/docs  (Swagger UI — auto-generated)
 """
 
+import functools
 import logging
 import os
 import re
@@ -1597,6 +1598,25 @@ def agent_interpret(body: dict, _admin: dict = Depends(admin.require_admin), sup
     return {"spec": spec, "questions": questions, "model": model, "preflight": ledger}
 
 
+def _ttl_by_client(seconds: float):
+    """Serve a slow, read-only composition from memory for `seconds`. /api/macro and /api/weather/map took 8-10s
+    per visit (2026-11-09) on data that changes hourly. Keyed on the Supabase client object itself, so a test's
+    fake client never sees another's payload. Errors are never cached.
+    ponytail: no lock (two cold visitors both build once); add stale-while-refresh if that ever matters."""
+    def deco(fn):
+        state: dict = {"at": 0.0, "client": None, "value": None}
+
+        @functools.wraps(fn)
+        def wrapper(supabase=Depends(get_supabase)):
+            if supabase is not None and state["client"] is supabase and time.time() - state["at"] < seconds:
+                return state["value"]
+            value = fn(supabase)
+            state.update(at=time.time(), client=supabase, value=value)
+            return value
+        return wrapper
+    return deco
+
+
 _GAP_DESK_CACHE: dict = {"at": 0.0, "payload": None}
 
 
@@ -3095,6 +3115,7 @@ MACRO_FORECASTERS = ("cpi_nowcast", "kalshi_implied_cpi", "ppi_nowcast", "kalshi
 
 
 @app.get("/api/macro", tags=["Macro"])
+@_ttl_by_client(300)
 def get_macro(supabase=Depends(get_supabase)):
     """The Macro predictions dashboard (phase-3 §1): one card per macro engine,
     composed from reads the hub already makes (jobs scorecard, scoreboard
@@ -3141,6 +3162,7 @@ def get_macro(supabase=Depends(get_supabase)):
 
 
 @app.get("/api/weather/map", tags=["Weather"])
+@_ttl_by_client(300)
 def get_weather_map(supabase=Depends(get_supabase)):
     """Per-city weather summaries for the map page (phase-3 §3.1), composed
     from journal forecasts WITH their payloads -- the station and the

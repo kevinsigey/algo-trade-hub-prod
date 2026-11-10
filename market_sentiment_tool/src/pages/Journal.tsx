@@ -47,7 +47,7 @@ type Tab = "models" | "league" | "time" | "weather" | "sports" | "waiting" | "ba
 function Number_({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
     <div className="border border-border bg-card px-4 py-3">
-      <div className="font-display text-5xl leading-none tracking-wide text-foreground tabular-nums">{value}</div>
+      <div className="font-display text-5xl leading-none tracking-wide text-foreground tabular-nums">{typeof value === "number" ? value.toLocaleString("en-US") : value}</div>
       <div className="mt-1 text-sm text-foreground">{label}</div>
       {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
     </div>

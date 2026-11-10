@@ -97,4 +97,11 @@ describe("Overview page", () => {
     expect(screen.getByText(/1,420 forecasts locked in/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open the Model Tracker/ })).toHaveAttribute("href", "/journal");
   });
+
+  it("shows no Coming up heading when nothing is coming up", async () => {
+    stubFetch();  // previews: []
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    expect(await screen.findByText("$100,450")).toBeInTheDocument();
+    expect(screen.queryByText("Coming up")).not.toBeInTheDocument();
+  });
 });
