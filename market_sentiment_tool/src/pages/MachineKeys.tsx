@@ -29,7 +29,7 @@ type KeyEvent = {
   detail: string | null;
 };
 
-const ALL_SCOPES = ["orders:place", "orders:read", "portfolio:read"] as const;
+const ALL_SCOPES = ["orders:place", "orders:read", "portfolio:read", "classifications:write"] as const;
 
 function fmt(ts: string | null): string {
   if (!ts) return "never";
