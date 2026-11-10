@@ -67,6 +67,30 @@ function serve(translateBody?: unknown) {
   return f;
 }
 
+const SAVED_ONE = [{
+  id: 7, name: "oversold_quality",
+  spec: { name: "oversold_quality", universe: { type: "index", index: "sp500" },
+          filters: [], limit: 10 },
+  last_run: { run_at: "2026-11-09T15:30:00Z", survivors: 1,
+              data_as_of: "2026-11-08", sources: ["EDGAR XBRL", "yfinance prices"] },
+  promoted_idea_id: null,
+}];
+
+function serveSaved() {
+  const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const body = url.includes("/api/screening/catalog")
+        ? { ...CATALOG, universe_refresh: { sp500: { as_of: "2026-11-09T12:00:00Z",
+              source: "wikipedia", count: 503 } } }
+      : url.includes("/api/screening/screens") && init?.method !== "POST" ? SAVED_ONE
+      : url.includes("/api/screening/run") ? RUN
+      : {};
+    return new Response(JSON.stringify(body), { status: 200 });
+  });
+  vi.stubGlobal("fetch", f);
+  return f;
+}
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Screening page (cards)", () => {
@@ -132,6 +156,22 @@ describe("Screening page (cards)", () => {
     expect(screen.getByText(/volume 3,000/)).toBeInTheDocument();
     expect(screen.getByText(/Delayed data/)).toBeInTheDocument();
     expect(document.querySelector("polyline")).not.toBeNull();
+  });
+
+  it("stamps saved screens with time, source, and singular grammar; chips mark presets vs saved", async () => {
+    serveSaved();
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    // The saved row: full-year timestamp, sources, and "1 survivor".
+    expect(await screen.findByText(/last run .*2026/)).toBeInTheDocument();
+    expect(screen.getByText(/sources: EDGAR XBRL, yfinance prices/)).toBeInTheDocument();
+    expect(screen.getByText(/1 survivor(?!s)/)).toBeInTheDocument();
+    // The collision is resolved visually: the preset and the saved screen
+    // carry different chips.
+    expect(screen.getAllByText("Preset").length).toBeGreaterThan(0);
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+    // Universe refresh stamps come from the catalog.
+    expect(screen.getByText(/refreshed .* · wikipedia · 503 names/)).toBeInTheDocument();
+    expect(screen.getAllByText(/bundled proxy — not yet refreshed/).length).toBeGreaterThan(0);
   });
 
   it("translate fills the cards, including on the rules fallback", async () => {

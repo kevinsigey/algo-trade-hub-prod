@@ -4046,8 +4046,10 @@ class _ScreenRunIn(BaseModel):
 def screening_catalog():
     from tradehub.screening.cards import cards_payload
     from tradehub.screening.catalog import catalog_dict
+    from tradehub.screening.universes import refresh_info
 
-    return {**catalog_dict(), "cards": cards_payload()}
+    return {**catalog_dict(), "cards": cards_payload(),
+            "universe_refresh": refresh_info()}
 
 
 class _ScreenIn(BaseModel):
@@ -4223,15 +4225,27 @@ def screening_quote(ticker: str, _admin: dict = Depends(admin.require_admin)):
     return payload
 
 
+def _snapshot_stamp(snap: dict | None) -> dict | None:
+    if snap is None:
+        return None
+    return {"id": snap.get("id"), "computed_at": snap.get("computed_at"),
+            "completed_at": snap.get("completed_at"),
+            "sheet_count": snap.get("sheet_count"),
+            "banded_count": snap.get("banded_count"),
+            "source": snap.get("source")}
+
+
 @app.get("/api/valuation-bands", tags=["Valuation"])
 def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
-    """Latest fact sheet per ticker (valuation Spec v1, Phase 0).
-
-    Deterministic bands off the recorded guidance file; display data only --
-    no debate, judge, book, or order state is read or written here."""
+    """The latest COMPLETED snapshot's fact sheets, stamped (reliability
+    pass F1): one compute's dataset served whole under its snapshot id +
+    computed-at -- a recompute in flight never swaps figures under the
+    reader. snapshot is null only for pre-fix legacy data, and the page
+    says so rather than inventing a version. Display data only."""
     from tradehub.valuation import store as val_store
 
-    return val_store.latest_sheets(supabase)
+    snap, sheets = val_store.latest_snapshot_sheets(supabase)
+    return {"snapshot": _snapshot_stamp(snap), "sheets": sheets}
 
 
 @app.get("/api/valuation-bands/{ticker}", tags=["Valuation"])
@@ -4239,10 +4253,18 @@ def valuation_bands_get(ticker: str, _admin: dict = Depends(admin.require_admin)
                         supabase=Depends(get_supabase)):
     from tradehub.valuation import store as val_store
 
-    row = val_store.latest_sheet(supabase, ticker.strip().upper())
+    snap, _sheets = val_store.latest_snapshot_sheets(supabase)
+    row = None
+    if snap is not None:
+        row = val_store.snapshot_sheet(supabase, snap["id"],
+                                       ticker.strip().upper())
+    if row is None:
+        row = val_store.latest_sheet(supabase, ticker.strip().upper())
     if row is None:
         raise HTTPException(status_code=404, detail="no fact sheet for ticker")
-    return val_store.with_peer_members(row)
+    view = val_store.with_peer_members(row)
+    view["snapshot"] = _snapshot_stamp(snap)
+    return view
 
 
 # ── Valuation verdicts (Phase 1: the forked debate over Exhibit A) ─────────

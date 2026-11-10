@@ -93,7 +93,8 @@ def test_screen_crud_and_validation(client):
     screen = made.json()
     assert screen["name"] == "demo" and screen["last_run"]["survivors"] == ["AAA", "BBB"]
     listed = c.get("/api/screening/screens").json()
-    assert listed[0]["last_run"] == {"run_at": "2026-11-02T00:00:00Z", "survivors": 2}
+    assert listed[0]["last_run"] == {"run_at": "2026-11-02T00:00:00Z", "survivors": 2,
+                                     "data_as_of": None, "sources": []}
     assert c.delete(f"/api/screening/screens/{screen['id']}").status_code == 200
     assert c.get(f"/api/screening/screens/{screen['id']}").status_code == 404
 

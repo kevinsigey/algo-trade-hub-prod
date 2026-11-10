@@ -36,6 +36,7 @@ export interface Catalog {
   universe_builders: string[];
   ops: { op: string; doc?: string }[];
   cards: CardFn[];
+  universe_refresh?: Record<string, { as_of: string; source: string; count: number } | null>;
 }
 
 export interface RunFooter {

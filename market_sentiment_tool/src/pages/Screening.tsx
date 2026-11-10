@@ -3,10 +3,15 @@ import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, ChevronDown, Loader2, Plus, Trophy, X } from "lucide-react";
 
 import { adminJson, type ScreenRow } from "@/lib/workshop";
+import { ctDateTimeYear } from "@/lib/format";
 import {
   OP_LABELS, PRESETS, UNIVERSES, specFromState, trayFromSpec,
   type CardFn, type Catalog, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
 } from "@/lib/screening";
+
+export function survivorText(n: number): string {
+  return `${n} survivor${n === 1 ? "" : "s"}`;
+}
 
 function fmtCell(v: unknown): string {
   if (v == null) return "—";
@@ -263,7 +268,7 @@ export default function Screening() {
           <p className="text-sm text-slate-400">
             <span className="font-medium text-slate-200">{result.footer.spec_name ?? "screen"}</span>
             {" "}· ran {result.footer.run_at?.replace("T", " ").slice(0, 16)} UTC · universe {result.footer.universe_size ?? "?"}
-            {" "}· <span className="text-slate-200">{result.footer.survivors ?? result.rows.length} survivors</span>
+            {" "}· <span className="text-slate-200">{survivorText(result.footer.survivors ?? result.rows.length)}</span>
             {result.footer.universe_capped && (
               <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names</span>
             )}
@@ -366,6 +371,15 @@ export default function Screening() {
                 ? "border-emerald-400/70 bg-emerald-500/10" : "border-slate-700 bg-slate-900/60 hover:border-slate-500"}`}>
               <span className="block text-sm font-medium text-slate-100">{u.label}</span>
               <span className="block text-xs text-slate-500">{u.note}</span>
+              {(() => {
+                const r = catalog?.universe_refresh?.[u.id];
+                return (
+                  <span className="block text-xs text-slate-600">
+                    {r ? `refreshed ${ctDateTimeYear(r.as_of)} · ${r.source} · ${r.count} names`
+                        : "bundled proxy — not yet refreshed"}
+                  </span>
+                );
+              })()}
             </button>
           ))}
           {universeId === "custom" && (
@@ -480,7 +494,10 @@ export default function Screening() {
           {PRESETS.map((p) => (
             <button key={p.id} type="button" onClick={() => applyPreset(p.id)}
               className="rounded-xl border border-slate-800 bg-slate-900/60 px-3.5 py-3 text-left hover:border-slate-500">
-              <span className="block text-sm font-medium text-slate-100">{p.name}</span>
+              <span className="flex items-center gap-2 text-sm font-medium text-slate-100">
+                {p.name}
+                <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">Preset</span>
+              </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-slate-400">{p.blurb}</span>
             </button>
           ))}
@@ -560,13 +577,21 @@ export default function Screening() {
           {(screens ?? []).map((sc) => (
             <li key={sc.id} className="rounded-lg border border-slate-800 px-3 py-2.5 text-sm">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="font-medium text-slate-200">{sc.name}</span>
+                <span className="flex items-center gap-2 font-medium text-slate-200">
+                  {sc.name}
+                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Saved</span>
+                </span>
                 {sc.promoted_idea_id
                   ? <Link to={`/workshop/${sc.promoted_idea_id}`} className="text-xs text-emerald-300 hover:underline">tracked idea →</Link>
                   : <span className="text-xs text-slate-500">not promoted</span>}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {sc.last_run ? `last run ${sc.last_run.run_at?.slice(0, 10) ?? ""} · ${sc.last_run.survivors ?? 0} survivors` : "not run yet"}
+                {sc.last_run
+                  ? `last run ${sc.last_run.run_at ? ctDateTimeYear(sc.last_run.run_at) : "—"}`
+                    + ` · ${survivorText(sc.last_run.survivors ?? 0)}`
+                    + (sc.last_run.data_as_of ? ` · data as of ${sc.last_run.data_as_of}` : "")
+                    + (sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
+                  : "not run yet"}
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <button type="button" onClick={() => applySpec(sc.spec as ScreenSpec, `Loaded saved screen "${sc.name}" into the cards.`)}

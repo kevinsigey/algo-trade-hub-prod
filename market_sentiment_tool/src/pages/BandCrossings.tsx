@@ -40,6 +40,8 @@ export interface Crossing {
   suppress_reason: string | null;
   pc_outcome: string | null;
   pc_detail: string | null;
+  snapshot_id: number | null;
+  source: string | null;
   mode: string;
   outcome_20: { score?: number; excess_pct?: number } | null;
   score_20: number | string | null;
@@ -51,6 +53,7 @@ interface ScanRow {
   started_at: string;
   banded_names: number | null;
   crossings_written: number | null;
+  snapshot_id: number | null;
 }
 
 interface CrossingsPayload {
@@ -164,12 +167,13 @@ export default function BandCrossings() {
             {` · ${ctDateTime(lastScan.started_at)}`}
             {lastScan.banded_names != null && ` · ${lastScan.banded_names} banded names`}
             {lastScan.crossings_written != null && ` · ${lastScan.crossings_written} crossings written`}
+            {lastScan.snapshot_id != null && ` · snapshot #${lastScan.snapshot_id}`}
             {" · "}
           </>
         ) : null}
         {falsifier && (
           <>Falsifier: <span className="font-medium text-white">
-            {falsifier.graded}/{falsifier.gate} graded</span>
+            {falsifier.graded}/{falsifier.gate} graded entries</span>
             {` — ${falsifier.status}`}
             {falsifier.mean_score != null && ` · mean score ${falsifier.mean_score}`}
           </>
@@ -233,6 +237,8 @@ export default function BandCrossings() {
                         {` · T1 ${c.t1_classification ?? "none on file"}`}
                         {num(c.held_mv) != null && ` · held ${money(c.held_mv)}`}
                         {c.prev_action && ` · previously ${ACTION_LABELS[c.prev_action] ?? c.prev_action}`}
+                        {c.snapshot_id != null && ` · snapshot #${c.snapshot_id}`}
+                        {` · via ${c.source ?? "scan"}`}
                         {c.pc_detail && <><br />{`Portfolio check: ${c.pc_detail}`}</>}
                         {c.outcome_20?.excess_pct != null &&
                           <><br />{`+20 sessions: excess ${c.outcome_20.excess_pct}% vs the unconditional control`}</>}

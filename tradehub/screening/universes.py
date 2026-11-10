@@ -24,6 +24,24 @@ def _refreshed(name: str) -> list[str] | None:
     except Exception:
         return None
 
+
+def refresh_info() -> dict:
+    """Per refreshed universe: when the daily refresh last landed, from
+    what source, and how many names -- or None when no refresh has
+    landed and the bundled proxy is serving (shown on the Screens page;
+    an unstamped universe is how a stale list hides)."""
+    out: dict = {}
+    cache = Path(os.environ.get("TRADEHUB_SCREENING_CACHE", "/cache/screening"))
+    for name in REFRESHED:
+        try:
+            data = json.loads((cache / f"universe_{name}.json").read_text())
+            out[name] = {"as_of": data.get("as_of"),
+                         "source": data.get("source"),
+                         "count": len(data.get("tickers") or [])}
+        except Exception:
+            out[name] = None
+    return out
+
 SPX_LIQUID_50 = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "BRK-B",
     "JPM", "LLY", "V", "MA", "XOM", "UNH", "HD", "PG", "JNJ", "COST", "WMT",

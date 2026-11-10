@@ -710,6 +710,7 @@ export interface ScreenRow {
   id: number;
   name: string;
   spec: Record<string, unknown>;
-  last_run: { run_at: string | null; survivors: number | null } | null;
+  last_run: { run_at: string | null; survivors: number | null;
+              data_as_of?: string | null; sources?: string[] } | null;
   promoted_idea_id: number | null;
 }
