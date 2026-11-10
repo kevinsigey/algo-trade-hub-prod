@@ -48,6 +48,30 @@ describe("MachineKeys page", () => {
     expect(JSON.parse(String(createCall?.[1]?.body)).scopes).toEqual(["orders:place"]);
   });
 
+  it("offers classifications:write and can create a key holding only it", async () => {
+    const clsRow = { ...KEY_ROW, id: 4, label: "muse classifications", scopes: ["classifications:write"] };
+    mockAdmin
+      .mockResolvedValueOnce({ keys: [] }) // initial load
+      .mockResolvedValueOnce({ ...clsRow, key: "thk_0123456789abcdef0123456789abcdef" }) // create
+      .mockResolvedValueOnce({ keys: [clsRow] }); // reload
+    render(<MachineKeys />);
+    await screen.findByText("No keys yet.");
+    // The scope is offered in the New key form…
+    const clsBox = screen.getByLabelText("classifications:write") as HTMLInputElement;
+    expect(clsBox.type).toBe("checkbox");
+    // …and grantable on its own: uncheck the orders:place default, check only it.
+    fireEvent.change(screen.getByPlaceholderText("mac scripts"), { target: { value: "muse classifications" } });
+    fireEvent.click(screen.getByLabelText("orders:place"));
+    fireEvent.click(clsBox);
+    const createButton = screen.getByText("Create key") as HTMLButtonElement;
+    expect(createButton.disabled).toBe(false);
+    fireEvent.click(createButton);
+    expect(await screen.findByText("thk_0123456789abcdef0123456789abcdef")).toBeTruthy();
+    const createCall = mockAdmin.mock.calls.find((c) => c[0] === "/api/admin/keys" && c[1]?.method === "POST");
+    expect(createCall).toBeTruthy();
+    expect(JSON.parse(String(createCall?.[1]?.body)).scopes).toEqual(["classifications:write"]);
+  });
+
   it("revokes through a two-step confirm", async () => {
     mockAdmin
       .mockResolvedValueOnce({ keys: [KEY_ROW] })

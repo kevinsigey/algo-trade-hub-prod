@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from workshop_fake import DB
 
-from tradehub.api import admin, machine_keys, main
+from tradehub.api import admin, machine_api, machine_keys, main
 from tradehub.api.dependencies import get_supabase
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
@@ -169,3 +169,32 @@ def test_a_keys_book_defaults_to_main_and_must_be_a_real_book(db):
     with pytest.raises(ValueError):
         machine_keys.create_key(db, "nope", ["orders:place"], book="nope")
     assert len(db.db[machine_keys.KEYS]) == 1  # the bad book minted nothing
+
+
+# ── Round 5: classifications:write is grantable on its own ─────────────────────
+
+def test_classifications_write_scope_is_grantable_on_its_own(db):
+    """A key holding ONLY classifications:write (no orders scopes) creates, verifies,
+    passes the classifications scope check, and is refused orders scopes — the
+    standalone-grant property the classifications mint depends on."""
+    from fastapi import HTTPException
+
+    row, plaintext = _create(db, label="muse classifications", scopes=("classifications:write",))
+    assert row["scopes"] == ["classifications:write"]
+    got = machine_keys.verify_key(db, plaintext, now=NOW)
+    assert got["id"] == row["id"] and got["scopes"] == ["classifications:write"]
+    machine_api.require_scope(db, got, "classifications:write", "v1/forward-file/classifications")
+    with pytest.raises(HTTPException) as refused:
+        machine_api.require_scope(db, got, "orders:place", "v1/orders")
+    assert refused.value.status_code == 403
+
+
+def test_create_route_accepts_a_classifications_only_key(api):
+    client, _ = api
+    r = client.post("/api/admin/keys", json={"label": "muse classifications",
+                                             "scopes": ["classifications:write"]})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["scopes"] == ["classifications:write"] and body["key"].startswith("thk_")
+    listed = client.get("/api/admin/keys").json()["keys"]
+    assert listed[0]["scopes"] == ["classifications:write"]
