@@ -117,7 +117,9 @@ def test_weighting_is_per_model_not_per_headcount():
 
 
 def test_registry_adds_a_blend_row_for_ens_v2_only():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
     blends = [(f.name, f.version) for f in FORECASTERS if f.name.endswith("_cautious")
               and f.name.startswith("weather_")]
     assert ("weather_high_cautious", "ens-v2.1+w25") in blends

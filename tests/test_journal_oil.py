@@ -159,7 +159,9 @@ def test_end_to_end_the_model_baseline_and_market_are_scored_on_the_same_contrac
 
 
 def test_the_registry_carries_oil_and_its_cautious_row():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     names = [(f.name, getattr(f, "version", None)) for f in FORECASTERS]
     assert ("oil_wti", "wti-v1") in names

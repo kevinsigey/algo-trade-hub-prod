@@ -228,7 +228,9 @@ def test_end_to_end_the_model_its_climatology_and_the_market_are_scored_on_the_s
 
 
 def test_the_registry_runs_every_weather_family_with_unique_keys():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     keys = [(f.name, f.version) for f in FORECASTERS]
     for kind in ("high", "low", "rain"):

@@ -18,14 +18,15 @@ from tradehub.journal.scoring import score
 log = logging.getLogger(__name__)
 
 
-def run_forecaster(supa, fc: Forecaster, now: datetime) -> dict[str, Any]:
+def run_forecaster(supa, fc: Forecaster, now: datetime, *, freeze: bool = True) -> dict[str, Any]:
     # A wrapper that reads the store (MarketShrunk) must read THIS run's client, not the singleton its
     # constructor was wired to. Optional, so a plain forecaster is unaffected.
     bind = getattr(fc, "bind_store", None)
     if callable(bind):
         bind(supa)
     summary: dict[str, Any] = {"registered": 0, "frozen": 0, "missed": 0, "settled": 0, "gate_status": None}
-    entries = [e for e in fc.targets(now) if e.cadence == fc.cadence]
+    # A retired forecaster (freeze=False) takes no new targets: it only settles and scores what it froze.
+    entries = [e for e in fc.targets(now) if e.cadence == fc.cadence] if freeze else []
     summary["registered"] = store.register_calendar(supa, entries, now)
 
     # Only the entries in hand are asked about: `frozen` is consulted through `entry.target` and
@@ -72,13 +73,14 @@ def run_forecaster(supa, fc: Forecaster, now: datetime) -> dict[str, Any]:
     return summary
 
 
-def run_journal(supa, forecasters: list[Forecaster], now: datetime) -> dict[str, Any]:
+def run_journal(supa, forecasters: list[Forecaster], now: datetime, *,
+                retired: list[Forecaster] | tuple[Forecaster, ...] = ()) -> dict[str, Any]:
     require_aware(now, "now")
     out: dict[str, Any] = {"as_of": now.isoformat(), "forecasters": {}, "failures": []}
-    for fc in forecasters:
+    for fc, freeze in [(f, True) for f in forecasters] + [(f, False) for f in retired]:
         key = f"{fc.name}@{fc.version}"
         try:
-            out["forecasters"][key] = run_forecaster(supa, fc, now)
+            out["forecasters"][key] = run_forecaster(supa, fc, now, freeze=freeze)
         except Exception as exc:
             log.exception("journal: %s failed", key)
             out["forecasters"][key] = {"error": f"{type(exc).__name__}: {exc}"}

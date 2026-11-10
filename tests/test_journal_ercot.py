@@ -228,7 +228,9 @@ def test_end_to_end_the_model_baseline_and_market_are_scored_on_the_same_contrac
 
 
 def test_the_registry_runs_the_ercot_family_with_unique_keys():
-    from tradehub.journal.registry import FORECASTERS
+    from tradehub.journal.registry import FORECASTERS as _live, RETIRED
+
+    FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     keys = [(f.name, f.version) for f in FORECASTERS]
     for name in ("ercot_peak", "kalshi_implied_ercot_peak", "baseline_climatology_ercot_peak"):
