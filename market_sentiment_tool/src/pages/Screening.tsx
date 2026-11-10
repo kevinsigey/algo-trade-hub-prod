@@ -4,6 +4,8 @@ import { ArrowDown, ArrowUp, ChevronDown, Loader2, Plus, Trophy, X } from "lucid
 
 import { adminJson, type ScreenRow } from "@/lib/workshop";
 import { ctDateTimeYear } from "@/lib/format";
+import { VerdictChipLine } from "@/components/VerdictChip";
+import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
   OP_LABELS, PRESETS, UNIVERSES, specFromState, trayFromSpec,
   type CardFn, type Catalog, type NearMiss, type QuotePayload, type RunPayload, type ScoreTerm, type ScreenSpec, type TrayItem,
@@ -197,10 +199,17 @@ export default function Screening() {
     return () => { live = false; };
   }, [openRow ]);
 
+  const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+
   const loadScreens = () => adminJson<ScreenRow[]>("/api/screening/screens").then(setScreens).catch(() => setScreens([]));
   useEffect(() => {
     adminJson<Catalog>("/api/screening/catalog").then(setCatalog).catch(() => setCatalog(null));
     loadScreens();
+    // Verdict chips ride beside the results: the debate judgment sits
+    // with the name on this page too, not only in a debates corner.
+    adminJson<ChipsPayload>("/api/verdict-chips")
+      .then((env) => { if (env?.chips) setChips(env.chips); })
+      .catch(() => { /* absence renders as "No debate verdict yet" */ });
   }, []);
 
   const spec = useMemo(() => {
@@ -434,10 +443,13 @@ export default function Screening() {
                         {result.columns.map((c) => (
                           <td key={c} className="px-3 py-2 tabular-nums text-slate-300">
                             {c === "ticker" ? (
-                              <span className="flex items-center gap-2 font-mono font-medium text-white">
-                                {t}
-                                {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
-                                  <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
+                              <span>
+                                <span className="flex items-center gap-2 font-mono font-medium text-white">
+                                  {t}
+                                  {fit && <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                                    <Trophy className="h-3 w-3" aria-hidden="true" /> Best fit</span>}
+                                </span>
+                                <VerdictChipLine chip={chips[t]} ticker={t} />
                               </span>
                             ) : fmtCell(r[c])}
                           </td>
