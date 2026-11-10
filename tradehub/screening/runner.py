@@ -93,6 +93,61 @@ def needed_kinds(spec: dict) -> set[str]:
     return kinds
 
 
+NEAR_MISS_CAP = 50
+
+
+def _miss_distance(op: str, v: float, thr) -> float | None:
+    """How far a failing value sits from its threshold, relative — the
+    ordering that makes a near-miss list an entrance pipeline (closest
+    first). None when closeness has no numeric meaning (set/percentile
+    ops); those sort after every numeric miss."""
+    try:
+        if op in ("lt", "le"):
+            return (v - float(thr)) / abs(float(thr)) if thr else abs(v - float(thr))
+        if op in ("gt", "ge"):
+            return (float(thr) - v) / abs(float(thr)) if thr else abs(v - float(thr))
+        if op == "between":
+            lo, hi = float(thr[0]), float(thr[1])
+            span = (hi - lo) or abs(lo) or 1.0
+            return (lo - v) / span if v < lo else (v - hi) / span
+        if op == "eq":
+            return abs(v - float(thr)) / abs(float(thr)) if thr else abs(v - float(thr))
+    except (TypeError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _near_misses(spec: dict, cols: dict, masks: list, idx: pd.Index) -> tuple[list[dict], int]:
+    """Names failing EXACTLY ONE filter, with the failing value shown
+    (Kevin, 2026-11-09: near misses are the entrance pipeline). A failure
+    on a missing (NaN) value is NOT a near miss — missing is not close;
+    it belongs to the missing-data record. Returns (list, total): the
+    list is closest-first and capped for the stored footer; the total
+    always counts every near miss."""
+    filters = spec.get("filters") or []
+    if not filters or not masks:
+        return [], 0
+    fails = pd.DataFrame({j: ~m for j, m in enumerate(masks)})
+    counts = fails.sum(axis=1)
+    found = []
+    for t in counts[counts == 1].index:
+        j = int(fails.loc[t].to_numpy().argmax())
+        f = filters[j]
+        name = _col_name(f)
+        raw = cols[name].loc[t]
+        if raw is None or pd.isna(raw):
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        found.append((_miss_distance(f["op"], v, f["value"]), t,
+                      {"ticker": str(t), "fn": f["fn"], "column": name,
+                       "value": v, "op": f["op"], "threshold": f["value"]}))
+    found.sort(key=lambda x: (x[0] is None, x[0] if x[0] is not None else 0.0, x[1]))
+    return [e for _, _, e in found[:NEAR_MISS_CAP]], len(found)
+
+
 @dataclass
 class RunResult:
     table: pd.DataFrame
@@ -105,8 +160,11 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     store = store or DataStore()
     tickers = resolve_universe(store, spec["universe"])
     universe_full = len(tickers)
-    if universe_full > MAX_UNIVERSE:
-        tickers = tickers[:MAX_UNIVERSE]
+    # A spec may carry its own cap (max_universe — the classic watchlist
+    # screens' wider-universe option); specs without it get the standard cap.
+    cap = spec.get("max_universe") or MAX_UNIVERSE
+    if universe_full > cap:
+        tickers = tickers[:cap]
     # Prefetch the per-ticker kinds this spec needs, concurrently, so the
     # field functions below read the local cache instead of fetching one
     # name at a time inside the request (Kevin, 2026-11-03).
@@ -163,13 +221,16 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
 
     mask = pd.Series(True, index=idx)
     filter_report = []
+    filter_masks: list[pd.Series] = []
     for f in spec.get("filters") or []:
         name = compute(f)
         m = _apply_op(cols[name], f["op"], f["value"])
         m = m.fillna(False)
         filter_report.append({"column": name, "op": f["op"], "value": f["value"],
                               "passed": int(m.sum())})
+        filter_masks.append(m)
         mask &= m
+    near_list, near_total = _near_misses(spec, cols, filter_masks, idx)
 
     score = None
     if spec.get("score"):
@@ -227,9 +288,10 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_as_of": min(ages) if ages else None,
         "universe_size": len(tickers),
-        **({"universe_capped": {"cap": MAX_UNIVERSE, "universe_size_full": universe_full}}
-           if universe_full > MAX_UNIVERSE else {}),
+        **({"universe_capped": {"cap": cap, "universe_size_full": universe_full}}
+           if universe_full > cap else {}),
         "survivors": int(len(table)),
+        **({"near_misses": near_list, "near_miss_count": near_total} if near_total else {}),
         "filters": filter_report,
         "columns": columns_prov,
         "context": context,

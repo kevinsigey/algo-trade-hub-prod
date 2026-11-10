@@ -1,8 +1,11 @@
 """Universe builders. A spec's `universe` is one of:
   {"type": "list", "tickers": [...]}                    explicit list
   {"type": "index_proxy", "index": "spx_liquid_50"}     bundled liquid proxies
+  {"type": "index", "index": "sp500"}                   refreshed membership
+  {"type": "index_union", "indexes": [...]}             union of refreshed lists
   {"type": "sector", "sector": "Technology",
    "base": <any universe object>}                      sector cut of a base
+  {"type": "common_equity", "base": <any universe>}     common shares only
 
 The index proxies are curated static lists of the most liquid constituents
 (as of the Nov 2026 build) — labelled proxies, not licensed index membership.
@@ -12,14 +15,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
+
+
+def _cache_file(name: str) -> Path:
+    return Path(os.environ.get("TRADEHUB_SCREENING_CACHE", "/cache/screening")) / name
 
 
 def _refreshed(name: str) -> list[str] | None:
     """The daily-refreshed list for `name` from the screening cache, if present."""
-    f = Path(os.environ.get("TRADEHUB_SCREENING_CACHE", "/cache/screening")) / f"universe_{name}.json"
     try:
-        data = json.loads(f.read_text())
+        data = json.loads(_cache_file(f"universe_{name}.json").read_text())
         return list(data["tickers"]) or None
     except Exception:
         return None
@@ -41,6 +48,69 @@ def refresh_info() -> dict:
         except Exception:
             out[name] = None
     return out
+
+
+_NAMES_CACHE: dict = {"key": None, "names": None}
+
+
+def _refreshed_names() -> dict[str, str] | None:
+    """Ticker -> exchange security name from the refresh's sidecar file
+    (universe_names.json), if present. Cached per (path, mtime): a 13k-name
+    universe resolves against one parse, not one file read per name."""
+    f = _cache_file("universe_names.json")
+    try:
+        key = (str(f), f.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if _NAMES_CACHE["key"] != key:
+        try:
+            data = json.loads(f.read_text())
+            names = {str(k).upper(): str(v) for k, v in (data.get("names") or {}).items()}
+        except Exception:
+            return None
+        _NAMES_CACHE.update(key=key, names=names or None)
+    return _NAMES_CACHE["names"]
+
+
+# Non-common share classes, detected on the exchange security name (Kevin,
+# 2026-11-09: Buffett's cohort was one issuer three times — ACGL plus its
+# preferreds ACGLN/ACGLO). A coupon in the name ("5.45% ...") is never a
+# common stock's name; the class words are the classes' own naming. The
+# markers are deliberately contextual so a common whose name merely contains
+# a word survives ("Preferred Bank" is a common; "United ..." is not units).
+_NONCOMMON = re.compile(
+    r"%"
+    r"|\bpreferred\s+(shares|stock|series|securities)\b"
+    r"|\bpreference\s+(shares|stock|series|securities)\b"
+    r"|\b(senior|subordinated)\s+notes?\b"
+    r"|\bnotes?\s+due\b"
+    r"|\bunits\b"
+    r"|\bwarrants?\b"
+    r"|\brights\b",
+    re.IGNORECASE)
+
+
+def _security_name(store, ticker: str) -> str | None:
+    names = _refreshed_names()
+    if names and ticker in names:
+        return names[ticker]
+    info = getattr(store, "info", None)
+    if callable(info):
+        try:
+            d = info(ticker) or {}
+        except Exception:
+            return None
+        return d.get("longName") or d.get("shortName") or None
+    return None
+
+
+def is_common_equity(store, ticker: str) -> bool:
+    """False only when the security name marks a non-common class. No name
+    on record -> kept (an unjudgeable name is not evidence of a class)."""
+    name = _security_name(store, ticker)
+    if not name:
+        return True
+    return _NONCOMMON.search(name) is None
 
 SPX_LIQUID_50 = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "BRK-B",
@@ -75,9 +145,30 @@ UNIVERSE_BUILDERS = [
      "doc": "Refreshed membership list (sp500, nasdaq100, nasdaq_all) from the "
             "daily universe refresh; falls back to the bundled liquid proxy "
             "(sp500/nasdaq100) until the first refresh lands."},
+    {"name": "universe_index_union", "type": "index_union",
+     "doc": "Union of refreshed index lists (e.g. sp500 + nasdaq100 = the "
+            "large-cap US universe the nightly warm-up keeps warm)."},
     {"name": "universe_sector", "type": "sector",
      "doc": "Sector cut of a base universe, via each name's yfinance sector."},
+    {"name": "universe_common_equity", "type": "common_equity",
+     "doc": "Common-equity cut of a base universe: drops non-common classes "
+            "(preferreds, units, warrants, rights, coupon notes) by the "
+            "exchange security name — the refresh's names file first, the "
+            "yfinance name as fallback. Equity screens screen common equity."},
 ]
+
+
+def _resolve_index(idx: str) -> list[str]:
+    if idx not in REFRESHED:
+        raise ValueError(f"unknown index '{idx}' (have: {', '.join(REFRESHED)})")
+    fresh = _refreshed(idx)
+    if fresh:
+        return fresh
+    fallback = REFRESHED[idx]
+    if fallback is None:
+        raise ValueError(f"index '{idx}' has no refreshed list yet and no bundled fallback; "
+                         f"run the universe refresh first")
+    return list(INDEX_PROXIES[fallback])
 
 
 def resolve_universe(store, spec_universe: dict) -> list[str]:
@@ -91,20 +182,18 @@ def resolve_universe(store, spec_universe: dict) -> list[str]:
                              f"(have: {', '.join(INDEX_PROXIES)})")
         return list(INDEX_PROXIES[idx])
     if t == "index":
-        idx = spec_universe["index"]
-        if idx not in REFRESHED:
-            raise ValueError(f"unknown index '{idx}' (have: {', '.join(REFRESHED)})")
-        fresh = _refreshed(idx)
-        if fresh:
-            return fresh
-        fallback = REFRESHED[idx]
-        if fallback is None:
-            raise ValueError(f"index '{idx}' has no refreshed list yet and no bundled fallback; "
-                             f"run the universe refresh first")
-        return list(INDEX_PROXIES[fallback])
+        return _resolve_index(spec_universe["index"])
+    if t == "index_union":
+        out: set[str] = set()
+        for idx in spec_universe["indexes"]:
+            out.update(_resolve_index(idx))
+        return sorted(out)
     if t == "sector":
         base = resolve_universe(store, spec_universe["base"])
         want = spec_universe["sector"].lower()
         return [x for x in base
                 if (store.info(x).get("sector") or "").lower() == want]
+    if t == "common_equity":
+        base = resolve_universe(store, spec_universe["base"])
+        return [x for x in base if is_common_equity(store, x)]
     raise ValueError(f"unknown universe type '{t}'")

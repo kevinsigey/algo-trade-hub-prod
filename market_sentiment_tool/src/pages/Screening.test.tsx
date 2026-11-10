@@ -52,14 +52,55 @@ const QUOTE = {
            { date: "2026-11-03", close: 121 }],
 };
 
-function serve(translateBody?: unknown) {
+const RUN_MISSING = {
+  ...RUN,
+  footer: { ...RUN.footer, missing: [
+    { ticker: "AAA", field: "pe_ratio", reason: "info field absent" },
+    { ticker: "AAA", field: "roe", reason: "info field absent" },
+    { ticker: "BBB", field: "pe_ratio", reason: "info field absent" },
+  ] },
+};
+
+const CATALOG_PCT = {
+  ...CATALOG,
+  functions: [...CATALOG.functions,
+    { name: "roe", category: "quality", kind: "field", params: {}, returns: "pct", doc: "Return on equity.", source: "yfinance.info" }],
+  computed_at: "2026-11-10T04:30:00Z",
+};
+
+const RUN_ROE = {
+  columns: ["ticker", "roe"],
+  rows: [{ ticker: "AAA", roe: 18.741 }],
+  footer: { spec_name: "quality", run_at: "2026-11-10T04:00:00Z", universe_size: 3, survivors: 1,
+            columns: { roe: { fn: "roe", source: "yfinance.info" } } },
+};
+
+const CLASSIC_ROW = {
+  id: 5, name: "Graham value (classic)",
+  spec: { name: "graham_value_classic", universe: { type: "list", tickers: ["AAA"] } },
+  last_run: {
+    run_at: "2026-11-10T04:02:00Z", survivors: 2,
+    near_misses: [{ ticker: "LEN", fn: "pe_ratio", column: "pe_ratio", value: 7.4, op: "lt", threshold: 7 }],
+    near_miss_count: 1,
+  },
+  membership: { tracked_since: "2026-11-10", as_of: "2026-11-10",
+                members: { AAA: "2026-11-10", BBB: "2026-11-10" } },
+  membership_events: [
+    { ticker: "AAA", kind: "exited", date: "2026-11-11", since: "2026-11-10" },
+    { ticker: "BBB", kind: "entered", date: "2026-11-11" },
+  ],
+  promoted_idea_id: null,
+};
+
+function serve(translateBody?: unknown,
+               extra?: { screens?: unknown; run?: unknown; catalog?: unknown }) {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const body = url.includes("/api/screening/catalog") ? CATALOG
+    const body = url.includes("/api/screening/catalog") ? (extra?.catalog ?? CATALOG)
       : url.includes("/api/screening/translate") ? translateBody
       : url.includes("/api/screening/quote/") ? QUOTE
-      : url.includes("/api/screening/screens") && init?.method !== "POST" ? []
-      : url.includes("/api/screening/run") ? RUN
+      : url.includes("/api/screening/screens") && init?.method !== "POST" ? (extra?.screens ?? [])
+      : url.includes("/api/screening/run") ? (extra?.run ?? RUN)
       : {};
     return new Response(JSON.stringify(body), { status: 200 });
   });
@@ -156,6 +197,47 @@ describe("Screening page (cards)", () => {
     expect(screen.getByText(/volume 3,000/)).toBeInTheDocument();
     expect(screen.getByText(/Delayed data/)).toBeInTheDocument();
     expect(document.querySelector("polyline")).not.toBeNull();
+  });
+
+  it("shows membership entrances and exits on a saved classic screen card", async () => {
+    serve(undefined, { screens: [CLASSIC_ROW] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText("Graham value (classic)")).toBeInTheDocument();
+    expect(screen.getByText(/membership tracked since Nov 10/)).toBeInTheDocument();
+    expect(screen.getByText(/entered · Nov 11/)).toBeInTheDocument();
+    expect(screen.getByText(/exited · was member since Nov 10/)).toBeInTheDocument();
+  });
+
+  it("shows near misses with units on the saved screen card", async () => {
+    serve(undefined, { screens: [CLASSIC_ROW] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText(/Near misses — one filter away \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/P\/E ratio 7\.4 × vs < 7/)).toBeInTheDocument();
+    expect(screen.getByText("LEN")).toBeInTheDocument();
+  });
+
+  it("renders the missing-data record per ticker, with counts", async () => {
+    serve(undefined, { run: RUN_MISSING });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText(/Missing data \(fails its filter, never zero\): 2 names · 3 field gaps/))
+      .toBeInTheDocument();
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toContain("AAA — pe_ratio, roe");
+    expect(items).toContain("BBB — pe_ratio");
+    // The old wall of bare repeated field names is gone.
+    expect(screen.queryByText(/pe_ratio, roe, pe_ratio/)).not.toBeInTheDocument();
+  });
+
+  it("column headers carry units, and the catalog carries a computed-at stamp", async () => {
+    serve(undefined, { run: RUN_ROE, catalog: CATALOG_PCT });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText("1 survivor")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /roe \(%\)/ })).toBeInTheDocument();
+    expect(screen.getByText(/computed 2026-11-10 04:30 UTC/)).toBeInTheDocument();
   });
 
   it("stamps saved screens with time, source, and singular grammar; chips mark presets vs saved", async () => {
