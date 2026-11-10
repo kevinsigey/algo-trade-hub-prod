@@ -52,7 +52,7 @@ export default function Health() {
             <Activity className="h-5 w-5" aria-hidden="true" />
             <span className="text-xs font-bold uppercase tracking-widest">System</span>
           </div>
-          <h1 className="mt-2 text-3xl font-black uppercase italic tracking-tight text-white sm:text-4xl">
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-white">
             Health
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400">{HEALTH_INTRO}</p>
@@ -142,7 +142,7 @@ function Heatmap({ history }: { history: import("@/lib/health").HealthHistory | 
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-500">
-        {detail ?? "Green ran (darker = more frozen) · red = silent inside an active stretch · amber = diagnostics flags that day · dark = no claim. The orderbooks timer has no history source and is not drawn."}
+        {detail ?? "Green ran (darker = more frozen) · red = silent inside an active stretch · amber = diagnostics flags that day · dark = no claim."}
       </p>
     </section>
   );
