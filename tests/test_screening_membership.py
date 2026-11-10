@@ -305,11 +305,13 @@ def test_near_miss_is_exactly_one_real_value_failure(nm_fields):
 
 
 def test_the_shipped_classic_specs_still_validate_with_the_option():
-    """The exact filter sets of screens 5/6/7 (filters unchanged) plus the
-    addenda keys must pass validation — the addenda change the run, never
-    the filters."""
+    """The exact filter sets of screens 5/6/7 plus the addenda keys must
+    pass validation. Round 2 adds ONE leg: Graham's P/E floor (ge 0.5),
+    the loop's answer to vendor P/E readings like 0.000364 passing the
+    < 7 leg as a real value -- spec-level, the field layer stays frozen."""
     filters = {
-        5: [("pe_ratio", "lt", 7), ("price_to_book", "lt", 1.5),
+        5: [("pe_ratio", "ge", 0.5), ("pe_ratio", "lt", 7),
+            ("price_to_book", "lt", 1.5),
             ("debt_to_equity", "lt", 0.5), ("current_ratio", "gt", 1.5)],
         6: [("roe", "gt", 15), ("net_margin", "gt", 10),
             ("eps_growth_5y", "gt", 10), ("debt_to_equity", "lt", 0.5)],

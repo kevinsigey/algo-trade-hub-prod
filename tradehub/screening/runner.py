@@ -16,7 +16,7 @@ import pandas as pd
 from .functions import REGISTRY
 from .sources import DataStore
 from .spec import validate_spec
-from .universes import resolve_universe
+from .universes import issuer_key, resolve_universe
 
 import os
 
@@ -155,16 +155,43 @@ class RunResult:
     spec: dict = dc_field(default_factory=dict)
 
 
+def _is_union_rooted(universe: dict) -> bool:
+    """True when the universe bottoms out in an index_union, through any
+    wrapper chain (common_equity, sector). Round 2: a union universe is
+    enriched in full -- the Round 1 timing evidence showed the wider run
+    is the FAST path (the nightly warm-up covers exactly sp500+nasdaq100),
+    and a cap on a union was the nondeterminism source: the recorded
+    Buffett run enriched one 300-name subset and returned 40 survivors,
+    a page-composed re-run enriched a different subset and returned 23."""
+    node = universe or {}
+    while node.get("type") in ("common_equity", "sector"):
+        node = node.get("base") or {}
+    return node.get("type") == "index_union"
+
+
 def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     validate_spec(spec)
     store = store or DataStore()
     tickers = resolve_universe(store, spec["universe"])
     universe_full = len(tickers)
-    # A spec may carry its own cap (max_universe — the classic watchlist
-    # screens' wider-universe option); specs without it get the standard cap.
-    cap = spec.get("max_universe") or MAX_UNIVERSE
-    if universe_full > cap:
-        tickers = tickers[:cap]
+    union_rooted = _is_union_rooted(spec["universe"])
+    if union_rooted:
+        cap = None
+        selection = (f"all {universe_full} names enriched — union universe, "
+                     "no enrichment cap")
+    else:
+        # A spec may carry its own cap (max_universe — the classic watchlist
+        # screens' wider-universe option); specs without it get the standard
+        # cap. A capped subset is the first `cap` names in SORTED ticker
+        # order: the cohort must be a function of the ticker SET, never of
+        # the order a refreshed universe file happens to list them in.
+        cap = spec.get("max_universe") or MAX_UNIVERSE
+        if universe_full > cap:
+            tickers = sorted(tickers)[:cap]
+            selection = (f"first {cap} of {universe_full} names in sorted "
+                         "ticker order (enrichment cap)")
+        else:
+            selection = f"all {universe_full} names enriched"
     # Prefetch the per-ticker kinds this spec needs, concurrently, so the
     # field functions below read the local cache instead of fetching one
     # name at a time inside the request (Kevin, 2026-11-03).
@@ -283,14 +310,21 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     used_fns = {name.split("(")[0] for name in used}
     used_fns |= {c["fn"] for c in spec.get("context") or []}
     ages = [p["as_of"] for p in columns_prov.values() if p.get("as_of")]
+    survivor_tickers = [str(t) for t in table["ticker"]] if len(table) else []
     footer = {
         "spec_name": spec["name"],
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_as_of": min(ages) if ages else None,
         "universe_size": len(tickers),
         **({"universe_capped": {"cap": cap, "universe_size_full": universe_full}}
-           if universe_full > cap else {}),
+           if cap is not None and universe_full > cap else {}),
+        "universe_selection": selection,
+        **({"universe_union": True} if union_rooted else {}),
         "survivors": int(len(table)),
+        # Rows and issuers both: dual-class names (GOOG + GOOGL) are two
+        # rows of one issuer. Sidecar names only -- no fetch for a count.
+        **({"survivor_issuers": len({issuer_key(t) for t in survivor_tickers})}
+           if survivor_tickers else {}),
         **({"near_misses": near_list, "near_miss_count": near_total} if near_total else {}),
         "filters": filter_report,
         "columns": columns_prov,

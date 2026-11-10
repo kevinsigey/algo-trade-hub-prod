@@ -734,8 +734,23 @@ def read_surface(client, *, limit: int = 50) -> dict:
                         .select("action, score_20").execute().data) or []
         except Exception:  # noqa: BLE001
             all_rows = crossings
+    # Freshness (Round 2): the newest COMPLETED valuation snapshot rides
+    # beside the scan list, so the page can say plainly when the last scan
+    # predates the snapshot the rest of the page serves ("scan of #M --
+    # #N pending") instead of silently presenting a stale scan as current.
+    # The re-scan itself stays on the existing paths: the weekly scan and
+    # the watermark-driven event scan fire when the sheets watermark moves.
+    latest_snapshot_id = None
+    try:
+        from tradehub.valuation import store as _val_store
+
+        snap = _val_store.latest_snapshot(client)
+        latest_snapshot_id = snap["id"] if snap else None
+    except Exception:  # noqa: BLE001 -- pre-snapshot deployments read as unknown
+        latest_snapshot_id = None
     return {"mode": "orders_enabled" if enabled else "log_only",
             "orders_enabled": enabled,
             "falsifier": falsifier_summary(all_rows),
             "scans": scans,
-            "crossings": crossings}
+            "crossings": crossings,
+            "latest_snapshot_id": latest_snapshot_id}

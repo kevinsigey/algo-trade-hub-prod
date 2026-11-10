@@ -112,6 +112,46 @@ def is_common_equity(store, ticker: str) -> bool:
         return True
     return _NONCOMMON.search(name) is None
 
+
+# A share-class tail in an exchange security name: "Alphabet Inc. - Class C
+# Capital Stock", "Berkshire Hathaway Inc. - Class B Common Stock". Cutting
+# at the CLASS/SERIES token collapses an issuer's share classes to one stem.
+_CLASS_TAIL = re.compile(r"\b(?:CLASS|SERIES)\s+[A-Z]\b.*$", re.IGNORECASE)
+_GENERIC_TAIL = re.compile(
+    r"\s+(?:COMMON STOCK|CAPITAL STOCK|ORDINARY SHARES|COMMON SHARES)$", re.IGNORECASE)
+
+
+def _issuer_stem(name: str | None, ticker: str) -> str:
+    if not name:
+        return ticker.upper()
+    stem = _CLASS_TAIL.sub("", str(name))
+    stem = re.sub(r"[^A-Za-z0-9]+", " ", stem).strip().upper()
+    stem = _GENERIC_TAIL.sub("", stem).strip()
+    return stem or ticker.upper()
+
+
+def issuer_key(ticker: str, store=None) -> str:
+    """One key per ISSUER for cohort counting and membership diffing.
+
+    Dual-class names (GOOG/GOOGL) are two rows but one issuer; keying them
+    apart double-counts the cohort and fabricates entrance/exit events when
+    one class crosses a filter the other already passed. The key is the
+    exchange security name with any CLASS/SERIES tail cut, so every share
+    class of an issuer shares a stem. Names come from the refresh sidecar;
+    a store, when passed, may fall back to its info record (the runner's
+    footer path passes none -- no network for a count). Limits, stated:
+    heuristic on names -- classes whose recorded names share no stem do not
+    merge; a preferred line keeps its own key (its name carries no class
+    token, and it is a different security, not a share class); a ticker
+    with no recorded name is its own issuer, never merged blindly.
+    """
+    t = str(ticker).upper()
+    names = _refreshed_names()
+    name = names.get(t) if names else None
+    if name is None and store is not None:
+        name = _security_name(store, t)
+    return _issuer_stem(name, t)
+
 SPX_LIQUID_50 = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA", "BRK-B",
     "JPM", "LLY", "V", "MA", "XOM", "UNH", "HD", "PG", "JNJ", "COST", "WMT",

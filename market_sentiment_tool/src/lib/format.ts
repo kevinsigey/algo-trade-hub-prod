@@ -44,3 +44,11 @@ export const usd = (v: number | null | undefined) => {
   const digits = v < 10 ? 2 : 0;
   return `$${v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 };
+
+/** "33rd" -- English ordinal for a whole number (percentiles, ranks). */
+export const ordinal = (n: number): string => {
+  const v = Math.abs(Math.trunc(n));
+  const suffix = v % 100 >= 11 && v % 100 <= 13 ? "th"
+    : v % 10 === 1 ? "st" : v % 10 === 2 ? "nd" : v % 10 === 3 ? "rd" : "th";
+  return `${n}${suffix}`;
+};

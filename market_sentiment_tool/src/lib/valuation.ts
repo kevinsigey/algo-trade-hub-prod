@@ -90,9 +90,24 @@ export interface FactSheet {
   peer_members?: string[]; // detail endpoint only (read-side derivation)
 }
 
+/** The consensus period arrives as a yfinance relative tag ("0y", "+1y"):
+ * cryptic on the page, so render the human form. The tag DOES carry
+ * meaning -- which forecast year the consensus belongs to -- so it is
+ * translated, not dropped; an unknown tag passes through as recorded. */
+const CONSENSUS_PERIODS: Record<string, string> = {
+  "0y": "current year",
+  "+1y": "next year",
+  "0q": "current quarter",
+  "+1q": "next quarter",
+};
+
+export function consensusPeriodText(period: string | null | undefined): string | null {
+  if (!period) return null;
+  return CONSENSUS_PERIODS[period] ?? period;
+}
+
 /** PostgREST numerics arrive as strings; anything unparseable is missing. */
-export function num(v: number | string | null | undefined): number | null {
-  if (v == null) return null;
+export function num(v: number | string | null | undefined): number | null {  if (v == null) return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
