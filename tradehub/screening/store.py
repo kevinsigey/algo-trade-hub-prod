@@ -15,11 +15,25 @@ def create_screen(supa, name: str, spec: dict, last_run: dict | None = None) -> 
     return supa.table(SCREENS).insert(row).execute().data[0]
 
 
+def _last_run_view(last_run: dict | None) -> dict | None:
+    """The saved-screen stamp: when it last ran, how many survived, and
+    where the data came from (the run footer's per-column provenance,
+    distilled to the distinct sources + the oldest as-of)."""
+    if not last_run:
+        return None
+    footer = last_run.get("footer") or {}
+    cols = footer.get("columns") or {}
+    sources = sorted({str(v.get("source")) for v in cols.values()
+                      if isinstance(v, dict) and v.get("source")})
+    return {"run_at": footer.get("run_at"),
+            "survivors": footer.get("survivors"),
+            "data_as_of": footer.get("data_as_of"),
+            "sources": sources}
+
+
 def list_screens(supa) -> list[dict]:
     rows = supa.table(SCREENS).select("*").order("id", desc=True).execute().data or []
-    return [{**r, "last_run": ({"run_at": (r.get("last_run") or {}).get("footer", {}).get("run_at"),
-                                "survivors": (r.get("last_run") or {}).get("footer", {}).get("survivors")}
-                               if r.get("last_run") else None)} for r in rows]
+    return [{**r, "last_run": _last_run_view(r.get("last_run"))} for r in rows]
 
 
 def get_screen(supa, screen_id: int) -> dict | None:

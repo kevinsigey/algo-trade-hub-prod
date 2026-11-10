@@ -273,6 +273,35 @@ def dedupe(items: list[GuidanceItem]) -> list[GuidanceItem]:
     return out
 
 
+def sanity_flag_for(record: dict, now=None) -> str | None:
+    """Ingest sanity flag for one would-be guidance record (reliability
+    pass F3): a full-year guide recorded as zero, or a guide whose mid
+    deviates from consensus by more than half, is flagged at ingest --
+    flag + surface, never silently rewrite the record (BKNG's FY2026
+    revenue guide landed as $0.00B against a $28.61B consensus: an
+    extraction parse failure, not absent guidance). The flag band
+    [0.5x, 2.0x] is deliberately tighter than the anchor guard's
+    rejection band [0.4x, 2.5x]: SO's 1.94 against 4.63 consensus
+    (0.42x) passed the guard and became the sheet's guide -- a flag is
+    surveillance, not rejection, so it trips earlier."""
+    from datetime import datetime, timezone
+
+    from tradehub.valuation import engine
+
+    now = now or datetime.now(timezone.utc)
+    if not engine.is_full_year_period(record.get("period") or "", now=now):
+        return None
+    low, high = record.get("low"), record.get("high")
+    if low is not None and high is not None and low == 0 and high == 0:
+        return "zero_guide_value"
+    cons = record.get("consensus")
+    mid = engine._mid(low, high)
+    if cons and mid is not None and cons > 0:
+        if not (0.5 <= mid / cons <= 2.0):
+            return "outlier_vs_consensus"
+    return None
+
+
 def wants_consensus(item: GuidanceItem) -> bool:
     """Street consensus is total revenue in dollars and adjusted EPS: only those are compared against it."""
     return (item.metric == "revenue" and item.unit == "usd") or item.metric == "eps_adjusted"
@@ -471,6 +500,7 @@ def run(
                     "consensus_source": cons_source,
                     "model": env.model,
                 }
+                record["ingest_flag"] = sanity_flag_for(record)
                 supa.table("guidance_records").insert(record).execute()
                 counts["records"] += 1
 

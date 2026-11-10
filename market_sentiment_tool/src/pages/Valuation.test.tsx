@@ -67,6 +67,7 @@ const LLY = {
 const KO = {
   ...AMGN, ticker: "KO", status: "guide_rejected", bands: null, anchor: null,
   baseline_verdict: "no_bands", peer_group: "soft_drinks_and_non_alcoholic_beverages",
+  guard_rejections: ["eps_adjusted FY2026: guide midpoint 9.00 is 2.69x the recorded consensus 3.34 -- rejected"],
   falsifier: "No band to falsify: KO has no usable full-year guide on record on either basis (EPS or revenue). The next recorded full-year guide creates the bands.",
   directions: { eps_adjusted: { period: "Full Year 2026", mid: 9.0,
     direction: "first", recorded_at: "2026-10-27T10:58:13+00:00" } },
@@ -96,7 +97,12 @@ function serve() {
       return new Response(JSON.stringify(AMGN_DETAIL), { status: 200 });
     }
     if (url.includes("/api/valuation-bands")) {
-      return new Response(JSON.stringify(SHEETS), { status: 200 });
+      return new Response(JSON.stringify({
+        snapshot: { id: 3, computed_at: "2026-11-10T03:44:00Z",
+          completed_at: "2026-11-10T03:50:00Z", sheet_count: 5,
+          banded_count: 3, source: "valuation_run" },
+        sheets: SHEETS,
+      }), { status: 200 });
     }
     return new Response("{}", { status: 200 });
   });
@@ -177,6 +183,36 @@ describe("Guidance tab", () => {
     expect(within(un).getByText(/No full-year guide on record/i)).toBeInTheDocument();
     // Both sheets' recorded notes carry the phrase; presence is the assertion.
     expect(within(un).getAllByText(/no usable full-year guide on record/i).length).toBeGreaterThan(0);
+  });
+
+  it("stamps the page with the snapshot id and its computed-at", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const stamp = await screen.findByTestId("snapshot-stamp");
+    expect(stamp).toHaveTextContent("Snapshot #3");
+    expect(stamp).toHaveTextContent("2026");
+    expect(stamp).toHaveTextContent("one consistent snapshot");
+  });
+
+  it("shows the guard's own reason for a rejected name, not the template", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const un = await screen.findByTestId("unbanded");
+    expect(await within(un).findByText(/2\.69x the recorded consensus/)).toBeInTheDocument();
+  });
+
+  it("renders the gap as n/a for a point guide", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const eps = await screen.findByTestId("basis-eps");
+    expect(await within(eps).findByText("n/a (narrow guide)")).toBeInTheDocument();
+  });
+
+  it("defines the stale zone in the legend", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const legend = await screen.findByTestId("zone-legend");
+    expect(legend).toHaveTextContent("Stale — zone held");
   });
 
   it("expands a banded row into the band chart and the full fact sheet", async () => {

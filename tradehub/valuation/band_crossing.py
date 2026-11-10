@@ -222,7 +222,7 @@ def _evaluate_book(client, *, sheet: dict, ticker: str, book: str,
                    positions: dict, equity: float,
                    scan_id, scan_kind: str, mode: str,
                    now: datetime, pc_runner,
-                   snapshot_id=_OMIT) -> dict | None:
+                   snapshot_id=_OMIT, source: str = "scan") -> dict | None:
     """One (name, book) step of the crossing state machine: evaluate the
     candidate at `price`, compare to the stored state, write a crossing
     row on a transition, and save the new state. Returns the crossing
@@ -287,15 +287,16 @@ def _evaluate_book(client, *, sheet: dict, ticker: str, book: str,
             "suppress_reason": reason if cand["action"] is None
                                else None,
             "pc_outcome": pc_outcome, "pc_detail": pc_detail,
-            "mode": mode,
+            "mode": mode, "source": source,
             "created_at": now.isoformat(),
         }
         if snapshot_id is not _OMIT:
-            # Provenance for the Guidance Reliability lane's persisted
-            # band snapshots: watcher-stamped rows carry the snapshot
-            # the bands came from (null until the snapshot compute
-            # lands and sheets carry the id). Scan inserts omit the
-            # key entirely — their behavior is unchanged.
+            # Provenance (Guidance Reliability F4): every crossing row
+            # records the persisted band snapshot its bands came from —
+            # scan rows carry the snapshot the scanner read, watcher
+            # rows the snapshot stamped on the sheet (null until the
+            # first stamped compute lands). One population for the
+            # falsifier, separated by the source stamp.
             payload["snapshot_id"] = snapshot_id
         inserted = client.table(CROSSINGS).insert(payload).execute()
         row = (inserted.data or [None])[0]
@@ -305,15 +306,57 @@ def _evaluate_book(client, *, sheet: dict, ticker: str, book: str,
 
 # ── the scan ─────────────────────────────────────────────────────────────────
 
+def _snapshot_sheets(client) -> tuple[list[dict], object]:
+    """The scanner's input (reliability pass F4): the latest COMPLETED
+    snapshot's band history, shaped as fact sheets — the scanner reads
+    the persisted snapshot record, never a live recompute, and every
+    crossing it writes carries that snapshot's id as provenance. When no
+    snapshot has completed yet (pre-fix deployment), falls back to the
+    legacy latest-per-ticker sheets with snapshot id None; the state
+    machine, rules, and grading are identical either way."""
+    from tradehub.valuation import store as val_store
+
+    snap = val_store.latest_snapshot(client)
+    if snap is None:
+        return val_store.latest_sheets(client), None
+    sheets: list[dict] = []
+    for row in val_store.snapshot_history(client, snap["id"]):
+        bands = None
+        if row.get("bear") is not None:
+            bands = {"bear": float(row["bear"]), "base": float(row["base"]),
+                     "bull": float(row["bull"])}
+        metric = row.get("guide_metric")
+        directions = ({metric: {"direction": row.get("direction")}}
+                      if metric and row.get("direction") else {})
+        sheets.append({
+            "ticker": row.get("ticker"),
+            # The compact record carries no status/peer columns: banded is
+            # "has bands", staleness is the held zone, industry is not a
+            # history field (peer detail is current-state on the sheet).
+            "status": "banded" if bands is not None else "no_bands",
+            "band_basis": row.get("band_basis"), "bands": bands,
+            "price": row.get("price"),
+            "price_as_of": (str(snap.get("computed_at"))[:10]
+                            if snap.get("computed_at") else None),
+            "stale": row.get("zone") == "stale",
+            "peer_group": None,
+            "anchor": {"metric": metric},
+            "directions": directions,
+            "computed_at": snap.get("computed_at"),
+            "snapshot_id": snap["id"],
+        })
+    return sheets, snap["id"]
+
+
 def run_scan(client, *, kind: str, now: datetime | None = None,
              books: tuple[str, ...] = BOOKS,
              positions_reader=None, equity_reader=None,
              t1_reader=None, pc_runner=None) -> dict:
-    """One scan over the latest banded sheets, per book. Writes crossing
-    rows only on transitions (freeze doc: the state machine), updates
-    every state row, and audits itself in band_crossing_scans. Places
-    nothing — there is no order path in this module."""
-    from tradehub.valuation import store as val_store
+    """One scan over the latest completed snapshot's banded names, per
+    book. Writes crossing rows only on transitions (freeze doc: the
+    state machine), updates every state row, and audits itself in
+    band_crossing_scans. Places nothing — there is no order path in
+    this module."""
 
     now = now or datetime.now(timezone.utc)
     positions_reader = positions_reader or _default_positions
@@ -321,7 +364,7 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
     t1_reader = t1_reader or t1_classification
     pc_runner = pc_runner or _default_pc
 
-    sheets = val_store.latest_sheets(client)
+    sheets, snapshot_id = _snapshot_sheets(client)
     state_empty = not (client.table(STATE).select("ticker").limit(1)
                        .execute().data or [])
     effective_kind = "baseline" if state_empty else kind
@@ -329,7 +372,8 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
 
     scan_rows = (client.table(SCANS).insert({
         "kind": effective_kind, "requested_kind": kind,
-        "started_at": now.isoformat(), "mode": mode}).execute().data) or []
+        "started_at": now.isoformat(), "mode": mode,
+        "snapshot_id": snapshot_id}).execute().data) or []
     scan_id = scan_rows[0]["id"] if scan_rows else None
 
     book_cache: dict[str, tuple[dict, float] | Exception] = {}
@@ -385,7 +429,8 @@ def run_scan(client, *, kind: str, now: datetime | None = None,
                 zone=zone, guide_status=guide_status, guide_raw=guide_raw,
                 t1=t1, positions=positions, equity=equity,
                 scan_id=scan_id, scan_kind=effective_kind, mode=mode,
-                now=now, pc_runner=pc_runner)
+                now=now, pc_runner=pc_runner,
+                snapshot_id=sheet.get("snapshot_id"), source="scan")
             if row is not None:
                 crossings_written += 1
             state_rows += 1
@@ -427,7 +472,8 @@ def run_watcher_evaluation(client, *, prices: dict, now: datetime | None = None,
     band snapshot the sheet's bands came from (the Guidance
     Reliability lane's snapshot table), read off the sheet; null
     until that lane's compute stamps sheets with the id. Scan rows
-    omit the key (their inserts are unchanged)."""
+    carry the snapshot the scanner read. Both stamp `source`
+    ("watcher" here, "scan" in run_scan) alongside scan_kind."""
     from zoneinfo import ZoneInfo
 
     from tradehub.valuation import store as val_store
@@ -502,7 +548,7 @@ def run_watcher_evaluation(client, *, prices: dict, now: datetime | None = None,
                 t1=t1, positions=positions, equity=equity,
                 scan_id=scan_id, scan_kind="watcher", mode=mode,
                 now=now, pc_runner=pc_runner,
-                snapshot_id=sheet.get("snapshot_id"))
+                snapshot_id=sheet.get("snapshot_id"), source="watcher")
             if row is not None:
                 crossings.append(row)
             state_rows += 1
@@ -629,6 +675,9 @@ def grade_crossings(client, ds, *, now: datetime | None = None) -> dict:
 def sheets_watermark(client) -> str | None:
     from tradehub.valuation import store as val_store
 
+    snap = val_store.latest_snapshot(client)
+    if snap is not None:
+        return str(snap["computed_at"]) if snap.get("computed_at") else None
     marks = [s.get("computed_at") for s in val_store.latest_sheets(client)]
     marks = [str(m) for m in marks if m]
     return max(marks) if marks else None
