@@ -414,6 +414,15 @@ describe("Journal model filtering", () => {
     try { localStorage.removeItem("atr:tracker-show-all"); } catch { /* storage blocked: nothing to clear */ }
   });
 
+  it("groups the totals' thousands", async () => {
+    journalWithFilter.headline.frozen_calibrated = 136137;
+    stubFetchFilter();
+    render(<Journal />);
+    const totals = await screen.findByLabelText("Totals");
+    expect(within(totals).getByText("136,137")).toBeInTheDocument();
+    journalWithFilter.headline.frozen_calibrated = 310;
+  });
+
   it("default view hides baseline_ and early rows, shows main row", async () => {
     stubFetchFilter();
     render(<Journal />);

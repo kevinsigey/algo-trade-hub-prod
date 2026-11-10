@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { NextRelease } from "@/components/NextRelease";
+import { NextRelease, type Preview } from "@/components/NextRelease";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import { getJson } from "@/lib/getJson";
 import type { JournalResponse, SeriesEntry, SeriesResponse } from "@/lib/journal";
@@ -83,6 +83,14 @@ export default function Overview() {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  // The "Coming up" heading sat over nothing whenever no preview existed (2026-11-09): fetch once, show it only with rows.
+  const [upcoming, setUpcoming] = useState<Preview[]>([]);
+  useEffect(() => {
+    getJson<{ previews: Preview[] }>("/api/journal/previews")
+      .then((r) => setUpcoming(Array.isArray(r?.previews) ? r.previews : []))
+      .catch(() => setUpcoming([]));
+  }, []);
+
   const movers = biggestMovers(series);
   const table = journal ? league(viewRows(journal.forecasters)) : [];
   const { beating, measured } = beatingCount(table);
@@ -129,13 +137,15 @@ export default function Overview() {
         )}
       </section>
 
-      <section aria-label="Coming up" className="space-y-3">
-        <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">Coming up</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          <NextRelease family="labor" title="Next jobs report" />
-          <NextRelease family="oil" title="Next oil settlement" />
-        </div>
-      </section>
+      {upcoming.some((r) => r.family === "labor" || r.family === "oil") && (
+        <section aria-label="Coming up" className="space-y-3">
+          <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">Coming up</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <NextRelease family="labor" title="Next jobs report" previews={upcoming} />
+            <NextRelease family="oil" title="Next oil settlement" previews={upcoming} />
+          </div>
+        </section>
+      )}
     </div>
   );
 }

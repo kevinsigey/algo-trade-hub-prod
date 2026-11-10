@@ -324,7 +324,8 @@ function Performance({ data }: { data: PortfolioPayload }) {
     { label: `SPY, ${range}`, value: fmtPct(last?.spy_pct) },
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
     { label: "Max drawdown", value: fmtPct(s.max_drawdown_pct) },
-    { label: "Sharpe", value: s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
+    // A Sharpe ratio on under a month of days is noise (it read -8.11 on day 5, 2026-11-09).
+    { label: "Sharpe", value: data.curve.length < 21 ? "after 1 month" : s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
     { label: "Closed-trade wins", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
   ];
   return (

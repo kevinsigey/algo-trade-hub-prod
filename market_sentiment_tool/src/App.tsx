@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } from "react-router-dom";
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
@@ -439,6 +439,8 @@ function App() {
           <Route path="/health" element={<RequireAdmin><Health /></RequireAdmin>} />
           <Route path="/machine-keys" element={<RequireAdmin><MachineKeys /></RequireAdmin>} />
           <Route path="/weather" element={<Weather />} />
+          {/* An unknown address rendered a blank page (2026-11-09). */}
+          <Route path="*" element={<div className="mx-auto max-w-md px-4 py-16 text-center"><h1 className="text-xl font-semibold text-white">Page not found</h1><p className="mt-1 text-sm text-slate-400">That address isn’t part of the hub.</p><Link to="/" className="mt-5 inline-block text-sm text-emerald-300 hover:text-emerald-200">Back to the overview</Link></div>} />
         </Routes>
         </Guarded>
       </AppShell>
