@@ -45,6 +45,15 @@ def _last_run_view(last_run: dict | None) -> dict | None:
             "survivors": footer.get("survivors"),
             "data_as_of": footer.get("data_as_of"),
             "sources": sources}
+    # Per-field provenance (Round 3): the distinct-sources list alone
+    # leaves a reader to guess which field each source belongs to -- on
+    # the Buffett run "SEC EDGAR company facts" sat next to the whole run
+    # while only eps_growth_5y is EDGAR (ROE is yfinance.info). The view
+    # carries the mapping so the card can attribute source per field.
+    column_sources = {str(k): str(v.get("source")) for k, v in cols.items()
+                      if isinstance(v, dict) and v.get("source")}
+    if column_sources:
+        view["column_sources"] = column_sources
     if footer.get("near_misses"):
         view["near_misses"] = footer["near_misses"]
         view["near_miss_count"] = footer.get("near_miss_count",

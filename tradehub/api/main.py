@@ -4125,8 +4125,13 @@ def screening_run_screen(screen_id: int, _admin: dict = Depends(admin.require_ad
     except (SpecError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     payload = _run_payload(result)
+    # The recorded survivor list is the run's FULL cohort from the footer
+    # (Round 3): payload["rows"] is display-truncated whenever the spec
+    # carries a limit, and a truncated list recorded here would shrink
+    # the membership baseline diffed from it.
     last_run = {"footer": payload["footer"], "columns": payload["columns"],
-                "survivors": [r["ticker"] for r in payload["rows"]]}
+                "survivors": payload["footer"].get("survivor_tickers")
+                             or [r["ticker"] for r in payload["rows"]]}
     screen_store.record_run(supabase, screen_id, last_run)
     return payload
 

@@ -344,3 +344,78 @@ describe("Screening page (Round 2)", () => {
     expect(screen.getByText(/union universe, no enrichment cap/)).toBeInTheDocument();
   });
 });
+
+describe("Screening page (Round 3)", () => {
+  const CLASSIC_NO_LIMIT = {
+    id: 6, name: "Buffett quality (classic)",
+    spec: { name: "buffett_quality_classic",
+      universe: { type: "common_equity",
+                  base: { type: "index_union", indexes: ["sp500", "nasdaq100"] } },
+      max_universe: 600, membership_diff: true,
+      filters: [{ fn: "roe", op: "gt", value: 15 }] },
+    last_run: { run_at: "2026-11-10T05:43:10Z", survivors: 40, survivor_issuers: 39,
+                data_as_of: "2026-11-10T05:43:08Z", sources: ["yfinance.info"] },
+    membership: null, membership_events: null, promoted_idea_id: null,
+  };
+
+  it("a loaded saved screen with no limit composes NO limit (the builder's 25 must not leak in)", async () => {
+    serve(undefined, { screens: [CLASSIC_NO_LIMIT] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText("Buffett quality (classic)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load into cards" }));
+    const pre = document.querySelector("pre");
+    expect(pre?.textContent).toContain("index_union");
+    expect(pre?.textContent).not.toContain('"limit"');
+    // The page says the saved screen's own (absent) limit governs.
+    expect(screen.getByText(/no result limit of its own/)).toBeInTheDocument();
+  });
+
+  it("a run header reports the TRUE count and labels the display cut", async () => {
+    const truncated = {
+      columns: ["ticker", "roe"],
+      rows: [{ ticker: "AAA", roe: 50 }, { ticker: "BBB", roe: 40 }],
+      footer: { spec_name: "buffett_quality_classic", run_at: "2026-11-10T05:47:00Z",
+        universe_size: 518, survivors: 40, survivor_issuers: 39,
+        displayed: 25, display_limit: 25,
+        columns: { roe: { fn: "roe", source: "yfinance.info", as_of: "2026-11-10" } } },
+    };
+    serve(undefined, { run: truncated });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText(/40 survivors/)).toBeInTheDocument();
+    expect(screen.getByText(/39 issuers/)).toBeInTheDocument();
+    expect(screen.getByText(/showing 25 of 40/)).toBeInTheDocument();
+    expect(screen.queryByText(/25 survivors/)).not.toBeInTheDocument();
+  });
+
+  it("saving a screen never attaches the builder's ad-hoc run as its record", async () => {
+    const f = serve();
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText("3 survivors")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save screen" }));
+    expect(await screen.findByText(/use Re-run on the saved screen to record a run/))
+      .toBeInTheDocument();
+    const saveCall = f.mock.calls.find(([u, init]) =>
+      String(u).endsWith("/api/screening/screens") && init?.method === "POST");
+    expect(saveCall).toBeTruthy();
+    const body = JSON.parse(String(saveCall?.[1]?.body ?? "{}"));
+    expect(body).not.toHaveProperty("last_run");
+    expect(body.spec).toBeTruthy();
+  });
+
+  it("the saved card attributes each field's source per field", async () => {
+    const row = { ...CLASSIC_NO_LIMIT,
+      last_run: { run_at: "2026-11-10T05:43:10Z", survivors: 40, survivor_issuers: 39,
+        data_as_of: "2026-11-10T05:43:08Z",
+        sources: ["SEC EDGAR company facts", "yfinance.info"],
+        column_sources: { roe: "yfinance.info",
+                          eps_growth_5y: "SEC EDGAR company facts" } } };
+    serve(undefined, { screens: [row] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText(/roe \(yfinance\.info\)/)).toBeInTheDocument();
+    expect(screen.getByText(/eps_growth_5y \(SEC EDGAR company facts\)/)).toBeInTheDocument();
+  });
+});
