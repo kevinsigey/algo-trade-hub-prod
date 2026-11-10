@@ -93,10 +93,11 @@ const CLASSIC_ROW = {
 };
 
 function serve(translateBody?: unknown,
-               extra?: { screens?: unknown; run?: unknown; catalog?: unknown }) {
+               extra?: { screens?: unknown; run?: unknown; catalog?: unknown; chips?: unknown }) {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const body = url.includes("/api/screening/catalog") ? (extra?.catalog ?? CATALOG)
+    const body = url.includes("/api/verdict-chips") ? (extra?.chips ?? { generated_at: "2026-11-10T12:00:00Z", chips: {} })
+      : url.includes("/api/screening/catalog") ? (extra?.catalog ?? CATALOG)
       : url.includes("/api/screening/translate") ? translateBody
       : url.includes("/api/screening/quote/") ? QUOTE
       : url.includes("/api/screening/screens") && init?.method !== "POST" ? (extra?.screens ?? [])
@@ -342,6 +343,25 @@ describe("Screening page (Round 2)", () => {
     expect(await screen.findByText(/2 survivors/)).toBeInTheDocument();
     expect(screen.getByText(/· 1 issuer/)).toBeInTheDocument();
     expect(screen.getByText(/union universe, no enrichment cap/)).toBeInTheDocument();
+  });
+
+  it("carries the debate verdict chip on result rows (Batch 2)", async () => {
+    const chips = { generated_at: "2026-11-10T12:00:00Z", chips: { AAA: {
+      ticker: "AAA", verdict_id: 7, rendered_at: "2026-11-10T06:00:00+00:00",
+      judge: "free-ai-proposer", choice_id: "watch", direction: "none",
+      confidence: null, rationale: "", dissent: "The bear case stands.",
+      snapshot_id: 3, fact_sheet_id: 41, trigger: "band_zone", zone: "neutral",
+    } } };
+    serve(undefined, { chips });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    const chip = await screen.findByTestId("verdict-chip-AAA");
+    expect(chip).toHaveTextContent("Debate: Watch · no stated confidence");
+    expect(chip).toHaveTextContent("Dissent: The bear case stands.");
+    // a row without a verdict says so, honestly
+    expect(screen.getByTestId("verdict-chip-BBB"))
+      .toHaveTextContent("No debate verdict yet");
   });
 });
 

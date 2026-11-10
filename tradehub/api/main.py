@@ -4455,6 +4455,92 @@ def level_watcher_surface(_admin: dict = Depends(admin.require_admin), supabase=
     return lw.read_surface(supabase)
 
 
+# ── Debate candidates + the per-name decision view (Loop Batch 2) ──────────
+# Candidates are generated from RECORDED screen runs/membership and the
+# latest completed snapshot's band history — never ad-hoc builder runs.
+# The decision view is one read surface per name: fact sheet, systems,
+# judgment, named gaps. Display-only, like the rest of the layer.
+
+@app.get("/api/debate-candidates", tags=["Valuation"])
+def debate_candidates_list(_admin: dict = Depends(admin.require_admin),
+                           supabase=Depends(get_supabase)):
+    """The persisted candidate queue for the latest completed snapshot:
+    counts by source class (entrants / zone names / conjunctions) and the
+    queue rows with their sources and states."""
+    from tradehub.valuation import candidates as cand_mod
+    from tradehub.valuation import store as val_store
+
+    snap = val_store.latest_snapshot(supabase)
+    if snap is None:
+        return {"snapshot": None, "counts": {"entrants": 0, "zone_names": 0,
+                                             "conjunctions": 0, "total": 0},
+                "candidates": []}
+    rows = cand_mod.candidates_for_snapshot(supabase, snap["id"])
+    counts = {
+        "entrants": sum(1 for r in rows if (r.get("sources") or {})
+                        .get("entrants")),
+        "zone_names": sum(1 for r in rows if (r.get("sources") or {})
+                          .get("zone")),
+        "conjunctions": sum(1 for r in rows
+                            if r.get("candidate_class") == "conjunction"),
+        "total": len(rows)}
+    return {"snapshot": _snapshot_stamp(snap), "counts": counts,
+            "candidates": rows}
+
+
+@app.post("/api/debate-candidates/run", tags=["Valuation"], status_code=202)
+def debate_candidates_run(_admin: dict = Depends(admin.require_admin),
+                          supabase=Depends(get_supabase)):
+    """Generate candidates from the recorded flow, then drain the queue
+    into debate renders on a background thread (shared daily budget,
+    fail-closed LLM chain — a capacity decline leaves candidates pending
+    and stores nothing). Returns the generation summary immediately."""
+    from tradehub.valuation import candidates as cand_mod
+
+    summary = cand_mod.generate_candidates(supabase)
+
+    def _go() -> None:
+        from tradehub.screening.sources import DataStore
+
+        cand_mod.run_candidate_debates(supabase, DataStore())
+
+    threading.Thread(target=_go, daemon=True,
+                     name="debate-candidates-drain").start()
+    return {"generation": {k: summary[k] for k in
+                           ("snapshot", "counts", "inserted", "excluded")}}
+
+
+@app.get("/api/verdict-chips", tags=["Valuation"])
+def verdict_chips_list(_admin: dict = Depends(admin.require_admin),
+                       supabase=Depends(get_supabase)):
+    """The compact per-name verdict read for the pages: latest rendered
+    verdict per ticker (verdict, confidence, dissent, judge identity,
+    exhibit snapshot id). Names without a rendered verdict are absent —
+    the pages render that absence honestly, never a placeholder."""
+    from tradehub.valuation import decisions
+
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "chips": decisions.verdict_chips(supabase)}
+
+
+@app.get("/api/name-decision/{ticker}", tags=["Valuation"])
+def name_decision_get(ticker: str,
+                      _admin: dict = Depends(admin.require_admin),
+                      supabase=Depends(get_supabase)):
+    """One name's decision view: what we know (fact sheet), what the
+    systems say (recorded screens, zone, crossings, print classification),
+    the judgment (debate verdict + falsifier standing), and what is
+    missing — named gaps, never proxied. 404 when the hub knows nothing
+    about the name at all."""
+    from tradehub.valuation import decisions
+
+    view = decisions.name_decision(supabase, ticker)
+    if view is None:
+        raise HTTPException(status_code=404,
+                            detail="nothing on record for that name")
+    return view
+
+
 mount_frontend(app, FRONTEND_DIST)
 
 

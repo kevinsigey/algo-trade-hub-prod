@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
 import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
 import LevelWatcher from "@/pages/LevelWatcher";
+import NameDecision from "@/components/NameDecision";
+import { VerdictChipLine } from "@/components/VerdictChip";
+import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
   consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
@@ -314,9 +318,10 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
   );
 }
 
-function BandedTable({ sheets, basis, expanded, onToggle, members }: {
+function BandedTable({ sheets, basis, expanded, onToggle, members, chips }: {
   sheets: FactSheet[]; basis: string; expanded: string | null;
   onToggle: (t: string) => void; members: Record<string, string[]>;
+  chips: Record<string, VerdictChip>;
 }) {
   const rows = sheets
     .filter((s) => s.status === "banded" && s.band_basis === basis)
@@ -374,13 +379,17 @@ function BandedTable({ sheets, basis, expanded, onToggle, members }: {
                     daily close as of {s.price_as_of ?? "—"} · {s.price_vendor ?? "Yahoo Finance"}
                   </span>
                 </td>
-                <td className="px-3 py-2">{zoneBadge(s.baseline_verdict)}</td>
+                <td className="px-3 py-2">
+                  {zoneBadge(s.baseline_verdict)}
+                  <VerdictChipLine chip={chips[s.ticker]} ticker={s.ticker} />
+                </td>
                 <td className="px-3 py-2 text-slate-300">{gapDisplay(s)}</td>
               </tr>,
               open ? (
                 <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
                   <td colSpan={10} className="px-3 py-3">
                     <SheetDetail sheet={s} members={members[s.ticker]} />
+                    <NameDecision ticker={s.ticker} />
                   </td>
                 </tr>
               ) : null,
@@ -442,6 +451,9 @@ export default function Valuation() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, string[]>>({});
+  const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+  const [searchParams] = useSearchParams();
+  const decisionParam = searchParams.get("decision")?.toUpperCase() ?? null;
 
   useEffect(() => {
     let live = true;
@@ -452,8 +464,21 @@ export default function Valuation() {
         setSheets(env.sheets);
       })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The valuation sheets could not be loaded"); });
+    // The verdict chips ride beside the sheets: a name with no rendered
+    // verdict is simply absent from the map, and its cell says so.
+    adminJson<ChipsPayload>("/api/verdict-chips")
+      .then((env) => { if (live && env?.chips) setChips(env.chips); })
+      .catch(() => { /* absence renders as "No debate verdict yet" */ });
     return () => { live = false; };
   }, []);
+
+  // Deep link from a Screening row (?decision=TICKER): open that name's
+  // sheet expansion, where its decision view lives.
+  useEffect(() => {
+    if (!decisionParam || !sheets) return;
+    const sheet = sheets.find((s) => s.ticker === decisionParam);
+    if (sheet) setExpanded(sheet.ticker);
+  }, [decisionParam, sheets]);
 
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
 
@@ -545,7 +570,7 @@ export default function Valuation() {
             <div className="mt-3">
               <BandedTable sheets={sheets} basis="eps" expanded={expanded}
                            onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} />
+                           members={members} chips={chips} />
             </div>
           </section>
 
@@ -559,7 +584,7 @@ export default function Valuation() {
             <div className="mt-3">
               <BandedTable sheets={sheets} basis="revenue" expanded={expanded}
                            onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} />
+                           members={members} chips={chips} />
             </div>
           </section>
 
@@ -602,6 +627,7 @@ export default function Valuation() {
                         <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
                           <td colSpan={4} className="px-3 py-3">
                             <SheetDetail sheet={s} members={members[s.ticker]} />
+                            <NameDecision ticker={s.ticker} />
                           </td>
                         </tr>
                       ) : null,

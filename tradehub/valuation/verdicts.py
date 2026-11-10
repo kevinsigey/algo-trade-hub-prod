@@ -82,8 +82,61 @@ def cap_reached(client, now: datetime) -> bool:
     return len(verdict_store.verdicts_since(client, since)) >= DAILY_CAP
 
 
+def context_markdown(candidate_sources: dict | None) -> str | None:
+    """The recorded context (Batch 2) as debate context: what the systems
+    recorded about this name — screen memberships/entrances from RECORDED
+    runs only, the band zone on the exhibit snapshot, the print
+    classification. Labeled as context wherever it appears; it is not
+    Exhibit A and packet validation never prices off it."""
+    if not candidate_sources:
+        return None
+    lines = ["## Recorded context (not Exhibit A — the systems' record "
+             "for this name)"]
+    memberships = candidate_sources.get("memberships") or []
+    entrants = {(e.get("screen_id"), e.get("date"))
+                for e in candidate_sources.get("entrants") or []}
+    if memberships:
+        parts = []
+        for m in memberships:
+            text = f"{m.get('screen_name')} — member since " \
+                   f"{m.get('member_since')}"
+            entered = [d for (sid, d) in entrants
+                       if sid == m.get("screen_id")]
+            if entered:
+                text += f"; entered {entered[0]}"
+            parts.append(text)
+        lines.append("- Screen memberships (recorded runs only): "
+                     + "; ".join(parts))
+    elif entrants:
+        names = [f"{e.get('screen_name')} (entered {e.get('date')})"
+                 for e in candidate_sources.get("entrants") or []]
+        lines.append("- Recent screen entrances (recorded runs only): "
+                     + "; ".join(names))
+    else:
+        lines.append("- Screen memberships: none on record.")
+    zone = candidate_sources.get("zone")
+    lines.append(f"- Band zone on the exhibit snapshot: {zone or 'none'}")
+    pc = candidate_sources.get("print_classification")
+    if pc:
+        lines.append(f"- Print classification (T1 forward file): "
+                     f"{pc.get('classification')} "
+                     f"(as of {pc.get('as_of') or 'not dated'})")
+    else:
+        lines.append("- Print classification (T1 forward file): none on "
+                     "record.")
+    held = candidate_sources.get("held")
+    if held:
+        text = "- Held in the books: " + ", ".join(held.get("books") or [])
+        sleeves = [s for s in held.get("sleeves") or [] if s]
+        if sleeves:
+            text += " · thesis sleeve: " + "; ".join(sleeves)
+        lines.append(text)
+    return "\n".join(lines)
+
+
 def render_verdict(client, ds, ticker: str, *, trigger: str,
-                   chat=None, seat=None, now: datetime | None = None) -> dict:
+                   chat=None, seat=None, now: datetime | None = None,
+                   candidate_sources: dict | None = None) -> dict:
     """Render (or decline to render) one verdict. Returns a status dict:
     rendered / void carry the stored row under 'verdict_row'; the declines
     (no_sheet, not_banded, stale_sheet, cap_reached, llm_unavailable,
@@ -129,9 +182,15 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
         "entry_price": sheet.get("price"),
         "debate_run_id": _classic_debate_id(
             ticker, now.astimezone(CT).date().isoformat()),
+        # Batch 2 provenance (scar #9): the exhibit snapshot this verdict
+        # was rendered against, and the recorded candidate context that
+        # brought the name here (null for pre-Batch-2 triggers).
+        "snapshot_id": sheet.get("snapshot_id"),
+        "candidate_sources": candidate_sources,
     }
     try:
-        debate = debate_fork.run_debate(ex, chat=chat)
+        debate = debate_fork.run_debate(
+            ex, chat=chat, context_md=context_markdown(candidate_sources))
     except debate_fork.PacketInvalid as exc:
         row = verdict_store.insert_verdict(client, {
             **base_row, "status": "void", "judge": None,
