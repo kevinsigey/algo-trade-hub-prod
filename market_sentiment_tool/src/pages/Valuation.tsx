@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 
 import { adminJson } from "@/lib/workshop";
-import { ctDateTimeYear, ctDateYear } from "@/lib/format";
+import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
 import LevelWatcher from "@/pages/LevelWatcher";
 import {
-  gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
+  consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
   type FactSheet, type GuidanceRecord, type SnapshotStamp,
 } from "@/lib/valuation";
@@ -73,8 +73,22 @@ function RangeStrip({ lo, hi, mid, marker, aria, fmt }: {
   const X = (v: number) => 6 + ((v - x0) / (x1 - x0)) * (W - 12);
   const markerAnchor = marker == null ? "middle"
     : X(marker) < 70 ? "start" : X(marker) > W - 70 ? "end" : "middle";
+  // Collision check (Kevin's standing rule: chart labels never overlap).
+  // The axis min/max labels and the marker label share the bottom row; when
+  // the marker sits near an edge, its end/start-anchored label lands on the
+  // axis label's ground. Estimate widths at 11px and, on a collision, drop
+  // the marker label to its own row -- no overlap by construction.
+  const labelW = (s: string) => s.length * 6.6;
+  const spanOf = (x: number, w: number, anchor: string): [number, number] =>
+    anchor === "start" ? [x, x + w] : anchor === "end" ? [x - w, x] : [x - w / 2, x + w / 2];
+  const minSpan: [number, number] = [6, 6 + labelW(fmt(x0))];
+  const maxSpan: [number, number] = [W - 6 - labelW(fmt(x1)), W - 6];
+  const markerSpan = marker != null ? spanOf(X(marker), labelW(fmt(marker)), markerAnchor) : null;
+  const collides = markerSpan != null
+    && (markerSpan[0] < minSpan[1] + 4 || markerSpan[1] > maxSpan[0] - 4);
+  const H = collides ? 74 : 58;
   return (
-    <svg viewBox={`0 0 ${W} 58`} className="w-full" role="img" aria-label={aria}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={aria}>
       <rect x={X(lo)} y={16} width={Math.max(2, X(hi) - X(lo))} height={12}
             className="fill-slate-600" rx={2} />
       {mid != null && (
@@ -89,7 +103,7 @@ function RangeStrip({ lo, hi, mid, marker, aria, fmt }: {
       <text x={6} y={54} fontSize={11} className="fill-slate-500">{fmt(x0)}</text>
       <text x={W - 6} y={54} fontSize={11} textAnchor="end" className="fill-slate-500">{fmt(x1)}</text>
       {marker != null && (
-        <text x={X(marker)} y={54} fontSize={11} textAnchor={markerAnchor}
+        <text x={X(marker)} y={collides ? 70 : 54} fontSize={11} textAnchor={markerAnchor}
               className="fill-amber-400">{fmt(marker)}</text>
       )}
     </svg>
@@ -222,9 +236,9 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
             <Kv k="Consensus">{a.consensus == null ? "—" : a.metric === "revenue"
               ? `$${(a.consensus / 1e9).toFixed(2)}B` : a.consensus.toFixed(2)}</Kv>
             <Kv k="Consensus source">{a.consensus_source ?? "—"}
-              {a.consensus_period ? ` · ${a.consensus_period}` : ""}</Kv>
+              {a.consensus_period ? ` · ${consensusPeriodText(a.consensus_period)}` : ""}</Kv>
             {sheet.guidance_percentile != null && (
-              <Kv k="Guide percentile">{`${num(sheet.guidance_percentile)?.toFixed(0)}th among guided peers`}</Kv>
+              <Kv k="Guide percentile">{`${ordinal(Math.round(num(sheet.guidance_percentile) ?? 0))} among guided peers`}</Kv>
             )}
             <Kv k="Tier">{sheet.tier === "watch" ? "Watch (S&P 500)" : "Open (any recorded guide)"}</Kv>
           </FactBlock>
@@ -286,7 +300,7 @@ function SheetDetail({ sheet, members }: { sheet: FactSheet; members: string[] |
       )}
       {sheet.falsifier && (
         <FactBlock title={sheet.status === "banded" ? "What would falsify this sheet" : "Why there are no bands — the sheet's recorded note"}>
-          <p className="text-slate-300">{sheet.falsifier}</p>
+          <p className="whitespace-pre-line break-words text-slate-300">{sheet.falsifier}</p>
         </FactBlock>
       )}
       <FactBlock title={`Guidance records on file (${records.length})`}>
@@ -392,6 +406,29 @@ function unbandedNote(sheet: FactSheet): string {
   return sheet.falsifier ?? "—";
 }
 
+/** The not-banded table cell: the first two guard reasons inline, the rest
+ * behind an expandable tail -- the "(+N more)" text used to be a dead end
+ * that summarized the remaining reasons away. */
+function UnbandedNote({ sheet }: { sheet: FactSheet }) {
+  const guards = sheet.guard_rejections ?? [];
+  if (guards.length > 2) {
+    return (
+      <span>
+        {guards.slice(0, 2).join("; ")}
+        <details className="mt-1">
+          <summary className="cursor-pointer text-slate-300 hover:text-white">
+            +{guards.length - 2} more
+          </summary>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {guards.slice(2).map((g, i) => <li key={i}>{g}</li>)}
+          </ul>
+        </details>
+      </span>
+    );
+  }
+  return <>{unbandedNote(sheet)}</>;
+}
+
 function onFileText(sheet: FactSheet): string {
   const records = sheet.inputs?.guidance_records ?? [];
   if (!records.length) return "Nothing on file";
@@ -460,8 +497,8 @@ export default function Valuation() {
             {" "}— one for every name with recorded guidance ·{" "}
             <span className="font-medium text-white">{summary.banded} banded</span>
             {` (${summary.epsBanded} EPS basis · ${summary.revenueBanded} revenue basis)`} ·{" "}
-            {summary.buyZones} in a buy zone{summary.buyZones === 1 ? "" : "s"} ·{" "}
-            {summary.shortZones} in short zone{summary.shortZones === 1 ? "" : "s"}
+            {summary.buyZones} {summary.buyZones === 1 ? "in a buy zone" : "in buy zones"} ·{" "}
+            {summary.shortZones} {summary.shortZones === 1 ? "in a short zone" : "in short zones"}
             {summary.flatZones > 0 && ` · ${summary.flatZones} neutral or no-chase`}
             {summary.stale > 0 && ` · ${summary.stale} stale (zone held)`}
             {` · ${summary.unbanded} not banded`}
@@ -559,7 +596,7 @@ export default function Valuation() {
                         </td>
                         <td className="px-3 py-2 text-slate-300">{STATE_LABELS[s.status] ?? s.status}</td>
                         <td className="px-3 py-2 text-slate-300">{onFileText(s)}</td>
-                        <td className="px-3 py-2 text-slate-400">{unbandedNote(s)}</td>
+                        <td className="px-3 py-2 text-slate-400"><UnbandedNote sheet={s} /></td>
                       </tr>,
                       open ? (
                         <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">

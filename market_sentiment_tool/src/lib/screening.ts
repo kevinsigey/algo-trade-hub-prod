@@ -55,7 +55,10 @@ export interface RunFooter {
   data_as_of?: string | null;
   universe_size?: number;
   universe_capped?: { cap: number; universe_size_full: number };
+  universe_selection?: string;
+  universe_union?: boolean;
   survivors?: number;
+  survivor_issuers?: number;
   near_misses?: NearMiss[];
   near_miss_count?: number;
   columns?: Record<string, { fn?: string; source?: string; as_of?: string }>;
@@ -82,11 +85,15 @@ export interface RunPayload {
 
 export type ScreenSpec = Record<string, unknown> & {
   name?: string;
-  universe?: { type: string; index?: string; tickers?: string[] };
+  universe?: { type: string; index?: string; tickers?: string[];
+               indexes?: string[]; base?: unknown };
   filters?: SpecFilter[];
   derived?: { name: string; expr: string }[];
   score?: SpecScore[];
+  sort?: { by: string; ascending?: boolean };
   limit?: number;
+  max_universe?: number;
+  membership_diff?: boolean;
 };
 
 export interface SpecFilter {

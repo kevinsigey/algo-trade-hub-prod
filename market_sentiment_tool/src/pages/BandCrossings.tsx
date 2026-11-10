@@ -62,6 +62,9 @@ interface CrossingsPayload {
   falsifier: { gate: number; graded: number; mean_score: number | null; status: string };
   scans: ScanRow[];
   crossings: Crossing[];
+  /** The newest COMPLETED valuation snapshot (Round 2): when it is newer
+   * than the last scan's snapshot, the section labels itself stale. */
+  latest_snapshot_id?: number | null;
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -168,12 +171,18 @@ export default function BandCrossings() {
             {lastScan.banded_names != null && ` · ${lastScan.banded_names} banded names`}
             {lastScan.crossings_written != null && ` · ${lastScan.crossings_written} crossings written`}
             {lastScan.snapshot_id != null && ` · snapshot #${lastScan.snapshot_id}`}
+            {payload.latest_snapshot_id != null && lastScan.snapshot_id != null
+              && payload.latest_snapshot_id > lastScan.snapshot_id && (
+              <span className="text-amber-300">
+                {` · snapshot #${payload.latest_snapshot_id} pending — the scan above predates the snapshot this page serves; the next scan reads it`}
+              </span>
+            )}
             {" · "}
           </>
         ) : null}
         {falsifier && (
           <>Falsifier: <span className="font-medium text-white">
-            {falsifier.graded}/{falsifier.gate} graded entries</span>
+            {falsifier.graded} of first {falsifier.gate} crossings graded</span>
             {` — ${falsifier.status}`}
             {falsifier.mean_score != null && ` · mean score ${falsifier.mean_score}`}
           </>

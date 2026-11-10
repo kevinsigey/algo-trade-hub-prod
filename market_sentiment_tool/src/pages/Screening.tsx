@@ -13,6 +13,24 @@ export function survivorText(n: number): string {
   return `${n} survivor${n === 1 ? "" : "s"}`;
 }
 
+/** Plain words for a universe the buttons cannot express (a loaded saved
+ * spec's union / wrapper chain), so the page says what will actually run. */
+export function universeWords(u: ScreenSpec["universe"]): string {
+  if (!u) return "the saved universe";
+  if (u.type === "common_equity") {
+    return `common equities only · ${universeWords(u.base as ScreenSpec["universe"])}`;
+  }
+  if (u.type === "sector") return universeWords(u.base as ScreenSpec["universe"]);
+  if (u.type === "index_union") {
+    const names: Record<string, string> = { sp500: "S&P 500", nasdaq100: "Nasdaq-100",
+                                            nasdaq_all: "all US listed" };
+    return `${(u.indexes ?? []).map((i) => names[i] ?? i).join(" + ")} union`;
+  }
+  if (u.type === "index") return u.index ?? "an index";
+  if (u.type === "list") return `${u.tickers?.length ?? 0} saved tickers`;
+  return u.type;
+}
+
 function fmtCell(v: unknown): string {
   if (v == null) return "—";
   if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toLocaleString("en-US", { maximumFractionDigits: 0 })
@@ -108,6 +126,16 @@ export default function Screening() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ ticker: string; data?: QuotePayload; error?: string } | null>(null);
   const [screens, setScreens] = useState<ScreenRow[] | null>(null);
+  /** The parts of a loaded saved spec the card builder cannot express
+   * (a union/wrapped universe, max_universe, membership_diff, its sort):
+   * carried verbatim into the composed spec until the user picks a
+   * universe button, which replaces them. Without this, loading a saved
+   * classic screen silently rebuilt it as {index: sp500} under the
+   * default cap -- the loaded screen was not the saved screen. */
+  const [carried, setCarried] = useState<{
+    universe: ScreenSpec["universe"]; max_universe?: number;
+    membership_diff?: boolean; sort?: ScreenSpec["sort"]; description?: string;
+  } | null>(null);
   const [dName, setDName] = useState("");
   const [dA, setDA] = useState("");
   const [dB, setDB] = useState("");
@@ -171,9 +199,16 @@ export default function Screening() {
     loadScreens();
   }, []);
 
-  const spec = useMemo(
-    () => specFromState({ name, universeId, customTickers, tray, derived, score, limit: limitN }),
-    [name, universeId, customTickers, tray, derived, score, limitN]);
+  const spec = useMemo(() => {
+    const base = specFromState({ name, universeId, customTickers, tray, derived, score, limit: limitN });
+    if (!carried) return base;
+    const out: ScreenSpec = { ...base, universe: carried.universe };
+    if (carried.max_universe != null) out.max_universe = carried.max_universe;
+    if (carried.membership_diff != null) out.membership_diff = carried.membership_diff;
+    if (carried.description != null) out.description = carried.description;
+    if (carried.sort && !base.sort) out.sort = carried.sort;
+    return out;
+  }, [name, universeId, customTickers, tray, derived, score, limitN, carried]);
 
   const act = async (label: string, fn: () => Promise<void>) => {
     setBusy(label); setError(null); setNotice(null);
@@ -186,8 +221,22 @@ export default function Screening() {
     setTray(t); setScore(s); setDerived(d);
     if (sp.name) setName(sp.name);
     const u = sp.universe;
-    if (u?.type === "index" && u.index && UNIVERSES.some((x) => x.id === u.index)) setUniverseId(u.index);
-    else if (u?.type === "list") { setUniverseId("custom"); setCustomTickers((u.tickers ?? []).join(" ")); }
+    if (u?.type === "index" && u.index && UNIVERSES.some((x) => x.id === u.index)) {
+      setUniverseId(u.index);
+      setCarried(null);
+    } else if (u?.type === "list") {
+      setUniverseId("custom"); setCustomTickers((u.tickers ?? []).join(" "));
+      setCarried(null);
+    } else if (u) {
+      // A universe the buttons cannot express (union, common_equity, ...):
+      // carry it verbatim -- never fall through to the sp500 default.
+      setUniverseId("");
+      setCarried({ universe: u, max_universe: sp.max_universe,
+        membership_diff: sp.membership_diff, sort: sp.sort,
+        description: typeof sp.description === "string" ? sp.description : undefined });
+    } else {
+      setCarried(null);
+    }
     if (typeof sp.limit === "number") setLimitN(sp.limit);
     setResult(null);
     setNotice(note);
@@ -211,6 +260,7 @@ export default function Screening() {
         op: item.op, value: item.value });
     }
     setTray(items);
+    setCarried(null);
     const sc = preset.scoreCard ? byCardId.get(preset.scoreCard) : undefined;
     setScore(sc ? [{ fn: sc.fn, params: sc.params, label: sc.label, weight: 1,
                      direction: preset.scoreDirection ?? "high" }] : []);
@@ -327,8 +377,15 @@ export default function Screening() {
             <span className="font-medium text-slate-200">{result.footer.spec_name ?? "screen"}</span>
             {" "}· ran {result.footer.run_at?.replace("T", " ").slice(0, 16)} UTC · universe {result.footer.universe_size ?? "?"}
             {" "}· <span className="text-slate-200">{survivorText(result.footer.survivors ?? result.rows.length)}</span>
+            {result.footer.survivor_issuers != null
+              && result.footer.survivor_issuers !== (result.footer.survivors ?? result.rows.length) && (
+              <span> · {result.footer.survivor_issuers} issuer{result.footer.survivor_issuers === 1 ? "" : "s"}</span>
+            )}
             {result.footer.universe_capped && (
-              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names</span>
+              <span className="text-amber-300"> · enrichment capped at {result.footer.universe_capped.cap} of {result.footer.universe_capped.universe_size_full} names — the first {result.footer.universe_capped.cap} in sorted ticker order</span>
+            )}
+            {!result.footer.universe_capped && result.footer.universe_selection && (
+              <span> · {result.footer.universe_selection}</span>
             )}
             {result.footer.data_as_of && <> · data as of {result.footer.data_as_of.replace("T", " ").slice(0, 16)} UTC</>}
             {" "}· click a column to sort, a row for its quote and provenance
@@ -438,7 +495,7 @@ export default function Screening() {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Universe</h2>
         <div className="mt-2 flex flex-wrap gap-2">
           {UNIVERSES.map((u) => (
-            <button key={u.id} type="button" onClick={() => setUniverseId(u.id)} aria-pressed={universeId === u.id}
+            <button key={u.id} type="button" onClick={() => { setUniverseId(u.id); setCarried(null); }} aria-pressed={universeId === u.id}
               className={`rounded-xl border px-3.5 py-2 text-left ${universeId === u.id
                 ? "border-emerald-400/70 bg-emerald-500/10" : "border-slate-700 bg-slate-900/60 hover:border-slate-500"}`}>
               <span className="block text-sm font-medium text-slate-100">{u.label}</span>
@@ -459,6 +516,12 @@ export default function Screening() {
               placeholder="AAPL MSFT NVDA ..." className="min-w-56 flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-white placeholder:text-slate-500" />
           )}
         </div>
+        {carried && (
+          <p className="mt-2 text-xs text-amber-200/90">
+            Loaded universe: {universeWords(carried.universe)} — carried from the saved screen, so
+            running or re-saving keeps it. Pick a universe above to replace it.
+          </p>
+        )}
       </section>
 
       <section aria-label="Your screen" className="mt-6 rounded-2xl border border-slate-700/80 bg-slate-900/50 p-4">
@@ -661,6 +724,9 @@ export default function Screening() {
                 {sc.last_run
                   ? `last run ${sc.last_run.run_at ? ctDateTimeYear(sc.last_run.run_at) : "—"}`
                     + ` · ${survivorText(sc.last_run.survivors ?? 0)}`
+                    + (sc.last_run.survivor_issuers != null && sc.last_run.survivors != null
+                        && sc.last_run.survivor_issuers !== sc.last_run.survivors
+                        ? ` · ${sc.last_run.survivor_issuers} issuer${sc.last_run.survivor_issuers === 1 ? "" : "s"}` : "")
                     + (sc.last_run.data_as_of ? ` · data as of ${sc.last_run.data_as_of}` : "")
                     + (sc.last_run.sources?.length ? ` · sources: ${sc.last_run.sources.join(", ")}` : "")
                   : "not run yet"}
@@ -676,7 +742,7 @@ export default function Screening() {
                   {[...(sc.membership_events ?? [])].slice(-6).reverse().map((e, i) => (
                     <li key={`${e.ticker}-${e.date}-${e.kind}-${i}`}
                         className={e.kind === "entered" ? "text-emerald-300/90" : "text-rose-300/90"}>
-                      <span className="font-mono font-medium">{e.ticker}</span>
+                      <span className="font-mono font-medium">{e.tickers && e.tickers.length > 1 ? e.tickers.join(" + ") : e.ticker}</span>
                       {e.kind === "entered"
                         ? ` entered · ${fmtDay(e.date)}`
                         : ` exited · was member since ${fmtDay(e.since ?? e.date)}`}
@@ -686,7 +752,9 @@ export default function Screening() {
               )}
               {(sc.last_run?.near_misses ?? []).length > 0 && (
                 <div className="mt-1 text-xs text-slate-500">
-                  Near misses — one filter away ({sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length}):
+                  Near misses — one filter away ({(sc.last_run?.near_miss_count ?? 0) > (sc.last_run?.near_misses?.length ?? 0)
+                    ? `${sc.last_run?.near_misses?.length} closest of ${sc.last_run?.near_miss_count}`
+                    : (sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length)}):
                   <ul className="mt-0.5 space-y-0.5">
                     {(sc.last_run?.near_misses ?? []).slice(0, 6).map((n: NearMiss) => (
                       <li key={`${n.ticker}-${n.column}`}>
@@ -699,7 +767,9 @@ export default function Screening() {
                   {(sc.last_run?.near_misses?.length ?? 0) > 6 && (
                     <details>
                       <summary className="cursor-pointer hover:text-slate-300">
-                        all {sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length} near misses
+                        {(sc.last_run?.near_miss_count ?? 0) > (sc.last_run?.near_misses?.length ?? 0)
+                          ? `all ${sc.last_run?.near_misses?.length} stored near misses`
+                          : `all ${sc.last_run?.near_miss_count ?? sc.last_run?.near_misses?.length} near misses`}
                       </summary>
                       <ul className="mt-0.5 space-y-0.5">
                         {(sc.last_run?.near_misses ?? []).slice(6).map((n: NearMiss) => (

@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from . import membership as membership_mod
+from .universes import issuer_key
 
 SCREENS = "screens"
 
@@ -48,6 +49,10 @@ def _last_run_view(last_run: dict | None) -> dict | None:
         view["near_misses"] = footer["near_misses"]
         view["near_miss_count"] = footer.get("near_miss_count",
                                              len(footer["near_misses"]))
+    if footer.get("survivor_issuers") is not None:
+        view["survivor_issuers"] = footer["survivor_issuers"]
+    if footer.get("universe_selection"):
+        view["universe_selection"] = footer["universe_selection"]
     return view
 
 
@@ -75,9 +80,11 @@ def record_run(supa, screen_id: int, last_run: dict) -> dict:
         # Watchlist diffing (classic three): the refresh is diffed against
         # the stored membership; entrances/exits append dated events, the
         # first diffed run baselines silently (see screening/membership.py).
+        # Membership diffs key by ISSUER (Round 2): a dual-class name
+        # joining an issuer that is already a member is not an entrance.
         state, events = membership_mod.diff_membership(
             existing.get("membership"), last_run.get("survivors") or [],
-            membership_mod.run_date_of(last_run))
+            membership_mod.run_date_of(last_run), key=issuer_key)
         values["membership"] = state
         if events:
             values["membership_events"] = membership_mod.append_events(

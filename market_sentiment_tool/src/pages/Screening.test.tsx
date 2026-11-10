@@ -271,3 +271,76 @@ describe("Screening page (cards)", () => {
     expect(screen.getByLabelText("Last earnings surprise value")).toBeInTheDocument();
   });
 });
+
+describe("Screening page (Round 2)", () => {
+  const UNION_ROW = {
+    id: 6, name: "Buffett quality (classic)",
+    spec: { name: "buffett_quality_classic",
+      universe: { type: "common_equity",
+                  base: { type: "index_union", indexes: ["sp500", "nasdaq100"] } },
+      max_universe: 600, membership_diff: true,
+      filters: [{ fn: "roe", op: "gt", value: 15 }], limit: 25 },
+    last_run: { run_at: "2026-11-10T05:04:28Z", survivors: 40, survivor_issuers: 39,
+                data_as_of: "2026-11-10T05:04:25Z", sources: ["yfinance.info"] },
+    membership: null, membership_events: null, promoted_idea_id: null,
+  };
+
+  it("loads a saved classic screen with its union universe intact", async () => {
+    serve(undefined, { screens: [UNION_ROW] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText("Buffett quality (classic)")).toBeInTheDocument();
+    // Rows and issuers both on the saved card.
+    expect(screen.getByText(/40 survivors · 39 issuers/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load into cards" }));
+    // The composed spec must BE the saved spec's universe -- the Round 1
+    // defect silently rebuilt it as {index: sp500} under the 300 cap.
+    const pre = document.querySelector("pre");
+    expect(pre?.textContent).toContain("index_union");
+    expect(pre?.textContent).toContain("common_equity");
+    expect(pre?.textContent).toContain("600");
+    expect(pre?.textContent).toContain("membership_diff");
+    // ...and the page says in plain words which universe is loaded.
+    expect(screen.getByText(/S&P 500 \+ Nasdaq-100 union/)).toBeInTheDocument();
+  });
+
+  it("labels a truncated near-miss list with the stored count and the true total", async () => {
+    const stored = Array.from({ length: 8 }, (_, i) => ({
+      ticker: `NM${i + 1}`, fn: "pe_ratio", column: "pe_ratio",
+      value: 7.4, op: "lt", threshold: 7 }));
+    const row = { ...CLASSIC_ROW, last_run: { run_at: "2026-11-10T04:02:00Z",
+      survivors: 2, near_misses: stored, near_miss_count: 89 } };
+    serve(undefined, { screens: [row] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText(/Near misses — one filter away \(8 closest of 89\)/))
+      .toBeInTheDocument();
+    expect(screen.getByText(/all 8 stored near misses/)).toBeInTheDocument();
+    expect(screen.queryByText(/all 89 near misses/)).not.toBeInTheDocument();
+  });
+
+  it("renders a dual-class membership event with both tickers", async () => {
+    const row = { ...CLASSIC_ROW, membership_events: [
+      { ticker: "BRK-A", tickers: ["BRK-A", "BRK-B"], kind: "entered", date: "2026-11-11" }] };
+    serve(undefined, { screens: [row] });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    expect(await screen.findByText(/BRK-A \+ BRK-B/)).toBeInTheDocument();
+    expect(screen.getByText(/entered · Nov 11/)).toBeInTheDocument();
+  });
+
+  it("shows rows + issuers and the selection rule on a run's header", async () => {
+    const runUnion = {
+      columns: ["ticker", "roe"],
+      rows: [{ ticker: "GOOG", roe: 30 }, { ticker: "GOOGL", roe: 28 }],
+      footer: { spec_name: "buffett_quality_classic", run_at: "2026-11-10T05:10:00Z",
+        universe_size: 518, survivors: 2, survivor_issuers: 1,
+        universe_selection: "all 518 names enriched — union universe, no enrichment cap",
+        columns: { roe: { fn: "roe", source: "yfinance.info", as_of: "2026-11-10" } } },
+    };
+    serve(undefined, { run: runUnion });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText(/2 survivors/)).toBeInTheDocument();
+    expect(screen.getByText(/· 1 issuer/)).toBeInTheDocument();
+    expect(screen.getByText(/union universe, no enrichment cap/)).toBeInTheDocument();
+  });
+});

@@ -709,6 +709,9 @@ export interface WorkshopDashboard {
 
 export interface ScreenMembershipEvent {
   ticker: string;
+  /** Every share-class ticker of the issuer when the event spans classes
+   * (Round 2 issuer-keyed diffing); absent for single-ticker events. */
+  tickers?: string[];
   kind: "entered" | "exited";
   date: string;
   since?: string;
@@ -719,6 +722,8 @@ export interface ScreenRow {
   name: string;
   spec: Record<string, unknown>;
   last_run: { run_at: string | null; survivors: number | null;
+              survivor_issuers?: number | null;
+              universe_selection?: string;
               data_as_of?: string | null; sources?: string[];
               near_misses?: NearMiss[]; near_miss_count?: number } | null;
   membership?: { tracked_since: string; as_of: string;

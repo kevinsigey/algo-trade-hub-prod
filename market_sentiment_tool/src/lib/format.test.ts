@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ctDateTime, ctTime, usd } from "@/lib/format";
+import { ctDateTime, ctTime, ordinal, usd } from "@/lib/format";
 
 describe("format", () => {
   it("renders instants in Chicago time with the CT suffix", () => {
@@ -15,5 +15,22 @@ describe("format", () => {
     expect(usd(2.5)).toBe("$2.50");
     expect(usd(null)).toBe("—");
     expect(usd(undefined)).toBe("—");
+  });
+});
+
+describe("ordinal", () => {
+  it("renders English ordinals, teens included", () => {
+    expect(ordinal(1)).toBe("1st");
+    expect(ordinal(2)).toBe("2nd");
+    expect(ordinal(3)).toBe("3rd");
+    expect(ordinal(4)).toBe("4th");
+    expect(ordinal(11)).toBe("11th");
+    expect(ordinal(12)).toBe("12th");
+    expect(ordinal(13)).toBe("13th");
+    expect(ordinal(21)).toBe("21st");
+    expect(ordinal(22)).toBe("22nd");
+    expect(ordinal(23)).toBe("23rd");
+    expect(ordinal(33)).toBe("33rd");
+    expect(ordinal(111)).toBe("111th");
   });
 });

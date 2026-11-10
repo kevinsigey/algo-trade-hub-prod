@@ -61,7 +61,7 @@ describe("Band crossings section", () => {
     render(<BandCrossings />);
     const section = await screen.findByTestId("band-crossings");
     expect(await within(section).findByText(/LOG-ONLY/)).toBeTruthy();
-    expect(within(section).getByText(/0\/20 graded entries/)).toBeTruthy();
+    expect(within(section).getByText(/0 of first 20 crossings graded/)).toBeTruthy();
     expect(within(section).getByText(/snapshot #3/)).toBeTruthy();
     expect(within(section).getByText("CVS")).toBeTruthy();
     expect(within(section).getByText(/Starter to 2% of book/)).toBeTruthy();
@@ -88,5 +88,24 @@ describe("Band crossings section", () => {
     render(<BandCrossings />);
     const section = await screen.findByTestId("band-crossings");
     expect(await within(section).findByText(/No crossings yet/)).toBeTruthy();
+  });
+});
+
+describe("Band crossings freshness (Round 2)", () => {
+  it("labels the section when a newer completed snapshot is pending a scan", async () => {
+    serve({ ...PAYLOAD, latest_snapshot_id: 5 });
+    render(<BandCrossings />);
+    const section = await screen.findByTestId("band-crossings");
+    // The last scan read snapshot #3 (the fixture's scan row); the page's
+    // sheets come from #5 -- the header must say so, never silently stale.
+    expect(within(section).getByText(/snapshot #5 pending/)).toBeTruthy();
+  });
+
+  it("shows no pending label when the last scan read the latest snapshot", async () => {
+    serve({ ...PAYLOAD, latest_snapshot_id: 3 });
+    render(<BandCrossings />);
+    const section = await screen.findByTestId("band-crossings");
+    expect(await within(section).findByText(/snapshot #3/)).toBeTruthy();
+    expect(within(section).queryByText(/pending/)).toBeNull();
   });
 });
