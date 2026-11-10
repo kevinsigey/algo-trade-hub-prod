@@ -240,6 +240,17 @@ def test_held_conjunction_outranks_and_carries_context():
     assert "held" not in cvs["sources"]
 
 
+def test_held_books_deduped_across_share_and_option_lines():
+    def positions(book):
+        if book == "big":
+            return {"GILD": 5.0, "GILD261218C00100000": 1.0}
+        return {}
+
+    held = candidates.held_positions(FakeClient(), positions)
+    assert held["GILD"]["books"] == ["big"]  # one book, named once
+    assert held["GILD"]["qty"] == 6.0  # shares + contracts on the name
+
+
 def test_positions_unavailable_falls_back_to_class_order():
     def boom(book):
         raise RuntimeError("paper api unreachable")

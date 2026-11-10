@@ -171,7 +171,8 @@ def held_positions(client, positions_fn=None) -> dict | None:
                 entry = out.setdefault(ticker, {
                     "books": [], "qty": 0.0,
                     "sleeves": sleeves.get(ticker, [])})
-                entry["books"].append(book)
+                if book not in entry["books"]:
+                    entry["books"].append(book)
                 entry["qty"] += float(qty)
         return out
     except Exception:  # noqa: BLE001 -- unavailable is a stated fallback
