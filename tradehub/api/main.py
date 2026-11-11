@@ -2197,7 +2197,11 @@ def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.req
 # notional cap at the stop. order_class and trailing stops still 422 here. GTC share limits
 # joined 2026-11-10 (Kevin: resting exits must not expire daily): a limit order with
 # time_in_force "gtc" is the second resting shape, namespaced to the ext-<key>-gtc- tag
-# family; GTC market orders and GTC splits still 422 in validate_order.
+# family; GTC market orders and GTC splits still 422 in validate_order. GTC option limits
+# joined later the same day (Kevin, after the probe proved Alpaca paper takes GTC on
+# single-leg and mleg options): a limit option order with time_in_force "gtc" rides the
+# same ext-<key>-gtc- family, placed through submit/submit_mleg carrying the tif; GTC
+# market option orders and opg/cls on options still 422 in validate_order.
 class _MachineOrderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")  # order_class and other broker shapes 422 here
 
@@ -2296,13 +2300,16 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         # Namespacing, idempotency, labelling and the audit event are exactly
         # the share path's; every cap already ran in validate_order.
         option = result["option"]
-        client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+        if option["time_in_force"] == "gtc":  # validate_order has fenced this to limit orders
+            client_order_id = f"ext-{key['id']}-gtc-{body.client_order_id}"
+        else:
+            client_order_id = f"ext-{key['id']}-{body.client_order_id}"
         try:
             if option["kind"] == "single":
                 leg = option["legs"][0]
                 order = paper_orders.submit(
                     leg["symbol"], leg["qty"], leg["side"], client_order_id,
-                    order_type=option["order_type"], time_in_force="day",
+                    order_type=option["order_type"], time_in_force=option["time_in_force"],
                     limit_price=body.limit_price if option["order_type"] == "limit" else None,
                     book=book, position_intent=leg["position_intent"])
             else:
@@ -2311,7 +2318,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                              for leg, ratio in zip(option["legs"], option["ratios"])]
                 order = paper_orders.submit_mleg(mleg_legs, option["parent_qty"],
                                                  option["net_limit_price"], client_order_id,
-                                                 book=book)
+                                                 book=book, time_in_force=option["time_in_force"])
         except paper_orders.OrdersDisabled as exc:
             refused("paper_switch_off", 409, str(exc))
         except paper_orders.DuplicateOrder:
@@ -2327,7 +2334,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
-            {**order, "time_in_force": "day",
+            {**order, "time_in_force": option["time_in_force"],
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         response = {"order": order, "client_order_id": client_order_id,
@@ -2479,7 +2486,9 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
         option = result["option"]
         used = result["daily_used"] or 0
         plan = ([{"qty": option["parent_qty"],
-                  "client_order_id": f"ext-{key['id']}-{body.client_order_id}"}]
+                  "client_order_id": (f"ext-{key['id']}-gtc-{body.client_order_id}"
+                                      if body.time_in_force == "gtc"
+                                      else f"ext-{key['id']}-{body.client_order_id}")}]
                 if result["refusal"] is None and option is not None else [])
         machine_keys.record_event(supabase, key["id"], route, "preflight",
                                   detail="ok" if result["refusal"] is None else result["refusal"][0],
@@ -2511,6 +2520,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
                             "parent_qty": option["parent_qty"],
                             "net_limit_price": option["net_limit_price"],
                             "net_price_convention": _option_orders.NET_PRICE_CONVENTION,
+                            "time_in_force": option["time_in_force"],
                             "max_loss": option["max_loss"]} if option else None),
                 "plan": {"children": plan}}
     book, symbol, price = result["book"], result["symbol"], result["price"]

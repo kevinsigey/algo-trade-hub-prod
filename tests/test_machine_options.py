@@ -50,11 +50,13 @@ def optapi(monkeypatch):
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
-    def fake_submit_mleg(legs, qty, limit_price, client_order_id, *, book=None):
+    def fake_submit_mleg(legs, qty, limit_price, client_order_id, *,
+                         book=None, time_in_force="day"):
         if any(s["client_order_id"] == client_order_id for s in sent + mlegs):
             raise paper_orders.DuplicateOrder(client_order_id)
         mlegs.append({"legs": legs, "qty": qty, "limit_price": limit_price,
-                      "client_order_id": client_order_id, "book": book})
+                      "client_order_id": client_order_id, "book": book,
+                      "time_in_force": time_in_force})
         return {"id": f"alpaca-mleg-{len(mlegs)}", "status": "accepted", "order_class": "mleg"}
 
     def fake_paper_get(path, params=None, **kw):
@@ -164,7 +166,9 @@ def test_single_leg_market_option_places_priced_at_the_mid(optapi):
 def test_opg_and_cls_are_refused_for_options_never_downgraded(optapi):
     client, db, sent, _, _, _ = optapi
     headers = _key(db)
-    for tif in ("opg", "cls", "gtc"):
+    # gtc left this list 2026-11-10: the probe proved Alpaca paper takes it on
+    # limit option orders, so the door admits it (tests/test_machine_options_gtc.py).
+    for tif in ("opg", "cls"):
         r = _single(client, headers, time_in_force=tif, client_order_id=f"tif-{tif}")
         assert r.status_code == 422, (tif, r.text)
         assert "day" in r.json()["detail"]
