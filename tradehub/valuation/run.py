@@ -292,9 +292,20 @@ def ingest_notes(records: list[dict], now: datetime) -> list[str]:
             continue  # same-timestamp rows are simultaneous claims -- the
             # conflicting-point-guides class above names those; a step is
             # a sequence in time
-        prev_mid = engine._mid(rows[-2].get("low"), rows[-2].get("high"))
         mid = engine._mid(rows[-1].get("low"), rows[-1].get("high"))
-        if not prev_mid or mid is None:
+        if mid is None:
+            continue
+        # Compare against the most recent earlier midpoint that DIFFERS
+        # from the latest: a later filing that repeats the new guide
+        # unchanged (records are inserted per extraction, never deduped)
+        # must not hide the step that produced it.
+        prev_mid = None
+        for earlier in reversed(rows[:-1]):
+            cand = engine._mid(earlier.get("low"), earlier.get("high"))
+            if cand is not None and cand != mid:
+                prev_mid = cand
+                break
+        if not prev_mid:
             continue
         chg = (mid - prev_mid) / abs(prev_mid)
         if abs(chg) > 0.35:

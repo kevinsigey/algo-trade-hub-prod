@@ -99,6 +99,18 @@ def test_ingest_notes_name_the_mrk_step_change():
     assert "5.10" in step[0] and "2.71" in step[0]
 
 
+def test_ingest_notes_step_change_survives_an_unchanged_repeat():
+    recs = _mrk_records() + [
+        rec(ticker="MRK", period="Full-Year 2026", low=2.66, high=2.76,
+            consensus=2.77993, consensus_period="0y",
+            created="2026-08-15T00:00:00+00:00"),
+    ]
+    notes = val_run.ingest_notes(recs, NOW)
+    step = [n for n in notes if "step" in n]
+    assert len(step) == 1
+    assert "5.10" in step[0] and "2.71" in step[0]
+
+
 def test_ingest_notes_silent_for_an_ordinary_revision():
     recs = [
         rec(period="Full Year 2026", low=5.00, high=5.15,
@@ -150,3 +162,23 @@ def test_verify_drops_reported_results_keeps_real_guidance():
     kept, dropped = gx.verify([tmus, mrk_gaap, mrk_guide, raised], text)
     assert kept == [mrk_guide, raised]
     assert dropped == 2
+
+
+def test_verify_drops_reported_result_with_unexpected_word():
+    # "unexpected" contains "expect" but is not forward-looking language:
+    # the marker check must match on token boundaries.
+    item = _eps_item(evidence=("Diluted EPS increased to $2.99 due to an "
+                               "unexpected tax benefit."))
+    assert gx.reported_result_reason(item) == "reported_result_not_guidance"
+    kept, dropped = gx.verify([item], item.evidence)
+    assert kept == [] and dropped == 1
+
+
+def test_verify_keeps_eps_target_revision():
+    # A raised EPS target is forward-looking guidance, not a reported
+    # result, even though its sentence uses "was".
+    item = _eps_item(period="2027", low=5.20, high=5.20,
+                     evidence="The 2027 EPS target was raised to $5.20.")
+    assert gx.reported_result_reason(item) is None
+    kept, dropped = gx.verify([item], item.evidence)
+    assert kept == [item] and dropped == 0

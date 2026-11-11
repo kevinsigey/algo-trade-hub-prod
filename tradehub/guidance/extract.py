@@ -171,7 +171,14 @@ def _close(val: float, ref: float) -> bool:
 # reported result, not guidance, whatever period label the model gave it.
 _FORWARD_MARKERS = ("expect", "guidance", "outlook", "anticipat",
                     "forecast", "will be", "to be between", "reaffirm",
-                    "projected", "projects ")
+                    "projected", "projects ", "target")
+# Markers match on token boundaries, with the intended word forms: "expect"
+# covers expects/expected/expecting but must NOT match inside "unexpected"
+# (a reported result "increased ... due to an unexpected tax benefit" is
+# past tense, not forward-looking). Stem markers keep their suffixes.
+_FORWARD_RE = re.compile(
+    r"\b(?:expect(?:s|ed|ing)?|guidance|outlook|anticipat\w*|forecast\w*"
+    r"|will be|to be between|reaffirm\w*|project\w*|target)\b")
 _REPORTED_EPS_RE = re.compile(
     r"(eps|earnings per share|per diluted share|per share)"
     r"[^.]{0,80}?\b(was|increased|decreased|grew|declined|rose|fell)\b")
@@ -184,7 +191,7 @@ def reported_result_reason(item: GuidanceItem) -> str | None:
     if not item.metric.startswith("eps"):
         return None
     ev = _normalize(item.evidence)
-    if any(marker in ev for marker in _FORWARD_MARKERS):
+    if _FORWARD_RE.search(ev):
         return None
     if _REPORTED_EPS_RE.search(ev) or re.search(r"\bwas \$?[\d,]", ev):
         return "reported_result_not_guidance"
