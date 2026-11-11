@@ -268,6 +268,44 @@ def ingest_notes(records: list[dict], now: datetime) -> list[str]:
             f"{_fmt_guide_value(metric, other)} — one of these reads as a "
             "different period's figure ingested under the full-year label; "
             "the anchor takes the guard-passing latest")
+    # (3) A4 (2026-11-11): a step change between consecutive full-year
+    # guides for the same metric + period. MRK's FY2026 non-GAAP guide went
+    # 5.10 -> 2.71 in one step -- genuine, per the filing (the new guide
+    # includes $2.43/share of one-time acquisition charges the old one
+    # excluded), but a >35% step is exactly what a basis break or a
+    # misingest looks like, so the sheet names it. Notes only: the anchor
+    # still follows the latest recorded guide.
+    seqs: dict[tuple, list[dict]] = {}
+    for rec in records:
+        period = rec.get("period") or ""
+        if not engine.is_full_year_period(period, now=now):
+            continue
+        if engine._mid(rec.get("low"), rec.get("high")) is None:
+            continue
+        seqs.setdefault((rec.get("metric"), engine.period_key(period)),
+                        []).append(rec)
+    for (metric, pkey), rows in sorted(seqs.items()):
+        if len(rows) < 2:
+            continue
+        rows = sorted(rows, key=engine._created)
+        if engine._created(rows[-2]) == engine._created(rows[-1]):
+            continue  # same-timestamp rows are simultaneous claims -- the
+            # conflicting-point-guides class above names those; a step is
+            # a sequence in time
+        prev_mid = engine._mid(rows[-2].get("low"), rows[-2].get("high"))
+        mid = engine._mid(rows[-1].get("low"), rows[-1].get("high"))
+        if not prev_mid or mid is None:
+            continue
+        chg = (mid - prev_mid) / abs(prev_mid)
+        if abs(chg) > 0.35:
+            notes.append(
+                f"guide step change: {metric} {pkey} guide mid moved "
+                f"{_fmt_guide_value(metric, prev_mid)} -> "
+                f"{_fmt_guide_value(metric, mid)} ({chg:+.0%}) in one recorded "
+                "step — a move this size usually marks a basis break (for "
+                "example one-time charges entering the guide) or a "
+                "misingested figure; the anchor follows the latest recorded "
+                "guide, so read the bands against this note")
     return notes
 
 

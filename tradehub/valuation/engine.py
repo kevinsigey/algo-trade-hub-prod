@@ -122,10 +122,15 @@ def _guards(rec: dict, fundamentals: dict) -> list[str]:
         # corroborate the guide -- at charge-heavy names the GAAP series is
         # structurally far from the adjusted guide and is not evidence
         # against it (ABBV: guide 13.97, consensus 13.98, GAAP trailing ~1.0).
-        if not (0.3 * trailing <= mid <= 2.0 * trailing) and not corroborated:
+        # A4 (2026-11-11): the uncorroborated floor is 0.45x, not 0.3x -- a
+        # single quarter's reported EPS sits at ~0.25-0.35x trailing TTM by
+        # construction, and TMUS's reported quarter (2.99 against ~9.5 TTM,
+        # 0.31x) anchored a full-year band under the old floor. Corroborated
+        # guides keep the A3 escape exactly as it was.
+        if not corroborated and not (0.45 * trailing <= mid <= 2.0 * trailing):
             reasons.append(
                 f"guide mid {mid:.2f} vs trailing diluted EPS {trailing:.2f} "
-                f"outside [0.3x, 2.0x] trailing band")
+                f"outside [0.45x, 2.0x] trailing band (uncorroborated floor)")
     return reasons
 
 
