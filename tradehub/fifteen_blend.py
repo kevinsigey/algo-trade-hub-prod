@@ -127,21 +127,28 @@ def weight_for_day(supa, name: str, version: str, series: str, day,
                    now: datetime) -> float:
     """The series' earned weight for one UTC day, from the days before it
     only. Computed once, persisted with its evidence (the raw slope and
-    the contested count), and read back on every later pass."""
-    rows = _read(supa, WEIGHTS_TABLE,
-                 lambda q: q.eq("series", series).eq("day", day.isoformat()))
+    the contested count), and read back on every later pass.
+
+    The weights table is read strictly and the persist is not swallowed:
+    a failed read must never read as an absent weight (a recalculation
+    could overwrite the day's frozen weight as late settlements land),
+    and a weight that could not be persisted must never stamp a decision
+    (a later pass could compute a different one and rewrite the day).
+    Either failure raises, and the callers decide what that means -- the
+    record pass aborts (the runner is fail-soft), the promoted live path
+    records a named no_weight skip."""
+    rows = store.select_all(
+        supa, WEIGHTS_TABLE,
+        lambda q: q.eq("series", series).eq("day", day.isoformat()), ("id",))
     if rows:
         return float(rows[0]["weight"])
     day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     slope, n = earned_weight(_history_triples(supa, name, version, day_start))
     weight = 0.0 if slope is None else min(1.0, max(0.0, slope))
-    try:
-        supa.table(WEIGHTS_TABLE).upsert([{
-            "series": series, "day": day.isoformat(), "weight": weight,
-            "raw_slope": slope, "n_contested": n,
-            "computed_at": now.isoformat()}], on_conflict="series,day").execute()
-    except Exception:  # noqa: BLE001 -- a failed persist never blocks the record
-        pass
+    supa.table(WEIGHTS_TABLE).upsert([{
+        "series": series, "day": day.isoformat(), "weight": weight,
+        "raw_slope": slope, "n_contested": n,
+        "computed_at": now.isoformat()}], on_conflict="series,day").execute()
     return weight
 
 
@@ -229,17 +236,37 @@ def criterion_met(n: int, low95: float | None, paired_low95: float | None) -> bo
             and paired_low95 is not None and paired_low95 > 0)
 
 
+def _reversal_bound(supa) -> datetime | None:
+    """The post-reversal hold: when the log's newest row is a reversal,
+    the segment that can qualify for promotion again is only the windows
+    opened after it -- the rows that earned the first promotion cannot
+    undo the operator's reversal on the next daily evaluation."""
+    rows = _read(supa, PROMOTIONS_TABLE)
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: (str(r.get("created_at") or ""), r.get("id") or 0))
+    if latest.get("kind") == "reversal":
+        return _dt(latest["created_at"])
+    return None
+
+
 def _evaluate(supa) -> dict[str, Any]:
     """The fresh-segment read, no writes: the blend's own settled record
     and the policy-paired delta against the live rule's decisions (any
     stamp but the blend's own live stamp -- a promoted row is the blend
-    itself, not its opponent)."""
-    fresh = [r for r in _read(supa, DECISIONS_TABLE)
-             if _dt(r["window_open"]) >= _PREREG_DT]
+    itself, not its opponent). Both reads are bounded at the preregistration:
+    only fresh windows can pair or count."""
+    bound = _reversal_bound(supa)
+    fresh = [r for r in _read(supa, DECISIONS_TABLE,
+                              lambda q: q.gte("window_open", PREREG_AT))
+             if _dt(r["window_open"]) >= _PREREG_DT
+             and (bound is None or _dt(r["window_open"]) > bound)]
     trades = [r for r in fresh if r["action"] == "buy" and r.get("outcome") is not None
               and r.get("pnl") is not None]
     n, mean, low = _mean_low95([float(r["pnl"]) for r in trades])
-    live = {(r["series"], r["target"]): r for r in _read(supa, rule.DECISIONS_TABLE)
+    live = {(r["series"], r["target"]): r
+            for r in _read(supa, rule.DECISIONS_TABLE,
+                           lambda q: q.gte("window_open", PREREG_AT))
             if (r.get("gate_version") or "v1") != LIVE_VERSION}
     deltas = []
     for r in fresh:

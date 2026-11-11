@@ -259,6 +259,7 @@ def _seed_promotable(supa, n=110):
                            "gate_version": "v2-blend-shadow", "action": "buy",
                            "pnl": 0.40, "outcome": 1})
         live_rows.append({"series": "KXNATGAS15M", "target": target,
+                          "window_open": "2026-11-12T01:00:00+00:00",
                           "gate_version": "v1", "action": "skip",
                           "pnl": None, "outcome": 1})
     supa.tables[blend.DECISIONS_TABLE] = blend_rows
@@ -276,6 +277,55 @@ def test_promotion_flips_state_and_revert_restores_it():
     assert not blend.evaluate_promotion(supa, NOW)["promoted"]
     back = blend.revert_promotion(supa, NOW, reason="check")
     assert back["reverted"] and blend.current_state(supa) == "v1"
+
+
+def test_a_reversal_holds_until_new_evidence_earns_the_flip_again():
+    supa = FakeSupa()
+    _seed_promotable(supa)
+    blend.evaluate_promotion(supa, NOW)
+    blend.revert_promotion(supa, NOW + timedelta(hours=1), reason="operator")
+    # The same settled segment cannot undo the reversal on the next pass.
+    out = blend.evaluate_promotion(supa, NOW + timedelta(hours=2))
+    assert out["promoted"] is False and out["trades"] == 0
+    assert blend.current_state(supa) == "v1"
+    # Windows opened after the reversal are a new segment: they can earn it.
+    for i in range(110):
+        target = f"kalshi:R{i}"
+        supa.tables[blend.DECISIONS_TABLE].append(
+            {"series": "KXNATGAS15M", "target": target,
+             "window_open": "2026-11-12T18:00:00+00:00",
+             "gate_version": "v2-blend-shadow", "action": "buy",
+             "pnl": 0.40, "outcome": 1})
+        supa.tables[rule.DECISIONS_TABLE].append(
+            {"series": "KXNATGAS15M", "target": target,
+             "window_open": "2026-11-12T18:00:00+00:00",
+             "gate_version": "v1", "action": "skip", "pnl": None, "outcome": 1})
+    out = blend.evaluate_promotion(supa, NOW + timedelta(hours=3))
+    assert out["promoted"] and blend.current_state(supa) == "v2-blend"
+
+
+def test_an_unpersistable_weight_writes_no_decision(monkeypatch):
+    cal, fc = _today()
+    _patch(monkeypatch, calendars={"natgas_15m": [cal]},
+           forecasts={"natgas_15m": [fc]}, settlements={})
+    supa = FakeSupa()
+    real_table = supa.table
+
+    def flaky(name):
+        q = real_table(name)
+        if name == blend.WEIGHTS_TABLE:
+            def boom(*_a, **_k):
+                raise RuntimeError("weights table unavailable")
+            q.upsert = boom
+        return q
+
+    supa.table = flaky
+    try:
+        blend.record_blend(supa, NOW)
+        raise AssertionError("record_blend should have raised")
+    except RuntimeError:
+        pass
+    assert blend.DECISIONS_TABLE not in supa.tables
 
 
 def test_daily_evaluation_runs_once_a_day():
@@ -304,6 +354,10 @@ def test_promoted_blend_stamps_live_decisions_until_reverted(monkeypatch):
     supa.tables[blend.WEIGHTS_TABLE] = [
         {"series": "KXNATGAS15M", "day": "2026-11-12", "weight": 1.0,
          "raw_slope": 1.4, "n_contested": 12, "computed_at": NOW.isoformat()}]
+    # A post-flip window with no forecast is the blend gate's own skip --
+    # it never falls through to a superseded gate.
+    calendars["natgas_15m"].append(
+        {"target": "kalshi:NOFC", "cutoff_at": "2026-11-12T15:45:00+00:00"})
     tracking.record_decisions(supa, NOW)
     rows = {r["target"]: r for r in supa.tables[rule.DECISIONS_TABLE]}
     # Today's window opened after the flip: a blend decision. The Nov 11
@@ -311,6 +365,8 @@ def test_promoted_blend_stamps_live_decisions_until_reverted(monkeypatch):
     assert rows[TARGET]["gate_version"] == "v2-blend" and rows[TARGET]["action"] == "buy"
     assert rows["kalshi:H1"]["gate_version"] == "v1"
     assert rows["kalshi:H2"]["gate_version"] == "v1"
+    assert rows["kalshi:NOFC"]["gate_version"] == "v2-blend"
+    assert rows["kalshi:NOFC"]["reason"] == "no_prediction"
     # After a reversal the same window is a plain v1 decision again.
     blend.revert_promotion(supa, NOW, reason="test")
     supa.tables[rule.DECISIONS_TABLE] = []
