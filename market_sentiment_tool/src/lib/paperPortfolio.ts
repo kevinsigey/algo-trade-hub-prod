@@ -90,6 +90,23 @@ export interface ClosedTrade {
   return_pct: number;
   held_days: number;
   idea: string;
+  /** The reason the opening order stated, for discretionary trades (2026-11-11). */
+  reason?: string | null;
+}
+
+/** Closed results split into tested ideas vs discretionary trades (2026-11-11):
+ * the Portfolio answer to "which of this book's results came from a tested idea?" */
+export interface ResultsSplitSide {
+  trades: number;
+  pnl: number;
+  wins: number;
+}
+
+export interface ResultsSplit {
+  tested: ResultsSplitSide;
+  discretionary: ResultsSplitSide & {
+    reasons: { reason: string; trades: number; pnl: number }[];
+  };
 }
 
 export interface ActivityOrder {
@@ -117,6 +134,7 @@ export interface ActivityPayload {
   open: ActivityOrder[];
   recent: ActivityOrder[];
   trades: ClosedTrade[];
+  results_split?: ResultsSplit | null;
 }
 
 export interface ClosedPayload {
@@ -125,6 +143,7 @@ export interface ClosedPayload {
   /** Which paper book this payload reads ("main" | "big"); absent on old payloads. */
   book?: string;
   trades: ClosedTrade[];
+  results_split?: ResultsSplit | null;
 }
 
 /** One book's headline for the Portfolio master view (GET /api/portfolio/books):

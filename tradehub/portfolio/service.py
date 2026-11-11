@@ -131,9 +131,10 @@ def tagged_fills(supa, public: bool = True, book_name: str | None = None) -> tup
     try:
         labels, titles = workshop_store.labels(supa), _titles(supa, public)
         tags = workshop_store.label_tags(supa)
+        reasons = workshop_store.label_reasons(supa)
     except Exception:  # noqa: BLE001
-        labels, titles, tags = {}, {}, {}
-    return book.tag_fills(fills, client_ids, labels, titles, tags), client_ids
+        labels, titles, tags, reasons = {}, {}, {}, {}
+    return book.tag_fills(fills, client_ids, labels, titles, tags, reasons), client_ids
 
 
 @_with_book
@@ -227,7 +228,8 @@ def activity(supa, now: datetime | None = None, book_name: str | None = None) ->
     from tradehub.portfolio.books import resolve
 
     name = resolve(book_name)
-    empty = {"state": "not_connected", "as_of": None, "book": name, "open": [], "recent": [], "trades": []}
+    empty = {"state": "not_connected", "as_of": None, "book": name, "open": [], "recent": [], "trades": [],
+             "results_split": None}
     try:
         orders = paper_get("/v2/orders", {"status": "all", "direction": "desc", "limit": 500})
     except AccountNotConnected:
@@ -242,10 +244,12 @@ def activity(supa, now: datetime | None = None, book_name: str | None = None) ->
     # This payload is public: an unexecuted order's price says where a position's stop sits (or sat),
     # so only the signed-in open-orders endpoint shows it.
     rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None} for r in rows]
+    closed_payload = closed(supa, now, book_name=name)
     return {"state": "live", "as_of": now.isoformat(), "book": name,
             "open": [r for r in rows if r["status"] not in _TERMINAL],
             "recent": rows[:50],
-            "trades": closed(supa, now, book_name=name)["trades"]}
+            "trades": closed_payload["trades"],
+            "results_split": closed_payload["results_split"]}
 
 
 @_with_book
@@ -257,11 +261,14 @@ def closed(supa, now: datetime | None = None, book_name: str | None = None) -> d
     try:
         trades = book.closed_trades(tagged_fills(supa, book_name=name)[0])
     except AccountNotConnected:
-        return {"state": "not_connected", "as_of": None, "book": name, "trades": []}
+        return {"state": "not_connected", "as_of": None, "book": name, "trades": [],
+                "results_split": None}
     except Exception:  # noqa: BLE001
-        return {"state": "stale", "as_of": None, "book": name, "trades": []}
+        return {"state": "stale", "as_of": None, "book": name, "trades": [],
+                "results_split": None}
     trades.sort(key=lambda t: t["exited_at"], reverse=True)
-    return {"state": "live", "as_of": now.isoformat(), "book": name, "trades": trades}
+    return {"state": "live", "as_of": now.isoformat(), "book": name, "trades": trades,
+            "results_split": book.results_split(trades)}
 
 
 @_with_book

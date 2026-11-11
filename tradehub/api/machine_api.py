@@ -380,14 +380,18 @@ def attribute_orders(supa, views: list[dict]) -> list[dict]:
             if mi:
                 idea_id, placed_by, source = int(mi.group(1)), "hub:idea engine", "hub"
         rows = history.get(view.get("alpaca_order_id") or "")
+        order_reason = None
         if rows:
             latest = rows[-1]
             if latest.get("idea_id") is not None:
                 idea_id = latest["idea_id"]
+            if latest.get("reason"):
+                order_reason = latest["reason"]
             if latest.get("by"):
                 placed_by = latest["by"]
                 source = "machine" if str(latest["by"]).startswith("api:") else source
-        view.update({"placed_by": placed_by, "idea_id": idea_id, "source": source})
+        view.update({"placed_by": placed_by, "idea_id": idea_id, "source": source,
+                     "reason": order_reason})
     return views
 
 
@@ -604,6 +608,37 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
                 "machine orders are switched on" if machine_orders_enabled()
                 else "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)",
                 ("switch_off", 409, "machine orders are switched off (TRADEHUB_MACHINE_ORDERS)")):
+        return out
+    # Attribution (2026-11-11, from Claude's Nov 10 review): every order through
+    # this door must carry the idea it belongs to or a stated reason. The door
+    # was the one placement path with no such rule -- all 142 API orders placed
+    # before this gate carry a null idea, so the books' results could not be
+    # split into tested ideas and discretionary trades. An idea_id that names
+    # no workshop idea is refused rather than trusted: a false attribution is
+    # worse than none. Applies to shares, options, stops, exits and preflight
+    # alike -- validate_order is the one path they all share.
+    idea_id = spec.get("idea_id")
+    reason = str(spec.get("reason") or "").strip()
+    out["idea_id"], out["reason"] = idea_id, reason or None
+    if idea_id is not None:
+        try:
+            from tradehub.workshop import store as _workshop_store
+
+            _idea = _workshop_store.get_idea(supa, int(idea_id))
+        except Exception:  # noqa: BLE001 -- an unverifiable idea is not an attribution
+            _idea = None
+        if not gate("attribution", _idea is not None,
+                    f"attributed to workshop idea {idea_id}" if _idea is not None
+                    else f"idea_id {idea_id} names no workshop idea",
+                    ("attribution", 422,
+                     f"idea_id {idea_id} does not name a workshop idea; "
+                     "pass a real idea_id or a stated reason")):
+            return out
+    elif not gate("attribution", bool(reason),
+                  f"discretionary order, reason stated: {reason}" if reason
+                  else "the order carries no idea_id and no reason",
+                  ("attribution", 422,
+                   "a machine order must carry an idea_id or a stated reason")):
         return out
     # Options (2026-11-09): an OCC symbol or a legs[] body leaves the share path
     # entirely -- a 21-char contract symbol is not a too-long ticker. The branch

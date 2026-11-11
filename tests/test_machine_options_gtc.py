@@ -48,7 +48,7 @@ def optapi(monkeypatch):
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
         if any(s["client_order_id"] == client_order_id for s in sent + mlegs):
             raise paper_orders.DuplicateOrder(client_order_id)
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
@@ -56,7 +56,7 @@ def optapi(monkeypatch):
                          book=None, time_in_force="day"):
         if any(s["client_order_id"] == client_order_id for s in sent + mlegs):
             raise paper_orders.DuplicateOrder(client_order_id)
-        mlegs.append({"legs": legs, "qty": qty, "limit_price": limit_price,
+        mlegs.append({ "reason": "test placement","legs": legs, "qty": qty, "limit_price": limit_price,
                       "client_order_id": client_order_id, "book": book,
                       "time_in_force": time_in_force})
         return {"id": f"alpaca-mleg-{len(mlegs)}", "status": "accepted", "order_class": "mleg"}
@@ -94,14 +94,14 @@ def _key(db, **caps):
 
 
 def _single(client, headers, **over):
-    body = {"symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
+    body = { "reason": "test placement","symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
             "order_type": "limit", "limit_price": 0.01, "time_in_force": "gtc"}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
 
 
 def _preflight(client, headers, **over):
-    body = {"symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
+    body = { "reason": "test placement","symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
             "order_type": "limit", "limit_price": 0.01, "time_in_force": "gtc"}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
@@ -112,7 +112,7 @@ SPREAD = [{"symbol": LONG_PUT, "side": "buy", "qty": 1},
 
 
 def _combo(client, headers, legs, **over):
-    body = {"client_order_id": "spread-1", "order_type": "limit", "limit_price": 0.01,
+    body = { "reason": "test placement","client_order_id": "spread-1", "order_type": "limit", "limit_price": 0.01,
             "time_in_force": "gtc", "legs": legs}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
@@ -209,7 +209,7 @@ def test_a_gtc_close_is_an_exit_and_consumes_no_daily_count(optapi):
 
 def test_resting_option_reserved_sums_singles_legs_and_partial_fills(monkeypatch):
     orders = [
-        {"symbol": LONG_PUT, "side": "sell", "qty": "2", "filled_qty": "0",
+        { "reason": "test placement","symbol": LONG_PUT, "side": "sell", "qty": "2", "filled_qty": "0",
          "status": "new", "client_order_id": "ext-1-gtc-a"},
         {"symbol": "GLD", "side": "sell", "qty": "50", "filled_qty": "0"},  # a share order: ignored
         {"symbol": LONG_PUT, "side": "buy", "qty": "1", "filled_qty": "1"},  # filled: reserves nothing
@@ -228,7 +228,7 @@ def test_resting_option_reserved_sums_singles_legs_and_partial_fills(monkeypatch
 def test_a_resting_close_reserves_its_contracts(optapi):
     client, db, sent, mlegs, _, state = optapi
     state["positions"] = [{"symbol": LONG_PUT, "qty": "3"}]
-    state["orders"] = [{"symbol": LONG_PUT, "side": "sell", "qty": "2", "filled_qty": "0",
+    state["orders"] = [{ "reason": "test placement","symbol": LONG_PUT, "side": "sell", "qty": "2", "filled_qty": "0",
                         "status": "new", "client_order_id": "ext-1-gtc-first-close"}]
     headers = _key(db)
     # Day orders on purpose: the netting is TIF-independent -- it closes a
@@ -254,7 +254,7 @@ def test_a_second_gtc_close_cannot_overclose_the_first(optapi):
     assert r.status_code == 200, r.text
     # It now rests on the book; a second close of the same contracts is no
     # longer an exit, so the caps refuse it (3 > the 2-contract cap).
-    state["orders"] = [{"symbol": LONG_PUT, "side": "sell", "qty": "3", "filled_qty": "0",
+    state["orders"] = [{ "reason": "test placement","symbol": LONG_PUT, "side": "sell", "qty": "3", "filled_qty": "0",
                         "status": "new", "client_order_id": "ext-1-gtc-close-1"}]
     r = _single(client, headers, side="sell", qty=3, limit_price=2.40,
                 position_intent="sell_to_close", client_order_id="close-2")
@@ -265,7 +265,7 @@ def test_a_second_gtc_close_cannot_overclose_the_first(optapi):
 def test_a_resting_mleg_close_reserves_each_leg(optapi):
     client, db, sent, mlegs, _, state = optapi
     state["positions"] = [{"symbol": LONG_PUT, "qty": "2"}, {"symbol": SHORT_PUT, "qty": "-2"}]
-    state["orders"] = [{"order_class": "mleg", "qty": "2", "filled_qty": "0", "status": "new",
+    state["orders"] = [{ "reason": "test placement","order_class": "mleg", "qty": "2", "filled_qty": "0", "status": "new",
                         "client_order_id": "ext-1-gtc-unwind",
                         "legs": [{"symbol": LONG_PUT, "side": "sell", "ratio_qty": "1"},
                                  {"symbol": SHORT_PUT, "side": "buy", "ratio_qty": "1"}]}]
@@ -282,7 +282,7 @@ def test_a_resting_mleg_close_reserves_each_leg(optapi):
 def test_a_resting_buy_reserves_against_a_held_short(optapi):
     client, db, sent, mlegs, _, state = optapi
     state["positions"] = [{"symbol": SHORT_PUT, "qty": "-3"}]
-    state["orders"] = [{"symbol": SHORT_PUT, "side": "buy", "qty": "2", "filled_qty": "0",
+    state["orders"] = [{ "reason": "test placement","symbol": SHORT_PUT, "side": "buy", "qty": "2", "filled_qty": "0",
                         "status": "new", "client_order_id": "ext-1-gtc-first"}]
     headers = _key(db)
     r = _preflight(client, headers, symbol=SHORT_PUT, side="buy", qty=2, limit_price=1.40,

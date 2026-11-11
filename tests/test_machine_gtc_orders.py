@@ -31,13 +31,13 @@ def api(monkeypatch):
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
         if any(s["client_order_id"] == client_order_id for s in sent):
             raise paper_orders.DuplicateOrder(client_order_id)
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
     def fake_paper_get(path, params=None, **kw):
         if path == "/v2/orders":
-            return [{"symbol": o["symbol"], "side": o["side"], "qty": str(o["qty"]),
+            return [{ "reason": "test placement","symbol": o["symbol"], "side": o["side"], "qty": str(o["qty"]),
                      "filled_qty": "0", "status": "new",
                      "client_order_id": o.get("client_order_id", "resting-1")}
                     for o in resting]
@@ -62,14 +62,14 @@ def _key(db, **caps):
 
 
 def _post(client, headers, **over):
-    body = {"symbol": "GLD", "qty": 10, "side": "sell", "client_order_id": "trim-1",
+    body = { "reason": "test placement","symbol": "GLD", "qty": 10, "side": "sell", "client_order_id": "trim-1",
             "order_type": "limit", "limit_price": 378.80, "time_in_force": "gtc"}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
 
 
 def _preflight(client, headers, **over):
-    body = {"symbol": "GLD", "qty": 10, "side": "sell", "client_order_id": "trim-1",
+    body = { "reason": "test placement","symbol": "GLD", "qty": 10, "side": "sell", "client_order_id": "trim-1",
             "order_type": "limit", "limit_price": 378.80, "time_in_force": "gtc"}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
@@ -140,7 +140,7 @@ def test_resting_reserved_qty_sums_open_sells_only(monkeypatch):
 def test_classification_nets_a_resting_sell(api):
     client, db, sent, held, resting = api
     held["IBIT"] = 1000.0
-    resting.append({"symbol": "IBIT", "side": "sell", "qty": 600,
+    resting.append({ "reason": "test placement","symbol": "IBIT", "side": "sell", "qty": 600,
                     "client_order_id": "ext-1-gtc-first"})
     # 500 <= 1000 held, but only 400 are unreserved: NOT an exit.
     resp = _preflight(client, _key(db), symbol="IBIT", qty=500, limit_price=44.37)
@@ -155,7 +155,7 @@ def test_classification_nets_a_resting_sell(api):
 def test_a_second_gtc_exit_cannot_oversell_the_first(api):
     client, db, sent, held, resting = api
     held["IBIT"] = 1000.0
-    resting.append({"symbol": "IBIT", "side": "sell", "qty": 600,
+    resting.append({ "reason": "test placement","symbol": "IBIT", "side": "sell", "qty": 600,
                     "client_order_id": "ext-1-gtc-first"})
     # Not exit-classified, so the normal caps refuse it (500 > the 100-qty cap).
     resp = _post(client, _key(db), symbol="IBIT", qty=500, limit_price=44.37,
@@ -167,7 +167,7 @@ def test_a_second_gtc_exit_cannot_oversell_the_first(api):
 def test_a_resting_stop_counts_against_the_unreserved_qty(api):
     client, db, sent, held, resting = api
     held["IBIT"] = 1000.0
-    resting.append({"symbol": "IBIT", "side": "sell", "qty": 950,
+    resting.append({ "reason": "test placement","symbol": "IBIT", "side": "sell", "qty": 950,
                     "client_order_id": "idea-9-stop-ibit"})
     resp = _preflight(client, _key(db), symbol="IBIT", qty=100, limit_price=44.37)
     assert resp.json()["exit"]["is_exit"] is False

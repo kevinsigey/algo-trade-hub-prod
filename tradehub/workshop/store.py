@@ -75,10 +75,16 @@ def append_shadow(supa, idea_id: int, rows: list[dict]) -> list[dict]:
     return supa.table(SHADOW).insert([{"idea_id": idea_id, **r} for r in rows]).execute().data
 
 
-def add_label(supa, order_id: str, idea_id: int | None, by: str, tag: str | None = None) -> dict:
+def add_label(supa, order_id: str, idea_id: int | None, by: str, tag: str | None = None,
+              reason: str | None = None) -> dict:
     row = {"order_id": order_id, "idea_id": idea_id, "by": by}
     if tag is not None:
         row["tag"] = tag  # the thesis tag (2026-11-08): metadata only, nothing routes by it
+    if reason is not None:
+        # The stated reason (2026-11-11): why a discretionary machine order
+        # exists. Stored only when stated, so rows written before the
+        # order_labels.reason migration simply carry no key.
+        row["reason"] = reason
     return supa.table(LABELS).insert(row).execute().data[0]
 
 
@@ -110,6 +116,12 @@ def label_tags(supa) -> dict[str, str]:
     """Order id -> its thesis tag, for the orders that carry one (latest row wins)."""
     return {order: rows[-1]["tag"] for order, rows in label_history(supa).items()
             if rows[-1].get("tag")}
+
+
+def label_reasons(supa) -> dict[str, str]:
+    """Order id -> its stated reason, for the orders that carry one (latest row wins)."""
+    return {order: rows[-1]["reason"] for order, rows in label_history(supa).items()
+            if rows[-1].get("reason")}
 
 
 def create_idea(supa, title: str, plain_words: str) -> dict:

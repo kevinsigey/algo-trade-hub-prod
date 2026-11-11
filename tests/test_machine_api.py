@@ -27,7 +27,7 @@ def api(monkeypatch):
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
         if any(s["client_order_id"] == client_order_id for s in sent):
             raise paper_orders.DuplicateOrder(client_order_id)
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
@@ -50,7 +50,7 @@ def _events(db, key_id=1):
 
 
 def _post(client, headers, **over):
-    body = {"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
+    body = { "reason": "test placement","symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
 
@@ -97,7 +97,7 @@ def test_a_market_order_places_namespaced_labelled_and_audited(api):
     body = r.json()
     assert body["client_order_id"] == "ext-1-run-1"
     assert body["placed_by"] == "api:mac scripts"
-    assert sent == [{"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "ext-1-run-1",
+    assert sent == [{ "reason": "test placement","symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "ext-1-run-1",
                      "order_type": "market", "time_in_force": "day", "limit_price": None,
                      "book": "main"}]
     labels = db.db["order_labels"]
@@ -130,7 +130,7 @@ def test_protective_and_limit_shapes_die_at_the_schema(api):
     client, db, sent = api
     headers = _key(db)
     for over in ({"stop_price": 12.3}, {"order_class": "oco"}, {"time_in_force": "gtc"}):
-        body = {"symbol": "XLE", "qty": 1, "side": "buy", "client_order_id": "x-1"}
+        body = { "reason": "test placement","symbol": "XLE", "qty": 1, "side": "buy", "client_order_id": "x-1"}
         body.update(over)
         assert client.post("/api/v1/orders", json=body, headers=headers).status_code == 422
     assert sent == []
@@ -288,7 +288,7 @@ def test_the_portfolio_read_needs_its_scope(api):
 
 # ── step 4: read/cancel, ownership from the audit trail ─────────────────────────
 
-BROKER_ORDER = {"id": "alpaca-1", "client_order_id": "ext-1-run-1", "symbol": "XLE",
+BROKER_ORDER = { "reason": "test placement","id": "alpaca-1", "client_order_id": "ext-1-run-1", "symbol": "XLE",
                 "qty": "2", "side": "buy", "status": "new",
                 "submitted_at": "2026-11-01T12:00:01+00:00", "filled_avg_price": None}
 
@@ -361,7 +361,7 @@ def test_the_open_filter_keeps_only_resting_orders(api4, monkeypatch):
 def test_open_orders_lists_the_whole_broker_book(api4, monkeypatch):
     from tradehub.portfolio import alpaca_paper
 
-    manual = {"id": "alpaca-9", "client_order_id": "9f2e-manual", "symbol": "XOM",
+    manual = { "reason": "test placement","id": "alpaca-9", "client_order_id": "9f2e-manual", "symbol": "XOM",
               "qty": "49", "filled_qty": "0", "side": "sell", "type": "stop",
               "time_in_force": "gtc", "stop_price": "175.00", "limit_price": None,
               "status": "new", "submitted_at": "2026-11-02T14:31:00+00:00",
@@ -508,7 +508,7 @@ def test_broker_orders_reads_the_named_book(monkeypatch):
 
     def fake_get(path, params=None, **kw):
         seen.append(kw.get("book"))
-        return [{"client_order_id": "ext-1-a", "status": "new"}]
+        return [{ "reason": "test placement","client_order_id": "ext-1-a", "status": "new"}]
 
     monkeypatch.setattr(alpaca_paper, "paper_get", fake_get)
     out = machine_api.broker_orders(book="big")
@@ -672,7 +672,7 @@ def test_a_tripped_breaker_fails_closed_when_positions_are_unreadable(api, monke
 # ── preflight (2026-11-08): the same validators, run without submitting ──────
 
 def _preflight(client, headers, **over):
-    body = {"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
+    body = { "reason": "test placement","symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
 
@@ -822,7 +822,7 @@ _SUN_EVENING = _dt(2026, 11, 8, 23, 0, tzinfo=_tz.utc)  # Sun 18:00 ET
 
 
 def _order_view(**over):
-    order = {"id": "alpaca-1", "client_order_id": "ext-1-x", "symbol": "GLD", "qty": "52",
+    order = { "reason": "test placement","id": "alpaca-1", "client_order_id": "ext-1-x", "symbol": "GLD", "qty": "52",
              "filled_qty": "0", "side": "sell", "type": "market", "time_in_force": "opg",
              "status": "accepted", "submitted_at": "2026-11-08T23:00:00+00:00",
              "filled_avg_price": None, "limit_price": None, "stop_price": None}
@@ -882,7 +882,7 @@ def _leg(symbol, side, intent, filled, price=None, ratio="1", status=None):
 
 
 def _mleg(status="filled", filled="1", leg_fills=("1", "1")):
-    return {"id": "alpaca-mleg-1", "client_order_id": "idea-50-spread-abc", "symbol": None,
+    return { "reason": "test placement","id": "alpaca-mleg-1", "client_order_id": "idea-50-spread-abc", "symbol": None,
             "qty": "1", "filled_qty": filled, "side": None, "type": "limit",
             "order_class": "mleg", "time_in_force": "day", "status": status,
             "limit_price": "2.50", "stop_price": None,
@@ -982,14 +982,14 @@ def test_open_orders_are_labelled_with_who_placed_them(api4, monkeypatch):
     mine = _key(db)               # key 1, "mac scripts"
     theirs = _key(db)             # key 2, also labelled "mac scripts" by the helper
     orders = [
-        {**BROKER_ORDER, "id": "alpaca-1", "client_order_id": "ext-1-run-1"},
-        {"id": "alpaca-2", "client_order_id": "ext-2-big-1", "symbol": "GLD", "qty": "52",
+        { "reason": "test placement",**BROKER_ORDER, "id": "alpaca-1", "client_order_id": "ext-1-run-1"},
+        { "reason": "test placement","id": "alpaca-2", "client_order_id": "ext-2-big-1", "symbol": "GLD", "qty": "52",
          "filled_qty": "0", "side": "sell", "type": "market", "time_in_force": "opg",
          "status": "accepted", "submitted_at": "2026-11-08T23:00:00+00:00", "filled_avg_price": None},
-        {"id": "alpaca-3", "client_order_id": "idea-50-entry-abc", "symbol": "NVDA", "qty": "1",
+        { "reason": "test placement","id": "alpaca-3", "client_order_id": "idea-50-entry-abc", "symbol": "NVDA", "qty": "1",
          "filled_qty": "0", "side": "buy", "type": "limit", "time_in_force": "day",
          "status": "new", "submitted_at": "2026-11-08T20:00:00+00:00", "filled_avg_price": None},
-        {"id": "alpaca-4", "client_order_id": "9f2e-manual", "symbol": "XOM", "qty": "49",
+        { "reason": "test placement","id": "alpaca-4", "client_order_id": "9f2e-manual", "symbol": "XOM", "qty": "49",
          "filled_qty": "0", "side": "sell", "type": "stop", "time_in_force": "gtc",
          "status": "new", "submitted_at": "2026-11-08T19:00:00+00:00", "filled_avg_price": None},
     ]
@@ -1009,13 +1009,13 @@ def test_the_group_read_aggregates_children_fills(api, monkeypatch):
     headers = _key(db)
     assert _post(client, headers, qty=208, split=True, client_order_id="trim").status_code == 200
     kids = [
-        {"id": "a1", "client_order_id": "ext-1-trim-1", "symbol": "XLE", "qty": "100", "side": "buy",
+        { "reason": "test placement","id": "a1", "client_order_id": "ext-1-trim-1", "symbol": "XLE", "qty": "100", "side": "buy",
          "status": "filled", "filled_qty": "100", "filled_avg_price": "90.0",
          "submitted_at": "2026-11-01T12:00:01+00:00"},
-        {"id": "a2", "client_order_id": "ext-1-trim-2", "symbol": "XLE", "qty": "100", "side": "buy",
+        { "reason": "test placement","id": "a2", "client_order_id": "ext-1-trim-2", "symbol": "XLE", "qty": "100", "side": "buy",
          "status": "filled", "filled_qty": "100", "filled_avg_price": "110.0",
          "submitted_at": "2026-11-01T12:00:02+00:00"},
-        {"id": "a3", "client_order_id": "ext-1-trim-3", "symbol": "XLE", "qty": "8", "side": "buy",
+        { "reason": "test placement","id": "a3", "client_order_id": "ext-1-trim-3", "symbol": "XLE", "qty": "8", "side": "buy",
          "status": "filled", "filled_qty": "8", "filled_avg_price": "50.0",
          "submitted_at": "2026-11-01T12:00:03+00:00"},
     ]
