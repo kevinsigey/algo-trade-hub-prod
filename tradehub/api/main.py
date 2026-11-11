@@ -1582,6 +1582,15 @@ def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
         payload["shadow"] = fifteen_shadow.summary(supabase)
     except Exception:  # noqa: BLE001
         pass
+    # The self-weighting blend shadow (preregistration 2026-11-11): one
+    # additive block -- its fresh record, the daily weights, and the
+    # promotion flag. Fail-soft the same way.
+    try:
+        from tradehub import fifteen_blend
+
+        payload["blend"] = fifteen_blend.summary(supabase)
+    except Exception:  # noqa: BLE001
+        pass
     # The metals family (preregistration 2026-11-09): one additive block --
     # its own record in this payload's shape (gated by_series leading, the
     # raw reconstruction beside it), labeled as its own family and counted

@@ -102,8 +102,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 77 | `20261110000003_fifteen_ticks_depth.sql` |
 | 78 | `20261111000001_order_labels_reason.sql` |
 | 79 | `20261111000002_ideas_batch.sql` |
+| 80 | `20261111000003_fifteen_blend_shadow.sql` |
 
-**Watermark: `20261111000002_ideas_batch.sql`**
+**Watermark: `20261111000003_fifteen_blend_shadow.sql`**
 
 ## How to record a new one
 

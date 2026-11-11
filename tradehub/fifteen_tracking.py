@@ -108,6 +108,45 @@ def _live_gate(supa) -> tuple[str, datetime | None]:
     return "v1", None
 
 
+def _blend_gate(supa) -> datetime | None:
+    """The blend gate's flip moment, from its own promotions log
+    (preregistration 2026-11-11, tradehub/fifteen_blend.py). Any doubt --
+    the log not migrated yet, a failed read -- reads as not flipped: the
+    flip must be earned in the data, never assumed."""
+    try:
+        from tradehub import fifteen_blend as blend
+        if blend.current_state(supa) == blend.LIVE_VERSION:
+            at = blend.promoted_at(supa)
+            return _dt(at) if at else None
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _blend_decision(supa, name: str, version: str, frozen: dict,
+                    window_open: datetime, now: datetime) -> tuple[dict[str, Any], float]:
+    """The promoted blend gate's decision for one window (preregistration
+    2026-11-11): the window's day weight applied to the frozen read. The
+    blend gate owns its windows outright once flipped, so its gaps are
+    named, never delegated: missing quotes read as the live evaluate's
+    no_quote, and a day weight that cannot be read or persisted reads as
+    a no_weight skip rather than a decision stamped with a weight no
+    record holds."""
+    from tradehub import fifteen_blend as blend
+    pay = frozen.get("payload") or {}
+    series = _BY_NAME[name]["series"]
+    try:
+        w = blend.weight_for_day(supa, name, version, series, window_open.date(), now)
+    except Exception:  # noqa: BLE001 -- a named gap, never a borrowed gate
+        return ({"action": "skip", "reason": "no_weight", "side": None, "cost": None,
+                 "edge_net": None, "best_edge_net": None},
+                round(float(frozen["probability"]), 5))
+    ev, _market, _p = blend.evaluate_blend(
+        float(frozen["probability"]), weight=w, yes_ask=pay.get("yes_ask"),
+        yes_bid=pay.get("yes_bid"), frozen_at=frozen["frozen_at"])
+    return ev, round(float(frozen["probability"]), 5)
+
+
 def _promoted_decision(tick: dict | None, *, ref: str) -> tuple[dict[str, Any], float | None]:
     """The promoted oil gate's decision for one window (preregistration
     2026-11-09): the shadow variant's own evaluation of the minute-1 tick at
@@ -132,6 +171,7 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
     candles_fn = candles_fn or _candles_or_empty
     rows: list[dict] = []
     gate_version, gate_since = _live_gate(supa) if live_gate else ("v1", None)
+    blend_since = _blend_gate(supa)
     for name, version, _label in (rule.SERIES if series_set is None else series_set):
         series = _BY_NAME[name]["series"]
         coin = SERIES_COINS[series]
@@ -155,6 +195,38 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
             window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
             frozen = first.get(target)
             stamp = "v1"
+            if blend_since is not None and window_open >= blend_since:
+                # The blend is the live gate from its flip, for every series
+                # (preregistration 2026-11-11): the decision is the day's
+                # earned weight applied to the frozen read, stamped with
+                # its version. Checked before the oil gate's own flip --
+                # the blend is the pooled, later gate, and it owns its
+                # windows outright: a window with no forecast is its
+                # no_prediction skip, never a fall-through to a superseded
+                # gate.
+                if frozen is not None:
+                    ev, model_prob = _blend_decision(supa, name, version, frozen,
+                                                     window_open, now)
+                    ref, frozen_at = frozen["frozen_at"], frozen["frozen_at"]
+                else:
+                    ev = {"action": "skip", "reason": "no_prediction", "side": None,
+                          "cost": None, "edge_net": None, "best_edge_net": None}
+                    ref = (window_open + timedelta(minutes=5)).isoformat()
+                    model_prob = frozen_at = None
+                outcome = settled.get(target)
+                rows.append({
+                    "series": series, "target": target,
+                    "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
+                    "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
+                    "frozen_at": frozen_at,
+                    "session": "open" if rule.futures_open(ref) else "closed",
+                    "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
+                    "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
+                    "best_edge_net": ev["best_edge_net"], "outcome": outcome,
+                    "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
+                           if ev["action"] == "buy" and outcome is not None else None,
+                    "evaluated_at": now.isoformat(), "gate_version": "v2-blend"})
+                continue
             if promoted and window_open >= gate_since:
                 # The variant is the live oil gate from the flip: the decision
                 # is read off the minute-1 tick, stamped with its version.
