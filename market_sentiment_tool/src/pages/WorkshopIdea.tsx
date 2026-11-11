@@ -44,6 +44,7 @@ import {
   type TickerNames,
   type IdeaDetail,
   type IdeaSpec,
+  type LeapsPanelData,
   type Run,
   type RunAutopsy,
 } from "@/lib/workshop";
@@ -1324,6 +1325,109 @@ function SummaryHeader({ data }: { data: IdeaDetail }) {
   );
 }
 
+const money = (v: number | null | undefined) =>
+  v == null ? "—" : `$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+const moneySgn = (v: number | null | undefined) =>
+  v == null ? "—" : `${v >= 0 ? "+$" : "−$"}${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+/** The Spec F LEAPS shadow trial panel (idea 81, family T8-LEAPS-1): both
+ * shadow lines per trigger, booked at delta-notional with the premium as
+ * its own number, the nightly marks, and the frozen gate read. Rendered
+ * only when the detail payload carries the panel (tag-gated server-side). */
+export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
+  const s = data.summary;
+  const gate = s.gate;
+  const gateText =
+    gate.state === "killed" ? `Killed — ${gate.reason ?? "the frozen bar failed"}`
+    : gate.state === "pass" ? "Pass at the frozen bar — the trial extends to 8 pairs"
+    : gate.state === "complete" ? "Trial complete at 8 pairs"
+    : gate.state === "insufficient_data" ? "Cohort complete, but the gate metrics are incomplete — no verdict yet"
+    : gate.state === "waiting" ? "Waiting for the first trigger — a T8 name at a stamped base band"
+    : `${gate.pairs} of ${gate.needed} pairs toward the gate read`;
+  return (
+    <section className="mt-6" aria-label="Spec F LEAPS shadow trial">
+      <h2 className="text-sm font-semibold text-white">Spec F — LEAPS shadow trial (T8-LEAPS-1)</h2>
+      <div className="mt-2 rounded-xl border border-slate-700/60 bg-slate-800/40 p-4 text-sm">
+        <p className="text-slate-300">
+          {s.pairs_opened} pair{s.pairs_opened === 1 ? "" : "s"} opened ({s.pairs_open} open, {s.pairs_closed} closed)
+          {s.unfilled > 0 && <> · {s.unfilled} trigger{s.unfilled === 1 ? "" : "s"} could not open a line</>}
+          {" · "}mean carry drag {s.mean_carry_drag_pct == null ? "—" : `${s.mean_carry_drag_pct.toFixed(2)}%/yr`}
+          {" · "}mean delta delivered {s.mean_delta_delivered == null ? "—" : s.mean_delta_delivered.toFixed(2)}
+        </p>
+        <p className="mt-1 text-slate-300">
+          {s.pairs_opened === 0
+            ? <>Premium cash — against share cash — for the same delta (no pair has opened yet).</>
+            : <>Premium cash {money(s.premium_cash)} against share cash {money(s.share_cash)} for the same delta
+              {s.premium_pct_of_share_cash != null && <> — premium is {s.premium_pct_of_share_cash.toFixed(0)}% of the share cash</>}.</>}
+        </p>
+        <p className={`mt-1 font-medium ${gate.state === "killed" ? "text-rose-300" : gate.state === "pass" || gate.state === "complete" ? "text-emerald-300" : "text-slate-200"}`}>
+          Gate: {gateText}.
+        </p>
+        {gate.extension?.state === "killed" && (
+          <p className="mt-1 text-slate-300">
+            The extension cohort (pairs 5–8) failed its own read — {gate.extension.reason ?? "the frozen bar failed"}. The first verdict stands.
+          </p>
+        )}
+        {data.pairs.length === 0 && (
+          <p className="mt-2 text-slate-400">
+            No pair has opened yet. A pair opens when a T8 sleeve name crosses into its bear or base
+            band on a stamped Guidance sheet with the guide intact.
+          </p>
+        )}
+        <div className="mt-3 space-y-3">
+          {data.pairs.map((p) => (
+            <div key={p.id} className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-3">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-semibold text-white">{p.ticker}</span>
+                <span className="text-xs uppercase tracking-wide text-slate-400">{p.status}</span>
+                {p.roll_flag && (
+                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300">
+                    Roll review — at or under 180 days to expiry
+                  </span>
+                )}
+                {p.mark_stale && <span className="text-xs text-slate-500">LEAPS mark stale (no usable quote)</span>}
+              </div>
+              <p className="mt-1 text-slate-300">
+                Triggered {ctDateTime(p.opened_at)} — {p.zone} zone, {p.action}, guide {p.guide_status ?? "—"},
+                at {p.trigger_price != null ? `$${p.trigger_price.toFixed(2)}` : "—"}.
+              </p>
+              <p className="mt-1 text-slate-300">
+                {p.contracts} × {p.ticker} ${p.strike?.toFixed(0)} calls expiring {p.expiry} — delta{" "}
+                {p.delta_at_entry?.toFixed(2)} and extrinsic {money(p.extrinsic_at_entry)} per contract
+                ({p.extrinsic_at_entry != null && p.entry_ask ? ((p.extrinsic_at_entry / p.entry_ask) * 100).toFixed(0) : "—"}% of the ask) at entry.
+              </p>
+              <p className="mt-1 text-slate-300">
+                LEAPS line: premium {money(p.premium_total)}, booked at delta-notional {money(p.delta_notional)}
+                {p.leaps_mid != null && <> · mid ${p.leaps_mid.toFixed(2)}</>} · P&amp;L {moneySgn(p.leaps_pnl)}.
+              </p>
+              <p className="mt-1 text-slate-300">
+                Share line: {p.share_shares?.toFixed(1)} shares at {p.share_entry_price != null ? `$${p.share_entry_price.toFixed(2)}` : "—"}
+                {p.share_price != null && <> · now ${p.share_price.toFixed(2)}</>} · P&amp;L {moneySgn(p.share_pnl)}.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {p.dte != null && <>{p.dte} days to expiry · </>}
+                {p.carry_drag_pct != null && <>carry drag {p.carry_drag_pct.toFixed(2)}%/yr · </>}
+                {p.delta_delivered != null && <>delta delivered {p.delta_delivered.toFixed(2)} · </>}
+                {p.status !== "open" && p.close_reason && <>closed: {p.close_reason}</>}
+              </p>
+            </div>
+          ))}
+        </div>
+        {data.unfilled.length > 0 && (
+          <div className="mt-3 text-xs text-slate-400">
+            <div className="font-medium text-slate-300">Triggers that opened no line</div>
+            {data.unfilled.map((p) => (
+              <div key={p.id}>
+                {p.ticker} · {ctDateTime(p.opened_at)} · {p.zone} zone · {p.close_reason}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function WorkshopIdea() {
   // Only a numeric id ever reaches a URL: the requests below carry Kevin's session token, so a crafted link
   // must not be able to point them at another API path.
@@ -1455,6 +1559,7 @@ export default function WorkshopIdea() {
           <LifecyclePanel id={id} detail={data} onChange={load} />
         </section>
       )}
+      {data?.leaps && <LeapsTrialPanel data={data.leaps} />}
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…

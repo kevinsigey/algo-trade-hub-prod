@@ -308,11 +308,75 @@ export interface BookLiveState {
   orders_enabled: boolean;
 }
 
+/** One Spec F LEAPS shadow pair (or unfilled trigger) — idea 81's trial rows. */
+export interface LeapsPair {
+  id: number;
+  ticker: string;
+  status: string;
+  opened_at: string;
+  crossing_id?: number | null;
+  zone?: string | null;
+  action?: string | null;
+  guide_status?: string | null;
+  trigger_price?: number | null;
+  occ_symbol?: string | null;
+  strike?: number | null;
+  expiry?: string | null;
+  contracts?: number | null;
+  entry_bid?: number | null;
+  entry_mid?: number | null;
+  entry_ask?: number | null;
+  premium_total?: number | null;
+  delta_at_entry?: number | null;
+  extrinsic_at_entry?: number | null;
+  iv_at_entry?: number | null;
+  spot_at_entry?: number | null;
+  delta_notional?: number | null;
+  share_shares?: number | null;
+  share_entry_price?: number | null;
+  marked_at?: string | null;
+  leaps_mid?: number | null;
+  mark_stale?: boolean;
+  share_price?: number | null;
+  dte?: number | null;
+  roll_flag?: boolean;
+  leaps_pnl?: number | null;
+  share_pnl?: number | null;
+  delta_delivered?: number | null;
+  carry_drag_pct?: number | null;
+  close_reason?: string | null;
+  closed_at?: string | null;
+}
+
+export interface LeapsSummary {
+  pairs_opened: number;
+  pairs_open: number;
+  pairs_closed: number;
+  unfilled: number;
+  mean_carry_drag_pct: number | null;
+  mean_delta_delivered: number | null;
+  premium_cash: number;
+  share_cash: number;
+  premium_pct_of_share_cash: number | null;
+  trial_start: string | null;
+  gate: { state: string; judged: boolean; pairs: number; needed: number; reason: string | null;
+          extension?: { state: string; reason: string | null } | null };
+}
+
+export interface LeapsPanelData {
+  idea_id: number;
+  summary: LeapsSummary;
+  pairs: LeapsPair[];
+  unfilled: LeapsPair[];
+}
+
 export interface IdeaDetail {
   idea: Idea;
   runs: Run[];
   /** The search this idea is one trial of (A3); null for a solo idea. */
   batch?: BatchInfo | null;
+  /** The Spec F LEAPS shadow panel; present only for ideas tagged leaps-trial. */
+  leaps?: LeapsPanelData | null;
   tag?: string;
   shadow?: ShadowSummary | null;
   orders_enabled?: boolean;

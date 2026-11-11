@@ -875,9 +875,21 @@ def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin),
                             "auto_orders": bool(act.get("auto_orders")),
                             "killed_at": act.get("killed_at"), "gate": act.get("gate"),
                             "orders_enabled": orders_enabled(name)}
+    # The Spec F LEAPS shadow panel rides ideas tagged 'leaps-trial'
+    # (idea 81; the trial state lives in leaps_shadow_pairs, not in the
+    # share-basket lifecycle). Fail-soft: the panel never breaks the page.
+    leaps_panel = None
+    if "leaps-trial" in (idea.get("tags") or []):
+        try:
+            from tradehub import leaps_shadow as _leaps
+
+            leaps_panel = _leaps.panel(supabase, idea)
+        except Exception:  # noqa: BLE001
+            leaps_panel = None
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
             "books": book_state, "batch": workshop_store.batch_info(supabase, idea),
-            "orders": workshop_store.order_log(supabase, idea_id, 50)}
+            "orders": workshop_store.order_log(supabase, idea_id, 50),
+            "leaps": leaps_panel}
 
 
 class _AutoIn(BaseModel):
