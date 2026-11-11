@@ -28,6 +28,12 @@ pass covers them with no new invocation; the same run additionally writes
 their tracking through the generalized fifteen_tracking passes, under the
 same fail-soft rule. Their record is separate and is read from
 tradehub/metals_fifteen_rule.py.
+
+Amendment 2026-11-11: the same run also writes the self-weighting blend
+shadow (tradehub/fifteen_blend.py, preregistration
+docs/superpowers/specs/2026-11-11-fifteen-blend-shadow-prereg.md) -- its
+decision record for all six series and its once-a-day promotion
+evaluation, under the same fail-soft rule.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from tradehub import fifteen_shadow, fifteen_tracking, metals_fifteen_rule
+from tradehub import fifteen_blend, fifteen_shadow, fifteen_tracking, metals_fifteen_rule
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
@@ -51,6 +57,8 @@ def run(supa, forecasters, now: datetime) -> dict[str, Any]:
                     ("fifteen_offsets", fifteen_tracking.record_offsets),
                     ("fifteen_shadow", fifteen_shadow.record_shadow),
                     ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily),
+                    ("fifteen_blend", fifteen_blend.record_blend),
+                    ("fifteen_blend_eval", fifteen_blend.evaluate_daily),
                     ("fifteen_metals_decisions",
                      lambda s, n: fifteen_tracking.record_decisions(
                          s, n, series_set=metals_fifteen_rule.SERIES, live_gate=False)),
