@@ -364,3 +364,26 @@ def test_extended_hours_gtc_still_needs_a_sanctioned_tag(keys, monkeypatch):
     with pytest.raises(ValueError, match="sanctioned protective orders"):
         paper_orders.submit("GLD", 1, "buy", "c", order_type="limit", time_in_force="gtc",
                             limit_price=100.0, extended_hours=True, session=Session(Resp(200)))
+
+
+def test_a_machine_gtc_tag_is_the_third_sanctioned_protective_family(keys, monkeypatch):
+    """2026-11-10: the machine API's ext-<key>-gtc- tags may carry a GTC LIMIT
+    order (a resting exit that survives the session). The family is limit-only:
+    a stop or a market order under a gtc tag still refuses, and a GTC limit
+    under a plain ext- tag still refuses -- the stop families are untouched."""
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-10"}))
+    paper_orders.submit("IBIT", 674, "sell", "ext-2-gtc-ibit-exit-b1", order_type="limit",
+                        time_in_force="gtc", limit_price=44.37, session=s)
+    assert s.calls[0]["json"] == {"symbol": "IBIT", "qty": "674", "side": "sell", "type": "limit",
+                                  "time_in_force": "gtc", "client_order_id": "ext-2-gtc-ibit-exit-b1",
+                                  "limit_price": "44.37"}
+    for tag, kw in (("ext-2-gtc-x", {"order_type": "stop", "time_in_force": "gtc", "stop_price": 1.0}),
+                    ("ext-2-gtc-x", {"order_type": "market", "time_in_force": "gtc"}),
+                    ("ext-2-gtc-x", {"order_type": "limit", "time_in_force": "day", "limit_price": 1.0}),
+                    ("ext-2-ibit-exit", {"order_type": "limit", "time_in_force": "gtc", "limit_price": 1.0})):
+        if kw["time_in_force"] == "day":
+            continue  # a day limit under any tag is an ordinary order, not this family's business
+        with pytest.raises(ValueError):
+            paper_orders.submit("IBIT", 5, "sell", tag, session=s, **kw)
+    assert len(s.calls) == 1

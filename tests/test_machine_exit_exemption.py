@@ -40,6 +40,10 @@ def api(monkeypatch):
     monkeypatch.setattr(alpaca_paper, "latest_price", lambda symbol: 100.0)
     monkeypatch.setattr(machine_api, "position_qty",
                         lambda symbol, book=None: held.get(symbol, 0.0))
+    # These scenarios rest no orders: the 2026-11-10 netting read sees an empty
+    # book (its own tests live in test_machine_gtc_orders.py).
+    monkeypatch.setattr(machine_api, "resting_reserved_qty",
+                        lambda symbol, side, book=None: 0.0)
     monkeypatch.setattr(machine_api, "LIMITER", machine_api.RateLimiter())
     monkeypatch.setenv("TRADEHUB_MACHINE_ORDERS", "on")
     main.app.dependency_overrides[get_supabase] = lambda: db

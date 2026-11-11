@@ -191,6 +191,15 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
         if row["status"] != "already sent":
             failed[idea_id] = f"stop on {order['symbol']}: {row['reason']}"[:300]
             store.add_manual_action(supa, book_name, idea_id, "order", order["symbol"], row["reason"] or "needs a hand")
+    # Resting-order wash guard (Kevin, 2026-11-10): orders already resting when
+    # the run starts, from ANY source -- a staged machine exit (GTC or day), a
+    # manual order, another idea's order. An engine send must never cross one:
+    # the Nov 9 manual actions #19-23 were engine orders meeting resting staged
+    # orders with no hub-side warning. The map is built here, after the
+    # stop-move handling above has taken its cancels out of `pending`.
+    resting: dict[str, list[tuple[str, str]]] = {}
+    for o in pending:
+        resting.setdefault(o["symbol"], []).append((o["side"], o.get("client_order_id") or ""))
     for idea, closing in jobs:
         try:
             spec = IdeaSpec.model_validate(store.get_run(supa, idea["live_run_id"])["spec"])
@@ -260,6 +269,25 @@ def _run(now: datetime, supa, book_name: str, *, submit=paper_orders.submit, clo
                                 {**rr, "status": "skip", "reason": f"crossed with idea {other_id}'s {other_side} of {rr['symbol']} today; retried tomorrow"}
                                 if rr is r else rr for rr in rows
                             ]
+            # Resting-order check: same shape as the cross-side check above, but
+            # against orders already resting when the run started (the `resting`
+            # map). The resting order wins and the engine order is suppressed,
+            # never sent -- so Alpaca never wash-rejects it and no manual action
+            # is born. The idea's OWN resting orders (idea-<id>- tags) do not
+            # suppress it, and same-side resting orders aggregate, as `waiting`
+            # already models them.
+            for r in rows:
+                if r["status"] == "send" and not opt_mod.is_occ(r["symbol"]):
+                    blockers = [(s, c) for s, c in resting.get(r["symbol"], [])
+                                if s != r["side"] and not c.startswith(f"idea-{idea['id']}-")]
+                    if blockers:
+                        other_side, blocker_cid = blockers[0]
+                        rows = [
+                            {**rr, "status": "skip",
+                             "reason": f"a resting {other_side} of {rr['symbol']} ({blocker_cid}) is already "
+                                       f"working; this {rr['side']} is suppressed, retried tomorrow"}
+                            if rr is r else rr for rr in rows
+                        ]
             # Re-price single-leg option orders at the touch (bid for sell, ask for buy).
             for r in rows:
                 if r["status"] == "send" and opt_mod.is_occ(r["symbol"]) and not r.get("mleg"):

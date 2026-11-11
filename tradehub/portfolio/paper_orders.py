@@ -6,6 +6,9 @@
 - Protective orders carry one of two sanctioned tags: the hub's own `idea-<n>-stop-...` or the machine
   API's `ext-<key>-stop-...` (2026-11-02: Kevin's staged mirror book needed its stops to ride through the
   machine door; the API fences those to held positions, this module fences the tag family and the shape).
+- A third family (2026-11-10): the machine API's `ext-<key>-gtc-...` tags may carry a GTC LIMIT order --
+  a resting exit that survives the session instead of expiring daily. Limit only: a stop or a market
+  order under a gtc tag is still refused, and a GTC limit under any other tag is still refused.
 - Nothing is sent unless the book's kill switch is exactly "on" (TRADEHUB_PAPER_ORDERS for the main
   book, TRADEHUB_PAPER_ORDERS_BIG for the $1M book; each idea has its own switch too).
 - Rule orders: market or limit, at the open (opg), at the close (cls) or during the day (day). Protective orders
@@ -25,6 +28,7 @@ ORDER_TYPES = ("market", "limit", "stop", "trailing_stop", "stop_limit")
 TIMES_IN_FORCE = ("opg", "cls", "day", "gtc")
 STOP_TAG = re.compile(r"^idea-\d+-stop-")
 MACHINE_STOP_TAG = re.compile(r"^ext-\d+-stop-")
+MACHINE_GTC_TAG = re.compile(r"^ext-\d+-gtc-")
 ORDER_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
@@ -69,10 +73,13 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
             raise ValueError("extended-hours orders must be day or gtc limit orders")
     protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
     sanctioned = STOP_TAG.match(client_order_id) or MACHINE_STOP_TAG.match(client_order_id)
-    if protective and not (sanctioned and time_in_force == "gtc"
-                           and order_type in ("stop", "trailing_stop", "limit")):
+    gtc_limit = (MACHINE_GTC_TAG.match(client_order_id) and time_in_force == "gtc"
+                 and order_type == "limit")
+    if protective and not ((sanctioned and time_in_force == "gtc"
+                            and order_type in ("stop", "trailing_stop", "limit")) or gtc_limit):
         raise ValueError("stops and good-till-cancelled orders are only sanctioned protective orders "
-                         "(an idea- stop tag or a machine ext- stop tag)")
+                         "(an idea- stop tag, a machine ext- stop tag, or a machine ext- gtc tag "
+                         "on a limit order)")
     # Single-leg option orders carry an explicit open/close intent (2026-11-09):
     # Alpaca evaluates a short leg by its intent, so opens and closes never blur.
     # The key joins the body ONLY when an intent is given -- a share order's body

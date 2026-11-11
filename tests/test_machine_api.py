@@ -129,7 +129,7 @@ def test_the_kill_switch_refuses_placements_but_not_reads(api, monkeypatch):
 def test_protective_and_limit_shapes_die_at_the_schema(api):
     client, db, sent = api
     headers = _key(db)
-    for over in ({"stop_price": 12.3}, {"order_class": "oco"}, {"time_in_force": "gtc", "order_type": "limit", "limit_price": 5}):
+    for over in ({"stop_price": 12.3}, {"order_class": "oco"}, {"time_in_force": "gtc"}):
         body = {"symbol": "XLE", "qty": 1, "side": "buy", "client_order_id": "x-1"}
         body.update(over)
         assert client.post("/api/v1/orders", json=body, headers=headers).status_code == 422
@@ -212,9 +212,12 @@ def test_limit_and_market_shapes_still_refuse_cleanly(api):
     assert _post(client, headers, order_type="limit").status_code == 422  # no limit_price
     assert _post(client, headers, limit_price=50.0).status_code == 422  # price on a market order
     assert _post(client, headers, order_type="stop").status_code == 422
-    assert _post(client, headers, order_type="limit", limit_price=50.0,
-                 time_in_force="gtc").status_code == 422  # GTC stays hub-internal
+    assert _post(client, headers, time_in_force="gtc").status_code == 422  # a GTC market order
     assert sent == []
+    # 2026-11-10: a GTC LIMIT is the door's second resting shape (Kevin: resting
+    # exits must not expire daily); it places under the ext-<key>-gtc- family.
+    r = _post(client, headers, order_type="limit", limit_price=50.0, time_in_force="gtc")
+    assert r.status_code == 200 and sent[-1]["client_order_id"] == "ext-1-gtc-run-1"
 
 
 # ── caps ─────────────────────────────────────────────────────────────────────────

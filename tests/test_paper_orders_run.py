@@ -786,3 +786,71 @@ def test_single_leg_option_keeps_mid_when_touch_is_none(db, monkeypatch):
     assert len(option_calls) == 1
     assert option_calls[0][1] == "sell"
     assert option_calls[0][4].get("limit_price") == 1.00
+
+
+def _resting(cid, symbol="GLD", side="sell", qty="54", limit_price="378.80"):
+    return {"id": f"rest-{cid}", "symbol": symbol, "side": side, "qty": qty,
+            "limit_price": limit_price, "client_order_id": cid, "status": "new"}
+
+
+def test_a_resting_machine_gtc_sell_suppresses_an_engine_buy(db, monkeypatch):
+    # The Nov 9 #19-23 shape, one day later: the book HOLDS GLD (so plan's own
+    # opposite-side guard stays quiet -- the position's value outweighs the
+    # resting order in the planning view) while Kevin's staged GTC exit rests
+    # on it, and the engine wants to BUY more GLD. The resting exit wins: the
+    # buy is skipped with the resting order named, never sent, never a manual
+    # action.
+    live_idea(db, 2, spec={**SPEC, "title": "Hold GLD too", "hold": ["GLD"]})
+    db.db["ideas"][1].update({"size_pct": 10})
+    resting = _resting("ext-2-gtc-gld-trim-b1", qty="10", limit_price="300")
+    positions = [{"symbol": "GLD", "qty": "40", "market_value": "12000", "current_price": "300"}]
+    sub = Submit()
+    run(db, Alpaca(positions=positions, pending=[resting]), sub, monkeypatch)
+    assert sub.calls == []
+    rows = [r for r in db.db.get("paper_orders", []) if r["symbol"] == "GLD"]
+    assert rows and all(r["status"] == "skipped" for r in rows)
+    assert any("ext-2-gtc-gld-trim-b1" in (r.get("reason") or "") for r in rows)
+    assert manual_rows(db) == []
+
+
+def test_a_resting_day_sell_also_suppresses_an_engine_buy(db, monkeypatch):
+    # The guard reads the open-orders list, not the TIF: a staged DAY sell
+    # resting this morning suppresses exactly like a GTC one.
+    live_idea(db, 2, spec={**SPEC, "title": "Hold GLD too", "hold": ["GLD"]})
+    db.db["ideas"][1].update({"size_pct": 10})
+    resting = _resting("ext-2-gld-trim-20261110", qty="10", limit_price="300")
+    positions = [{"symbol": "GLD", "qty": "40", "market_value": "12000", "current_price": "300"}]
+    sub = Submit()
+    run(db, Alpaca(positions=positions, pending=[resting]), sub, monkeypatch)
+    assert sub.calls == []
+    rows = [r for r in db.db.get("paper_orders", []) if r["symbol"] == "GLD"]
+    assert any("ext-2-gld-trim-20261110" in (r.get("reason") or "") for r in rows)
+    assert manual_rows(db) == []
+
+
+def test_a_same_side_resting_sell_does_not_suppress_an_engine_sell(db, monkeypatch):
+    live_idea(db, 1)
+    db.db["ideas"][0].update({"size_pct": 5})
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    resting = _resting("ext-2-gtc-gld-trim-b1", qty="10")
+    sub = Submit()
+    run(db, Alpaca(fills=fills, positions=positions, pending=[resting],
+                   orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]),
+        sub, monkeypatch)
+    assert [(c[0], c[1]) for c in sub.calls] == [("GLD", "sell")]
+
+
+def test_an_ideas_own_resting_order_does_not_suppress_itself(db, monkeypatch):
+    live_idea(db, 1)
+    db.db["ideas"][0].update({"size_pct": 5})
+    store.add_manual_move(db, "main", "GLD", 1, "kevin")
+    fills = [_manual_fill("f1", "m", "GLD", "buy", 50, "2026-11-02T14:30:00Z")]
+    positions = [{"symbol": "GLD", "qty": "50", "market_value": "15000", "current_price": "300"}]
+    own = _resting("idea-1-auto-20261102-GLD-open", side="buy", qty="5", limit_price="290")
+    sub = Submit()
+    run(db, Alpaca(fills=fills, positions=positions, pending=[own],
+                   orders=[{"id": "m", "client_order_id": "manual-1", "submitted_at": "t"}]),
+        sub, monkeypatch)
+    assert [(c[0], c[1]) for c in sub.calls] == [("GLD", "sell")]
