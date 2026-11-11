@@ -45,50 +45,75 @@ def bh_rejected(pvals: list[float], q: float = FDR_Q) -> set[int]:
     return {order[i] for i in range(kmax)}
 
 
+def _run_p(run: dict):
+    """The p a run's verdict answers for: the event battery's p since
+    Amendment 2 (spec 2026-11-08), else the timing shuffle's. Pre-promotion
+    event runs carry no battery block and keep their shuffle p -- their
+    verdict WAS the shuffle's, so it still answers for them."""
+    result = run.get("result") or {}
+    bat = result.get("battery") or {}
+    if bat.get("type") == "event" and bat.get("p") is not None:
+        return bat["p"]
+    return ((result.get("shuffle") or {}).get("p"))
+
+
+def run_verdict_now(run: dict) -> dict:
+    """One stored run re-judged under the current bar (A2, Claude review
+    2026-11-10): a stored PASS stands only if its p is at or under P_MAX and,
+    where walk-forward folds were judged, the claim held in at least 3 of 4.
+    A run never fold-judged keeps that leg unjudged (None) -- history says it
+    was never tested, it does not fail a leg that never ran. The FDR leg is
+    NOT applied here: it is a statement about the family of latest runs and
+    lives in adjusted(). The stored verdict never changes; this is the
+    run's standing today, printed next to the bar it was judged under."""
+    result = run.get("result") or {}
+    bat = result.get("battery") or {}
+    if bat.get("type") in ("basket", "overlay"):
+        # A claim-typed battery run (spec 2026-11-08): the BH family is defined
+        # over timing shuffle p-values, so a basket/overlay verdict stands as
+        # stored — reported, never demoted here — until a cross-battery FDR
+        # treatment is preregistered. The run still counts in
+        # store.insert_run's family log. Event runs are deliberately NOT
+        # exempt: since Amendment 2 their verdict comes from the event
+        # battery, and the battery's p is their family p (see _run_p).
+        return {"verdict_now": run.get("verdict"), "fdr_pass": None, "p_ok": None,
+                "wf_ok": None, "p": None, "battery": bat.get("type")}
+    wf = result.get("walk_forward")
+    ok_wf = wf_ok(wf) if wf is not None else None
+    p = _run_p(run)
+    ok_p = None if p is None else float(p) <= P_MAX
+    now = run.get("verdict")
+    if now == "PASS" and (ok_p is False or ok_wf is False):
+        now = "FAIL"
+    return {"verdict_now": now, "fdr_pass": None, "p_ok": ok_p,
+            "wf_ok": ok_wf, "p": p}
+
+
 def adjusted(latest_by_idea: dict[int, dict]) -> dict[int, dict]:
     """Each idea's current standing under the hub-wide standard.
 
     Input: idea id -> its latest SAVED run row (verdict + result). A stored
     PASS is demoted when its p fails the FDR bar or P_MAX, or its walk-forward
-    falls short; every other verdict stands as stored."""
-    def _p(run: dict):
-        result = run.get("result") or {}
-        bat = result.get("battery") or {}
-        if bat.get("type") == "event" and bat.get("p") is not None:
-            # Amendment 2 (spec 2026-11-08): the event battery renders the
-            # verdict now, so its p is the run's family p. Pre-promotion event
-            # runs carry no battery block and keep their shuffle p below --
-            # their verdict WAS the shuffle's, so it still answers for them.
-            return bat["p"]
-        return ((result.get("shuffle") or {}).get("p"))
-
-    fam_ids = [iid for iid, r in latest_by_idea.items() if _p(r) is not None]
-    rejected = bh_rejected([float(_p(latest_by_idea[i])) for i in fam_ids])
+    falls short; every other verdict stands as stored. On top of
+    run_verdict_now's legs, the LATEST run is held to two more: it must
+    survive the hub-wide FDR adjustment, and a latest run with no judged
+    folds has unverifiable durability, which fails here even though the
+    per-run history view leaves that leg unjudged."""
+    fam_ids = [iid for iid, r in latest_by_idea.items() if _run_p(r) is not None]
+    rejected = bh_rejected([float(_run_p(latest_by_idea[i])) for i in fam_ids])
     fdr = {iid: (pos in rejected) for pos, iid in enumerate(fam_ids)}
     out: dict[int, dict] = {}
     for iid, run in latest_by_idea.items():
-        result = run.get("result") or {}
-        if (result.get("battery") or {}).get("type") in ("basket", "overlay"):
-            # A claim-typed battery run (spec 2026-11-08): the BH family above is defined
-            # over timing shuffle p-values, so a basket/overlay verdict stands as stored —
-            # reported, never demoted here — until a cross-battery FDR treatment is
-            # preregistered. The run still counts in store.insert_run's family log.
-            # Event runs are deliberately NOT exempt: since Amendment 2 their verdict
-            # comes from the event battery, and the battery's p is their family p
-            # (see _p above) — they flow through the adjustment as before.
-            out[iid] = {"verdict_now": run.get("verdict"), "fdr_pass": None, "p_ok": None,
-                        "wf_ok": None, "p": None, "battery": result["battery"].get("type")}
+        now = run_verdict_now(run)
+        if "battery" in now:
+            out[iid] = now
             continue
-        wf = result.get("walk_forward")
-        ok_wf = wf_ok(wf)
-        verdict = run.get("verdict")
-        now = verdict
-        p = _p(run)
-        ok_p = None if p is None else float(p) <= P_MAX
-        if verdict == "PASS" and (fdr.get(iid) is not True or not ok_wf or not ok_p):
-            now = "FAIL"
-        out[iid] = {"verdict_now": now, "fdr_pass": fdr.get(iid), "p_ok": ok_p,
-                    "wf_ok": ok_wf if wf is not None else None, "p": _p(run)}
+        now["fdr_pass"] = fdr.get(iid)
+        if now["verdict_now"] == "PASS":
+            result = run.get("result") or {}
+            if fdr.get(iid) is not True or result.get("walk_forward") is None:
+                now["verdict_now"] = "FAIL"
+        out[iid] = now
     return out
 
 

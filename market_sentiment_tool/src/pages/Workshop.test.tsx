@@ -801,3 +801,44 @@ describe("Workshop dashboard and labeling queue", () => {
     expect(screen.getByText(/2 fills already attributed/)).toBeInTheDocument();
   });
 });
+
+describe("A2 — verdicts under the current bar", () => {
+  it("the ideas list chip reads the current-bar standing, with the as-run verdict beside it", async () => {
+    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "PASS", verdict_now: "FAIL" }] } });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
+    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
+    expect(screen.getByText("FAIL")).toBeInTheDocument();
+    expect(screen.getByText("as run PASS")).toBeInTheDocument();
+  });
+
+  it("the dashboard tile counts verdicts under the current bar and shows the as-run tally", async () => {
+    serve({
+      "/api/workshop/ideas": { body: [] },
+      "/api/screening/screens": { body: [] },
+      "/api/workshop/dashboard": { body: {
+        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
+        runs: { total: 98, saved: 61, latest_verdicts: { PASS: 12, FAIL: 30 }, latest_verdicts_as_run: { PASS: 45, FAIL: 10 }, recent: [] },
+        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [] },
+        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
+    });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    expect(await screen.findByText("Latest verdicts, current bar")).toBeInTheDocument();
+    expect(screen.getByText("12 PASS")).toBeInTheDocument();
+    expect(screen.getByText(/as run 45 PASS/)).toBeInTheDocument();
+  });
+
+  it("an old-bar PASS run on the idea page says what it reads under the current bar, and why", async () => {
+    const legacy = { ...RUN, verdict: "PASS", verdict_now: "FAIL", p_ok: false, wf_ok: true, p: 0.029,
+      result: { ...RUN.result, verdict: "PASS",
+        shuffle: { beats_pct: 97, p: 0.029, bar: 0.05, permutations: 1000, seed: 4, method: "random timing" },
+        walk_forward: { held: 4, of: 4, folds: [] } } };
+    serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [legacy], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [] } } });
+    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    const note = await screen.findByText((_, el) => el?.tagName === "P" && (el?.textContent ?? "").includes("Under the current bar"));
+    expect(note.textContent).toContain("this run reads FAIL: p = 0.029 is over 0.01");
+    expect(note.textContent).toContain("The PASS above is the verdict as run, judged at p < 0.05");
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    expect(summary).toHaveTextContent("as run PASS · reads FAIL under the current bar");
+  });
+});
