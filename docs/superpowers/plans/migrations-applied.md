@@ -99,8 +99,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 74 | `20261109000009_screen_membership.sql` |
 | 75 | `20261110000001_debate_candidates.sql` |
 | 76 | `20261110000002_loop_round4.sql` |
+| 77 | `20261110000003_fifteen_ticks_depth.sql` |
 
-**Watermark: `20261110000002_loop_round4.sql`**
+**Watermark: `20261110000003_fifteen_ticks_depth.sql`**
 
 ## How to record a new one
 
