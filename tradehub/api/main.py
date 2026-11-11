@@ -589,6 +589,10 @@ class _DraftIn(BaseModel):
 class _IdeaIn(BaseModel):
     title: str = Field(min_length=3, max_length=120)
     plain_words: str = Field(min_length=1, max_length=4000)
+    # The search this idea is one trial of (A3, 2026-11-11). batch_trial is
+    # optional: naming only the batch assigns the next trial in it.
+    batch_id: str | None = Field(default=None, max_length=80)
+    batch_trial: int | None = Field(default=None, ge=0)
 
 
 class _RunIn(BaseModel):
@@ -679,7 +683,22 @@ def workshop_draft_import(body: _ImportIn, _admin: dict = Depends(admin.require_
 
 @app.post("/api/workshop/ideas", tags=["Workshop"])
 def workshop_create_idea(body: _IdeaIn, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
-    return workshop_store.create_idea(supabase, body.title, body.plain_words)
+    return workshop_store.create_idea(supabase, body.title, body.plain_words,
+                                      batch_id=body.batch_id, batch_trial=body.batch_trial)
+
+
+def _batch_for_run(supabase, found: dict) -> tuple[int, dict | None]:
+    """(effective variations, batch stamp) for a run on this idea (A3,
+    2026-11-11): the shuffle bar is raised by the trials in the idea's search,
+    not by this idea's own reruns alone -- bar = 0.05 / max(own variation,
+    batch size). An unbatched idea keeps its own count and gets no stamp."""
+    own = len(found["runs"]) + 1
+    info = workshop_store.batch_info(supabase, found["idea"])
+    if not info:
+        return own, None
+    stamp = {"id": info["id"], "trial": info["trial"],
+             "position": info["position"], "of": info["size"]}
+    return max(own, info["size"]), stamp
 
 
 @app.get("/api/agent-debates", tags=["Workshop"])
@@ -792,8 +811,12 @@ def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=De
         adj = adjusted.get(r["id"])
         r["verdict_now"] = adj["verdict_now"] if adj else None
     ideas = {i["id"]: i for i in supabase.table("ideas").select("*").execute().data or []}
+    # Each idea's search standing rides along (A3, 2026-11-11): the list
+    # shows "Trial N of M in <batch>" for generated and sibling ideas.
+    batches = workshop_store.batch_map(list(ideas.values()))
     big = {a["idea_id"]: a for a in workshop_store.activations(supabase, "big")}
     for r in rows:
+        r["batch"] = batches.get(r["id"])
         i = ideas.get(r["id"], {})
         r["live_at"] = i.get("live_at")
         r["tracked_at"] = i.get("tracked_at")
@@ -853,7 +876,7 @@ def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin),
                             "killed_at": act.get("killed_at"), "gate": act.get("gate"),
                             "orders_enabled": orders_enabled(name)}
     return {**found, "tag": f"idea-{idea_id}-", "shadow": shadow, "orders_enabled": orders_enabled(),
-            "books": book_state,
+            "books": book_state, "batch": workshop_store.batch_info(supabase, idea),
             "orders": workshop_store.order_log(supabase, idea_id, 50)}
 
 
@@ -1389,7 +1412,10 @@ def workshop_event_run(idea_id: int, body: _EventRunIn, _admin: dict = Depends(a
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     variation = len(found["runs"]) + 1
-    result = run_event_test(spec, closes, events, variations=variation, seed=idea_id * 1000 + variation)
+    eff_variations, batch_stamp = _batch_for_run(supabase, found)
+    result = run_event_test(spec, closes, events, variations=eff_variations, seed=idea_id * 1000 + variation)
+    if batch_stamp:
+        result = {**result, "batch": batch_stamp}
     return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
                                      result)
 
@@ -1429,9 +1455,12 @@ def workshop_run(idea_id: int, body: _RunIn, _admin: dict = Depends(admin.requir
     except UnknownSymbol as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     variation = len(found["runs"]) + 1
+    eff_variations, batch_stamp = _batch_for_run(supabase, found)
     div_yields = workshop_div_yields(spec, prices)
-    result = run_test(spec, prices, fred, variations=variation, seed=idea_id * 1000 + variation,
+    result = run_test(spec, prices, fred, variations=eff_variations, seed=idea_id * 1000 + variation,
                       div_yields=div_yields)
+    if batch_stamp:
+        result = {**result, "batch": batch_stamp}
     return workshop_store.insert_run(supabase, idea_id, variation, spec.model_dump(mode="json"), body.draft_model,
                                      {**result, "autopsy": _run_autopsy(spec, prices, fred, div_yields, variation)})
 
@@ -1906,6 +1935,7 @@ def get_idea_record(idea_id: int, supabase=Depends(get_supabase)):
                     "detail": {"curve": r["result"].get("curve") or [],
                                "reason": r["result"].get("reason"), "variations": r["result"].get("variations"),
                                "claim": r["result"].get("claim"), "shuffle": r["result"].get("shuffle"),
+                               "batch": r["result"].get("batch"),
                                "t_test": r["result"].get("t_test"), "periods": r["result"].get("periods"),
                                "walk_forward": r["result"].get("walk_forward"),
                                "context": r["result"].get("context") or [],

@@ -118,6 +118,12 @@ function IdeaRows({ rows }: { rows: IdeaRow[] }) {
               {i.verdict_now != null && i.latest_verdict != null && i.verdict_now !== i.latest_verdict && (
                 <span className="text-slate-500">as run {i.latest_verdict}</span>
               )}
+              {i.batch && (
+                <span className="text-slate-500">
+                  Trial {i.batch.position} of {i.batch.size} in {i.batch.id}
+                  {i.batch.trial != null && i.batch.trial !== i.batch.position ? ` · lab trial ${i.batch.trial}` : ""}
+                </span>
+              )}
             </span>
           </Link>
         </li>

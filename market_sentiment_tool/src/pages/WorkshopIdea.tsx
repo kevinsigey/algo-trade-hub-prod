@@ -878,6 +878,7 @@ function RuleVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run
             {r.periods && <tr><td className="py-1.5 text-slate-300">Holds in each market period</td><td className="py-1.5 text-slate-400">{r.periods.held} of {r.periods.of}</td><td><Mark ok={r.periods.held >= 4 ? true : r.periods.held <= 1 ? false : null} /></td></tr>}
             {r.walk_forward && <tr><td className="py-1.5 text-slate-300">Walk-forward, later stretches in order</td><td className="py-1.5 text-slate-400">{r.walk_forward.held} of {r.walk_forward.of} held</td><td><Mark ok={r.walk_forward.of === 0 ? null : r.walk_forward.held === r.walk_forward.of ? true : r.walk_forward.held === 0 ? false : null} /></td></tr>}
             <tr><td className="py-1.5 text-slate-300">Variations tried on this idea</td><td className="py-1.5 text-slate-400">{r.variations} · bar raised accordingly</td><td /></tr>
+            {r.batch && <tr><td className="py-1.5 text-slate-300">Search this idea belongs to</td><td className="py-1.5 text-slate-400">Trial {r.batch.position} of {r.batch.of} in {r.batch.id}{r.batch.trial != null && r.batch.trial !== r.batch.position ? ` · lab trial ${r.batch.trial}` : ""} · the bar above counts the whole search</td><td /></tr>}
           </tbody>
         </table>
       )}
@@ -1311,6 +1312,12 @@ function SummaryHeader({ data }: { data: IdeaDetail }) {
         </>
       ) : (
         <span className="text-sm text-slate-300">No runs yet — draft the test to get a verdict.</span>
+      )}
+      {data.batch && (
+        <span className="text-xs text-slate-400">
+          Trial {data.batch.position} of {data.batch.size} in {data.batch.id}
+          {data.batch.trial != null && data.batch.trial !== data.batch.position ? ` · lab trial ${data.batch.trial}` : ""}
+        </span>
       )}
       <span className="text-xs font-medium text-slate-300">{lifecycleLabel(data)}</span>
     </section>

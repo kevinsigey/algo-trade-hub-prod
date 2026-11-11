@@ -101,6 +101,23 @@ describe("Workshop pages", () => {
     expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
   });
 
+  it("shows which trial of its search an idea is, in the list and on its page (A3)", async () => {
+    const batch = { id: "random-lab-gen-3", trial: 54, size: 15, position: 3 };
+    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "TXN + MU wrap", created_at: "", runs: 1, latest_verdict: "PASS", batch }] } });
+    render(<MemoryRouter><Workshop /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
+    expect(await screen.findByText(/Trial 3 of 15 in random-lab-gen-3 · lab trial 54/)).toBeInTheDocument();
+  });
+
+  it("shows the run's search stamp in its verdict card (A3)", async () => {
+    const run = { ...RUN, result: { ...RUN.result, batch: { id: "spec-e", trial: 2, position: 2, of: 4 } } };
+    serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [run], batch: { id: "spec-e", trial: 2, size: 4, position: 2 } } } });
+    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText(/Trial 2 of 4 in spec-e · the bar above counts the whole search/)).toBeInTheDocument();
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    expect(summary).toHaveTextContent("Trial 2 of 4 in spec-e");
+  });
+
   it("leads with a summary header and collapses older runs (§6)", async () => {
     const older = { ...RUN, id: 0, variation: 3, created_at: "2026-10-20T00:00:00Z",
       result: { ...RUN.result, headline: "An earlier headline." } };
