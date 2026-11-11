@@ -163,6 +163,41 @@ def _close(val: float, ref: float) -> bool:
     return abs(val - ref) <= 1e-6 * max(1.0, abs(ref))
 
 
+# A4 (2026-11-11): the prompt already says "not reported results", but the
+# model still files them -- TMUS's reported quarter ("Diluted EPS increased
+# 5% year-over-year to $2.99 per share") was recorded as a full-year guide,
+# and MRK's "GAAP EPS was $2.04" likewise. An EPS item whose own evidence
+# is past-tense results language, with no forward-looking marker, is a
+# reported result, not guidance, whatever period label the model gave it.
+_FORWARD_MARKERS = ("expect", "guidance", "outlook", "anticipat",
+                    "forecast", "will be", "to be between", "reaffirm",
+                    "projected", "projects ", "target")
+# Markers match on token boundaries, with the intended word forms: "expect"
+# covers expects/expected/expecting but must NOT match inside "unexpected"
+# (a reported result "increased ... due to an unexpected tax benefit" is
+# past tense, not forward-looking). Stem markers keep their suffixes.
+_FORWARD_RE = re.compile(
+    r"\b(?:expect(?:s|ed|ing)?|guidance|outlook|anticipat\w*|forecast\w*"
+    r"|will be|to be between|reaffirm\w*|project\w*|target)\b")
+_REPORTED_EPS_RE = re.compile(
+    r"(eps|earnings per share|per diluted share|per share)"
+    r"[^.]{0,80}?\b(was|increased|decreased|grew|declined|rose|fell)\b")
+
+
+def reported_result_reason(item: GuidanceItem) -> str | None:
+    """'reported_result_not_guidance' when an EPS item's evidence reads as
+    a reported result rather than guidance; None otherwise. The name is
+    the ingest vocabulary for the class, alongside the F3 sanity flags."""
+    if not item.metric.startswith("eps"):
+        return None
+    ev = _normalize(item.evidence)
+    if _FORWARD_RE.search(ev):
+        return None
+    if _REPORTED_EPS_RE.search(ev) or re.search(r"\bwas \$?[\d,]", ev):
+        return "reported_result_not_guidance"
+    return None
+
+
 def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], int]:
     """Verify items against the release text.
 
@@ -170,6 +205,7 @@ def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], in
     - Its normalized evidence is a substring of the normalized text
     - Every non-None low/high value equals some number token in the evidence (as float, abs diff < 1e-9),
       or a bound/center derived from a "±" statement in the evidence (amendment A1)
+    - An EPS item's evidence is not a reported result (A4 screen above)
 
     Returns (kept_items, dropped_count).
     """
@@ -178,6 +214,9 @@ def verify(items: list[GuidanceItem], text: str) -> tuple[list[GuidanceItem], in
     dropped = 0
 
     for item in items:
+        if reported_result_reason(item) is not None:
+            dropped += 1
+            continue
         norm_evidence = _normalize(item.evidence)
 
         # Check evidence is in text
