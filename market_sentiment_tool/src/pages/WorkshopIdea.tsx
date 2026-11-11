@@ -714,6 +714,7 @@ function EventVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; ru
         </div>
       </div>
       <SaveRunBar ideaId={ideaId} run={run} onSaved={onSaved} />
+      <VerdictNowNote run={run} />
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
 
       {r.claim && (
@@ -795,6 +796,32 @@ function EventVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; ru
   );
 }
 
+/** The run's standing under the current bar (A2, 2026-11-11): the big chip
+ * keeps the verdict as run — history — and this line says what that
+ * verdict is worth under today's bar (p ≤ 0.01, held in 3 of 4 folds)
+ * and which bar the run was actually judged under. */
+function VerdictNowNote({ run }: { run: Run }) {
+  const now = run.verdict_now;
+  if (now == null) return null;
+  if (now === run.verdict) {
+    return run.result.bar
+      ? <p className="mt-3 text-xs text-slate-500">Judged under the current bar: p ≤ {run.result.bar.p_max} · held in 3 of 4 walk-forward folds.</p>
+      : null;
+  }
+  const legs: string[] = [];
+  if (run.p_ok === false && run.p != null) legs.push(`p = ${run.p.toFixed(3)} is over 0.01`);
+  if (run.wf_ok === false && run.result.walk_forward)
+    legs.push(`the claim held in only ${run.result.walk_forward.held} of ${run.result.walk_forward.of} folds (the bar is 3 of 4)`);
+  const judgedBar = run.result.bar?.shuffle_bar ?? run.result.shuffle?.bar;
+  return (
+    <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+      Under the current bar (p ≤ 0.01 · held in 3 of 4 folds) this run reads {now}
+      {legs.length ? `: ${legs.join("; ")}` : ""}. The {run.verdict} above is the verdict as run
+      {judgedBar != null ? `, judged at p < ${judgedBar}` : ""}.
+    </p>
+  );
+}
+
 function RuleVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run: Run; onVary: (s: IdeaSpec) => void; onSaved?: () => void }) {
   const r = run.result;
   const tone = verdictTone(run.verdict);
@@ -812,6 +839,7 @@ function RuleVerdictCard({ ideaId, run, onVary, onSaved }: { ideaId: string; run
         </div>
       </div>
       <SaveRunBar ideaId={ideaId} run={run} onSaved={onSaved} />
+      <VerdictNowNote run={run} />
       {r.reason && <p className="mt-3 text-sm text-slate-300">{r.reason}</p>}
       {(r.notes ?? []).map((n) => (
         <p key={n} className="mt-2 text-sm text-amber-200/90">{n}</p>
@@ -1271,8 +1299,11 @@ function SummaryHeader({ data }: { data: IdeaDetail }) {
     <section aria-label="Summary" className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3">
       {latest ? (
         <>
-          <span className={`rounded-lg border-2 px-3 py-0.5 text-lg font-extrabold ${toneClass[verdictTone(latest.verdict)]}`}>{latest.verdict}</span>
+          <span className={`rounded-lg border-2 px-3 py-0.5 text-lg font-extrabold ${toneClass[verdictTone(latest.verdict_now ?? latest.verdict)]}`}>{latest.verdict_now ?? latest.verdict}</span>
           <span className="min-w-0 flex-1 text-sm text-slate-200">{latest.result.headline}</span>
+          {latest.verdict_now != null && latest.verdict_now !== latest.verdict && (
+            <span className="text-xs text-amber-300">as run {latest.verdict} · reads {latest.verdict_now} under the current bar</span>
+          )}
           <span className="text-xs text-slate-400">
             {data.runs.length} run{data.runs.length === 1 ? "" : "s"} · latest {ctDateTime(latest.created_at)}
             {!latest.saved_at && " · preview, not saved"}

@@ -112,9 +112,12 @@ function IdeaRows({ rows }: { rows: IdeaRow[] }) {
             <span className="flex shrink-0 items-center gap-3 text-xs text-slate-400">
               {i.runs} {i.runs === 1 ? "run" : "runs"}
               <LifecycleChip row={i} />
-              <span className={`rounded-full border px-2 py-0.5 font-semibold ${toneClass[verdictTone(i.latest_verdict)]}`}>
-                {i.latest_verdict ?? "Not run"}
+              <span className={`rounded-full border px-2 py-0.5 font-semibold ${toneClass[verdictTone(i.verdict_now ?? i.latest_verdict)]}`}>
+                {i.verdict_now ?? i.latest_verdict ?? "Not run"}
               </span>
+              {i.verdict_now != null && i.latest_verdict != null && i.verdict_now !== i.latest_verdict && (
+                <span className="text-slate-500">as run {i.latest_verdict}</span>
+              )}
             </span>
           </Link>
         </li>
@@ -179,8 +182,8 @@ export default function Workshop() {
                     sub={`${dash.ideas.live} main · ${dash.ideas.live_big} on $1M`} />
           <StatTile label="Tracking" value={String(dash.ideas.tracking)} sub={`${dash.ideas.total} ideas in all`} />
           <StatTile label="Tests kept" value={String(dash.runs.saved)} sub={`${dash.runs.total} runs incl. previews`} />
-          <StatTile label="Latest verdicts" value={`${dash.runs.latest_verdicts.PASS ?? 0} PASS`}
-                    sub={`${dash.runs.latest_verdicts.FAIL ?? 0} fail · ${dash.runs.latest_verdicts.NOT_ENOUGH_DATA ?? 0} not enough data`} />
+          <StatTile label="Latest verdicts, current bar" value={`${dash.runs.latest_verdicts.PASS ?? 0} PASS`}
+                    sub={`${dash.runs.latest_verdicts.FAIL ?? 0} fail · ${dash.runs.latest_verdicts.NOT_ENOUGH_DATA ?? 0} not enough data${(dash.runs.latest_verdicts_as_run?.PASS ?? 0) !== (dash.runs.latest_verdicts.PASS ?? 0) ? ` · as run ${dash.runs.latest_verdicts_as_run?.PASS ?? 0} PASS` : ""}`} />
           <StatTile label="Fills attributed" value={dash.fills.state === "live" ? `${dash.fills.attributed}/${dash.fills.total}` : "—"}
                     sub={dash.fills.state === "live" ? "the rest are manual / mirror" : "account not connected"} />
           <StatTile label="Needs labeling" value={String(dash.fills.needs_label)} warn={dash.fills.needs_label > 0}

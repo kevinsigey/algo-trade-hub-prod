@@ -226,6 +226,9 @@ export interface RunResult {
     verdict: Verdict;
     shuffle: { beats_pct: number; p: number; bar: number; permutations: number; seed: number; method: string; holds?: boolean };
   } | null;
+  /** The bar this verdict was judged under, stamped at record time (A2,
+   * 2026-11-11). Absent on runs recorded before the stamp existed. */
+  bar?: { standard: string; p_max: number; wf_min_share: number; shuffle_bar: number | null } | null;
 }
 
 export interface Run {
@@ -239,6 +242,13 @@ export interface Run {
   /** Save-by-choice (2026-11-02): null while the run is an unsaved preview. Only
    * saved runs count toward the record, the gate, and tracking. */
   saved_at: string | null;
+  /** Standing under the current bar (A2, 2026-11-11): verdict is the as-run
+   * history; verdict_now is what the run is worth under today's bar, with
+   * the two legs that decided it. Absent on payloads that predate A2. */
+  verdict_now?: Verdict | null;
+  p_ok?: boolean | null;
+  wf_ok?: boolean | null;
+  p?: number | null;
 }
 
 export interface Idea {
@@ -322,6 +332,8 @@ export interface IdeaRow {
   created_at: string;
   runs: number;
   latest_verdict: Verdict | null;
+  /** Standing under the current bar (A2): the chip reads this first. */
+  verdict_now?: Verdict | null;
   published_at: string | null;
   tracked_at: string | null;
   live_at: string | null;
@@ -700,6 +712,7 @@ export const STATUS_LABEL: Record<PublicIdea["status"], string> = {
 export interface WorkshopDashboard {
   ideas: { total: number; live: number; live_big: number; tracking: number; published: number; draft: number; killed: number };
   runs: { total: number; saved: number; latest_verdicts: Record<string, number>;
+          latest_verdicts_as_run?: Record<string, number>;
           recent: { idea_id: number; title: string | null; verdict: string; at: string | null }[] };
   fills: { state: string; total: number; attributed: number; needs_label: number;
            closed_pnl_by_idea: { idea: string; pnl: number; trades: number }[] };

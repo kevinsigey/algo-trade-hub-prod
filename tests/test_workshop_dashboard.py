@@ -28,6 +28,10 @@ class FakeQuery:
         self.col, self.desc = col, desc
         return self
 
+    def range(self, lo, hi):
+        self.span = (lo, hi)
+        return self
+
     def insert(self, row):
         rows = self.store.setdefault(self.table, [])
         row = {**row, "id": max([r.get("id", 0) for r in rows], default=0) + 1}
@@ -53,6 +57,9 @@ class FakeQuery:
                 r.update(self.updates)
         if getattr(self, "col", None):
             rows.sort(key=lambda r: r.get(self.col) or 0, reverse=getattr(self, "desc", False))
+        if getattr(self, "span", None):
+            lo, hi = self.span
+            rows = rows[lo:hi + 1]  # PostgREST range is inclusive of the last index
         return type("R", (), {"data": rows})()
 
 
@@ -111,7 +118,11 @@ def test_dashboard_totals(monkeypatch):
     assert body["ideas"] == {"total": 3, "live": 1, "live_big": 1, "tracking": 1,
                              "published": 0, "draft": 1, "killed": 0}
     assert body["runs"]["total"] == 4 and body["runs"]["saved"] == 3
-    assert body["runs"]["latest_verdicts"] == {"PASS": 1, "FAIL": 1}
+    # A2: headline counts are standings under the current bar. The fixture's
+    # runs carry no result payload (no p, no folds), so idea 1's stored PASS
+    # is unverifiable and does not stand; the as-run tally rides along.
+    assert body["runs"]["latest_verdicts"] == {"FAIL": 2}
+    assert body["runs"]["latest_verdicts_as_run"] == {"PASS": 1, "FAIL": 1}
     assert [r["idea_id"] for r in body["runs"]["recent"]] == [2, 1, 1]
     assert body["fills"]["total"] == 4 and body["fills"]["attributed"] == 1
     assert body["fills"]["needs_label"] == 1  # only o4: no tag, no label, placed outside the hub

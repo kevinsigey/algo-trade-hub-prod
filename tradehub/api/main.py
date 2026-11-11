@@ -784,6 +784,13 @@ def agent_debate_report(run_id: str, _admin: dict = Depends(admin.require_admin)
 @app.get("/api/workshop/ideas", tags=["Workshop"])
 def workshop_list_ideas(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     rows = workshop_store.list_ideas(supabase)
+    # The standing under the current bar rides along (A2, 2026-11-11): the
+    # list chip reads verdict_now, with latest_verdict kept as the as-run
+    # history. Ideas with no saved run have no standing yet (None).
+    adjusted = _registry_view(supabase)["adjusted"]
+    for r in rows:
+        adj = adjusted.get(r["id"])
+        r["verdict_now"] = adj["verdict_now"] if adj else None
     ideas = {i["id"]: i for i in supabase.table("ideas").select("*").execute().data or []}
     big = {a["idea_id"]: a for a in workshop_store.activations(supabase, "big")}
     for r in rows:
@@ -820,6 +827,13 @@ def _shadow(supabase, idea: dict) -> dict:
 def workshop_get_idea(idea_id: int, _admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     found = _found(supabase, idea_id)
     idea = found["idea"]
+    # Each run's standing under the current bar, next to its as-run verdict
+    # (A2, 2026-11-11): the stored verdict is history and never changes;
+    # verdict_now is what the run is worth under today's bar.
+    from tradehub.workshop import registry as _registry
+
+    for r in found["runs"]:
+        r.update(_registry.run_verdict_now(r))
     shadow = _shadow(supabase, idea) if (idea.get("live_at") or idea.get("tracked_at")) else None
     from tradehub.portfolio import books as _books
     from tradehub.portfolio.paper_orders import orders_enabled
@@ -2897,7 +2911,11 @@ def workshop_dashboard(_admin: dict = Depends(admin.require_admin), supabase=Dep
     rows = workshop_store.list_ideas(supabase)
     ideas = {"total": len(rows), "live": 0, "live_big": 0, "tracking": 0,
              "published": 0, "draft": 0, "killed": 0}
+    # Headline counts are standings under the current bar (A2, 2026-11-11);
+    # the as-run counts ride along so the re-labelling is visible, not silent.
+    adjusted = _registry_view(supabase)["adjusted"]
     verdicts: dict[str, int] = {}
+    verdicts_as_run: dict[str, int] = {}
     for r in rows:
         if r.get("killed_at"):
             ideas["killed"] += 1
@@ -2910,7 +2928,10 @@ def workshop_dashboard(_admin: dict = Depends(admin.require_admin), supabase=Dep
         else:
             ideas["draft"] += 1
         if r.get("latest_verdict"):
-            verdicts[r["latest_verdict"]] = verdicts.get(r["latest_verdict"], 0) + 1
+            verdicts_as_run[r["latest_verdict"]] = verdicts_as_run.get(r["latest_verdict"], 0) + 1
+            adj = adjusted.get(r["id"])
+            now = adj["verdict_now"] if adj else r["latest_verdict"]
+            verdicts[now] = verdicts.get(now, 0) + 1
     ideas["live_big"] = len({a["idea_id"] for a in workshop_store.activations(supabase, "big")
                              if a.get("live_at") and not a.get("killed_at")})
     all_runs = supabase.table("idea_runs").select("id,idea_id,verdict,created_at").execute().data or []
@@ -2919,6 +2940,7 @@ def workshop_dashboard(_admin: dict = Depends(admin.require_admin), supabase=Dep
     recent = sorted((r for r in all_runs if r["id"] in saved_ids),
                     key=lambda r: r.get("created_at") or "", reverse=True)[:8]
     runs = {"total": len(all_runs), "saved": len(saved_ids), "latest_verdicts": verdicts,
+            "latest_verdicts_as_run": verdicts_as_run,
             "recent": [{"idea_id": r["idea_id"], "title": titles.get(r["idea_id"]),
                         "verdict": r["verdict"], "at": r.get("created_at")} for r in recent]}
     fills_payload: dict = {"state": "not_connected", "total": 0, "attributed": 0,

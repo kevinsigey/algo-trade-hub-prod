@@ -160,7 +160,16 @@ def insert_run(supa, idea_id: int, variation: int, spec: dict, draft_model: str 
     # Nth test the hub has ever run, and its standing is judged against all
     # of them (see tradehub.workshop.registry), not just this idea's reruns.
     tests_before = len(supa.table(RUNS).select("id").execute().data or [])
-    result = {**result, "registry": {"test_number": tests_before + 1, "tests_before": tests_before}}
+    # The bar this verdict was judged under (A2, 2026-11-11): stamped at
+    # record time so a future bar change can print, next to every verdict,
+    # both the bar of its day and the bar of today — the Nov 10 review found
+    # stored PASSes still reading as current truth under an old bar.
+    from tradehub.workshop import registry as _registry
+
+    result = {**result, "registry": {"test_number": tests_before + 1, "tests_before": tests_before},
+              "bar": {"standard": "2026-11-03", "p_max": _registry.P_MAX,
+                      "wf_min_share": _registry.WF_MIN_SHARE,
+                      "shuffle_bar": (result.get("shuffle") or {}).get("bar")}}
     row = {"idea_id": idea_id, "variation": variation, "spec": spec, "draft_model": draft_model,
            "verdict": result["verdict"], "result": result, "data_end": result.get("data_end")}
     # A fresh run is a preview by definition (save-by-choice): the shape carries it.
