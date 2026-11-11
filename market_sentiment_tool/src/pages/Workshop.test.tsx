@@ -118,6 +118,34 @@ describe("Workshop pages", () => {
     expect(summary).toHaveTextContent("Trial 2 of 4 in spec-e");
   });
 
+  it("shows the Spec F LEAPS shadow panel when the detail carries it", async () => {
+    const leaps = {
+      idea_id: 81,
+      summary: { pairs_opened: 1, pairs_open: 1, pairs_closed: 0, unfilled: 1,
+        mean_carry_drag_pct: 2.1, mean_delta_delivered: 0.95, premium_cash: 9600,
+        share_cash: 24000, premium_pct_of_share_cash: 40, trial_start: "2026-11-12T05:00:00Z",
+        gate: { state: "open", judged: false, pairs: 1, needed: 4, reason: null } },
+      pairs: [{ id: 1, ticker: "NVDA", status: "open", opened_at: "2026-11-12T05:00:00Z",
+        zone: "base", action: "starter", guide_status: "intact", trigger_price: 100,
+        strike: 70, expiry: "2028-02-10", contracts: 3, entry_ask: 32, premium_total: 9600,
+        delta_at_entry: 0.79, extrinsic_at_entry: 2, delta_notional: 23700,
+        share_shares: 237, share_entry_price: 100, share_price: 110, leaps_mid: 36,
+        leaps_pnl: 1200, share_pnl: 2370, dte: 455, roll_flag: false, mark_stale: false,
+        carry_drag_pct: 2.1, delta_delivered: 0.95 }],
+      unfilled: [{ id: 2, ticker: "MSFT", status: "unfilled", opened_at: "2026-11-12T05:00:00Z",
+        zone: "bear", close_reason: "extrinsic_over_cap" }],
+    };
+    serve({ "/api/workshop/ideas/81": { body: { idea: { id: 81, title: "Spec F", plain_words: "LEAPS instead of shares", created_at: "", tags: ["leaps-trial"] }, runs: [RUN], leaps } } });
+    render(<MemoryRouter initialEntries={["/workshop/81"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    const panel = await screen.findByRole("region", { name: "Spec F LEAPS shadow trial" });
+    expect(panel).toHaveTextContent("1 pair opened (1 open, 0 closed)");
+    expect(panel).toHaveTextContent("premium is 40% of the share cash");
+    expect(panel).toHaveTextContent("3 × NVDA $70 calls expiring 2028-02-10");
+    expect(panel).toHaveTextContent("Gate: 1 of 4 pairs toward the gate read.");
+    expect(panel).toHaveTextContent("MSFT");
+    expect(panel).toHaveTextContent("extrinsic_over_cap");
+  });
+
   it("leads with a summary header and collapses older runs (§6)", async () => {
     const older = { ...RUN, id: 0, variation: 3, created_at: "2026-10-20T00:00:00Z",
       result: { ...RUN.result, headline: "An earlier headline." } };
