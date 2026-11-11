@@ -2194,7 +2194,10 @@ def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.req
 # staged mirror book had no way to rest its stops): order_type "stop" + stop_price + gtc is
 # the one protective shape the door takes, fenced to shares actually held (stop_capacity),
 # namespaced to the ext-<key>-stop- tag family paper_orders sanctions, and priced for the
-# notional cap at the stop. order_class and trailing stops still 422 here.
+# notional cap at the stop. order_class and trailing stops still 422 here. GTC share limits
+# joined 2026-11-10 (Kevin: resting exits must not expire daily): a limit order with
+# time_in_force "gtc" is the second resting shape, namespaced to the ext-<key>-gtc- tag
+# family; GTC market orders and GTC splits still 422 in validate_order.
 class _MachineOrderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")  # order_class and other broker shapes 422 here
 
@@ -2348,6 +2351,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     if not body.split:
         if body.order_type == "stop":
             client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"
+        elif body.time_in_force == "gtc":  # validate_order has fenced this to limit orders
+            client_order_id = f"ext-{key['id']}-gtc-{body.client_order_id}"
         else:
             client_order_id = f"ext-{key['id']}-{body.client_order_id}"
         try:

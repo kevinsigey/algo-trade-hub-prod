@@ -80,6 +80,27 @@ def stop_capacity(symbol: str, side: str, book: str | None = None) -> int:
     return max(0, int(abs(held)) - int(reserved))
 
 
+def resting_reserved_qty(symbol: str, side: str, book: str | None = None) -> float:
+    """Shares of `symbol` already reserved by resting orders on `side` of this
+    book: every open order's UNFILLED quantity, however the order is tagged --
+    machine, idea, manual, protective stops included. The exit test nets this
+    out (Kevin, 2026-11-10): once GTC exits can rest for days, a second exit
+    must never re-sell shares a first resting exit is already working, or the
+    two together oversell the position. Reads go through
+    alpaca_paper.paper_get; any failure propagates, and the caller fails
+    closed. `book` names the account; None is the current book."""
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    reserved = 0.0
+    for order in paper_get("/v2/orders", {"status": "open", "limit": 500}, book=book) or []:
+        if not isinstance(order, dict):
+            continue
+        if (order.get("symbol") or "").upper() == symbol and order.get("side") == side:
+            remaining = float(order.get("qty") or 0) - float(order.get("filled_qty") or 0)
+            reserved += max(0.0, remaining)
+    return reserved
+
+
 def key_book(key: dict) -> str:
     """The book a key is bound to (Kevin, 2026-11-03). Rows minted before the book
     column -- and any row a caller hands us without one -- read as the main book,
@@ -375,7 +396,14 @@ def classify_share_exit(spec: dict, symbol: str, side: str, qty: int, book: str 
     unheld symbol, or a position read that fails is NOT an exit: the caps apply
     in full, with no partial exemption for the covered part. The classification
     is this book math and nothing else -- a caller's `exit` claim is recorded
-    (`claimed`) and reported when it disagrees, but it never decides."""
+    (`claimed`) and reported when it disagrees, but it never decides.
+
+    Netting (Kevin, 2026-11-10): the held quantity is net of shares already
+    reserved by resting sell orders on the book (resting_reserved_qty) -- a
+    sell is an exit only up to the UNRESERVED held quantity, so two resting
+    exits can never each pass the test and together oversell. A resting read
+    that fails is unprovable, so it fails toward the caps like a failed
+    position read."""
     info: dict = {"is_exit": False, "bypassed": [], "claimed": spec.get("exit_claim"),
                   "detail": ""}
     if side != "sell":
@@ -387,11 +415,30 @@ def classify_share_exit(spec: dict, symbol: str, side: str, qty: int, book: str 
             info["detail"] = ("not an exit: positions could not be read, so the book math "
                               "cannot prove this sale only closes a position; the caps apply")
             return info
-        if qty <= held:
+        try:
+            reserved = resting_reserved_qty(symbol, side, book=book)
+        except Exception:  # noqa: BLE001 -- unprovable is unexempted: fail toward the caps
+            info["detail"] = ("not an exit: resting orders could not be read, so the book math "
+                              "cannot prove this sale only closes unreserved shares; "
+                              "the caps apply")
+            return info
+        unreserved = held - reserved
+        if qty <= unreserved:
             info["is_exit"] = True
             info["bypassed"] = list(EXIT_BYPASSED_CAPS)
-            info["detail"] = (f"an exit: selling {qty} of the {held:g} {symbol} shares held "
-                              "only closes the position; the machine caps do not apply to exits")
+            if reserved:
+                info["detail"] = (f"an exit: selling {qty} of the {held:g} {symbol} shares held, "
+                                  f"of which {reserved:g} are already reserved by resting sell "
+                                  "orders, only closes the position; the machine caps do not "
+                                  "apply to exits")
+            else:
+                info["detail"] = (f"an exit: selling {qty} of the {held:g} {symbol} shares held "
+                                  "only closes the position; the machine caps do not apply to exits")
+        elif reserved:
+            info["detail"] = (f"not an exit: the book holds {held:g} {symbol} shares but "
+                              f"{reserved:g} are already reserved by resting sell orders, so "
+                              f"this sell of {qty} exceeds the {unreserved:g} unreserved "
+                              "shares; the excess would open a short, so the caps apply")
         else:
             info["detail"] = (f"not an exit: the book holds {held:g} {symbol} shares and this "
                               f"sell is for {qty}; the excess would open a short, so the caps apply")
@@ -505,8 +552,14 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
         elif limit_price is not None:
             shape = ("order_type", 422, "limit_price is for limit orders")
     else:
-        if tif not in ("opg", "cls", "day"):
-            shape = ("validation", 422, "time_in_force must be opg, cls or day")
+        if split and tif == "gtc":
+            shape = ("validation", 422, "a good-till-cancelled order rests as one order; "
+                                        "split is for opg, cls and day orders")
+        elif tif not in ("opg", "cls", "day", "gtc"):
+            shape = ("validation", 422, "time_in_force must be opg, cls, day or gtc")
+        elif tif == "gtc" and order_type != "limit":
+            shape = ("validation", 422, "a good-till-cancelled machine order must be a limit "
+                                        "order (stops ride their own gtc path)")
         elif stop_price is not None:
             shape = ("order_type", 422, "stop_price is for stop orders")
         elif order_type == "limit" and limit_price is None:
