@@ -171,40 +171,74 @@ def pair_marks(pair: dict, *, leaps_mid: float | None, share_price: float | None
     return patch
 
 
+def _cohort_read(cohort: list[dict]) -> dict:
+    """One gate cohort's verdict inputs: the two frozen means over the
+    cohort's rows that carry them."""
+    drags = [float(r["carry_drag_pct"]) for r in cohort if r.get("carry_drag_pct") is not None]
+    deliveries = [float(r["delta_delivered"]) for r in cohort
+                  if r.get("delta_delivered") is not None]
+    return {"mean_drag": sum(drags) / len(drags) if drags else None,
+            "mean_delivery": sum(deliveries) / len(deliveries) if deliveries else None}
+
+
+def _cohort_verdict(read: dict) -> tuple[str | None, str | None]:
+    """(state, reason) for one judged cohort: a kill on either bar, an
+    insufficient-data read when a metric the gate judges is missing (a
+    gate never passes on absent evidence), else a pass."""
+    if read["mean_drag"] is not None and read["mean_drag"] > DRAG_KILL_PCT:
+        return "killed", (f"mean carry drag {read['mean_drag']:.2f}%/yr over the "
+                          f"{DRAG_KILL_PCT}%/yr bar")
+    if read["mean_delivery"] is not None and read["mean_delivery"] < DELIVERY_KILL:
+        return "killed", (f"mean delta delivery {read['mean_delivery']:.2f} under "
+                          f"the {DELIVERY_KILL:.0%} bar")
+    if read["mean_drag"] is None or read["mean_delivery"] is None:
+        return "insufficient_data", ("the gate's metrics are incomplete for this "
+                                     "cohort — no verdict until both are marked")
+    return "pass", None
+
+
 def trial_summary(rows: list[dict], *, now: datetime) -> dict:
     """The frozen gate read over the trial's rows. A read, never an
-    actor: promotion is Kevin's call."""
+    actor: promotion is Kevin's call.
+
+    The gate judges a FROZEN cohort — the first GATE_PAIRS opened pairs,
+    or every pair opened by the 12-month cutoff when fewer arrived — so
+    a later pair can never rewrite the verdict. A pass extends the trial
+    to EXTENDED_PAIRS; that extension cohort (pairs 5–8) is read
+    separately under gate["extension"] and never mutates the first
+    verdict."""
     opened = [r for r in rows if r.get("status") != "unfilled"]
     unfilled = [r for r in rows if r.get("status") == "unfilled"]
+    opened.sort(key=lambda r: (_dt(r["opened_at"]), r.get("id") or 0))
     drags = [float(r["carry_drag_pct"]) for r in opened if r.get("carry_drag_pct") is not None]
     deliveries = [float(r["delta_delivered"]) for r in opened
                   if r.get("delta_delivered") is not None]
     premium_cash = sum(float(r["premium_total"] or 0) for r in opened)
     share_cash = sum(float(r["share_shares"] or 0) * float(r["share_entry_price"] or 0)
                      for r in opened)
-    trial_start = min((_dt(r["opened_at"]) for r in opened), default=None)
+    trial_start = _dt(opened[0]["opened_at"]) if opened else None
     months_hit = trial_start is not None and now >= trial_start + timedelta(days=TRIAL_DAYS)
     judged = len(opened) >= GATE_PAIRS or months_hit
     mean_drag = sum(drags) / len(drags) if drags else None
     mean_delivery = sum(deliveries) / len(deliveries) if deliveries else None
     gate: dict = {"state": "waiting", "judged": False, "pairs": len(opened),
-                  "needed": GATE_PAIRS, "reason": None}
+                  "needed": GATE_PAIRS, "reason": None, "extension": None}
     if opened:
         gate["state"] = "open"
     if judged:
         gate["judged"] = True
-        if mean_drag is not None and mean_drag > DRAG_KILL_PCT:
-            gate["state"] = "killed"
-            gate["reason"] = (f"mean carry drag {mean_drag:.2f}%/yr over the "
-                              f"{DRAG_KILL_PCT}%/yr bar")
-        elif mean_delivery is not None and mean_delivery < DELIVERY_KILL:
-            gate["state"] = "killed"
-            gate["reason"] = (f"mean delta delivery {mean_delivery:.2f} under "
-                              f"the {DELIVERY_KILL:.0%} bar")
-        elif len(opened) >= EXTENDED_PAIRS:
-            gate["state"] = "complete"
-        else:
-            gate["state"] = "pass"
+        read = _cohort_read(opened[:GATE_PAIRS])
+        gate["cohort_pairs"] = min(len(opened), GATE_PAIRS)
+        gate["mean_carry_drag_pct"] = read["mean_drag"]
+        gate["mean_delta_delivered"] = read["mean_delivery"]
+        state, reason = _cohort_verdict(read)
+        gate["state"], gate["reason"] = state, reason
+        if state == "pass" and len(opened) >= EXTENDED_PAIRS:
+            ext_state, ext_reason = _cohort_verdict(
+                _cohort_read(opened[GATE_PAIRS:EXTENDED_PAIRS]))
+            gate["extension"] = {"state": ext_state, "reason": ext_reason}
+            if ext_state == "pass":
+                gate["state"] = "complete"
     return {"pairs_opened": len(opened),
             "pairs_open": sum(1 for r in opened if r["status"] == "open"),
             "pairs_closed": sum(1 for r in opened if r["status"] in ("closed", "expired")),
@@ -286,19 +320,35 @@ def run_intake(client, *, now: datetime | None = None, contracts_fn=None,
     rows = _rows(client)
     consumed = {r.get("crossing_id") for r in rows}
     open_by_ticker = {r["ticker"]: r for r in rows if r.get("status") == "open"}
-    evented = {e.get("crossing_id") for r in open_by_ticker.values()
+    evented = {e.get("crossing_id") for r in rows
                for e in (r.get("events") or [])}
-    crossings = (client.table(CROSSINGS).select("*").order("created_at")
-                 .limit(1000).execute().data) or []
-    out = {"opened": 0, "unfilled": 0, "events": 0}
+    opened_rows = [r for r in rows if r.get("status") != "unfilled"]
+    trial_end = (min((_dt(r["opened_at"]) for r in opened_rows),
+                     default=None))
+    if trial_end is not None:
+        trial_end = trial_end + timedelta(days=TRIAL_DAYS)
+    crossings: list[dict] = []
+    offset = 0
+    while True:  # page past the consumed prefix; never just the oldest page
+        page = (client.table(CROSSINGS).select("*").order("created_at")
+                .range(offset, offset + 999).execute().data) or []
+        crossings.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
+    out = {"opened": 0, "unfilled": 0, "events": 0, "errors": 0}
     for crossing in crossings:
         if crossing.get("zone") not in ("bear", "base"):
             continue
         if crossing.get("action") not in ("starter", "add"):
             continue
         ticker = str(crossing.get("ticker") or "").upper()
-        if ticker not in t8 or crossing.get("id") in consumed:
-            continue
+        if ticker not in t8 or crossing.get("id") in consumed \
+                or crossing.get("id") in evented:
+            continue  # already a pair's trigger, or already rode as an event
+        if trial_end is not None and crossing.get("created_at") is not None \
+                and _dt(crossing["created_at"]) > trial_end:
+            continue  # fired after the trial closed; not a trial trigger
         if ticker in open_by_ticker:
             pair = open_by_ticker[ticker]
             if crossing["id"] not in evented:
@@ -311,10 +361,15 @@ def run_intake(client, *, now: datetime | None = None, contracts_fn=None,
                 evented.add(crossing["id"])
                 out["events"] += 1
             continue
-        out[_open_from_crossing(client, crossing, now=now, today=today,
-                                contracts_fn=contracts_fn, snapshots_fn=snapshots_fn,
-                                quote_fn=quote_fn, spot_fn=spot_fn,
-                                open_by_ticker=open_by_ticker)] += 1
+        try:
+            kind = _open_from_crossing(
+                client, crossing, now=now, today=today,
+                contracts_fn=contracts_fn, snapshots_fn=snapshots_fn,
+                quote_fn=quote_fn, spot_fn=spot_fn, open_by_ticker=open_by_ticker)
+        except Exception:  # noqa: BLE001 -- a failed read leaves the crossing
+            out["errors"] += 1  # unconsumed; the next pass retries it
+            continue
+        out[kind] += 1
         consumed.add(crossing.get("id"))
     return out
 
@@ -350,7 +405,22 @@ def _open_from_crossing(client, crossing: dict, *, now: datetime, today: date,
                 "entry_ask": sel["ask"], "delta_at_entry": sel["delta"],
                 "extrinsic_at_entry": sel["extrinsic"], "iv_at_entry": sel["iv"],
                 "spot_at_entry": spot, **sized})
-    inserted = client.table(PAIRS).insert(row).execute()
+    try:
+        inserted = client.table(PAIRS).insert(row).execute()
+    except Exception:
+        # A concurrent intake won the one-open-pair race for this ticker:
+        # this crossing rides as an event on the pair that exists.
+        rival = next((r for r in _rows(client)
+                      if r["ticker"] == ticker and r.get("status") == "open"), None)
+        if rival is None:
+            raise
+        events = list(rival.get("events") or []) + [{
+            "type": "trigger", "crossing_id": crossing["id"],
+            "at": crossing.get("created_at"), "zone": crossing.get("zone"),
+            "action": crossing.get("action"), "book": crossing.get("book")}]
+        client.table(PAIRS).update({"events": events}).eq("id", rival["id"]).execute()
+        open_by_ticker[ticker] = rival
+        return "events"
     saved = (inserted.data or [row])[0]
     open_by_ticker[ticker] = saved
     return "opened"
@@ -406,10 +476,13 @@ def run_grading(client, *, now: datetime | None = None, mid_fn=None,
                            share_price=price, marked_at=now)
         sheet = sheets.get(pair["ticker"])
         reason = None
-        if sheet is not None and sheet.get("bands") and price is not None:
-            if band_crossing.zone_of(price, sheet["bands"]) == "above_bull":
+        if sheet is not None:
+            if sheet.get("bands") and price is not None \
+                    and band_crossing.zone_of(price, sheet["bands"]) == "above_bull":
                 reason = "above_bull"
             elif band_crossing.guide_status_of(sheet)[0] == "cut":
+                # The guide leg needs no price: a cut closes the pair even
+                # on a night the spot read fails.
                 reason = "guide_cut"
         if reason is None and trial_start is not None \
                 and now >= trial_start + timedelta(days=TRIAL_DAYS):

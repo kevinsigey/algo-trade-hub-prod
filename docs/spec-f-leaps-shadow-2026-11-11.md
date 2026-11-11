@@ -55,8 +55,10 @@ model marks):
   alone costs more than the $10,000 premium cap → no line, reason recorded.
 - Delta-notional of the LEAPS line = contracts × 100 × delta × spot.
 - The share line opens the same moment at identical delta-notional:
-  shares = delta-notional / spot (fractional in shadow), entry at the
-  trigger price the crossing row recorded.
+  shares = delta-notional / the trigger price the crossing row recorded
+  (fractional in shadow), entered at that trigger price — so shares ×
+  entry price is the delta-notional exactly, whatever the live spot at
+  capture.
 - Both lines are booked at delta-notional; the premium is carried as its
   own field everywhere it is shown, never as the position's value. (This is
   the T10 booking rule from the preregistration, applied to shadow first.)

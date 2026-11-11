@@ -359,7 +359,8 @@ export interface LeapsSummary {
   share_cash: number;
   premium_pct_of_share_cash: number | null;
   trial_start: string | null;
-  gate: { state: string; judged: boolean; pairs: number; needed: number; reason: string | null };
+  gate: { state: string; judged: boolean; pairs: number; needed: number; reason: string | null;
+          extension?: { state: string; reason: string | null } | null };
 }
 
 export interface LeapsPanelData {

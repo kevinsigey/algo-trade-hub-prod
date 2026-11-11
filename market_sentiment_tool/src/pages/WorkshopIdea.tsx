@@ -1341,6 +1341,7 @@ export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
     gate.state === "killed" ? `Killed — ${gate.reason ?? "the frozen bar failed"}`
     : gate.state === "pass" ? "Pass at the frozen bar — the trial extends to 8 pairs"
     : gate.state === "complete" ? "Trial complete at 8 pairs"
+    : gate.state === "insufficient_data" ? "Cohort complete, but the gate metrics are incomplete — no verdict yet"
     : gate.state === "waiting" ? "Waiting for the first trigger — a T8 name at a stamped base band"
     : `${gate.pairs} of ${gate.needed} pairs toward the gate read`;
   return (
@@ -1354,12 +1355,19 @@ export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
           {" · "}mean delta delivered {s.mean_delta_delivered == null ? "—" : s.mean_delta_delivered.toFixed(2)}
         </p>
         <p className="mt-1 text-slate-300">
-          Premium cash {money(s.premium_cash)} against share cash {money(s.share_cash)} for the same delta
-          {s.premium_pct_of_share_cash != null && <> — premium is {s.premium_pct_of_share_cash.toFixed(0)}% of the share cash</>}.
+          {s.pairs_opened === 0
+            ? <>Premium cash — against share cash — for the same delta (no pair has opened yet).</>
+            : <>Premium cash {money(s.premium_cash)} against share cash {money(s.share_cash)} for the same delta
+              {s.premium_pct_of_share_cash != null && <> — premium is {s.premium_pct_of_share_cash.toFixed(0)}% of the share cash</>}.</>}
         </p>
         <p className={`mt-1 font-medium ${gate.state === "killed" ? "text-rose-300" : gate.state === "pass" || gate.state === "complete" ? "text-emerald-300" : "text-slate-200"}`}>
           Gate: {gateText}.
         </p>
+        {gate.extension?.state === "killed" && (
+          <p className="mt-1 text-slate-300">
+            The extension cohort (pairs 5–8) failed its own read — {gate.extension.reason ?? "the frozen bar failed"}. The first verdict stands.
+          </p>
+        )}
         {data.pairs.length === 0 && (
           <p className="mt-2 text-slate-400">
             No pair has opened yet. A pair opens when a T8 sleeve name crosses into its bear or base

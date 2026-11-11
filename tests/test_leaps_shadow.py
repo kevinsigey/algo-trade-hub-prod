@@ -107,7 +107,10 @@ def test_select_bs_delta_fallback_when_greeks_are_absent():
     snaps = _snaps(**{"NVDA  280210C00080000": {"delta": None, "iv": 0.30, "bid": 22.5, "ask": 23.0}})
     sel, reason = leaps.select_leaps(_chain(), snaps, spot=100.0, today=TODAY)
     assert reason is None and sel["strike"] == 80.0
-    assert sel["delta"] == pytest.approx(leaps.bs_call_delta(100.0, 80.0, 0.30, 455 / 365), abs=1e-9)
+    # Independent expectation: N(d1) for S=100, K=80, IV=0.30, T=455/365
+    # is 0.7978 (computed outside this module; a hardcoded constant, so a
+    # wrong fallback formula cannot satisfy both sides of the assert).
+    assert sel["delta"] == pytest.approx(0.7978, abs=1e-3)
     assert 0.75 <= sel["delta"] <= 0.85
 
 
@@ -156,7 +159,7 @@ def test_size_one_contract_over_the_cap_is_refused():
 def test_intake_opens_a_pair_on_a_t8_base_starter():
     db = _db_with_crossings(_crossing(1))
     out = leaps.run_intake(db, now=NOW, **_providers())
-    assert out == {"opened": 1, "unfilled": 0, "events": 0}
+    assert out == {"opened": 1, "unfilled": 0, "events": 0, "errors": 0}
     (pair,) = db.db["leaps_shadow_pairs"]
     assert pair["status"] == "open" and pair["ticker"] == "NVDA"
     assert pair["idea_id"] == 81 and pair["crossing_id"] == 1
@@ -172,14 +175,14 @@ def test_intake_ignores_non_t8_bull_zone_and_suppressed_rows():
         _crossing(3, zone="bear", action="none"),          # suppressed: no action
         _crossing(4, zone="above_bull", action="starter")) # wrong zone entirely
     out = leaps.run_intake(db, now=NOW, **_providers())
-    assert out == {"opened": 0, "unfilled": 0, "events": 0}
+    assert out == {"opened": 0, "unfilled": 0, "events": 0, "errors": 0}
     assert db.db.get("leaps_shadow_pairs", []) == []
 
 
 def test_intake_second_crossing_on_an_open_name_is_an_event_only():
     db = _db_with_crossings(_crossing(1), _crossing(2, book="big"), _crossing(2, book="big"))
     out = leaps.run_intake(db, now=NOW, **_providers())
-    assert out == {"opened": 1, "unfilled": 0, "events": 1}   # idempotent on rerun rows
+    assert out == {"opened": 1, "unfilled": 0, "events": 1, "errors": 0}   # idempotent on rerun rows
     (pair,) = db.db["leaps_shadow_pairs"]
     assert [e["crossing_id"] for e in pair["events"]] == [2]
 
@@ -188,7 +191,7 @@ def test_intake_unfillable_trigger_is_recorded_and_does_not_count():
     db = _db_with_crossings(_crossing(1))
     snaps = {s: {"delta": 0.40, "iv": 0.3, "bid": 1.0, "ask": 1.1} for s in _snaps()}
     out = leaps.run_intake(db, now=NOW, **_providers(snapshots_fn=lambda symbols: snaps))
-    assert out == {"opened": 0, "unfilled": 1, "events": 0}
+    assert out == {"opened": 0, "unfilled": 1, "events": 0, "errors": 0}
     (row,) = db.db["leaps_shadow_pairs"]
     assert row["status"] == "unfilled" and row["close_reason"] == "no_contract_in_delta_band"
     summary = leaps.trial_summary(db.db["leaps_shadow_pairs"], now=NOW)
@@ -289,6 +292,140 @@ def test_gate_read_pass_and_kill():
 
     s = leaps.trial_summary(rows[:2], now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "open" and not s["gate"]["judged"]
+
+
+def test_intake_a_failed_chain_read_leaves_the_crossing_for_a_retry():
+    db = _db_with_crossings(_crossing(1))
+
+    def boom(ticker, today):
+        raise RuntimeError("contracts read failed: HTTP 500")
+
+    out = leaps.run_intake(db, now=NOW, **_providers(contracts_fn=boom))
+    assert out == {"opened": 0, "unfilled": 0, "events": 0, "errors": 1}
+    assert db.db.get("leaps_shadow_pairs", []) == []        # nothing consumed
+    out = leaps.run_intake(db, now=NOW, **_providers())     # the retry lands
+    assert out["opened"] == 1
+
+
+def test_intake_pages_past_a_thousand_consumed_crossings():
+    rows = [_crossing(i, ticker="AAPL") for i in range(1, 1002)]  # never T8
+    rows.append(_crossing(1002))                                  # the trigger
+    db = _db_with_crossings(*rows)
+    out = leaps.run_intake(db, now=NOW, **_providers())
+    assert out["opened"] == 1
+
+
+def test_intake_ignores_a_crossing_that_fired_after_the_trial_ended():
+    db = DB()
+    db.db["leaps_shadow_pairs"] = [_open_pair()]            # opened 2026-11-12
+    late = _crossing(9, ticker="MSFT")
+    late["created_at"] = "2027-12-25T04:00:00+00:00"        # past trial end
+    db.db["band_crossings"] = [late]
+    out = leaps.run_intake(db, now=NOW + timedelta(days=30), **_providers())
+    assert out == {"opened": 0, "unfilled": 0, "events": 0, "errors": 0}
+    assert len(db.db["leaps_shadow_pairs"]) == 1
+
+
+def test_intake_an_event_recorded_on_a_closed_pair_is_never_reprocessed():
+    db = DB()
+    pair = _open_pair(status="closed", close_reason="guide_cut",
+                      events=[{"type": "trigger", "crossing_id": 5,
+                               "at": "2026-11-13T04:00:00+00:00",
+                               "zone": "base", "action": "add", "book": "main"}])
+    db.db["leaps_shadow_pairs"] = [pair]
+    db.db["band_crossings"] = [_crossing(5, action="add")]
+    out = leaps.run_intake(db, now=NOW, **_providers())
+    assert out == {"opened": 0, "unfilled": 0, "events": 0, "errors": 0}
+    assert len(db.db["leaps_shadow_pairs"]) == 1
+
+
+def test_grading_closes_on_a_guide_cut_even_when_the_spot_read_fails():
+    db = DB(); db.db["leaps_shadow_pairs"] = [_open_pair()]
+    out = _grade(db, sheets_fn=lambda c: [_sheet(direction="cut")],
+                 spot_fn=lambda t: None)
+    assert out["closed"] == 1
+    assert db.db["leaps_shadow_pairs"][0]["close_reason"] == "guide_cut"
+
+
+def test_gate_with_no_metrics_is_insufficient_data_never_a_pass():
+    rows = [_open_pair(id=i, crossing_id=i) for i in range(1, 5)]  # no marks
+    s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
+    assert s["gate"]["judged"] and s["gate"]["state"] == "insufficient_data"
+
+
+def test_gate_verdict_is_frozen_on_the_first_four_pairs():
+    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=d, delta_delivered=0.9,
+                       status="closed")
+            for i, d in enumerate([9.0, 2.0, 2.0, 2.0], start=1)]  # mean 3.75: killed
+    rows.append(_open_pair(id=5, crossing_id=5, carry_drag_pct=0.1,
+                           delta_delivered=0.99, status="closed"))
+    s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
+    assert s["gate"]["state"] == "killed"                   # pair 5 cannot un-kill
+
+
+def test_gate_extension_is_read_separately_from_the_first_verdict():
+    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=2.0, delta_delivered=0.9,
+                       status="closed") for i in range(1, 9)]
+    s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
+    assert s["gate"]["state"] == "complete" and s["gate"]["extension"]["state"] == "pass"
+
+    for r in rows[4:]:
+        r["delta_delivered"] = 0.5                          # extension cohort fails
+    s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
+    assert s["gate"]["state"] == "pass"                      # first verdict stands
+    assert s["gate"]["extension"]["state"] == "killed"
+
+
+# ── the live-chain reads: failures raise, snapshots batch and page ──────────
+
+class _Resp:
+    def __init__(self, status, body=None):
+        self.status_code, self._body = status, body or {}
+
+    def json(self):
+        return self._body
+
+
+class _Session:
+    def __init__(self, responses):
+        self.responses, self.calls = list(responses), []
+
+    def get(self, url, headers=None, params=None, timeout=None):
+        self.calls.append(dict(params or {}))
+        return self.responses.pop(0)
+
+
+def _snap(symbol, delta=0.8):
+    return {symbol: {"greeks": {"delta": delta}, "impliedVolatility": 0.3,
+                     "latestQuote": {"bp": 10.0, "ap": 10.2}}}
+
+
+def test_snapshots_batch_at_a_hundred_and_follow_page_tokens(monkeypatch):
+    from tradehub.portfolio import alpaca_paper, options
+    monkeypatch.setattr(alpaca_paper, "_headers", lambda book=None: {})
+    symbols = [f"S{i:03d}" for i in range(150)]
+    session = _Session([
+        _Resp(200, {"snapshots": _snap("S000"), "next_page_token": "t1"}),
+        _Resp(200, {"snapshots": _snap("S001")}),
+        _Resp(200, {"snapshots": _snap("S100")}),
+    ])
+    out = options.fetch_snapshots(symbols, session=session)
+    assert out["S000"]["delta"] == 0.8 and out["S001"]["ask"] == 10.2
+    assert out["S100"]["iv"] == 0.3
+    assert len(session.calls) == 3                          # 2 pages + batch 2
+    assert session.calls[1].get("page_token") == "t1"
+    assert len(session.calls[2]["symbols"].split(",")) == 50
+
+
+def test_snapshots_and_window_reads_raise_on_http_errors(monkeypatch):
+    from tradehub.portfolio import alpaca_paper, options
+    monkeypatch.setattr(alpaca_paper, "_headers", lambda book=None: {})
+    with pytest.raises(RuntimeError):
+        options.fetch_snapshots(["S000"], session=_Session([_Resp(500)]))
+    ok = _Resp(200, {"option_contracts": [], "next_page_token": "t1"})
+    with pytest.raises(RuntimeError):                       # page 2 fails whole
+        options.fetch_contracts_window("NVDA", "call", TODAY, EXP,
+                                       session=_Session([ok, _Resp(429)]))
 
 
 # ── the API surface: the panel rides the idea detail, tag-gated ─────────────

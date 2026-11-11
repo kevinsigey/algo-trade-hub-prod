@@ -127,8 +127,10 @@ def fetch_contracts_window(underlying: str, kind: str, gte: date, lte: date, *,
                            book: str | None = None, session=requests) -> list[dict]:
     """Listed, tradable contracts with expiry inside [gte, lte], from the
     paper host — fetch_contracts with an explicit window instead of a
-    target ±21 days (the LEAPS shadow reads 365–550 days out). Empty when
-    the book is not connected."""
+    target ±21 days (the LEAPS shadow reads 365–550 days out). Unlike
+    fetch_contracts, a failed page RAISES: a silently partial chain would
+    be priced as a real selection (or a false refusal) by the caller, so
+    the read must fail whole and let the caller retry."""
     params = {"underlying_symbols": underlying, "type": kind, "status": "active",
               "expiration_date_gte": gte.isoformat(),
               "expiration_date_lte": lte.isoformat(), "limit": 1000}
@@ -139,7 +141,7 @@ def fetch_contracts_window(underlying: str, kind: str, gte: date, lte: date, *,
         if response.status_code == 401:
             raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
         if response.status_code >= 400:
-            return out
+            raise RuntimeError(f"contracts read failed: HTTP {response.status_code}")
         body = response.json() or {}
         out.extend(c for c in body.get("option_contracts") or [] if c.get("tradable", True))
         url = body.get("next_page_token") and (alpaca_paper.PAPER_BASE + "/v2/options/contracts")
@@ -157,19 +159,29 @@ def fetch_snapshots(symbols: list[str], *, book: str | None = None,
                     session=requests) -> dict[str, dict]:
     """{symbol: {delta, iv, bid, ask}} from the data host's options
     snapshots (greeks and IV ride the snapshot; the latest quote rides
-    along). Absent fields read None; an unreachable host reads {}."""
-    if not symbols:
-        return {}
-    response = session.get(alpaca_paper.DATA_BASE + "/v1beta1/options/snapshots",
-                           headers=alpaca_paper._headers(book),
-                           params={"symbols": ",".join(symbols)}, timeout=15)
-    if response.status_code == 401:
-        raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
-    if response.status_code >= 400:
-        return {}
+    along). Absent fields read None. Symbols are read in batches of 100
+    and each batch follows its next_page_token, so a wide chain's greeks
+    are never silently truncated; a failed read RAISES rather than
+    reading as a chain with no greeks."""
     out: dict[str, dict] = {}
-    for symbol, snap in ((response.json() or {}).get("snapshots") or {}).items():
-        greeks, quote = snap.get("greeks") or {}, snap.get("latestQuote") or {}
-        out[symbol] = {"delta": greeks.get("delta"), "iv": snap.get("impliedVolatility"),
-                       "bid": quote.get("bp"), "ask": quote.get("ap")}
+    for start in range(0, len(symbols), 100):
+        params: dict[str, Any] = {"symbols": ",".join(symbols[start:start + 100])}
+        while True:
+            response = session.get(alpaca_paper.DATA_BASE + "/v1beta1/options/snapshots",
+                                   headers=alpaca_paper._headers(book),
+                                   params=params, timeout=15)
+            if response.status_code == 401:
+                raise AccountNotConnected("Alpaca rejected the keys (HTTP 401)")
+            if response.status_code >= 400:
+                raise RuntimeError(f"snapshots read failed: HTTP {response.status_code}")
+            body = response.json() or {}
+            for symbol, snap in (body.get("snapshots") or {}).items():
+                greeks, quote = snap.get("greeks") or {}, snap.get("latestQuote") or {}
+                out[symbol] = {"delta": greeks.get("delta"),
+                               "iv": snap.get("impliedVolatility"),
+                               "bid": quote.get("bp"), "ask": quote.get("ap")}
+            token = body.get("next_page_token")
+            if not token:
+                break
+            params = {**params, "page_token": token}
     return out
