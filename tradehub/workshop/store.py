@@ -124,8 +124,48 @@ def label_reasons(supa) -> dict[str, str]:
             if rows[-1].get("reason")}
 
 
-def create_idea(supa, title: str, plain_words: str) -> dict:
-    return supa.table(IDEAS).insert({"title": title, "plain_words": plain_words}).execute().data[0]
+def create_idea(supa, title: str, plain_words: str, batch_id: str | None = None,
+                batch_trial: int | None = None) -> dict:
+    row: dict = {"title": title, "plain_words": plain_words}
+    if batch_id is not None:
+        if batch_trial is None:
+            # The next trial in the search: one past the highest recorded
+            # trial, or one past the sibling count when the batch's trials
+            # were never numbered (the Gen 2 shape).
+            siblings = supa.table(IDEAS).select("batch_trial").eq("batch_id", batch_id).execute().data or []
+            trials = [s["batch_trial"] for s in siblings if s.get("batch_trial") is not None]
+            batch_trial = max(trials) + 1 if trials else len(siblings) + 1
+        row["batch_id"], row["batch_trial"] = batch_id, batch_trial
+    return supa.table(IDEAS).insert(row).execute().data[0]
+
+
+def batch_map(rows: list[dict]) -> dict[int, dict]:
+    """Idea id -> its search standing {id, trial, size, position}, for every
+    batched row in `rows` (A3, 2026-11-11). Position orders by the recorded
+    trial; members whose trial was never recorded (Gen 2) fall back to
+    creation order -- a number is never invented for them."""
+    by_batch: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("batch_id"):
+            by_batch.setdefault(r["batch_id"], []).append(r)
+    out: dict[int, dict] = {}
+    for bid, members in by_batch.items():
+        ordered = sorted(members, key=lambda m: (m.get("batch_trial") is None,
+                                                 m.get("batch_trial") or 0, m.get("id") or 0))
+        for pos, m in enumerate(ordered, 1):
+            out[m["id"]] = {"id": bid, "trial": m.get("batch_trial"),
+                            "size": len(members), "position": pos}
+    return out
+
+
+def batch_info(supa, idea: dict | None) -> dict | None:
+    """One idea's batch standing, read from its siblings; None when the idea
+    carries no batch (a single, hand-made trial)."""
+    if not idea or not idea.get("batch_id"):
+        return None
+    members = supa.table(IDEAS).select("id, batch_id, batch_trial").eq(
+        "batch_id", idea["batch_id"]).execute().data or []
+    return batch_map(members).get(idea["id"])
 
 
 def get_idea(supa, idea_id: int) -> dict | None:

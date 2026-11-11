@@ -229,6 +229,21 @@ export interface RunResult {
   /** The bar this verdict was judged under, stamped at record time (A2,
    * 2026-11-11). Absent on runs recorded before the stamp existed. */
   bar?: { standard: string; p_max: number; wf_min_share: number; shuffle_bar: number | null } | null;
+  /** The search this run's idea belongs to, stamped at record time (A3,
+   * 2026-11-11): the shuffle bar was raised by the trials in the batch, and
+   * `of` is the count that raised it. Absent on unbatched ideas' runs and on
+   * runs recorded before the stamp existed. */
+  batch?: { id: string; trial: number | null; position: number; of: number } | null;
+}
+
+/** An idea's standing in its search (A3, 2026-11-11): trial `position` of
+ * `size` in batch `id`; `trial` is the recorded trial number where the
+ * search recorded one (null for Gen 2, whose numbers were never kept). */
+export interface BatchInfo {
+  id: string;
+  trial: number | null;
+  size: number;
+  position: number;
 }
 
 export interface Run {
@@ -296,6 +311,8 @@ export interface BookLiveState {
 export interface IdeaDetail {
   idea: Idea;
   runs: Run[];
+  /** The search this idea is one trial of (A3); null for a solo idea. */
+  batch?: BatchInfo | null;
   tag?: string;
   shadow?: ShadowSummary | null;
   orders_enabled?: boolean;
@@ -334,6 +351,8 @@ export interface IdeaRow {
   latest_verdict: Verdict | null;
   /** Standing under the current bar (A2): the chip reads this first. */
   verdict_now?: Verdict | null;
+  /** The search this idea is one trial of (A3); null for a solo idea. */
+  batch?: BatchInfo | null;
   published_at: string | null;
   tracked_at: string | null;
   live_at: string | null;
@@ -693,6 +712,8 @@ export interface PublicRunDetail {
   n_events?: number | null;
   per_ticker?: RunResult["per_ticker"];
   notes?: string[] | null;
+  /** The search stamp from the run (A3); absent on older runs. */
+  batch?: RunResult["batch"];
 }
 
 export interface PublicIdeaDetail extends Omit<PublicIdea, "live"> {

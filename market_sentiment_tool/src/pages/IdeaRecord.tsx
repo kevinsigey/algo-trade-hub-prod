@@ -85,6 +85,7 @@ function RunCard({ run }: { run: PublicRun }) {
                 {d.periods && <tr><td className="py-1.5 text-slate-300">Holds in each market period</td><td className="py-1.5 text-slate-400">{d.periods.held} of {d.periods.of}</td><td><Mark ok={d.periods.held >= 4 ? true : d.periods.held <= 1 ? false : null} /></td></tr>}
                 {d.walk_forward && <tr><td className="py-1.5 text-slate-300">Walk-forward, later stretches in order</td><td className="py-1.5 text-slate-400">{d.walk_forward.held} of {d.walk_forward.of} held</td><td><Mark ok={d.walk_forward.of === 0 ? null : d.walk_forward.held === d.walk_forward.of ? true : d.walk_forward.held === 0 ? false : null} /></td></tr>}
                 {d.variations != null && <tr><td className="py-1.5 text-slate-300">Variations tried on this idea</td><td className="py-1.5 text-slate-400">{d.variations} · bar raised accordingly</td><td /></tr>}
+                {d.batch && <tr><td className="py-1.5 text-slate-300">Search this idea belongs to</td><td className="py-1.5 text-slate-400">Trial {d.batch.position} of {d.batch.of} in {d.batch.id}{d.batch.trial != null && d.batch.trial !== d.batch.position ? ` · lab trial ${d.batch.trial}` : ""} · the bar above counts the whole search</td><td /></tr>}
               </tbody>
             </table>
           )}
