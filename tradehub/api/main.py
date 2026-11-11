@@ -2220,6 +2220,11 @@ class _MachineOrderIn(BaseModel):
     limit_price: float | None = None
     stop_price: float | None = Field(default=None, gt=0)
     idea_id: int | None = None
+    # Attribution (2026-11-11): an order with no idea_id must state why it
+    # exists. validate_order refuses a placement that carries neither, and the
+    # reason is stored on the order's label row so Portfolio results can split
+    # tested ideas from discretionary trades with their reasons attached.
+    reason: str | None = Field(default=None, max_length=200)
     # Single-leg options (2026-11-09): the open/close intent Alpaca needs.
     position_intent: str | None = None
     # Combos (2026-11-09): legs[] + ONE net limit_price, placed as one mleg order.
@@ -2268,7 +2273,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
-            "tag": body.tag, "idea_id": body.idea_id}
+            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason}
     result = machine_api.validate_order(supabase, key, spec)
     if result["refusal"] is not None:
         refused(*result["refusal"])
@@ -2288,7 +2293,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             from tradehub.workshop import store as workshop_store
 
             workshop_store.add_label(supabase, order_id, body.idea_id, f"api:{key['label']}",
-                                     tag=body.tag)
+                                     tag=body.tag, reason=body.reason)
         except Exception:  # noqa: BLE001 -- the order exists; a failed label must not un-place it
             return "label failed"
         return None
@@ -2338,7 +2343,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         response = {"order": order, "client_order_id": client_order_id,
-                    "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session,
+                    "placed_by": f"api:{key['label']}", "tag": body.tag,
+                    "idea_id": body.idea_id, "reason": body.reason,
+                    "exit": result["exit"], **session,
                     "portfolio_check": result["portfolio_check"]}
         if option["kind"] == "single":
             response["position_intent"] = option["legs"][0]["position_intent"]
@@ -2383,7 +2390,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
              "submitted_at": order.get("submitted_at") or datetime.now(timezone.utc).isoformat(),
              "status": order.get("status", "accepted")})
         return {"order": order, "client_order_id": client_order_id,
-                "placed_by": f"api:{key['label']}", "tag": body.tag, "exit": result["exit"], **session,
+                "placed_by": f"api:{key['label']}", "tag": body.tag,
+                "idea_id": body.idea_id, "reason": body.reason,
+                "exit": result["exit"], **session,
                 "portfolio_check": result["portfolio_check"]}
 
     # A parent order: the server chunks the total under the key's caps and places
@@ -2447,6 +2456,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     return {"group": _machine_group_view(body.client_order_id, namespaced, events, broker,
                                          _machine_label_tags(supabase)),
             "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag,
+            "idea_id": body.idea_id, "reason": body.reason,
             "exit": result["exit"], "portfolio_check": result["portfolio_check"]}
 
 
@@ -2474,7 +2484,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
-            "tag": body.tag, "idea_id": body.idea_id}
+            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason}
     result = machine_api.validate_order(supabase, key, spec, dry_run=True)
     from tradehub.portfolio import option_orders as _option_orders
 

@@ -46,7 +46,7 @@ def optapi(monkeypatch):
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
         if any(s["client_order_id"] == client_order_id for s in sent + mlegs):
             raise paper_orders.DuplicateOrder(client_order_id)
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
@@ -54,7 +54,7 @@ def optapi(monkeypatch):
                          book=None, time_in_force="day"):
         if any(s["client_order_id"] == client_order_id for s in sent + mlegs):
             raise paper_orders.DuplicateOrder(client_order_id)
-        mlegs.append({"legs": legs, "qty": qty, "limit_price": limit_price,
+        mlegs.append({ "reason": "test placement","legs": legs, "qty": qty, "limit_price": limit_price,
                       "client_order_id": client_order_id, "book": book,
                       "time_in_force": time_in_force})
         return {"id": f"alpaca-mleg-{len(mlegs)}", "status": "accepted", "order_class": "mleg"}
@@ -105,14 +105,14 @@ def _events(db, key_id=1):
 
 
 def _single(client, headers, **over):
-    body = {"symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
+    body = { "reason": "test placement","symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
             "order_type": "limit", "limit_price": 2.40}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
 
 
 def _combo(client, headers, legs, **over):
-    body = {"client_order_id": "spread-1", "order_type": "limit", "limit_price": 1.20,
+    body = { "reason": "test placement","client_order_id": "spread-1", "order_type": "limit", "limit_price": 1.20,
             "legs": legs}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
@@ -131,7 +131,7 @@ def test_occ_single_leg_limit_places_with_open_intent(optapi):
     body = r.json()
     assert body["client_order_id"] == "ext-1-opt-1"
     assert body["position_intent"] == "buy_to_open"
-    assert sent == [{"symbol": LONG_PUT, "qty": 2, "side": "buy",
+    assert sent == [{ "reason": "test placement","symbol": LONG_PUT, "qty": 2, "side": "buy",
                      "client_order_id": "ext-1-opt-1", "order_type": "limit",
                      "time_in_force": "day", "limit_price": 2.40, "book": "main",
                      "position_intent": "buy_to_open"}]
@@ -316,7 +316,7 @@ def test_the_daily_cap_counts_a_combo_once(optapi):
     client, db, _, _, _, _ = optapi
     headers = _key(db, daily_cap=1)
     assert _combo(client, headers, SPREAD).status_code == 200
-    r = client.post("/api/v1/orders", headers=headers, json={
+    r = client.post("/api/v1/orders", headers=headers, json={ "reason": "test placement",
         "symbol": "XLE", "qty": 1, "side": "buy", "client_order_id": "share-1"})
     assert r.status_code == 429 and "daily_cap" in r.json()["detail"]
 
@@ -330,7 +330,7 @@ def test_the_kill_switch_still_refuses_option_orders(optapi, monkeypatch):
 
 # ── requirements 4, 6, 7: read-back, tags, cancel ────────────────────────────────
 
-MLEG_BROKER = {"id": "alpaca-mleg-1", "client_order_id": "ext-1-spread-1",
+MLEG_BROKER = { "reason": "test placement","id": "alpaca-mleg-1", "client_order_id": "ext-1-spread-1",
                "order_class": "mleg", "symbol": None, "side": None, "type": "limit",
                "time_in_force": "day", "qty": "3", "filled_qty": "3",
                "limit_price": "1.20", "status": "filled",
@@ -393,7 +393,7 @@ def test_open_orders_surface_occ_rows_attributed_to_the_combo(optapi):
 def test_preflight_states_max_loss_headroom_and_the_convention(optapi):
     client, db, _, _, _, _ = optapi
     headers = _key(db)
-    body = {"client_order_id": "spread-1", "order_type": "limit", "limit_price": 1.20,
+    body = { "reason": "test placement","client_order_id": "spread-1", "order_type": "limit", "limit_price": 1.20,
             "legs": SPREAD}
     r = client.post("/api/v1/orders/preflight", json=body, headers=headers)
     assert r.status_code == 200, r.text
@@ -410,7 +410,7 @@ def test_preflight_states_max_loss_headroom_and_the_convention(optapi):
 def test_preflight_refuses_a_naked_short_without_placing(optapi):
     client, db, sent, mlegs, _, _ = optapi
     headers = _key(db)
-    body = {"symbol": LONG_PUT, "qty": 1, "side": "sell", "client_order_id": "opt-1",
+    body = { "reason": "test placement","symbol": LONG_PUT, "qty": 1, "side": "sell", "client_order_id": "opt-1",
             "order_type": "limit", "limit_price": 2.40}
     r = client.post("/api/v1/orders/preflight", json=body, headers=headers)
     assert r.status_code == 200 and r.json()["ok"] is False

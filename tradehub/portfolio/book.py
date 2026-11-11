@@ -25,16 +25,19 @@ def tag_id(client_order_id: str | None) -> int | None:
 
 
 def tag_fills(fills: list[dict], client_ids: dict[str, str], labels: dict[str, int | None],
-              titles: dict[int, str], tags: dict[str, str] | None = None) -> list[dict]:
+              titles: dict[int, str], tags: dict[str, str] | None = None,
+              reasons: dict[str, str] | None = None) -> list[dict]:
     """Add `idea_id` and `idea` (title) to each fill. A relabel beats the tag; an id not in `titles` is manual.
-    `tags` (order id -> thesis tag) rides along as the fill's `tag`, so a manual play's label reaches its lots."""
+    `tags` (order id -> thesis tag) rides along as the fill's `tag`, so a manual play's label reaches its lots.
+    `reasons` (order id -> stated reason, 2026-11-11) rides along the same way, so a discretionary
+    lot keeps the reason its opening order stated."""
     out = []
     for f in fills:
         order = f.get("order_id")
         wanted = labels[order] if order in labels else tag_id(client_ids.get(order))
         idea_id = wanted if wanted in titles else None
         out.append({**f, "idea_id": idea_id, "idea": titles[idea_id] if idea_id is not None else MANUAL,
-                    "tag": (tags or {}).get(order)})
+                    "tag": (tags or {}).get(order), "reason": (reasons or {}).get(order)})
     return out
 
 
@@ -240,13 +243,14 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
     """FIFO round trips from Alpaca FILL activities, plus the lots still open. Longs qty > 0, shorts qty < 0.
     FIFO runs per idea first: a sale closes its own idea's lots before anyone else's. A trade carries the idea
     of the lot that opened it."""
-    lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time, idea]
+    lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time, idea, tag, reason]
     trades = []
     for f in sorted(fills, key=lambda f: f["transaction_time"]):
         qty = float(f["qty"]) * (1 if f["side"] == "buy" else -1)
         price, at = float(f["price"]), f["transaction_time"]
         book, idea = lots[f["symbol"]], f.get("idea", MANUAL)
         lot_tag = f.get("tag")
+        lot_reason = f.get("reason")
         while qty and book and (book[0][0] > 0) != (qty > 0):
             # A closing fill takes its own idea's oldest lot first, then the oldest lot of any idea.
             at_lot = next((i for i, lot in enumerate(book) if lot[3] == idea), 0)
@@ -258,13 +262,14 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
                 "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed,
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
                 "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],
+                "reason": lot[5] if len(lot) > 5 else None,
             })
             lot[0] -= signed
             qty += signed
             if not lot[0]:
                 del book[at_lot]
         if qty:
-            book.append([qty, price, at, idea, lot_tag])
+            book.append([qty, price, at, idea, lot_tag, lot_reason])
     return trades, lots
 
 
@@ -276,7 +281,7 @@ def open_lots(fills: list[dict]) -> dict[str, dict[str, float]]:
     """Open signed quantity per symbol per idea."""
     out: dict[str, dict[str, float]] = {}
     for symbol, book in _fifo(fills)[1].items():
-        for qty, _, _, idea, _tag in book:
+        for qty, _, _, idea, _tag, *_rest in book:
             out.setdefault(symbol, {})
             out[symbol][idea] = out[symbol].get(idea, 0.0) + qty
     return {s: v for s, v in out.items() if v}
@@ -288,10 +293,34 @@ def open_lot_tags(fills: list[dict]) -> dict[str, dict[str, list[str]]]:
     the lot does -- a partial close shrinks the shares, never the label's truth."""
     out: dict[str, dict[str, list[str]]] = {}
     for symbol, book in _fifo(fills)[1].items():
-        for _qty, _price, _at, idea, tag in book:
+        for _qty, _price, _at, idea, tag, *_rest in book:
             if tag and tag not in out.setdefault(symbol, {}).setdefault(idea, []):
                 out[symbol][idea].append(tag)
     return out
+
+
+def results_split(trades: list[dict]) -> dict:
+    """Closed results split the way the Nov 10 review asked for (2026-11-11):
+    "tested ideas" (the trade's lot was attributed to a Workshop idea) against
+    "discretionary" (everything else), with the discretionary side broken down
+    by the reason its opening order stated. Trades closed before the reason
+    rule group under "no reason recorded" -- stated, not hidden."""
+    def side(rows: list[dict]) -> dict:
+        return {"trades": len(rows), "pnl": round(sum(float(t.get("pnl") or 0) for t in rows), 2),
+                "wins": sum(1 for t in rows if float(t.get("pnl") or 0) > 0)}
+
+    tested = [t for t in trades if t.get("idea") and t.get("idea") != MANUAL]
+    discretionary = [t for t in trades if not t.get("idea") or t.get("idea") == MANUAL]
+    by_reason: dict[str, dict] = {}
+    for t in discretionary:
+        key = t.get("reason") or "no reason recorded"
+        slot = by_reason.setdefault(key, {"reason": key, "trades": 0, "pnl": 0.0})
+        slot["trades"] += 1
+        slot["pnl"] = round(slot["pnl"] + float(t.get("pnl") or 0), 2)
+    return {"tested": side(tested),
+            "discretionary": {**side(discretionary),
+                              "reasons": sorted(by_reason.values(),
+                                                key=lambda r: abs(r["pnl"]), reverse=True)}}
 
 
 def win_rate(trades: list[dict]) -> float | None:
@@ -304,7 +333,7 @@ def open_cost(fills: list[dict]) -> dict[str, dict[str, tuple[float, float]]]:
     """Open signed quantity and average entry price per symbol per idea (the base for protective stops)."""
     out: dict[str, dict] = {}
     for symbol, lots in _fifo(fills)[1].items():
-        for qty, price, _, idea, _tag in lots:
+        for qty, price, _, idea, _tag, *_rest in lots:
             q, cost = out.setdefault(symbol, {}).get(idea, (0.0, 0.0))
             out[symbol][idea] = (q + qty, cost + qty * price)
     return {s: {i: (q, c / q) for i, (q, c) in v.items() if q} for s, v in out.items()}

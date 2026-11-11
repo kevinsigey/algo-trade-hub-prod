@@ -5,7 +5,7 @@ import { Panel } from "@/components/Panel";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   fmtPct, fmtUsd, stateLabel, tone,
-  type ActivityOrder, type ActivityPayload, type ClosedTrade,
+  type ActivityOrder, type ActivityPayload, type ClosedTrade, type ResultsSplit,
 } from "@/lib/paperPortfolio";
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -118,6 +118,39 @@ function OrderLines({ rows }: { rows: ActivityOrder[] }) {
   );
 }
 
+/** Tested ideas vs discretionary trades (2026-11-11): the split the Nov 10
+ * review asked the Portfolio results to carry, with the discretionary side's
+ * stated reasons attached. Aggregate first; the reasons are the detail. */
+function ResultsSplitPanel({ split }: { split: ResultsSplit }) {
+  const side = (label: string, s: ResultsSplit["tested"]) => (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-1 text-lg font-semibold tabular-nums ${tone(s.pnl)}`}>{fmtUsd(s.pnl, { signed: true })}</p>
+      <p className="text-xs tabular-nums text-slate-400">{s.trades} closed · {s.wins} won</p>
+    </div>
+  );
+  return (
+    <Panel title="Results by kind">
+      <div className="grid gap-4 sm:grid-cols-2">
+        {side("Tested ideas", split.tested)}
+        <div>
+          {side("Discretionary", split.discretionary)}
+          {split.discretionary.reasons.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs tabular-nums">
+              {split.discretionary.reasons.map((r) => (
+                <li key={r.reason} className="flex items-baseline justify-between gap-2 border-t border-slate-800/70 pt-1">
+                  <span className="truncate text-slate-300">{r.reason} <span className="text-slate-500">· {r.trades}</span></span>
+                  <span className={`shrink-0 ${tone(r.pnl)}`}>{fmtUsd(r.pnl, { signed: true })}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 const SHOWN = 15;
 
 export default function ClosedTrades() {
@@ -189,6 +222,12 @@ export default function ClosedTrades() {
               )}
             </Panel>
           </div>
+
+          {data.results_split && data.trades.length > 0 && (
+            <div className="mt-2">
+              <ResultsSplitPanel split={data.results_split} />
+            </div>
+          )}
         </>
       )}
     </div>

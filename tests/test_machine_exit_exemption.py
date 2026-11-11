@@ -32,7 +32,7 @@ def api(monkeypatch):
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
         if any(s["client_order_id"] == client_order_id for s in sent):
             raise paper_orders.DuplicateOrder(client_order_id)
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
@@ -61,13 +61,13 @@ def _events(db, key_id=1):
 
 
 def _post(client, headers, **over):
-    body = {"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
+    body = { "reason": "test placement","symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
     body.update(over)
     return client.post("/api/v1/orders", json=body, headers=headers)
 
 
 def _preflight(client, headers, **over):
-    body = {"symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
+    body = { "reason": "test placement","symbol": "XLE", "qty": 2, "side": "buy", "client_order_id": "run-1"}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
 
@@ -281,13 +281,13 @@ def optapi(monkeypatch):
     sent, mlegs = [], []
 
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
     def fake_submit_mleg(legs, qty, limit_price, client_order_id, *,
                          book=None, time_in_force="day"):
-        mlegs.append({"legs": legs, "qty": qty, "limit_price": limit_price,
+        mlegs.append({ "reason": "test placement","legs": legs, "qty": qty, "limit_price": limit_price,
                       "client_order_id": client_order_id, "book": book,
                       "time_in_force": time_in_force})
         return {"id": f"alpaca-mleg-{len(mlegs)}", "status": "accepted", "order_class": "mleg"}
@@ -319,7 +319,7 @@ def optapi(monkeypatch):
 
 
 def _opt_preflight(client, headers, **over):
-    body = {"symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
+    body = { "reason": "test placement","symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "opt-1",
             "order_type": "limit", "limit_price": 2.40}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
@@ -335,7 +335,7 @@ def test_a_single_leg_sell_to_close_is_an_exit_and_skips_the_caps(optapi):
     assert body["ok"] is True
     assert body["exit"]["is_exit"] is True
     assert body["exit"]["bypassed"] == ["max_qty", "max_notional", "daily_cap"]
-    r = client.post("/api/v1/orders", json={
+    r = client.post("/api/v1/orders", json={ "reason": "test placement",
         "symbol": LONG_PUT, "qty": 3, "side": "sell", "client_order_id": "close-1",
         "order_type": "limit", "limit_price": 2.40,
         "position_intent": "sell_to_close"}, headers=headers)
@@ -357,7 +357,7 @@ def test_a_combo_of_only_closing_legs_is_an_exit(optapi):
                           {"symbol": SHORT_PUT, "qty": "-1"}]
     legs = [{"symbol": LONG_PUT, "side": "sell", "qty": 1, "position_intent": "sell_to_close"},
             {"symbol": SHORT_PUT, "side": "buy", "qty": 1, "position_intent": "buy_to_close"}]
-    body = {"client_order_id": "unwind-1", "order_type": "limit", "limit_price": -0.50,
+    body = { "reason": "test placement","client_order_id": "unwind-1", "order_type": "limit", "limit_price": -0.50,
             "legs": legs}
     r = client.post("/api/v1/orders/preflight", json=body, headers=_key(db))
     assert r.json()["exit"]["is_exit"] is True
@@ -371,7 +371,7 @@ def test_a_combo_with_one_opening_leg_is_not_an_exit(optapi):
     state["positions"] = [{"symbol": SHORT_PUT, "qty": "-1"}]
     legs = [{"symbol": SHORT_PUT, "side": "buy", "qty": 1, "position_intent": "buy_to_close"},
             {"symbol": LONG_PUT, "side": "buy", "qty": 2, "position_intent": "buy_to_open"}]
-    body = {"client_order_id": "mixed-1", "order_type": "limit", "limit_price": 1.20,
+    body = { "reason": "test placement","client_order_id": "mixed-1", "order_type": "limit", "limit_price": 1.20,
             "legs": legs}
     r = client.post("/api/v1/orders/preflight", json=body, headers=_key(db, max_qty=1))
     body_out = r.json()
@@ -395,12 +395,12 @@ def test_an_options_exit_does_not_consume_the_daily_count(optapi):
     client, db, sent, mlegs, state = optapi
     state["positions"] = [{"symbol": LONG_PUT, "qty": "3"}]
     headers = _key(db, daily_cap=1)
-    r = client.post("/api/v1/orders", json={
+    r = client.post("/api/v1/orders", json={ "reason": "test placement",
         "symbol": LONG_PUT, "qty": 1, "side": "buy", "client_order_id": "open-1",
         "order_type": "limit", "limit_price": 2.40,
         "position_intent": "buy_to_open"}, headers=headers)
     assert r.status_code == 200 and machine_api.placed_today(db, 1) == 1
-    r = client.post("/api/v1/orders", json={
+    r = client.post("/api/v1/orders", json={ "reason": "test placement",
         "symbol": LONG_PUT, "qty": 1, "side": "sell", "client_order_id": "close-1",
         "order_type": "limit", "limit_price": 2.40,
         "position_intent": "sell_to_close"}, headers=headers)

@@ -13,8 +13,9 @@ const payload = {
   trades: [],
 };
 
+const { state } = vi.hoisted(() => ({ state: { payload: null as unknown } }));
 vi.mock("@/hooks/usePaperPortfolio", () => ({
-  useApi: () => ({ data: payload, error: null, loading: false }),
+  useApi: () => ({ data: state.payload, error: null, loading: false }),
 }));
 vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: null } }) } },
@@ -24,6 +25,7 @@ import ClosedTrades from "./ClosedTrades";
 
 describe("Trades and Orders page", () => {
   it("shows open orders, the recent tape, and the closed-trades section together", () => {
+    state.payload = payload;
     render(<MemoryRouter><ClosedTrades /></MemoryRouter>);
     expect(screen.getByText(/Open orders · 1/)).toBeInTheDocument();
     expect(screen.getByText(/Recent orders · 1/)).toBeInTheDocument();
@@ -31,5 +33,29 @@ describe("Trades and Orders page", () => {
     expect(screen.getByText("GLD")).toBeInTheDocument();
     expect(screen.getByText("XLE")).toBeInTheDocument();
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
+  });
+
+  it("splits closed results into tested ideas and discretionary trades, with reasons", () => {
+    state.payload = {
+      ...payload,
+      trades: [
+        { symbol: "AAA", qty: 10, entry_price: 100, exit_price: 102, entered_at: "2026-11-01T15:00:00Z",
+          exited_at: "2026-11-03T15:00:00Z", pnl: 268.5, return_pct: 2, held_days: 2, idea: "T8 Core" },
+        { symbol: "BBB", qty: 5, entry_price: 50, exit_price: 49, entered_at: "2026-11-02T15:00:00Z",
+          exited_at: "2026-11-04T15:00:00Z", pnl: -1752, return_pct: -2, held_days: 2, idea: "No idea yet (manual)" },
+      ],
+      results_split: {
+        tested: { trades: 1, pnl: 268.5, wins: 1 },
+        discretionary: { trades: 1, pnl: -1752, wins: 0,
+                         reasons: [{ reason: "no reason recorded", trades: 1, pnl: -1752 }] },
+      },
+    };
+    render(<MemoryRouter><ClosedTrades /></MemoryRouter>);
+    expect(screen.getByText("Results by kind")).toBeInTheDocument();
+    expect(screen.getByText("Tested ideas")).toBeInTheDocument();
+    expect(screen.getAllByText("+$268.50").length).toBeGreaterThan(0);
+    expect(screen.getByText("Discretionary")).toBeInTheDocument();
+    expect(screen.getAllByText("−$1,752.00").length).toBeGreaterThan(0);
+    expect(screen.getByText(/no reason recorded/)).toBeInTheDocument();
   });
 });

@@ -51,7 +51,7 @@ def api(monkeypatch):
     sent = []
 
     def fake_submit(symbol, qty, side, client_order_id, **kwargs):
-        sent.append({"symbol": symbol, "qty": qty, "side": side,
+        sent.append({ "reason": "test placement","symbol": symbol, "qty": qty, "side": side,
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
@@ -89,7 +89,7 @@ def _key(db, **caps):
 
 
 def _preflight(client, headers, **over):
-    body = {"symbol": "GLD", "qty": 14, "side": "buy", "client_order_id": "pf-1"}
+    body = { "reason": "test placement","symbol": "GLD", "qty": 14, "side": "buy", "client_order_id": "pf-1"}
     body.update(over)
     return client.post("/api/v1/orders/preflight", json=body, headers=headers)
 
@@ -113,7 +113,7 @@ def test_placement_refuses_what_preflight_blocked_and_audits_it(api):
     client, db, sent, _ = api
     headers = _key(db)
     r = client.post("/api/v1/orders",
-                    json={"symbol": "GLD", "qty": 14, "side": "buy",
+                    json={ "reason": "test placement","symbol": "GLD", "qty": 14, "side": "buy",
                           "client_order_id": "pf-1"}, headers=headers)
     assert r.status_code == 422
     assert r.json()["detail"].startswith("portfolio check:")
@@ -144,7 +144,7 @@ def test_preflight_passes_a_conforming_order_with_the_block_visible(api):
 def test_a_gld_sell_places_because_exits_reduce_the_breach(api):
     client, db, sent, _ = api
     r = client.post("/api/v1/orders",
-                    json={"symbol": "GLD", "qty": 50, "side": "sell",
+                    json={ "reason": "test placement","symbol": "GLD", "qty": 50, "side": "sell",
                           "client_order_id": "trim-1"}, headers=_key(db))
     assert r.status_code == 200 and len(sent) == 1
     assert r.json()["portfolio_check"]["outcome"] != "block"
@@ -218,7 +218,7 @@ def test_preflight_the_same_trim_oversold_is_not_an_exit_and_still_blocks(api):
 def test_a_spy_spread_preflight_carries_the_portfolio_block(api):
     client, db, _, state = api
     _gold_under_its_flag(state)
-    r = client.post("/api/v1/orders/preflight", headers=_key(db), json={
+    r = client.post("/api/v1/orders/preflight", headers=_key(db), json={ "reason": "test placement",
         "client_order_id": "spread-1", "order_type": "limit", "limit_price": 1.20,
         "legs": [{"symbol": LONG_PUT, "side": "buy", "qty": 1},
                  {"symbol": SHORT_PUT, "side": "sell", "qty": 1}]})
@@ -229,7 +229,7 @@ def test_a_spy_spread_preflight_carries_the_portfolio_block(api):
 
 def test_an_ibit_call_buy_blocks_as_exit_only(api):
     client, db, _, _ = api
-    r = client.post("/api/v1/orders/preflight", headers=_key(db), json={
+    r = client.post("/api/v1/orders/preflight", headers=_key(db), json={ "reason": "test placement",
         "symbol": IBIT_CALL, "qty": 1, "side": "buy", "client_order_id": "ibit-1",
         "order_type": "limit", "limit_price": 1.10})
     body = r.json()

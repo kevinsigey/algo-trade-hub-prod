@@ -149,7 +149,7 @@ def test_closed_endpoint_newest_first_and_not_connected(client_with, monkeypatch
     body = c.get("/api/portfolio/closed").json()
     assert body["state"] == "live" and [t["symbol"] for t in body["trades"]] == ["B", "A"]
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
-    assert c.get("/api/portfolio/closed").json() == {"state": "not_connected", "as_of": None, "book": "main", "trades": []}
+    assert c.get("/api/portfolio/closed").json() == {"state": "not_connected", "as_of": None, "book": "main", "trades": [], "results_split": None}
 
 
 def test_fill_paging_follows_page_token(monkeypatch):
@@ -328,7 +328,7 @@ def test_activity_endpoint_splits_open_recent_and_trades(client_with, monkeypatc
     assert body["trades"] == []
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
     assert c.get("/api/portfolio/activity").json() == {
-        "state": "not_connected", "as_of": None, "book": "main", "open": [], "recent": [], "trades": []}
+        "state": "not_connected", "as_of": None, "book": "main", "open": [], "recent": [], "trades": [], "results_split": None}
 
 
 def test_books_endpoint_lists_both_books(client_with, monkeypatch):

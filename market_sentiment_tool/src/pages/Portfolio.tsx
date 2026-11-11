@@ -613,6 +613,12 @@ function RecentTrades({ book }: { book: string | null }) {
       {recent.length === 0 ? (
         <p className="text-xs text-slate-400">No closed trades yet.</p>
       ) : list(recent)}
+      {data.results_split && data.trades.length > 0 && (
+        <p className="mt-2 border-t border-slate-800/70 pt-1.5 text-xs tabular-nums text-slate-400">
+          Tested ideas <span className={tone(data.results_split.tested.pnl)}>{fmtUsd(data.results_split.tested.pnl, { signed: true })}</span>
+          {" · "}Discretionary <span className={tone(data.results_split.discretionary.pnl)}>{fmtUsd(data.results_split.discretionary.pnl, { signed: true })}</span>
+        </p>
+      )}
     </Box>
   );
 }
