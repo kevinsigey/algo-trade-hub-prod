@@ -8,7 +8,9 @@
   machine door; the API fences those to held positions, this module fences the tag family and the shape).
 - A third family (2026-11-10): the machine API's `ext-<key>-gtc-...` tags may carry a GTC LIMIT order --
   a resting exit that survives the session instead of expiring daily. Limit only: a stop or a market
-  order under a gtc tag is still refused, and a GTC limit under any other tag is still refused.
+  order under a gtc tag is still refused, and a GTC limit under any other tag is still refused. Option
+  orders ride the same family through the machine door (single-leg limits via submit, combos via
+  submit_mleg carrying time_in_force "gtc"); Alpaca takes no GTC market option orders.
 - Nothing is sent unless the book's kill switch is exactly "on" (TRADEHUB_PAPER_ORDERS for the main
   book, TRADEHUB_PAPER_ORDERS_BIG for the $1M book; each idea has its own switch too).
 - Rule orders: market or limit, at the open (opg), at the close (cls) or during the day (day). Protective orders
@@ -141,15 +143,24 @@ def _post_order(body: dict, client_order_id: str, book: str | None, session) -> 
 
 
 def submit_mleg(legs: list[dict], qty: int, limit_price: float, client_order_id: str, *,
+                time_in_force: str = "day",
                 book: str | None = None, session=requests) -> dict[str, Any]:
     """One multi-leg option order (Kevin, 2026-11-03): a defined-risk vertical placed
     as a unit, so the short leg is evaluated as part of a spread -- sent on its own it
     reads as an uncovered contract and Alpaca refuses it (Idea 50, 2026-11-03). The
     limit price is the NET price: positive is a debit paid, negative a credit taken
     (Alpaca's convention for mleg orders). Legs carry position_intent so opens and
-    closes never blur."""
+    closes never blur. time_in_force rides the order (2026-11-10): "day", as every
+    caller before today, or "gtc" for a resting combo -- sanctioned only under the
+    machine door's ext-<key>-gtc- tag family, the same fence submit() puts on a GTC
+    limit, because a resting order must never ride an untagged family."""
     from tradehub.portfolio.options import is_occ
 
+    if time_in_force not in ("day", "gtc"):
+        raise ValueError(f"a multi-leg order takes a day or gtc time in force, got {time_in_force!r}")
+    if time_in_force == "gtc" and not MACHINE_GTC_TAG.match(client_order_id):
+        raise ValueError("good-till-cancelled orders are only sanctioned protective orders "
+                         "(a machine ext- gtc tag on a limit order)")
     if not 2 <= len(legs) <= 4:
         raise ValueError(f"a multi-leg order takes 2-4 legs, got {len(legs)}")
     for leg in legs:
@@ -163,7 +174,7 @@ def submit_mleg(legs: list[dict], qty: int, limit_price: float, client_order_id:
         raise ValueError(f"qty must be a whole number of contracts, got {qty}")
     if not orders_enabled(book):
         raise OrdersDisabled("the book's order switch is off")
-    body = {"order_class": "mleg", "type": "limit", "time_in_force": "day", "qty": str(int(qty)),
+    body = {"order_class": "mleg", "type": "limit", "time_in_force": time_in_force, "qty": str(int(qty)),
             "limit_price": _price(limit_price), "client_order_id": client_order_id,
             "legs": [{"symbol": leg["symbol"], "side": leg["side"],
                       "ratio_qty": str(leg.get("ratio_qty", 1)),

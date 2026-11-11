@@ -285,9 +285,11 @@ def optapi(monkeypatch):
                      "client_order_id": client_order_id, **kwargs})
         return {"id": f"alpaca-{len(sent)}", "status": "accepted"}
 
-    def fake_submit_mleg(legs, qty, limit_price, client_order_id, *, book=None):
+    def fake_submit_mleg(legs, qty, limit_price, client_order_id, *,
+                         book=None, time_in_force="day"):
         mlegs.append({"legs": legs, "qty": qty, "limit_price": limit_price,
-                      "client_order_id": client_order_id, "book": book})
+                      "client_order_id": client_order_id, "book": book,
+                      "time_in_force": time_in_force})
         return {"id": f"alpaca-mleg-{len(mlegs)}", "status": "accepted", "order_class": "mleg"}
 
     def fake_paper_get(path, params=None, **kw):

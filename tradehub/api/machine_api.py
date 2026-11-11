@@ -101,6 +101,51 @@ def resting_reserved_qty(symbol: str, side: str, book: str | None = None) -> flo
     return reserved
 
 
+def resting_option_reserved(book: str | None = None) -> dict[str, dict[str, float]]:
+    """Contracts already reserved by resting OPTION orders on this book, per
+    contract symbol and order side: {symbol: {"buy": n, "sell": n}} -- every
+    open order's UNFILLED quantity, however the order is tagged (machine,
+    idea, manual). A combo's legs ride the parent's remaining quantity x each
+    leg's ratio, the same derivation the combo read-back uses. Share orders
+    in the open list are ignored (their symbols are tickers, never OCC). The
+    options exit test nets this out (Kevin, 2026-11-10, extending the share
+    guardrail of the same day): once GTC closes can rest for days, a second
+    close must never re-close contracts a first resting close is already
+    working, or the two together over-close the position. Reads go through
+    alpaca_paper.paper_get; any failure propagates, and the caller fails
+    closed. `book` names the account; None is the current book."""
+    from tradehub.portfolio import option_orders
+    from tradehub.portfolio.alpaca_paper import paper_get
+
+    reserved: dict[str, dict[str, float]] = {}
+    for order in paper_get("/v2/orders", {"status": "open", "limit": 500}, book=book) or []:
+        if not isinstance(order, dict):
+            continue
+        remaining = float(order.get("qty") or 0) - float(order.get("filled_qty") or 0)
+        if remaining <= 0:
+            continue
+        legs = order.get("legs") or []
+        if legs:
+            for leg in legs:
+                symbol = (leg.get("symbol") or "").upper()
+                side = leg.get("side")
+                if not symbol or side not in ("buy", "sell"):
+                    continue
+                try:
+                    ratio = float(leg.get("ratio_qty") or 1)
+                except (TypeError, ValueError):
+                    continue
+                slot = reserved.setdefault(symbol, {"buy": 0.0, "sell": 0.0})
+                slot[side] += remaining * ratio
+        else:
+            symbol = (order.get("symbol") or "").upper()
+            side = order.get("side")
+            if symbol and side in ("buy", "sell") and option_orders.is_option_symbol(symbol):
+                slot = reserved.setdefault(symbol, {"buy": 0.0, "sell": 0.0})
+                slot[side] += remaining
+    return reserved
+
+
 def key_book(key: dict) -> str:
     """The book a key is bound to (Kevin, 2026-11-03). Rows minted before the book
     column -- and any row a caller hands us without one -- read as the main book,
@@ -448,32 +493,74 @@ def classify_share_exit(spec: dict, symbol: str, side: str, qty: int, book: str 
     return info
 
 
-def classify_option_exit(legs: list[dict], held: dict[str, float], claim=None) -> dict:
+def classify_option_exit(legs: list[dict], held: dict[str, float], claim=None,
+                         reserved: dict | None = None) -> dict:
     """The options exit test (Kevin, 2026-11-09): EVERY leg closes a position the
     book actually holds -- sell_to_close no larger than the held long,
     buy_to_close no larger than the held short (`held` is
     option_orders.positions_map: signed qty per symbol). One opening leg, or a
-    close larger than the holding, makes the whole package a non-exit."""
+    close larger than the holding, makes the whole package a non-exit. Demand
+    is aggregated per contract and direction first, so two legs on the same
+    contract cannot each pass against the same holding.
+
+    Netting (Kevin, 2026-11-10): the holding is net of contracts already
+    reserved by resting option orders on the book (`reserved` is
+    resting_option_reserved: per-symbol resting buy/sell quantities) -- a
+    close is an exit only up to the UNRESERVED held contracts, so two resting
+    closes can never each pass the test and together over-close. `reserved`
+    of None means the resting book could not be read: unprovable, so it fails
+    toward the caps like a failed position read."""
     info: dict = {"is_exit": False, "bypassed": [], "claimed": claim, "detail": ""}
+    demanded: dict[tuple[str, str], float] = {}
+    failure: str | None = None
     for leg in legs:
-        have = held.get(leg["symbol"], 0.0)
         intent = leg["position_intent"]
-        if intent == "sell_to_close" and have >= leg["qty"]:
-            continue
-        if intent == "buy_to_close" and have <= -leg["qty"]:
-            continue
-        if intent in ("buy_to_close", "sell_to_close"):
-            info["detail"] = (f"not an exit: {intent} {leg['qty']} x {leg['symbol']} exceeds "
-                              f"the {abs(have):g} contracts held; the package runs under the caps")
+        if intent not in ("buy_to_close", "sell_to_close"):
+            failure = (f"not an exit: the {leg['symbol']} leg is {intent} -- an opening "
+                       "leg makes the whole package an entry under the caps")
+            break
+        key = (leg["symbol"], intent)
+        demanded[key] = demanded.get(key, 0.0) + leg["qty"]
+    if failure is None and demanded:
+        if reserved is None:
+            failure = ("not an exit: resting orders could not be read, so the book math "
+                       "cannot prove these closes only close unreserved contracts; "
+                       "the caps apply")
         else:
-            info["detail"] = (f"not an exit: the {leg['symbol']} leg is {intent} -- an opening "
-                              "leg makes the whole package an entry under the caps")
-        break
-    else:
+            for (symbol, intent), qty in demanded.items():
+                have = held.get(symbol, 0.0)
+                side = "sell" if intent == "sell_to_close" else "buy"
+                taken = (reserved.get(symbol) or {}).get(side, 0.0)
+                capacity = have - taken if intent == "sell_to_close" else -have - taken
+                if qty <= capacity:
+                    continue
+                if taken:
+                    failure = (f"not an exit: {intent} {qty:g} x {symbol} exceeds the "
+                               f"{capacity:g} unreserved contracts -- the book holds "
+                               f"{abs(have):g} and {taken:g} are already reserved by "
+                               f"resting {side} orders; the package runs under the caps")
+                else:
+                    failure = (f"not an exit: {intent} {qty:g} x {symbol} exceeds "
+                               f"the {abs(have):g} contracts held; the package runs "
+                               "under the caps")
+                break
+    if failure is None:
         info["is_exit"] = True
         info["bypassed"] = list(EXIT_BYPASSED_CAPS)
-        info["detail"] = ("an exit: every leg closes a held position; the machine caps "
-                          "do not apply to exits")
+        netted = 0.0
+        if reserved:
+            netted = sum((reserved.get(symbol) or {}).get(
+                "sell" if intent == "sell_to_close" else "buy", 0.0)
+                for (symbol, intent) in demanded)
+        if netted:
+            info["detail"] = (f"an exit: every leg closes a held position ({netted:g} "
+                              "contracts already reserved by resting orders were netted "
+                              "out); the machine caps do not apply to exits")
+        else:
+            info["detail"] = ("an exit: every leg closes a held position; the machine caps "
+                              "do not apply to exits")
+    else:
+        info["detail"] = failure
     if info["claimed"] and not info["is_exit"]:
         info["detail"] += (" The caller marked this order an exit; the book math disagrees, "
                            "and the math wins.")
@@ -782,10 +869,16 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
         shape = ("order_type", 422, "stop_price is for stop orders; option orders here are market or limit")
     elif order_type not in ("market", "limit"):
         shape = ("order_type", 422, "option orders are market or limit only")
-    elif tif != "day":
+    elif tif not in ("day", "gtc"):
         shape = ("order_type", 422,
-                 f"option orders are day orders through this door: Alpaca paper does not take "
-                 f"{tif} on an option order, and the door will not silently downgrade it to day")
+                 f"option orders through this door are day or good-till-cancelled orders: "
+                 f"Alpaca paper does not take {tif} on an option order, and the door will "
+                 f"not silently downgrade it to day")
+    elif tif == "gtc" and order_type != "limit":
+        shape = ("order_type", 422,
+                 "a good-till-cancelled option order must be a limit order: Alpaca takes "
+                 "no gtc market orders on options, and the door will not silently "
+                 "downgrade it to day")
     elif kind == "combo" and order_type != "limit":
         shape = ("order_type", 422, "a combo is placed at one net limit price; market combos are not taken")
     elif kind == "combo" and (limit_price is None or float(limit_price) == 0):
@@ -832,10 +925,18 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
              ("position_unverified", 424, "positions could not be read; the defined-risk check cannot run"))
         return out
 
+    # ── resting reservations (Kevin, 2026-11-10): contracts resting option
+    # orders on this book are already working; the exit test nets them out.
+    # An unreadable resting book is None -- unprovable, fails toward the caps. ──
+    try:
+        reserved = resting_option_reserved(book)
+    except Exception:  # noqa: BLE001
+        reserved = None
+
     # ── exit classification (Kevin, 2026-11-09): every leg closing a held
     # position exempts the package from the per-leg and daily caps below. The
     # defined-risk guard right after this still runs and still blocks. ──
-    exit_info = classify_option_exit(legs, held, spec.get("exit_claim"))
+    exit_info = classify_option_exit(legs, held, spec.get("exit_claim"), reserved)
     out["exit"] = exit_info
     checks.append({"name": "exit_classification", "ok": True, "blocking": False,
                    "exit": exit_info["is_exit"], "bypassed": exit_info["bypassed"],
@@ -970,7 +1071,7 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
     out["option"] = {"kind": kind, "legs": legs, "parent_qty": parent, "ratios": ratios,
                      "net_limit_price": float(limit_price) if kind == "combo" else None,
                      "max_loss": max_loss, "options_buying_power": obp,
-                     "order_type": order_type}
+                     "order_type": order_type, "time_in_force": tif}
 
     # The portfolio check (Kevin, 2026-11-09): the legs' exposure lands on their
     # underlying -- a bought contract adds its premium value, a sold one removes
