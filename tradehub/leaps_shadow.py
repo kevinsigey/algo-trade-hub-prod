@@ -344,20 +344,31 @@ def _stored_verdicts(client) -> dict:
 def persist_gate_verdicts(client, *, now: datetime | None = None) -> dict:
     """Store the first judged verdict for each cohort, exactly once
     (the nightly grade calls this after marking). A cohort's verdict is
-    written the first night its gate read judges, from that night's
-    numbers, and is never recomputed or overwritten — later marks move
-    the live read, not the verdict. The unique (idea_id, cohort) index
-    is the backstop if two passes race."""
+    written the first night its gate read judges a kill or a pass, from
+    that night's numbers, and is never recomputed or overwritten —
+    later marks move the live read, not the verdict. An
+    insufficient_data read is NOT stored: it stays live and re-reads
+    nightly, so a night with missing metrics can never freeze the
+    trial. The unique (idea_id, cohort) index is the backstop if two
+    passes race."""
     now = now or datetime.now(UTC)
     rows = _rows(client)
     stored = _stored_verdicts(client)
     gate = trial_summary(rows, now=now, stored=stored)["gate"]
     out: dict = {"stored": []}
     candidates = []
+    # Only a killed or a pass is stored. An insufficient_data read (the
+    # share line made nothing in total, or the drag is unmarked) is
+    # missing evidence, not a verdict: storing it would freeze the
+    # trial forever, since a stored verdict is never recomputed. It
+    # stays a live read and re-reads on the next nightly pass.
     if gate.get("judged") and not stored.get("first4"):
-        candidates.append(("first4", gate))
+        first_state = "pass" if gate["state"] == "complete" else gate["state"]
+        if first_state in ("killed", "pass"):
+            candidates.append(("first4", {**gate, "state": first_state}))
     ext = gate.get("extension")
-    if ext and not stored.get("extension") and gate["state"] in ("pass", "complete"):
+    if ext and not stored.get("extension") and gate["state"] in ("pass", "complete") \
+            and ext["state"] in ("killed", "pass"):
         candidates.append(("extension", {"state": ext["state"],
                                          "reason": ext.get("reason")}))
     opened = [r for r in rows if r.get("status") != "unfilled"]

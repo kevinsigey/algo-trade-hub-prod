@@ -17,6 +17,7 @@ import {
   dayMovers,
   ideaScorecard,
   contractLabel,
+  orderDetailLabel,
   orderLabel,
   CURVE_RANGES,
   curveRange,
@@ -117,7 +118,7 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
           {ordered.map((r) => {
             const option = contractLabel(r.symbol);
             return (
-              <tr key={r.symbol} className="border-t border-slate-800/80 hover:bg-slate-800/40">
+              <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/80 hover:bg-slate-800/40">
                 <td className={`sticky left-0 whitespace-nowrap bg-slate-900 px-2 py-1.5 font-semibold text-white ${option ? "pl-6 font-normal text-slate-200" : ""}`}>
                   {option ?? r.symbol}
                   {r.side === "short" && <span className="ml-1.5 text-xs font-normal text-amber-300">short</span>}
@@ -168,7 +169,7 @@ function PositionsSummary({ rows, n = 5 }: { rows: PositionRow[]; n?: number }) 
         </tr></thead>
         <tbody>
           {top.map((r) => (
-            <tr key={r.symbol} className="border-t border-slate-800/70">
+            <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/70">
               <td className="py-1 pr-2 font-semibold text-white">{contractLabel(r.symbol) ?? r.symbol}</td>
               <td className="py-1 pr-2 text-right text-slate-200">{money(r.market_value)}</td>
               <td className="py-1 pr-2 text-right text-slate-400">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}</td>
@@ -557,7 +558,9 @@ function OrdersBox({ book }: { book: string }) {
               {list.map((o, i) => (
                 <tr key={`${o.symbol}-${o.submitted_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
                   <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</td>
-                  <td className="whitespace-nowrap py-1.5 pr-3">{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span> <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
+                  <td className="whitespace-nowrap py-1.5 pr-3">{o.legs && o.legs.length > 0
+                    ? <span className="font-semibold text-white">{orderDetailLabel(o)}</span>
+                    : <>{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span></>} <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
                   <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? 0}/{o.qty ?? "—"}</td>
                   <td className="py-1.5 pr-3 text-right">{price(o.filled_avg_price)}</td>
                   <td className={`py-1.5 pr-3 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</td>

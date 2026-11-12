@@ -130,6 +130,53 @@ def test_kev_unknown_choice_answer_is_unavailable():
         seat.render(PACKET)
 
 
+def _answers(decision_choice, direction_choice):
+    return {"answers": {
+        "decision": {"type": "choice", "choice": decision_choice,
+                     "probabilities": {decision_choice: 0.6},
+                     "confidence": 0.6},
+        "direction": {"type": "choice", "choice": direction_choice,
+                      "probabilities": {direction_choice: 0.7},
+                      "confidence": 0.7}}}
+
+
+def test_kev_watch_with_a_direction_is_forced_to_none():
+    # Kev answers choice and direction as two independent questions, so
+    # it can say "watch" and "short" in the same reply. A watch/pass
+    # verdict carrying a direction would be stored as a directional
+    # non-action; the seat forces direction none instead.
+    seat = _kev_seat(_Post(_Resp(200, _answers("watch", "short"))))
+    decision = seat.render(PACKET)
+    assert decision["choice_id"] == "watch"
+    assert decision["direction"] == "none"
+
+
+def test_kev_pass_with_a_direction_is_forced_to_none():
+    seat = _kev_seat(_Post(_Resp(200, _answers("pass", "long"))))
+    decision = seat.render(PACKET)
+    assert decision["choice_id"] == "pass"
+    assert decision["direction"] == "none"
+
+
+def test_kev_act_without_a_direction_abstains():
+    # An act choice with direction none is a contradiction the other
+    # way: acting needs a side. The seat abstains (SeatUnavailable)
+    # rather than storing a directionless act.
+    seat = _kev_seat(_Post(_Resp(200, _answers("act_at_band_low", "none"))))
+    with pytest.raises(judge.SeatUnavailable):
+        seat.render(PACKET)
+    seat = _kev_seat(_Post(_Resp(200, _answers("act_at_band_mid", "none"))))
+    with pytest.raises(judge.SeatUnavailable):
+        seat.render(PACKET)
+
+
+def test_kev_act_with_a_direction_passes_through():
+    seat = _kev_seat(_Post(_Resp(200, _answers("act_at_band_mid", "short"))))
+    decision = seat.render(PACKET)
+    assert decision["choice_id"] == "act_at_band_mid"
+    assert decision["direction"] == "short"
+
+
 def test_kev_oversize_state_is_unavailable_and_never_sent():
     post = _Post(_Resp(200, PROBE_ANSWERS))
     seat = _kev_seat(post)
