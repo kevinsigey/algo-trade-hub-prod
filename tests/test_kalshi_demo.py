@@ -72,7 +72,20 @@ def decision(**over):
     return row
 
 
-def seed(db, decisions=(), orders=(), ticks=()):
+REAL_OPEN_DECISIONS = kd.fifteen_tracking.open_decisions
+
+
+@pytest.fixture(autouse=True)
+def _open_decisions(monkeypatch):
+    """The runner's candidates are open-window decisions; most tests here
+    hand them in directly (seed(open_=...)) and exercise the guards. The
+    production-shaped test below runs the real open_decisions instead."""
+    monkeypatch.setattr(kd.fifteen_tracking, "open_decisions",
+                        lambda supa, now, series_set=None: list(supa.db.get("_open", [])))
+
+
+def seed(db, decisions=(), orders=(), ticks=(), open_=()):
+    db.db["_open"] = list(open_)
     db.db[kd.DECISIONS] = list(decisions)
     db.db[kd.ORDERS] = list(orders)
     db.db[kd.TICKS] = list(ticks)
@@ -96,7 +109,7 @@ def order_row(**over):
 # -- the demo guard ------------------------------------------------------------
 
 def test_runner_refuses_when_not_demo():
-    db = seed(DB(), decisions=[decision()])
+    db = seed(DB(), open_=[decision()])
     out = kd.run_once(db, FakePortfolio(refuse=True), NOW)
     assert "refused" in out
     assert db.db[kd.ORDERS] == []
@@ -230,7 +243,7 @@ def test_size_contracts(balance, price, want):
 # -- placement -------------------------------------------------------------------
 
 def test_places_only_gated_gas_buys():
-    db = seed(DB(), decisions=[
+    db = seed(DB(), open_=[
         decision(),
         decision(target="kalshi:KXNATGAS15M-26NOV121230-00",
                  ticker="KXNATGAS15M-26NOV121230-00", action="skip"),
@@ -258,36 +271,84 @@ def test_places_only_gated_gas_buys():
 
 
 def test_blend_shadow_decisions_never_traded():
-    db = seed(DB(), decisions=[decision(gate_version="v2-blend")])
+    db = seed(DB(), open_=[decision(gate_version="v2-blend")])
     pf = FakePortfolio()
     out = kd.run_once(db, pf, NOW)
     assert pf.placed == [] and out["candidates"] == 0
 
 
 def test_never_orders_twice():
-    db = seed(DB(), decisions=[decision()])
+    db = seed(DB(), open_=[decision()])
     pf = FakePortfolio()
     kd.run_once(db, pf, NOW)
     kd.run_once(db, pf, NOW)
     assert len(pf.placed) == 1
 
 
-def test_fresh_decision_found_behind_1200_stale_buys():
-    # The decisions query must filter the freshness window itself: an
-    # ascending page of the 1,000 oldest buys would bury the one fresh
-    # decision and the runner would silently place nothing.
-    stale = []
+def test_production_shaped_trades_the_open_window(monkeypatch):
+    # Production on 2026-11-12: the record pass writes a window's decision
+    # row only after it closes, so the decisions table never holds an open
+    # window. Here it holds only closed windows (1,200 stale buys and a
+    # just-closed one); the one open window has a frozen forecast with an
+    # edge. The real open_decisions must find it and place exactly once.
+    from tradehub import fifteen_tracking as tracking
+    monkeypatch.setattr(kd.fifteen_tracking, "open_decisions", REAL_OPEN_DECISIONS)
+    closed = []
     for i in range(1200):
         ticker = f"KXNATGAS15M-26NOV110000-{i:04d}"
-        stale.append(decision(
+        closed.append(decision(
             target=f"kalshi:{ticker}", ticker=ticker,
             close_time=(NOW - timedelta(days=1, minutes=i % 60)).isoformat(),
             frozen_at=(NOW - timedelta(days=1)).isoformat()))
-    db = seed(DB(), decisions=[*stale, decision()])
+    just_closed = "KXNATGAS15M-26NOV121200-00"
+    closed.append(decision(target=f"kalshi:{just_closed}", ticker=just_closed,
+                           close_time=(NOW - timedelta(minutes=5)).isoformat(),
+                           frozen_at=(NOW - timedelta(minutes=15)).isoformat()))
+    calendar = [
+        {"target": f"kalshi:{just_closed}", "cutoff_at": (NOW - timedelta(minutes=5)).isoformat()},
+        {"target": TARGET, "cutoff_at": (NOW + timedelta(minutes=10)).isoformat()},
+        # opens later; no forecast frozen yet -- not a decision
+        {"target": "kalshi:KXNATGAS15M-26NOV121230-00",
+         "cutoff_at": (NOW + timedelta(minutes=25)).isoformat()},
+    ]
+    forecasts = [{"target": TARGET, "probability": 0.70,
+                  "frozen_at": (NOW - timedelta(minutes=1)).isoformat(),
+                  "payload": {"yes_ask": 0.40, "yes_bid": 0.38}}]
+    monkeypatch.setattr(tracking, "fetch_targets", lambda supa, family, since, until: [
+        c for c in calendar if family == "natgas_15m"
+        and since <= datetime.fromisoformat(c["cutoff_at"]) <= until])
+    monkeypatch.setattr(tracking.store, "fetch_forecasts",
+                        lambda supa, f, v, targets=None: [
+                            r for r in forecasts if f == "natgas_15m" and r["target"] in targets])
+    db = seed(DB(), decisions=closed)
+    assert all(kd._dt(d["close_time"]) < NOW for d in db.db[kd.DECISIONS])
     pf = FakePortfolio()
     out = kd.run_once(db, pf, NOW)
-    assert out["placed"] == 1
-    assert pf.placed[0]["ticker"] == TICKER
+    assert out["gate_version"] == "v1"
+    assert out["candidates"] == 1 and out["placed"] == 1
+    assert [p["ticker"] for p in pf.placed] == [TICKER]
+    assert pf.placed[0]["side"] == "yes" and pf.placed[0]["limit_price_cents"] == 40
+    assert kd.run_once(db, pf, NOW + timedelta(minutes=5))["placed"] == 0
+    assert len(pf.placed) == 1  # never twice
+
+
+def test_decision_mismatch_counted_against_the_tracking_row():
+    # The record pass's row for an order's window, once it lands, must say
+    # what the runner traded on. A different side or cost is counted.
+    other = "KXNATGAS15M-26NOV120900-00"
+    db = seed(DB(), decisions=[decision(side="no", cost=0.60),
+                               decision(target=f"kalshi:{other}", ticker=other)],
+              orders=[order_row(status="settled", settlement_pnl=1.0),
+                      order_row(id=2, target=f"kalshi:{other}", ticker=other,
+                                status="settled", settlement_pnl=1.0)])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert out["decision_mismatch"] == 1
+    kd._summary_cache = None
+    pf = FakePortfolio()
+    pf.get_positions = lambda: []
+    report = kd.build_report(db, pf, NOW)
+    kd._summary_cache = None
+    assert report["performance"]["decision_mismatch"] == 1
 
 
 class LostResponsePortfolio(FakePortfolio):
@@ -312,7 +373,7 @@ class LostResponsePortfolio(FakePortfolio):
 
 
 def test_timed_out_placement_is_adopted_not_replaced():
-    db = seed(DB(), decisions=[decision()])
+    db = seed(DB(), open_=[decision()])
     pf = LostResponsePortfolio()
     first = kd.run_once(db, pf, NOW)
     assert first["placed"] == 0 and pf.create_calls == 1
@@ -328,7 +389,7 @@ def test_timed_out_placement_is_adopted_not_replaced():
 
 def test_depth_under_one_skips():
     close = (NOW + timedelta(minutes=10)).isoformat()
-    db = seed(DB(), decisions=[decision()], ticks=[{
+    db = seed(DB(), open_=[decision()], ticks=[{
         "series": kd.SERIES, "close_time": close, "at": NOW.isoformat(),
         "yes_ask_size": 0, "no_ask_size": 9}])
     pf = FakePortfolio()
@@ -340,7 +401,7 @@ def test_depth_under_one_skips():
 
 def test_depth_measured_and_recorded():
     close = (NOW + timedelta(minutes=10)).isoformat()
-    db = seed(DB(), decisions=[decision()], ticks=[{
+    db = seed(DB(), open_=[decision()], ticks=[{
         "series": kd.SERIES, "close_time": close, "at": NOW.isoformat(),
         "yes_ask_size": 147, "no_ask_size": 3}])
     kd.run_once(db, FakePortfolio(), NOW)
@@ -350,7 +411,7 @@ def test_depth_measured_and_recorded():
 def test_contract_cap_skips(monkeypatch):
     monkeypatch.setenv("KALSHI_DEMO_MAX_CONTRACTS_PER_DAY", "12")
     earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
-    db = seed(DB(), decisions=[decision()],
+    db = seed(DB(), open_=[decision()],
               orders=[order_row(id=7, target=earlier,
                                 ticker="KXNATGAS15M-26NOV120900-00",
                                 kalshi_order_id="ord-8", contracts=12,
@@ -364,7 +425,7 @@ def test_contract_cap_skips(monkeypatch):
 
 def test_loss_cap_skips(monkeypatch):
     earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
-    db = seed(DB(), decisions=[decision()],
+    db = seed(DB(), open_=[decision()],
               orders=[order_row(id=7, target=earlier,
                                 ticker="KXNATGAS15M-26NOV120900-00",
                                 kalshi_order_id="ord-8", contracts=5,
@@ -423,3 +484,24 @@ def test_pending_past_cutoff_cancelled():
     assert row["status"] == "cancelled"
     assert row["skip_reason"] == "placement_interrupted"
     assert out["cancelled"] == 1
+
+
+def test_lost_response_on_last_pass_is_adopted_at_cutoff():
+    # The last pass before cutoff: the create is accepted on the exchange,
+    # its response is lost. The next pass is past the cutoff -- the row is
+    # no longer a candidate, so only reconcile sees it. It must adopt the
+    # real order by client_order_id, not write it off as interrupted.
+    db = seed(DB(), open_=[decision()])
+    pf = LostResponsePortfolio()
+    last = NOW + timedelta(minutes=8)  # close is NOW+10, cutoff NOW+9
+    assert kd.run_once(db, pf, last)["placed"] == 0
+    assert db.db[kd.ORDERS][0]["status"] == "pending"
+    db.db["_open"] = []
+    pf.fills = [{"order_id": "ord-lost", "side": "yes", "yes_price": 40,
+                 "count_fp": "12.00", "created_ts": last.isoformat()}]
+    out = kd.run_once(db, pf, NOW + timedelta(minutes=9, seconds=30))
+    row = db.db[kd.ORDERS][0]
+    assert out["adopted"] == 1 and out["cancelled"] == 0
+    assert row["kalshi_order_id"] == "ord-lost" and row.get("skip_reason") is None
+    assert row["status"] == "filled" and row["contracts_filled"] == 12
+    assert pf.create_calls == 1

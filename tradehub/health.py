@@ -101,6 +101,7 @@ def build_health_report(
     calendar_by_family: Mapping[str, list[dict[str, Any]]] | None = None,
     diagnostics: Mapping[str, Any] | None = None,
     history: Mapping[str, Any] | None = None,
+    kalshi_demo: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the whole read-only report. Pure: `timers`/`frozen_by_family` are already fetched.
 
@@ -217,6 +218,10 @@ def build_health_report(
     else:
         orderbook_status = "ok"
 
+    demo = kalshi_demo_canary(kalshi_demo)
+    if demo is not None:
+        problems.extend(demo["problems"])
+
     return {
         "status": "degraded" if problems else "ok",
         "generated_at": now.isoformat(),
@@ -239,8 +244,37 @@ def build_health_report(
         # absent (not "clean") when no run has recorded diagnostics yet.
         "diagnostics": dict(diagnostics) if diagnostics else None,
         "history": dict(history) if history else None,
+        # None when the decisions/orders tables could not be read -- unknown, not "placed 0".
+        "kalshi_demo": demo,
         "problems": problems,
     }
+
+
+# A gated gas buy with no runner row is the 2026-11-12 failure (27 passes,
+# 0 orders). One unanswered buy today may still be in flight; two, or any
+# from a finished ET day, is the runner not trading.
+KALSHI_DEMO_SILENT_TODAY = 2
+
+
+def kalshi_demo_canary(days: Mapping[str, Mapping[str, int]] | None) -> dict[str, Any] | None:
+    """The Kalshi demo runner's canary from per-ET-day counts
+    ({"today"|"yesterday": {"gated_buys", "placed", "skipped"}}): how many
+    of the live gate's gated gas buys the runner answered with an order or
+    a named skip row. Pure."""
+    if days is None:
+        return None
+    today = days.get("today") or {}
+    y, x = int(today.get("gated_buys", 0)), int(today.get("placed", 0))
+    problems = []
+    for day, floor in (("today", KALSHI_DEMO_SILENT_TODAY), ("yesterday", 1)):
+        c = days.get(day) or {}
+        buys = int(c.get("gated_buys", 0))
+        if buys >= floor and int(c.get("placed", 0)) + int(c.get("skipped", 0)) == 0:
+            problems.append(f"Kalshi demo runner placed nothing for {buys} gated gas "
+                            f"buy{'s' if buys != 1 else ''} {day} (ET)")
+    return {"summary": f"Kalshi demo runner: placed {x} of {y} gated gas buys today (ET)",
+            "status": "silent" if problems else "ok",
+            "days": {k: dict(v) for k, v in days.items()}, "problems": problems}
 
 
 # ─── the one place that reads ──────────────────────────────────────────────────
@@ -504,7 +538,43 @@ def collect_health(supa, *, now: datetime | None = None, orderbook_dir: Path | N
         calendar_by_family=calendar_by_family,
         diagnostics=_latest_diagnostics(supa),
         history=_history(supa, now, cadences),
+        kalshi_demo=_kalshi_demo_counts(supa, now),
     )
+
+
+def _kalshi_demo_counts(supa, now: datetime) -> dict[str, dict[str, int]] | None:
+    """Per ET day (today, yesterday): the live gate's gated gas buys in
+    fifteen_rule_decisions, and how many the demo runner placed or skipped
+    with a row. None on any read failure."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        from tradehub import fifteen_tracking
+        from tradehub import kalshi_demo as kd
+        from tradehub.journal.store import select_all
+        et = ZoneInfo("America/New_York")
+        today = now.astimezone(et).date()
+        start = datetime(today.year, today.month, today.day, tzinfo=et) - timedelta(days=1)
+        version, _since = fifteen_tracking._live_gate(supa)
+        buys = select_all(supa, kd.DECISIONS, lambda q: q.eq("series", kd.SERIES)
+                          .eq("action", "buy").gte("close_time", start.isoformat()), ("target",))
+        orders = {r["target"]: r for r in select_all(
+            supa, kd.ORDERS, lambda q: q.eq("series", kd.SERIES)
+            .gte("window_close", start.isoformat()), ("id",))}
+    except Exception:  # noqa: BLE001 - health must never 500 on a missing table
+        return None
+    out = {d: {"gated_buys": 0, "placed": 0, "skipped": 0} for d in ("today", "yesterday")}
+    for b in buys:
+        if b.get("gate_version") != version:
+            continue
+        day = "today" if _as_datetime(b["close_time"]).astimezone(et).date() == today else "yesterday"
+        out[day]["gated_buys"] += 1
+        row = orders.get(b["target"])
+        if row is not None and row.get("kalshi_order_id"):
+            out[day]["placed"] += 1
+        elif row is not None and row.get("status") in kd.SKIP_STATUSES:
+            out[day]["skipped"] += 1
+    return out
 
 
 def _latest_diagnostics(supa) -> dict[str, Any] | None:
