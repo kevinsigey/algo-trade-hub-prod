@@ -28,7 +28,7 @@ production database on Nov 12, 00:20 UTC.
 
 ## In flight (open PRs from Muse)
 None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
-(`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 18 there.
+(`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 19 there.
 
 ## Not started: product
 1. **Overview rework and visitor landing page.** Overview hasn't changed since the Nov 9 polish. Plan: say what the
