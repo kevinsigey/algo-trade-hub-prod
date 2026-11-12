@@ -371,14 +371,15 @@ def test_the_desk_route_answers_uncached(monkeypatch):
 
     from tradehub.api import main
     from tradehub.api.dependencies import get_supabase
+    from tradehub.api.swr import SwrCache
 
-    main._GAP_DESK_CACHE.update(at=0.0, payload=None)
+    main._GAP_DESK_CACHE = SwrCache(120)
     main.app.dependency_overrides[get_supabase] = lambda: ReportStore()
     try:
         r = TestClient(main.app).get("/api/gaps/desk")
     finally:
         main.app.dependency_overrides.clear()
-        main._GAP_DESK_CACHE.update(at=0.0, payload=None)
+        main._GAP_DESK_CACHE = SwrCache(120)
     assert r.status_code == 200 and r.json()["evidence"]["status"] == "NOT ENOUGH EVIDENCE"
 
 
