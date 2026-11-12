@@ -8,6 +8,10 @@ export interface Scoreboard {
   return_pct: number | null;
   spy_return_pct: number | null;
   ahead_pts: number | null;
+  /** QQQ since the first snapshot; null on payloads from before the
+   * qqq_price snapshot column (or where its backfill has a gap). */
+  qqq_return_pct?: number | null;
+  ahead_qqq_pts?: number | null;
   max_drawdown_pct: number | null;
   sharpe: number | null;
   win_rate: number | null;
@@ -38,7 +42,7 @@ export interface PositionRow {
  * the move since the close snapshot. state is "regular" until a post-close
  * snapshot exists, then "after_hours"; "no_prior" on the book's first day. */
 export interface TodaySplit {
-  state: "regular" | "after_hours" | "no_prior";
+  state: "regular" | "after_hours" | "no_prior" | "closed_day";
   prior_close_at: string | null;
   close_at: string | null;
   regular_pl: number | null;
@@ -47,6 +51,14 @@ export interface TodaySplit {
   after_hours_pct: number | null;
   spy_regular_pct: number | null;
   spy_after_hours_pct: number | null;
+  /** QQQ beside SPY; absent on old payloads, null where no QQQ price exists. */
+  qqq_regular_pct?: number | null;
+  qqq_after_hours_pct?: number | null;
+  /** The ET date the figures describe; on a weekend/holiday it is the last
+   * trading day, `is_today` is false, and `day_label` names it ("Fri"). */
+  for_date?: string | null;
+  day_label?: string | null;
+  is_today?: boolean;
 }
 
 /** The account rail's balances, as the broker reports them. */
@@ -153,7 +165,7 @@ export interface PortfolioPayload {
   scoreboard: Scoreboard;
   account?: AccountView;
   breaker?: BreakerState;
-  curve: { t: string; portfolio_pct: number; spy_pct: number }[];
+  curve: { t: string; portfolio_pct: number; spy_pct: number; qqq_pct?: number | null }[];
   composition: { idea: string; pct_of_book: number; unrealized_pl: number }[];
   positions: PositionRow[];
   /** One line per symbol (book.positions_aggregate); absent on old payloads. */
@@ -324,8 +336,10 @@ export function curveRange(curve: CurvePoint[], range: CurveRange, now: Date = n
   const kept = curve.filter((p) => new Date(p.t) >= since);
   if (kept.length === 0) return [];
   const rebase = (v: number, base: number) => ((1 + v / 100) / (1 + base / 100) - 1) * 100;
+  const q0 = kept[0].qqq_pct;
   return kept.map((p) => ({
     t: p.t, portfolio_pct: rebase(p.portfolio_pct, kept[0].portfolio_pct), spy_pct: rebase(p.spy_pct, kept[0].spy_pct),
+    qqq_pct: p.qqq_pct == null || q0 == null ? null : rebase(p.qqq_pct, q0),
   }));
 }
 
@@ -352,6 +366,8 @@ export interface DailyReturn {
   date: string;
   portfolio_pct: number;
   spy_pct: number | null;
+  /** QQQ's daily return, beside SPY's; null where a day lacks a QQQ price. */
+  qqq_pct: number | null;
   /** Today, before its close is fixed history: the value still moves with
    * the live read (regular session) or was fixed by the 4 PM ET snapshot. */
   provisional: boolean;
@@ -382,6 +398,7 @@ export function dailyReturns(curve: CurvePoint[], today?: TodaySplit | null, now
       date,
       portfolio_pct: ratio(p.portfolio_pct, prev.portfolio_pct),
       spy_pct: p.spy_pct == null || prev.spy_pct == null ? null : ratio(p.spy_pct, prev.spy_pct),
+      qqq_pct: p.qqq_pct == null || prev.qqq_pct == null ? null : ratio(p.qqq_pct, prev.qqq_pct),
       provisional: false,
     });
   }
@@ -391,17 +408,21 @@ export function dailyReturns(curve: CurvePoint[], today?: TodaySplit | null, now
     if (today?.state === "after_hours") {
       if (today.regular_pct != null) last.portfolio_pct = today.regular_pct;
       if (today.spy_regular_pct != null) last.spy_pct = today.spy_regular_pct;
+      if (today.qqq_regular_pct != null) last.qqq_pct = today.qqq_regular_pct;
     }
   }
   return out;
 }
 
-/** Running drawdown of the curve's portfolio line, in points (0 or negative). */
+/** Running drawdown of the curve's portfolio line: peak-relative, as a
+ * return — (1 + p) / (1 + peak) − 1 over the cumulative curve. Subtracting
+ * percentage points overstates it (from +10% to −5% is a −13.6% drawdown,
+ * not −15.0) — Claude's #509 review. */
 export function drawdownSeries(points: CurvePoint[]): { t: string; dd_pct: number }[] {
   let peak = -Infinity;
   return points.map((p) => {
     peak = Math.max(peak, p.portfolio_pct);
-    return { t: p.t, dd_pct: p.portfolio_pct - peak };
+    return { t: p.t, dd_pct: ((1 + p.portfolio_pct / 100) / (1 + peak / 100) - 1) * 100 };
   });
 }
 

@@ -135,6 +135,74 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
 
+  it("lists closed trades in full on the Trade tab", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({
+          state: "live", as_of: "2026-11-12T20:00:00Z", book: "main",
+          trades: [{ symbol: "NVDA", sector: "Technology", qty: 10, entry_price: 100, exit_price: 110,
+                     entered_at: "2026-11-02T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+                     pnl: 100, return_pct: 10, held_days: 8, idea: "Idea One" }],
+          results_split: null,
+        }), { status: 200 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/^Closed trades · 1/)).toBeInTheDocument();
+    expect(screen.getByText("NVDA")).toBeInTheDocument();
+    expect(screen.getByText("Idea One")).toBeInTheDocument();
+  });
+
+  it("sorts the Trade tab's closed trades by P&L when the header is clicked", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({
+          state: "live", as_of: "2026-11-12T20:00:00Z", book: "main",
+          trades: [
+            { symbol: "NVDA", sector: "Technology", qty: 10, entry_price: 100, exit_price: 110,
+              entered_at: "2026-11-02T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+              pnl: 100, return_pct: 10, held_days: 8, idea: "Idea One" },
+            { symbol: "AAPL", sector: "Technology", qty: 5, entry_price: 200, exit_price: 190,
+              entered_at: "2026-11-03T15:00:00Z", exited_at: "2026-11-11T20:00:00Z",
+              pnl: -50, return_pct: -5, held_days: 8, idea: "Idea Two" },
+          ],
+          results_split: null,
+        }), { status: 200 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/^Closed trades · 2/)).toBeInTheDocument();
+    const symbolsInOrder = () => [...document.querySelectorAll("tbody tr")]
+      .map((tr) => tr.textContent ?? "").filter((t) => t.includes("NVDA") || t.includes("AAPL"))
+      .map((t) => (t.includes("NVDA") ? "NVDA" : "AAPL"));
+    // Default: newest exit first (AAPL, Nov 11).
+    expect(symbolsInOrder()).toEqual(["AAPL", "NVDA"]);
+    // First P&L click sorts descending (NVDA +100 first), second ascending.
+    fireEvent.click(screen.getByRole("button", { name: /^P&L/ }));
+    expect(symbolsInOrder()).toEqual(["NVDA", "AAPL"]);
+    fireEvent.click(screen.getByRole("button", { name: /^P&L/ }));
+    expect(symbolsInOrder()).toEqual(["AAPL", "NVDA"]);
+  });
+
+  it("never polls the manual-actions endpoint for a signed-out visitor", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
+    expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(false);
+  });
+
   it("places a market order through the endpoint when signed in", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);
@@ -375,6 +443,40 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText(/After hours −\$84 since 4:00 PM/)).toBeInTheDocument();
     expect(screen.getByText("After hours", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
+  });
+
+  it("shows QQQ beside SPY in the header when the payload carries it", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 98839, return_pct: -3.5, spy_return_pct: -0.4, ahead_pts: -3.1,
+                    qqq_return_pct: 5.0, ahead_qqq_pts: -8.5 },
+      today: {
+        state: "regular", prior_close_at: "2026-11-10T21:30:00Z", close_at: null,
+        regular_pl: -1161, regular_pct: -1.16, after_hours_pl: null, after_hours_pct: null,
+        spy_regular_pct: -0.02, spy_after_hours_pct: null,
+        qqq_regular_pct: -0.5, qqq_after_hours_pct: null,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 98839, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/QQQ −0\.5%/)).toBeInTheDocument();
+    expect(screen.getByText(/QQQ \+5\.0%/)).toBeInTheDocument();
+    expect(screen.getByText("−8.5 pts")).toBeInTheDocument();
+  });
+
+  it("labels a closed day with its own day, not Today, and no after-hours tag", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100200, return_pct: 0.2, spy_return_pct: 0.1, ahead_pts: 0.1 },
+      today: {
+        state: "closed_day", prior_close_at: "2026-11-12T21:30:00Z", close_at: "2026-11-13T21:05:00Z",
+        regular_pl: 200, regular_pct: 0.2, after_hours_pl: null, after_hours_pct: null,
+        spy_regular_pct: 1.0, spy_after_hours_pct: null,
+        for_date: "2026-11-13", day_label: "Fri", is_today: false,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100200, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/Fri \+\$200/)).toBeInTheDocument();
+    expect(screen.queryByText("After hours", { selector: "span" })).toBeNull();
   });
 
   it("keeps idea information out of the Positions table -- it lives in By idea", async () => {

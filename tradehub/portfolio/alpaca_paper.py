@@ -52,6 +52,27 @@ def latest_spy_price(*, session=requests, book: str | None = None) -> float:
     return latest_price("SPY", session=session, book=book)
 
 
+def latest_qqq_price(*, session=requests, book: str | None = None) -> float:
+    return latest_price("QQQ", session=session, book=book)
+
+
+def stock_bars(symbol: str, timeframe: str, start: str, end: str, *, session=requests,
+               book: str | None = None) -> list[dict]:
+    """Historical bars for one symbol over [start, end] (ISO timestamps),
+    oldest first, following the data API's pagination. IEX feed, matching
+    the snapshots read. Used by the QQQ snapshot backfill."""
+    out: list[dict] = []
+    params: dict = {"timeframe": timeframe, "start": start, "end": end,
+                    "feed": "iex", "adjustment": "raw", "sort": "asc", "limit": 10000}
+    while True:
+        data = _get(DATA_BASE + f"/v2/stocks/{symbol}/bars", params, session, book)
+        out.extend((data or {}).get("bars") or [])
+        token = (data or {}).get("next_page_token")
+        if not token:
+            return out
+        params = {**params, "page_token": token}
+
+
 def latest_snapshots(symbols: list[str], *, session=requests,
                      book: str | None = None) -> dict[str, dict]:
     """Batched stock snapshots: the latest trade price and today's daily
@@ -66,12 +87,18 @@ def latest_snapshots(symbols: list[str], *, session=requests,
     for symbol, snap in (data or {}).items():
         trade = (snap or {}).get("latestTrade") or {}
         bar = (snap or {}).get("dailyBar") or {}
+        prev_bar = (snap or {}).get("prevDailyBar") or {}
+        try:
+            prev_close = float(prev_bar["c"])
+        except (KeyError, TypeError, ValueError):
+            prev_close = None
         try:
             out[symbol] = {
                 "price": float(trade["p"]),
                 "trade_at": str(trade.get("t", "")),
                 "day_close": float(bar["c"]),
                 "day": str(bar.get("t", ""))[:10],
+                "prev_close": prev_close,
             }
         except (KeyError, TypeError, ValueError):
             continue

@@ -1,23 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
 
 import { adminJson, ApiError } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
   contractLabel,
+  fmtPct,
+  fmtUsd,
   orderDetailLabel,
   orderLabel,
   type ActivityOrder,
   type ActivityPayload,
+  type ClosedPayload,
   type ManualAction,
 } from "@/lib/paperPortfolio";
-import { Box, pollWhileVisible, price, REFRESH_MS } from "./shared";
+import { Box, money, pollWhileVisible, price, REFRESH_MS } from "./shared";
 
 /** Tab 3: Trade (2026-11-12 redesign). Manual actions at the top, the
  * order ticket open on the page (Single and Combo tabs inside it), then
- * staged orders, recent orders and closed activity as full lists --
+ * staged orders, recent orders and closed trades as full lists --
  * nothing opens in a pop-up. */
 
 export default function TradeTab({ book }: { book: string }) {
@@ -27,7 +30,118 @@ export default function TradeTab({ book }: { book: string }) {
       <OrderForm book={book} />
       <StagedOrders book={book} />
       <OrdersBox book={book} />
+      <ClosedTradesBox book={book} />
     </div>
+  );
+}
+
+/** Sortable table headers for the Trade lists, the BookTab pattern
+ * (Claude's #514 review): click to sort, click again to reverse; unknown
+ * values stay last in both directions. */
+type SortState<K extends string> = { key: K; desc: boolean };
+
+function compareVals(x: number | string | null | undefined, y: number | string | null | undefined): number {
+  if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+  return typeof x === "string" ? x.localeCompare(String(y)) : Number(x) - Number(y);
+}
+
+function sortRows<T, K extends string>(rows: T[], sort: SortState<K> | null,
+                                       read: (row: T, key: K) => number | string | null | undefined): T[] {
+  if (!sort) return rows;
+  return [...rows].sort((a, b) => {
+    const x = read(a, sort.key), y = read(b, sort.key);
+    const base = compareVals(x, y);
+    // compareVals places nulls last; flip only a real value comparison.
+    return sort.desc && x != null && y != null ? -base : base;
+  });
+}
+
+function SortHead<K extends string>({ label, sortKey, sort, onSort, align = "left" }: {
+  label: string; sortKey: K; sort: SortState<K> | null;
+  onSort: (key: K) => void; align?: "left" | "right";
+}) {
+  const active = sort?.key === sortKey;
+  return (
+    <th scope="col" aria-sort={active ? (sort.desc ? "descending" : "ascending") : "none"}
+        className={`py-1 pr-3 font-medium ${align === "right" ? "text-right" : ""}`}>
+      <button type="button" onClick={() => onSort(sortKey)}
+              className="inline-flex items-center gap-0.5 rounded hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
+        {label}
+        {active && (sort.desc ? <ArrowDown className="h-3 w-3" aria-hidden="true" /> : <ArrowUp className="h-3 w-3" aria-hidden="true" />)}
+      </button>
+    </th>
+  );
+}
+
+function nextSort<K extends string>(sort: SortState<K> | null, key: K): SortState<K> {
+  return { key, desc: sort?.key === key ? !sort.desc : true };
+}
+
+/** Every closed trade on this book, newest exit first — the full list the
+ * spec puts under the ticket (the Performance tab carries the same list
+ * with its range stats; here it is the complete record). */
+type ClosedSortKey = "exited_at" | "symbol" | "idea" | "qty" | "entry" | "exit" | "return" | "pnl";
+const CLOSED_READERS: Record<ClosedSortKey, (t: ClosedPayload["trades"][number]) => number | string | null> = {
+  exited_at: (t) => t.exited_at, symbol: (t) => t.symbol, idea: (t) => t.idea,
+  qty: (t) => t.qty, entry: (t) => t.entry_price, exit: (t) => t.exit_price,
+  return: (t) => t.return_pct, pnl: (t) => t.pnl,
+};
+
+function ClosedTradesBox({ book }: { book: string }) {
+  const { data, loading } = useApi<ClosedPayload>(`/api/portfolio/closed?book=${book}`, REFRESH_MS);
+  const [sort, setSort] = useState<SortState<ClosedSortKey> | null>({ key: "exited_at", desc: true });
+  const trades = useMemo(
+    () => sortRows(Array.isArray(data?.trades) ? data.trades : [], sort, (t, k) => CLOSED_READERS[k](t)),
+    [data, sort]);
+  const total = trades.reduce((a, t) => a + t.pnl, 0);
+  const head = (key: ClosedSortKey, label: string, align: "left" | "right" = "left") => (
+    <SortHead label={label} sortKey={key} sort={sort} align={align}
+              onSort={(k) => setSort((s) => nextSort(s, k))} />
+  );
+  return (
+    <Box title={`Closed trades · ${trades.length}`}
+         right={trades.length > 0
+           ? <span className="text-xs tabular-nums text-slate-400">Total {fmtUsd(total, { signed: true })}</span>
+           : undefined}>
+      {loading && trades.length === 0 ? (
+        <p className="text-sm text-slate-400">Reading closed trades…</p>
+      ) : trades.length === 0 ? (
+        <p className="text-sm text-slate-400">No closed trades yet.</p>
+      ) : (
+        <div className="-mx-4 overflow-x-auto px-4">
+          <table className="w-full min-w-[42rem] text-left text-xs tabular-nums">
+            <thead className="text-slate-400">
+              <tr>
+                {head("exited_at", "Exit")}
+                {head("symbol", "Symbol")}
+                {head("idea", "Idea")}
+                {head("qty", "Qty", "right")}
+                {head("entry", "Entry", "right")}
+                {head("exit", "Exit price", "right")}
+                {head("return", "Return", "right")}
+                {head("pnl", "P&L", "right")}
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((t, i) => (
+                <tr key={`${t.symbol}-${t.exited_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{ctDateTime(t.exited_at)}</td>
+                  <td className="py-1.5 pr-3 font-semibold text-white">{t.symbol}</td>
+                  <td className="max-w-[14rem] truncate py-1.5 pr-3 text-slate-400">{t.idea ?? "—"}</td>
+                  <td className="py-1.5 pr-3 text-right">{t.qty}</td>
+                  <td className="py-1.5 pr-3 text-right">{money(t.entry_price)}</td>
+                  <td className="py-1.5 pr-3 text-right">{money(t.exit_price)}</td>
+                  <td className="py-1.5 pr-3 text-right">{fmtPct(t.return_pct)}</td>
+                  <td className={`py-1.5 text-right font-medium ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                    {fmtUsd(t.pnl, { signed: true })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Box>
   );
 }
 
@@ -41,6 +155,7 @@ function ManualActions({ book }: { book: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let stop: (() => void) | undefined;
     const load = () => {
       adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
         .then((body) => {
@@ -50,16 +165,23 @@ function ManualActions({ book }: { book: string }) {
           }
         })
         .catch((err) => {
-          // 401/403 is the signed-out view; anything else is a failed
-          // read, which shows as one rather than as an empty queue.
+          // A failed read shows as one rather than as an empty queue.
           if (!cancelled && !(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
             setFailed(true);
           }
         });
     };
-    load();
-    const stop = pollWhileVisible(load);
-    return () => { cancelled = true; stop(); };
+    // Signed-in only, gated on /api/admin/me like the order form: a
+    // visitor must not poll the admin endpoint into a 401 every 30 s
+    // (Claude's #514 review).
+    adminJson<{ email: string }>("/api/admin/me")
+      .then(() => {
+        if (cancelled) return;
+        load();
+        stop = pollWhileVisible(load);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
   }, [book]);
 
   if (actions === null) {
@@ -130,8 +252,18 @@ type OpenOrder = {
  * option legs it would not price or size alone. Signed-in only, like the order form:
  * a visitor's read 401s and the box simply never appears. Done/Dismiss are Kevin's
  * clicks; the runner never resolves its own hand-offs. */
+type StagedSortKey = "symbol" | "side" | "type" | "qty" | "price" | "tif" | "status";
+const STAGED_READERS: Record<StagedSortKey, (o: OpenOrder) => number | string | null> = {
+  symbol: (o) => o.symbol, side: (o) => o.side, type: (o) => o.type, qty: (o) => o.qty,
+  price: (o) => o.stop_price ?? o.limit_price, tif: (o) => o.time_in_force, status: (o) => o.status,
+};
+
 function StagedOrders({ book }: { book: string }) {
   const [orders, setOrders] = useState<OpenOrder[] | null>(null);
+  const [sort, setSort] = useState<SortState<StagedSortKey> | null>(null);
+  const sortedOrders = useMemo(
+    () => (orders === null ? null : sortRows(orders, sort, (o, k) => STAGED_READERS[k](o))),
+    [orders, sort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,21 +278,25 @@ function StagedOrders({ book }: { book: string }) {
     return () => { cancelled = true; stop(); };
   }, [book]);
 
-  if (orders === null) return null;
+  if (orders === null || sortedOrders === null) return null;
   const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
+  const head = (key: StagedSortKey, label: string) => (
+    <SortHead label={label} sortKey={key} sort={sort}
+              onSort={(k) => setSort((s) => nextSort(s, k))} />
+  );
   const table = (
         <div>
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="text-[11px] uppercase tracking-wide text-slate-500">
-                <th className="py-1 pr-3">Symbol</th><th className="py-1 pr-3">Side</th>
-                <th className="py-1 pr-3">Type</th><th className="py-1 pr-3">Qty</th>
-                <th className="py-1 pr-3">Price</th><th className="py-1 pr-3">TIF</th>
-                <th className="py-1">Status</th>
+                {head("symbol", "Symbol")}{head("side", "Side")}
+                {head("type", "Type")}{head("qty", "Qty")}
+                {head("price", "Price")}{head("tif", "TIF")}
+                {head("status", "Status")}
               </tr>
             </thead>
             <tbody>
-              {orders.map((o) => (
+              {sortedOrders.map((o) => (
                 <tr key={o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${o.submitted_at}`} className="border-t border-slate-800 text-slate-200">
                   <td className="py-1.5 pr-3 font-medium text-white">{o.symbol}</td>
                   <td className="py-1.5 pr-3">{o.side}</td>
@@ -187,28 +323,40 @@ function StagedOrders({ book }: { book: string }) {
 const STATUS_TONE: Record<string, string> = {
   filled: "text-emerald-400", expired: "text-rose-400", rejected: "text-rose-400", canceled: "text-slate-400",
 };
+type RecentSortKey = "sent" | "order" | "filled" | "avg" | "status" | "from";
+const RECENT_READERS: Record<RecentSortKey, (o: ActivityOrder) => number | string | null> = {
+  sent: (o) => o.submitted_at, order: (o) => o.symbol, filled: (o) => o.filled_qty,
+  avg: (o) => o.filled_avg_price, status: (o) => o.status, from: (o) => o.source,
+};
+
 /** What the broker did with recent orders: an order the hub sent can still expire unfilled. */
 function OrdersBox({ book }: { book: string }) {
   const { data, loading } = useApi<ActivityPayload>(`/api/portfolio/activity?book=${book}`, REFRESH_MS);
   // On a broker-read failure the endpoint answers 200 with state "stale"
   // and an empty list; that must not blank orders already on screen.
   const [lastGood, setLastGood] = useState<ActivityOrder[]>([]);
+  const [sort, setSort] = useState<SortState<RecentSortKey> | null>(null);
   useEffect(() => {
     if (data && data.state !== "stale" && Array.isArray(data.recent)) setLastGood(data.recent);
   }, [data]);
   const staleNow = data?.state === "stale";
-  const all: ActivityOrder[] = staleNow ? lastGood : (Array.isArray(data?.recent) ? data.recent : []);
+  const raw: ActivityOrder[] = staleNow ? lastGood : (Array.isArray(data?.recent) ? data.recent : []);
+  const all = useMemo(() => sortRows(raw, sort, (o, k) => RECENT_READERS[k](o)), [raw, sort]);
+  const head = (key: RecentSortKey, label: string, align: "left" | "right" = "left") => (
+    <SortHead label={label} sortKey={key} sort={sort} align={align}
+              onSort={(k) => setSort((s) => nextSort(s, k))} />
+  );
   const table = (list: ActivityOrder[]) => (
         <div className="-mx-4 overflow-x-auto px-4">
           <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">
             <thead className="text-slate-400">
               <tr>
-                <th scope="col" className="py-1 pr-3 font-medium">Sent</th>
-                <th scope="col" className="py-1 pr-3 font-medium">Order</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">Filled</th>
-                <th scope="col" className="py-1 pr-3 text-right font-medium">Avg price</th>
-                <th scope="col" className="py-1 pr-3 font-medium">Status</th>
-                <th scope="col" className="py-1 font-medium">From</th>
+                {head("sent", "Sent")}
+                {head("order", "Order")}
+                {head("filled", "Filled", "right")}
+                {head("avg", "Avg price", "right")}
+                {head("status", "Status")}
+                {head("from", "From")}
               </tr>
             </thead>
             <tbody>
