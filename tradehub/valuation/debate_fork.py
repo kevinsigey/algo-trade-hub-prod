@@ -17,6 +17,8 @@ a band price (or the live price, for watch/pass) voids the verdict — the
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 from tradehub.valuation import exhibit as exhibit_mod
@@ -50,7 +52,11 @@ STRUCTURER_SYSTEM = (
     "pick. The choices are fixed and their prices are the fact sheet's own "
     "numbers, copied exactly: act_at_band_low at the bear band, "
     "act_at_band_mid at the base band, watch and pass at the current price. "
-    "Weights for the five rubric criteria must each be between 0 and 1. The "
+    "The rubric weight keys are exactly: guide_credibility, gap_size, "
+    "direction_momentum, options_expression, falsifier_proximity — each "
+    "between 0 and 1. The choice ids are exactly act_at_band_low, "
+    "act_at_band_mid, watch, pass: watch and pass are two separate choices, "
+    "both at the current price, never a combined choice. The "
     "digest is the whole state (fact sheet + debate) in at most 6000 "
     "characters. Your proposer_pick is your own call — it is logged as a "
     "grading control. Reply with JSON only, matching the schema."
@@ -58,20 +64,28 @@ STRUCTURER_SYSTEM = (
 
 
 class Choice(BaseModel):
-    choice_id: str
+    choice_id: Literal["act_at_band_low", "act_at_band_mid", "watch", "pass"]
     label: str
     price: float
 
 
 class ProposerPick(BaseModel):
-    choice_id: str
-    direction: str  # long | short | none
+    choice_id: Literal["act_at_band_low", "act_at_band_mid", "watch", "pass"]
+    direction: Literal["long", "short", "none"]
     probability: float | None = None
+
+
+class RubricWeights(BaseModel):
+    guide_credibility: float
+    gap_size: float
+    direction_momentum: float
+    options_expression: float
+    falsifier_proximity: float
 
 
 class DecisionPacket(BaseModel):
     choices: list[Choice]
-    rubric_weights: dict[str, float]
+    rubric_weights: RubricWeights
     digest: str
     proposer_pick: ProposerPick
     rationale: str = ""
@@ -92,11 +106,82 @@ def _expected_prices(ex: dict) -> dict[str, float]:
     }
 
 
+_RUBRIC_ALIASES = {"guidance_credibility": "guide_credibility"}
+
+
+def _norm_id(text) -> str:
+    return "_".join(str(text or "").strip().lower().replace("-", " ").split())
+
+
+def _repair_raw(raw):
+    """Deterministic near-miss repairs on the raw reply (A5, 2026-11-11:
+    10 of 10 rendered verdicts void, on a renamed rubric key and on the
+    merged choice 'watch_and_pass'). A repair is allowed only where it
+    invents nothing:
+
+    - rubric keys are spelling-normalized and known aliases mapped; when
+      exactly one canonical key is missing and exactly one unknown key is
+      present, the unknown key's weight stands in for the missing one.
+    - a 'watch_and_pass' choice expands into 'watch' and 'pass' at its own
+      price -- both are priced at the live price by construction, and the
+      price check below still voids the packet if that price is wrong.
+      A 'watch_and_pass' proposer pick maps to 'watch' only when its
+      direction is 'none' (both halves are directionless); a directional
+      merged pick is ambiguous and still voids.
+    Anything else is left exactly as filed and fails validation as before."""
+    if not isinstance(raw, dict):
+        return raw
+    raw = dict(raw)
+    choices = raw.get("choices")
+    if isinstance(choices, list):
+        expanded: list = []
+        for choice in choices:
+            if isinstance(choice, dict):
+                cid = _norm_id(choice.get("choice_id"))
+                if cid == "watch_and_pass":
+                    for half, label in (("watch", "Watch"), ("pass", "Pass")):
+                        expanded.append({**choice, "choice_id": half,
+                                         "label": label})
+                    continue
+                choice = {**choice, "choice_id": cid}
+            expanded.append(choice)
+        seen: set = set()
+        deduped: list = []
+        for choice in expanded:
+            cid = choice.get("choice_id") if isinstance(choice, dict) else None
+            if cid is not None:
+                if cid in seen:
+                    continue
+                seen.add(cid)
+            deduped.append(choice)
+        raw["choices"] = deduped
+    pick = raw.get("proposer_pick")
+    if isinstance(pick, dict):
+        pid = _norm_id(pick.get("choice_id"))
+        if pid == "watch_and_pass":
+            if (pick.get("direction") or "none") == "none":
+                raw["proposer_pick"] = {**pick, "choice_id": "watch"}
+        else:
+            raw["proposer_pick"] = {**pick, "choice_id": pid}
+    weights = raw.get("rubric_weights")
+    if isinstance(weights, dict):
+        norm: dict = {}
+        for key, val in weights.items():
+            nk = _RUBRIC_ALIASES.get(_norm_id(key), _norm_id(key))
+            norm[nk] = val
+        missing = [k for k in RUBRIC_KEYS if k not in norm]
+        unknown = [k for k in norm if k not in RUBRIC_KEYS]
+        if len(missing) == 1 and len(unknown) == 1:
+            norm[missing[0]] = norm.pop(unknown[0])
+        raw["rubric_weights"] = norm
+    return raw
+
+
 def validate_packet(raw, ex: dict) -> dict:
     """Validate + normalize a structurer reply against Exhibit A. Returns the
     packet as a plain dict (weights normalized to sum 1, digest capped)."""
     try:
-        packet = DecisionPacket.model_validate(raw)
+        packet = DecisionPacket.model_validate(_repair_raw(raw))
     except Exception as exc:  # noqa: BLE001
         raise PacketInvalid(f"packet does not fit the contract: {exc}") \
             from exc
@@ -115,10 +200,11 @@ def validate_packet(raw, ex: dict) -> dict:
         raise PacketInvalid(
             f"choices must be exactly {sorted(expected)}, got {sorted(seen)}")
     weights = {}
+    rubric = packet.rubric_weights.model_dump()
     for key in RUBRIC_KEYS:
-        if key not in packet.rubric_weights:
+        if key not in rubric:
             raise PacketInvalid(f"rubric weight {key} missing")
-        val = float(packet.rubric_weights[key])
+        val = float(rubric[key])
         if not 0.0 <= val <= 1.0:
             raise PacketInvalid(f"rubric weight {key}={val} outside [0, 1]")
         weights[key] = val
