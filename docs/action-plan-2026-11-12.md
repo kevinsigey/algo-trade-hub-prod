@@ -6,7 +6,11 @@ list Muse can finish. This file is that list.
 **Nov 12 update:** steps 1 and 4 merged (#499, #501). Step 2 is in review (#500: two fixes, then Kevin's go on the migration). Step 5, the Portfolio redesign, was added after Kevin asked whether the plan covered everything he'd asked for. It hadn't: the first version was built from the backlog, which predates the Portfolio review. It **replaces the ordering** in the "Prompt for Muse" in
 `review-backlog-2026-11-12.md`; that file still has the full detail for each numbered item.
 
-## Where things stand (checked Nov 12 against `origin/main`, GitHub and the live site)
+## Status, Nov 12 20:45 UTC
+- Merged: steps 1–4 (#499, #500, #501, #505), 6 (#502), the page-load fix #504, and step 5 part 1 (#506). #500, #504, #505 and #506 merged without Claude's review.
+- **Blocking: #500's runner can never trade** (gas decisions are written only after their window closes). Fix spec: the #500 comment of Nov 12, 20:08 UTC. Do this before the rest of step 5.
+
+## Where things stood (checked Nov 12 against `origin/main`, GitHub and the live site)
 
 - **Merged:** everything in the backlog's "In flight" table (#484–#489), plus #493–#496. This PR moves those
   rows to Done.
@@ -63,12 +67,16 @@ Agent debates; and whether Screening becomes a tracked idea.
 ## Done means (every step)
 1. Tests are written first; there's no network in CI (stub Alpaca and Kalshi); Python, Vitest and tsc all pass.
 2. CodeRabbit is requested. If it's rate limited, say so on the PR and Claude reviews instead.
+   **Merge rule (Kevin, Nov 12, 20:11 UTC): no PR merges until Claude posts a review saying it's ready to merge.** This
+   replaces "keep going without waiting" and the rate-limit rule for merges. Keep building the next step in a new PR
+   while you wait, as long as it doesn't touch the open PR's files.
 3. Any migration waits for Kevin's go, is recorded in `docs/superpowers/plans/migrations-applied.md`, and is
    applied before the code that needs it merges.
 4. The step's status is updated in `review-backlog-2026-11-12.md` in the same PR.
 5. After the deploy, check the change on the live site (an endpoint or page) and quote the result in the PR.
 
 ## Hard rules
+- Never merge without Claude's ready-to-merge review (see "Done means" item 2).
 - No live Kalshi orders, anywhere. Demo only, enforced in code.
 - Never change a live model in place: add a new shadow version beside it, preregistered first.
 - Don't touch the live 15-minute rule, the blend's frozen rows, shadow scoring, or the Alpaca paper-order path.
