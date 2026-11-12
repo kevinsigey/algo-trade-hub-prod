@@ -254,12 +254,21 @@ class KalshiPortfolio:
         return self._get("/portfolio/balance")
 
     def get_positions(self, limit=200):
-        """Get all open positions."""
+        """Get all open positions (fail-soft: [] when the read fails)."""
         data = self._get("/portfolio/positions", params={"limit": limit})
         if data:
             positions = data.get('market_positions', data.get('positions', []))
             return positions
         return []
+
+    def get_positions_strict(self, limit=200):
+        """Same read, but a failed request raises instead of reading as an
+        empty book -- for callers that must not report 'no positions' when
+        the read never landed."""
+        data = self._get("/portfolio/positions", params={"limit": limit})
+        if data is None:
+            raise RuntimeError("Kalshi positions read failed")
+        return data.get('market_positions', data.get('positions', []))
 
     def get_settlements(self, limit=50):
         """Get recent settlements (closed positions and payouts)."""

@@ -535,6 +535,37 @@ def get_portfolio(book: str = "main", supabase=Depends(get_supabase)):
         raise _table_fault(service.SNAPSHOTS, exc) from exc
 
 
+@app.get("/api/kalshi-demo", tags=["Portfolio"])
+def get_kalshi_demo(supabase=Depends(get_supabase)):
+    """The Kalshi DEMO book behind the Portfolio page's third tab: the live
+    demo balance and positions (cached ~15s in kalshi_demo.live_summary)
+    plus the demo runner's own record against the shadow record for the
+    same decisions. Read-only -- the runner is the only writer, and
+    `book=kalshi` never reaches the Alpaca handler above."""
+    from tradehub import kalshi_demo
+    from tradehub.core.kalshi_portfolio import (
+        KalshiPortfolio,
+        NotDemoHostError,
+        check_portfolio_available,
+    )
+
+    if not check_portfolio_available():
+        return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
+    try:
+        portfolio = KalshiPortfolio()
+        # The tab is labelled demo; never serve a live host's balances or
+        # positions under that label. The guard runs before any account
+        # read (build_report is unreachable unless it passes).
+        portfolio.assert_demo_host()
+    except (ValueError, NotDemoHostError):
+        return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
+    try:
+        return kalshi_demo.build_report(
+            supabase, portfolio, datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        raise _table_fault(kalshi_demo.ORDERS, exc) from exc
+
+
 @app.get("/api/admin/me", tags=["Admin"])
 def get_admin_me(user: dict = Depends(admin.require_admin)) -> dict:
     """Kevin's session, confirmed server-side. The Workshop's routes use the same dependency."""
