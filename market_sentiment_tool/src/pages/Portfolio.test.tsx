@@ -543,6 +543,62 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
     expect(screen.queryByText("-10.01")).toBeNull();
   });
 
+  it("keys position rows by symbol and idea, so duplicate tickers warn about nothing", async () => {
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args); });
+    try {
+      // No aggregate on this payload: the fallback slice path feeds the
+      // tables, and the same ticker appears once per holding idea. (The
+      // two slices move opposite ways so Today's movers lists each in a
+      // different list — this test is about the positions rows' keys.)
+      serve(payload({
+        scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+        positions: [
+          slice("GLD", "Gold"), slice("GLD", "Rates hedge", { day_pl: 44 }),
+          { symbol: "Cash", qty: null, side: null, market_value: 81000, pct_of_book: 81, unrealized_pl: null, idea: null },
+        ],
+      }));
+      page(<Portfolio />);
+      expect(await screen.findByText("Positions · 2")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Open Positions · 2 in full" }));
+      expect(within(screen.getByRole("dialog", { name: "Positions · 2" })).getAllByText("GLD")).toHaveLength(2);
+      const keyWarnings = errors.filter((a) => String(a[0]).includes("same key"));
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("names each leg's side and quantity in the full orders table", async () => {
+    const activity = {
+      state: "live", as_of: "2026-11-11T20:00:00Z", book: "main", open: [],
+      recent: [{
+        symbol: "", side: "buy", qty: 1, filled_qty: 1, type: "limit", time_in_force: "day",
+        status: "filled", limit_price: 0.31, stop_price: null, filled_avg_price: 0.31,
+        submitted_at: "2026-11-11T15:00:00Z", filled_at: "2026-11-11T15:01:00Z",
+        asset: "option", source: "Machine order",
+        legs: [
+          { symbol: "SPY261111P00750000", side: "buy_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+          { symbol: "SPY261111P00749000", side: "sell_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+        ],
+      }],
+      trades: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/activity")) return new Response(JSON.stringify(activity), { status: 200 });
+      return new Response(JSON.stringify(payload({
+        scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+        positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
+      })), { status: 200 });
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Recent orders in full" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Recent orders" }));
+    expect(dialog.getByText(/buy 1 SPY Nov 11 2026 \$750 put \/ sell 1 SPY Nov 11 2026 \$749 put/)).toBeInTheDocument();
+  });
+
   it("counts every rendered row in the By-idea header, manual ones included", async () => {
     serve(payload({
       scoreboard: { ...EMPTY_SCORE, equity: 100000 },

@@ -106,11 +106,22 @@ export function aggregateToRow(a: AggregatePositionRow): PositionRow {
   };
 }
 
-/** Distinct calendar days in the equity curve. The Sharpe guard counts
+/** Distinct weekdays in the equity curve. The Sharpe guard counts
  * these, not snapshots: intraday snapshots made 65 points out of 8 trading
- * days and let a meaningless Sharpe print (2026-11-12 review). */
+ * days and let a meaningless Sharpe print (2026-11-12 review). Weekends
+ * don't count either — a live point stamped on a Saturday or Sunday is
+ * not a trading day and must not advance the guard. (No holiday
+ * handling: a holiday weekday still counts, as before.) */
 export function curveTradingDays(curve: { t: string }[]): number {
-  return new Set(curve.map((p) => (p.t ?? "").slice(0, 10))).size;
+  const days = new Set<string>();
+  for (const p of curve) {
+    const day = (p.t ?? "").slice(0, 10);
+    if (!day) continue;
+    const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    days.add(day);
+  }
+  return days.size;
 }
 
 export interface PortfolioPayload {
@@ -314,6 +325,26 @@ export function orderLabel(o: ActivityOrder): string {
       .join(" / ");
   }
   return o.symbol ? (contractLabel(o.symbol) ?? o.symbol) : "—";
+}
+
+/** The full orders table's label: for a multi-leg order, each leg's own
+ * side and quantity ride with the leg ("buy 1 SPY Nov 11 2026 $750 put /
+ * sell 1 SPY Nov 11 2026 $749 put"), so a spread and its reverse read
+ * differently — the compact list's orderLabel alone cannot tell them
+ * apart. A plain order reads as its orderLabel, unchanged. */
+export function orderDetailLabel(o: ActivityOrder): string {
+  if (o.legs && o.legs.length > 0) {
+    return o.legs
+      .map((l) => {
+        const name = l.symbol ? (contractLabel(l.symbol) ?? l.symbol) : "—";
+        const verb = (l.side ?? "").split("_")[0];
+        const qty = l.ratio_qty ?? l.qty;
+        return [verb || null, qty != null ? String(qty) : null, name]
+          .filter(Boolean).join(" ");
+      })
+      .join(" / ");
+  }
+  return orderLabel(o);
 }
 
 /** Keeps the given order, but moves each option leg directly under its underlying's row. */

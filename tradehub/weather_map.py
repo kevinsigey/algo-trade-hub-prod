@@ -125,3 +125,39 @@ def build_weather_map(*, forecasts: Sequence[Mapping[str, Any]],
                                      "brier_market": acc["market"] / acc["n"]}
     return {"cities": [c for c in cities.values()
                        if c["high"] or c["low"] or c["rain"] or c["record"]]}
+
+
+def _read_pages(supabase, table: str, build, *, order: str, desc: bool = False,
+                cap: int) -> list[dict]:
+    """Ordered .range() pages up to `cap` rows -- the api module's
+    _fetch_all contract, kept local so this module stays importable by
+    the hourly job without pulling in the FastAPI app."""
+    rows: list[dict] = []
+    lo, page = 0, 1000
+    while len(rows) < cap:
+        query = build(supabase.table(table).select("*")).order(order, desc=desc)
+        chunk = query.range(lo, min(lo + page, cap) - 1).execute().data or []
+        rows.extend(chunk)
+        if len(chunk) < page:
+            break
+        lo += page
+    return rows[:cap]
+
+
+def compose_weather_map(supabase) -> dict[str, Any]:
+    """The /api/weather/map payload: the endpoint's reads, moved here so
+    the hourly precompute builds the identical payload. Raises whatever
+    the reads raise -- the endpoint maps that to its 503, the precompute
+    records a failure."""
+    names = ("weather_high", "weather_low", "weather_rain",
+             "kalshi_implied_weather_high", "kalshi_implied_weather_low", "kalshi_implied_weather_rain",
+             "baseline_climatology_weather_high", "baseline_climatology_weather_low",
+             "baseline_climatology_weather_rain")
+    forecasts = _read_pages(
+        supabase, "journal_forecasts",
+        lambda q: q.in_("forecaster", list(names)),
+        order="frozen_at", desc=True, cap=6000)
+    settlements = _read_pages(
+        supabase, "journal_settlements", lambda q: q, order="target", cap=100_000)
+    outcomes = {s["target"]: s["outcome"] for s in settlements if s.get("outcome") is not None}
+    return build_weather_map(forecasts=forecasts, settlements=outcomes)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateToRow, curveTradingDays, dayMovers, fmtPct, fmtPts, fmtUsd, ideaScorecard, orderLabel, stateLabel, type PositionRow } from "@/lib/paperPortfolio";
+import { aggregateToRow, curveTradingDays, dayMovers, fmtPct, fmtPts, fmtUsd, ideaScorecard, orderDetailLabel, orderLabel, stateLabel, type PositionRow } from "@/lib/paperPortfolio";
 
 describe("paper portfolio formatting", () => {
   it("shows unknown as a dash, never zero", () => {
@@ -106,6 +106,36 @@ describe("curve trading days and order labels (2026-11-12 fixes)", () => {
     });
     expect(row).toMatchObject({ symbol: "GLD", qty: 52, avg_price: 355, pct_of_book: 19,
                                 day_pl: -88, idea: null, sector: "Commodities (Gold)" });
+  });
+
+  it("counts weekdays only, so a weekend live point can't advance the Sharpe guard", () => {
+    // Fri Nov 6, Sat Nov 7, Sun Nov 8, Mon Nov 9 2026: four calendar
+    // days on the curve, but only two trading days.
+    const curve = ["2026-11-06", "2026-11-07", "2026-11-08", "2026-11-09"]
+      .map((d) => ({ t: `${d}T15:00:00Z`, portfolio_pct: 0, spy_pct: 0 }));
+    expect(curveTradingDays(curve)).toBe(2);
+  });
+
+  it("names each leg's side and quantity in the full orders table label", () => {
+    const base = { side: "buy", qty: 1, filled_qty: 1, type: "limit", time_in_force: "day",
+                   status: "filled", limit_price: 0.31, stop_price: null, filled_avg_price: 0.31,
+                   submitted_at: null, filled_at: null, asset: "option" as const, source: "Machine order" };
+    const spread = { ...base, symbol: null as unknown as string, legs: [
+      { symbol: "SPY261111P00750000", side: "buy_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+      { symbol: "SPY261111P00749000", side: "sell_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+    ] };
+    expect(orderDetailLabel(spread)).toBe(
+      "buy 1 SPY Nov 11 2026 $750 put / sell 1 SPY Nov 11 2026 $749 put");
+    // The reverse spread must read differently: sides ride with the legs.
+    const reversed = { ...spread, legs: [
+      { symbol: "SPY261111P00750000", side: "sell_to_close", ratio_qty: 1, qty: 1, filled_qty: 1 },
+      { symbol: "SPY261111P00749000", side: "buy_to_close", ratio_qty: 1, qty: 1, filled_qty: 1 },
+    ] };
+    expect(orderDetailLabel(reversed)).toBe(
+      "sell 1 SPY Nov 11 2026 $750 put / buy 1 SPY Nov 11 2026 $749 put");
+    expect(orderDetailLabel(reversed)).not.toBe(orderDetailLabel(spread));
+    // A plain order's detail label is its symbol label, unchanged.
+    expect(orderDetailLabel({ ...base, symbol: "GLD" })).toBe("GLD");
   });
 
   it("names a multi-leg order by its legs and a plain order by its symbol", () => {
