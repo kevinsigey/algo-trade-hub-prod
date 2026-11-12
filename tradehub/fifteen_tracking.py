@@ -160,6 +160,90 @@ def _promoted_decision(tick: dict | None, *, ref: str) -> tuple[dict[str, Any], 
     return ev, round(float(tick["prob_up"]), 5)
 
 
+_SKIP_NO_READ = {"side": None, "cost": None, "edge_net": None, "best_edge_net": None}
+
+
+def _oil_promoted(name: str, live_gate: bool, gate_version: str, gate_since) -> bool:
+    return (live_gate and gate_version == "v2-oil" and gate_since is not None
+            and name in ("oil_wti_15m", "oil_brent_15m"))
+
+
+def gate_branch(window_open: datetime, *, promoted: bool, gate_since: datetime | None,
+                blend_since: datetime | None) -> str:
+    """Which gate owns a window: the blend from its flip -- checked first, it is
+    the pooled, later gate and owns its windows outright (preregistration
+    2026-11-11) -- then the promoted oil gate from its flip (2026-11-09), else v1."""
+    if blend_since is not None and window_open >= blend_since:
+        return "v2-blend"
+    if promoted and window_open >= gate_since:
+        return "v2-oil"
+    return "v1"
+
+
+def _minute1_ticks(supa, series: str, targets: list[dict]) -> dict[str, dict]:
+    """close_time -> the minute-1 tick the promoted oil gate reads, per window."""
+    by_close: dict[str, list[dict]] = {}
+    for tk in fetch_ticks(supa, series, [_iso(t["cutoff_at"]) for t in targets]):
+        by_close.setdefault(_iso(tk["close_time"]), []).append(tk)
+    return {ct: b[1] for ct, rs in by_close.items() if 1 in (b := _tick_buckets(rs))}
+
+
+def decide_window(supa, name: str, version: str, t: dict, *, branch: str,
+                  frozen: dict | None, tick: dict | None, outcome: int | None,
+                  now: datetime, candles_fn) -> dict[str, Any]:
+    """One window's gated decision row under the gate that owns it: the buy, or
+    the skip and why. The single decision both the record pass and the demo
+    runner act on, so what is traded is what is recorded."""
+    series = _BY_NAME[name]["series"]
+    target = t["target"]
+    close_time = _dt(t["cutoff_at"])
+    window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
+    freeze_ref = (window_open + timedelta(minutes=5)).isoformat()
+    if branch == "v2-blend":
+        # The decision is the day's earned weight applied to the frozen read.
+        # A window with no forecast is the blend's own no_prediction skip,
+        # never a fall-through to a superseded gate.
+        if frozen is not None:
+            ev, model_prob = _blend_decision(supa, name, version, frozen, window_open, now)
+            ref = frozen_at = frozen["frozen_at"]
+        else:
+            ev = {"action": "skip", "reason": "no_prediction", **_SKIP_NO_READ}
+            ref, model_prob, frozen_at = freeze_ref, None, None
+    elif branch == "v2-oil":
+        # The variant is the live oil gate from the flip: the decision is read
+        # off the minute-1 tick.
+        ref = frozen["frozen_at"] if frozen is not None else freeze_ref
+        ev, model_prob = _promoted_decision(tick, ref=ref)
+        frozen_at = (window_open + timedelta(minutes=1)).isoformat()
+    elif frozen is not None:
+        pay = frozen.get("payload") or {}
+        ev = rule.evaluate(float(frozen["probability"]), yes_ask=pay.get("yes_ask"),
+                           yes_bid=pay.get("yes_bid"), frozen_at=frozen["frozen_at"])
+        ref, model_prob = frozen["frozen_at"], round(float(frozen["probability"]), 5)
+        frozen_at = frozen["frozen_at"]
+    else:
+        # No forecast was frozen. Re-check the tape at the freeze moment to name the
+        # gap honestly: a tape that could have read is a forecaster miss, not stale data.
+        tape = candles_fn(SERIES_COINS[series], window_open - TAPE_SPAN,
+                          window_open + timedelta(minutes=6))
+        read = read_window(close_time, tape, window_open + timedelta(minutes=5)) if tape else None
+        ev = {"action": "skip", "reason": "no_prediction" if read else "stale_tape",
+              **_SKIP_NO_READ}
+        ref, model_prob, frozen_at = freeze_ref, None, None
+    return {
+        "series": series, "target": target,
+        "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
+        "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
+        "frozen_at": frozen_at,
+        "session": "open" if rule.futures_open(ref) else "closed",
+        "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
+        "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
+        "best_edge_net": ev["best_edge_net"], "outcome": outcome,
+        "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
+               if ev["action"] == "buy" and outcome is not None else None,
+        "evaluated_at": now.isoformat(), "gate_version": branch}
+
+
 def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelta = LOOKBACK,
                      series_set=None, live_gate: bool = True) -> dict[str, Any]:
     """One gated decision per targeted window in the lookback: the buy, or the skip and why.
@@ -174,110 +258,22 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
     blend_since = _blend_gate(supa)
     for name, version, _label in (rule.SERIES if series_set is None else series_set):
         series = _BY_NAME[name]["series"]
-        coin = SERIES_COINS[series]
         targets = fetch_targets(supa, name, now - lookback, now)
         if not targets:
             continue
         names = [t["target"] for t in targets]
         first = _first_forecasts(supa, name, version, names)
         settled = store.fetch_settlements(supa, names)
-        promoted = (live_gate and gate_version == "v2-oil" and gate_since is not None
-                    and name in ("oil_wti_15m", "oil_brent_15m"))
-        tick_buckets: dict[str, dict[int, dict]] = {}
-        if promoted:
-            by_close: dict[str, list[dict]] = {}
-            for tk in fetch_ticks(supa, series, [_iso(t["cutoff_at"]) for t in targets]):
-                by_close.setdefault(_iso(tk["close_time"]), []).append(tk)
-            tick_buckets = {ct: _tick_buckets(rs) for ct, rs in by_close.items()}
+        promoted = _oil_promoted(name, live_gate, gate_version, gate_since)
+        ticks = _minute1_ticks(supa, series, targets) if promoted else {}
         for t in targets:
-            target = t["target"]
-            close_time = _dt(t["cutoff_at"])
-            window_open = close_time - timedelta(minutes=WINDOW_MINUTES)
-            frozen = first.get(target)
-            stamp = "v1"
-            if blend_since is not None and window_open >= blend_since:
-                # The blend is the live gate from its flip, for every series
-                # (preregistration 2026-11-11): the decision is the day's
-                # earned weight applied to the frozen read, stamped with
-                # its version. Checked before the oil gate's own flip --
-                # the blend is the pooled, later gate, and it owns its
-                # windows outright: a window with no forecast is its
-                # no_prediction skip, never a fall-through to a superseded
-                # gate.
-                if frozen is not None:
-                    ev, model_prob = _blend_decision(supa, name, version, frozen,
-                                                     window_open, now)
-                    ref, frozen_at = frozen["frozen_at"], frozen["frozen_at"]
-                else:
-                    ev = {"action": "skip", "reason": "no_prediction", "side": None,
-                          "cost": None, "edge_net": None, "best_edge_net": None}
-                    ref = (window_open + timedelta(minutes=5)).isoformat()
-                    model_prob = frozen_at = None
-                outcome = settled.get(target)
-                rows.append({
-                    "series": series, "target": target,
-                    "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
-                    "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
-                    "frozen_at": frozen_at,
-                    "session": "open" if rule.futures_open(ref) else "closed",
-                    "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
-                    "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
-                    "best_edge_net": ev["best_edge_net"], "outcome": outcome,
-                    "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
-                           if ev["action"] == "buy" and outcome is not None else None,
-                    "evaluated_at": now.isoformat(), "gate_version": "v2-blend"})
-                continue
-            if promoted and window_open >= gate_since:
-                # The variant is the live oil gate from the flip: the decision
-                # is read off the minute-1 tick, stamped with its version.
-                ref = (frozen["frozen_at"] if frozen is not None
-                       else (window_open + timedelta(minutes=5)).isoformat())
-                ev, model_prob = _promoted_decision(
-                    tick_buckets.get(_iso(t["cutoff_at"]), {}).get(1), ref=ref)
-                frozen_at = (window_open + timedelta(minutes=1)).isoformat()
-                stamp = "v2-oil"
-                outcome = settled.get(target)
-                rows.append({
-                    "series": series, "target": target,
-                    "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
-                    "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
-                    "frozen_at": frozen_at,
-                    "session": "open" if rule.futures_open(ref) else "closed",
-                    "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
-                    "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
-                    "best_edge_net": ev["best_edge_net"], "outcome": outcome,
-                    "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
-                           if ev["action"] == "buy" and outcome is not None else None,
-                    "evaluated_at": now.isoformat(), "gate_version": stamp})
-                continue
-            if frozen is not None:
-                pay = frozen.get("payload") or {}
-                ev = rule.evaluate(float(frozen["probability"]), yes_ask=pay.get("yes_ask"),
-                                   yes_bid=pay.get("yes_bid"), frozen_at=frozen["frozen_at"])
-                ref, model_prob = frozen["frozen_at"], round(float(frozen["probability"]), 5)
-                frozen_at = frozen["frozen_at"]
-            else:
-                # No forecast was frozen. Re-check the tape at the freeze moment to name the
-                # gap honestly: a tape that could have read is a forecaster miss, not stale data.
-                tape = candles_fn(coin, window_open - TAPE_SPAN, window_open + timedelta(minutes=6))
-                read = read_window(close_time, tape, window_open + timedelta(minutes=5)) if tape else None
-                ev = {"action": "skip", "reason": "no_prediction" if read else "stale_tape",
-                      "side": None, "cost": None, "edge_net": None, "best_edge_net": None}
-                ref = (window_open + timedelta(minutes=5)).isoformat()
-                model_prob = frozen_at = None
-            outcome = settled.get(target)
-            rows.append({
-                "series": series, "target": target,
-                "ticker": ticker_of(target) if target.startswith("kalshi:") else target,
-                "window_open": window_open.isoformat(), "close_time": close_time.isoformat(),
-                "frozen_at": frozen_at,
-                "session": "open" if rule.futures_open(ref) else "closed",
-                "action": ev["action"], "reason": ev["reason"], "side": ev["side"],
-                "cost": ev["cost"], "model_prob": model_prob, "edge_net": ev["edge_net"],
-                "best_edge_net": ev["best_edge_net"], "outcome": outcome,
-                "pnl": rule.pnl(ev["side"], ev["cost"], outcome)
-                       if ev["action"] == "buy" and outcome is not None else None,
-                "evaluated_at": now.isoformat(), "gate_version": stamp})
+            window_open = _dt(t["cutoff_at"]) - timedelta(minutes=WINDOW_MINUTES)
+            branch = gate_branch(window_open, promoted=promoted, gate_since=gate_since,
+                                 blend_since=blend_since)
+            rows.append(decide_window(
+                supa, name, version, t, branch=branch, frozen=first.get(t["target"]),
+                tick=ticks.get(_iso(t["cutoff_at"])), outcome=settled.get(t["target"]),
+                now=now, candles_fn=candles_fn))
     if rows:
         supa.table(rule.DECISIONS_TABLE).upsert(rows, on_conflict="series,target").execute()
     by_reason: dict[str, int] = {}
@@ -286,6 +282,69 @@ def record_decisions(supa, now: datetime, *, candles_fn=None, lookback: timedelt
             by_reason[r["reason"]] = by_reason.get(r["reason"], 0) + 1
     return {"windows": len(rows), "buy": sum(r["action"] == "buy" for r in rows),
             "skip": sum(r["action"] == "skip" for r in rows), "by_reason": by_reason}
+
+
+OPEN_BUFFER = timedelta(seconds=60)  # the demo runner's cutoff: orders die a minute before close
+
+
+def _blend_weight_persisted(supa, series: str, day) -> bool:
+    """Whether the blend's day weight is already frozen. Read-only: an open
+    window never computes (and so never persists) a weight."""
+    from tradehub import fifteen_blend as blend
+    try:
+        return bool(store.select_all(
+            supa, blend.WEIGHTS_TABLE,
+            lambda q: q.eq("series", series).eq("day", day.isoformat()), ("id",)))
+    except Exception:  # noqa: BLE001 -- unknown is not ready
+        return False
+
+
+def open_decisions(supa, now: datetime, *, series_set=None,
+                   live_gate: bool = True) -> list[dict]:
+    """The decision the record pass will later write, for every calendar window
+    still open -- close in (now + 60s, now + 15 min] -- whose read is already
+    frozen. Read-only, nothing is written.
+
+    The record pass only writes a window once it has closed (fetch_targets up
+    to `now`), so a reader of `fifteen_rule_decisions` can never see an open
+    window's decision; this is that decision, made at freeze time through the
+    same `gate_branch` and `decide_window`. A window with no frozen read yet
+    (no first forecast; for the promoted oil gate, no settled minute-1 tick;
+    for the blend, no persisted day weight) is not a decision and is omitted
+    -- never reported as the record pass's no_prediction/stale_tape skip."""
+    out: list[dict] = []
+    gate_version, gate_since = _live_gate(supa) if live_gate else ("v1", None)
+    blend_since = _blend_gate(supa)
+    lo, hi = now + OPEN_BUFFER, now + timedelta(minutes=WINDOW_MINUTES)
+    for name, version, _label in (rule.SERIES if series_set is None else series_set):
+        series = _BY_NAME[name]["series"]
+        targets = [t for t in fetch_targets(supa, name, lo, hi) if _dt(t["cutoff_at"]) > lo]
+        if not targets:
+            continue
+        first = _first_forecasts(supa, name, version, [t["target"] for t in targets])
+        promoted = _oil_promoted(name, live_gate, gate_version, gate_since)
+        ticks = _minute1_ticks(supa, series, targets) if promoted else {}
+        for t in targets:
+            window_open = _dt(t["cutoff_at"]) - timedelta(minutes=WINDOW_MINUTES)
+            branch = gate_branch(window_open, promoted=promoted, gate_since=gate_since,
+                                 blend_since=blend_since)
+            frozen = first.get(t["target"])
+            tick = ticks.get(_iso(t["cutoff_at"]))
+            if branch == "v2-oil":
+                # Ticks at elapsed [0.5, 1.5) compete for minute 1: before 1.5
+                # a later, closer tick could still change the read.
+                if (now < window_open + timedelta(minutes=1.5)
+                        or tick is None or tick.get("prob_up") is None):
+                    continue
+            elif frozen is None:
+                continue
+            elif branch == "v2-blend" and not _blend_weight_persisted(
+                    supa, series, window_open.date()):
+                continue
+            out.append(decide_window(supa, name, version, t, branch=branch, frozen=frozen,
+                                     tick=tick, outcome=None, now=now,
+                                     candles_fn=_candles_or_empty))
+    return out
 
 
 def _tick_buckets(ticks: list[dict]) -> dict[int, dict]:

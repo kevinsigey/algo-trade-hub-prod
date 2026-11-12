@@ -8,8 +8,10 @@ but demo-api.kalshi.co with KALSHI_ENV=demo places nothing.
 
 Installed on the VPS as a systemd timer firing two minutes after each
 5-minute fifteen_min decision pass (see the PR for the unit files and the
-tradehub-job dispatcher case); the decisions it consumes land on the
-5-minute marks, so +2 min trades the same cycle's freeze.
+tradehub-job dispatcher case); the forecasts it decides on are frozen on
+the 5-minute marks, so +2 min trades the same window's freeze while it is
+still open (fifteen_tracking.open_decisions -- the decisions table only
+gets a window's row after it closes).
 """
 
 from __future__ import annotations
