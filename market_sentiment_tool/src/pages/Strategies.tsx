@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, ChevronDown } from "lucide-react";
 
+import { FifteenDeclineMonitor, type DeclineRow } from "@/components/FifteenDeclineMonitor";
 import { FifteenSettlements } from "@/components/FifteenSettlements";
 import { SniperRecord } from "@/components/SniperRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
@@ -70,6 +71,10 @@ interface FifteenPayload {
   decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
   offsets?: { by_offset: OffsetStat[] };
   shadow?: ShadowBlock;
+  // Per ET day and market, all six series: live rule, blend, vol-regime challenger.
+  decline?: DeclineRow[];
+  volregime?: { fresh?: { trades: number; net_per_contract: number | null; low95: number | null; clustered_low95: number | null };
+                paired?: { windows: number; delta_per_window: number | null; low95: number | null; clustered_low95: number | null } };
   // The metals family (2026-11-09 preregistration): its own record block in
   // the same shape, counted entirely apart from the oil family's above.
   metals?: { prereg_at?: string; ready_trades?: number;
@@ -557,6 +562,26 @@ export default function Strategies() {
               {fifteen.replay && (
                 <p className="mt-2 text-xs text-slate-500">
                   Replay before the rule was fixed: {fifteen.replay.n} trades, {fifteen.replay.net_per_contract == null ? "—" : cents(fifteen.replay.net_per_contract)}. Fills at the quoted price are assumed; paper only.
+                </p>
+              )}
+            </SubDetails>
+          )}
+          {fifteen?.decline && (
+            <SubDetails title="Day by day — v1 rule, blend and vol-regime challenger">
+              <FifteenDeclineMonitor rows={fifteen.decline} />
+              <p className="mt-1 text-xs text-slate-400">
+                All six 15-minute markets, the last two weeks of whole ET days: settled trades and P&amp;L per trade after
+                fees. The v1 rule is the live gate for oil and gas and a record only for metals; the blend and the
+                vol-regime challenger are paper shadows.
+              </p>
+              {fifteen.volregime?.fresh && fifteen.volregime.fresh.trades > 0 && (
+                <p className="mt-1 text-xs tabular-nums text-slate-400">
+                  Vol-regime challenger: {fifteen.volregime.fresh.trades} fresh trades, {fifteen.volregime.fresh.net_per_contract == null ? "—" : cent1(fifteen.volregime.fresh.net_per_contract)} a trade,
+                  low95 {fifteen.volregime.fresh.low95 == null ? "—" : cent1(fifteen.volregime.fresh.low95)}, day-clustered low95 {fifteen.volregime.fresh.clustered_low95 == null ? "—" : cent1(fifteen.volregime.fresh.clustered_low95)}
+                  {fifteen.volregime.paired && fifteen.volregime.paired.windows > 0 && (
+                    <> · against the blend on {fifteen.volregime.paired.windows} windows {fifteen.volregime.paired.delta_per_window == null ? "—" : cent1(fifteen.volregime.paired.delta_per_window)} a window,
+                      low95 {fifteen.volregime.paired.low95 == null ? "—" : cent1(fifteen.volregime.paired.low95)}, day-clustered low95 {fifteen.volregime.paired.clustered_low95 == null ? "—" : cent1(fifteen.volregime.paired.clustered_low95)}</>
+                  )}. The day-clustered figure is informational; the promotion bar is the preregistered one.
                 </p>
               )}
             </SubDetails>

@@ -100,10 +100,14 @@ def earned_weight(triples) -> tuple[float | None, int]:
     return num / den, n
 
 
-def _history_triples(supa, name: str, version: str, before: datetime) -> list[tuple]:
+def _history_triples(supa, name: str, version: str, before: datetime,
+                     tag=None) -> list[tuple]:
     """Every settled (model, market, outcome) triple for one series from
     the forward record's start up to `before`: the first forecast's frozen
-    probability, the mid of its frozen quotes, the settlement."""
+    probability, the mid of its frozen quotes, the settlement. `tag`, when
+    given, appends tag(frozen row) as a fourth element (the volatility-regime
+    challenger tags each window's sigma_1m and splits in memory); the blend
+    itself never passes it."""
     targets = tracking.fetch_targets(supa, name, _HISTORY_DT, before)
     names = [t["target"] for t in targets]
     if not names:
@@ -118,8 +122,8 @@ def _history_triples(supa, name: str, version: str, before: datetime) -> list[tu
         bid, ask = pay.get("yes_bid"), pay.get("yes_ask")
         if bid is None or ask is None:
             continue
-        triples.append((float(frozen["probability"]),
-                        (float(bid) + float(ask)) / 2, settled[target]))
+        triple = (float(frozen["probability"]), (float(bid) + float(ask)) / 2, settled[target])
+        triples.append(triple if tag is None else (*triple, tag(frozen)))
     return triples
 
 

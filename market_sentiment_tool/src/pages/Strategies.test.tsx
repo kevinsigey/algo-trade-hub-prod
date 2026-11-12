@@ -188,6 +188,23 @@ describe("Strategies", () => {
     expect(within(tile!).getByText(/promotes itself at 150 fresh trades with both low ends above zero \(12\/150 so far\)/)).toBeInTheDocument();
   });
 
+  it("puts the decline monitor in the fifteen tile: v1 rule, blend and challenger per day and market", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    const cell = (trades: number, pnl: number | null) => ({ trades, pnl_per_trade: pnl });
+    serve({ "/api/oil/fifteen-rule": { ...base,
+      decline: [{ day: "2026-11-12", series: "Natural gas", live: cell(12, 0.025), blend: cell(4, 0.08), volregime: cell(0, null) }],
+      volregime: { fresh: { trades: 40, net_per_contract: 0.06, low95: 0.01, clustered_low95: -0.03 },
+                   paired: { windows: 300, delta_per_window: 0.01, low95: 0.002, clustered_low95: -0.004 } } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    await within(tile!).findByText("Day by day — v1 rule, blend and vol-regime challenger", { selector: "summary" });
+    const table = within(tile!).getByRole("table", { name: "15-minute decline monitor" });
+    expect(within(table).getByText("+2.5¢")).toBeInTheDocument();
+    expect(within(table).getByText("+8.0¢")).toBeInTheDocument();
+    expect(within(tile!).getByText(/40 fresh trades, \+6\.0¢ a trade,\s+low95 \+1\.0¢, day-clustered low95 −3\.0¢/)).toBeInTheDocument();
+  });
+
   it("adds a metals tile in the same visual form when the fifteen payload carries the metals block", async () => {
     const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
     serve({ "/api/oil/fifteen-rule": { ...base,
