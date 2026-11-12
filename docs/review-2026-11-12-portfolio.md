@@ -103,6 +103,19 @@ nothing moves until a reload.
 - Keep showing the last data while a refetch runs; never flash an empty book.
 - Show "updated 12 s ago" in the header. If a refetch fails, keep the last data and mark it stale.
 - Diff rows by ticker (Positions) and by idea and ticker (By idea), so rows update in place rather than redrawing.
+- **Performance metrics refresh on the same 30-second cycle** (Kevin, Nov 12). Anything that moves with price
+  moves with it:
+  - Header: net liquidation value, today, after hours, and ahead of SPY and QQQ.
+  - Performance tab: the curve's last point is live equity against live SPY and QQQ prices, appended to the stored
+    snapshots and not written back. Return, ahead of each benchmark, drawdown (current and maximum), today's
+    daily-return bar, and P&L by idea and by sector all recompute from that point.
+  - Stats built on daily closes (volatility, Sharpe, beta, best and worst day) include today as a provisional day,
+    marked "today provisional". Its value is fixed by the 4:00 PM ET snapshot and stays put after hours. The
+    after-hours move is shown separately and never enters those figures.
+  - Closed-trade figures (win rate, average win and loss, profit factor, realized by week) change only when a fill
+    lands. Refetch them on the same cycle, but they will usually be unchanged.
+  - Compute it all on the server in the same `/api/portfolio` response, so the header, Positions, By idea and
+    Performance can never disagree with each other.
 - Check the snapshot job's cadence. A 30-second page refresh shows nothing new if the server only re-reads the
   broker every few minutes. If it reads live from Alpaca on each request, rate-limit it on the server (for example,
   cache for 15 seconds).
