@@ -634,7 +634,8 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     pageAt("/portfolio?tab=performance");
-    expect(await screen.findByText("after 1 month")).toBeInTheDocument();
+    // Both day-count guards hold at 8 trading days: Sharpe and beta to SPY.
+    expect(await screen.findAllByText("after 1 month")).toHaveLength(2);
     expect(screen.queryByText("-10.01")).toBeNull();
     expect(screen.getByText("58%")).toBeInTheDocument();
   });
@@ -703,5 +704,76 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
     }));
     page(<Portfolio />);
     expect(await screen.findByText("By idea · 2 ideas")).toBeInTheDocument();
+  });
+});
+
+describe("Portfolio performance tab deepening (2026-11-12 redesign PR 2)", () => {
+  const closedTrade = (over: Record<string, unknown>) => ({
+    symbol: "NVDA", sector: "Technology", qty: 10, entry_price: 100, exit_price: 110,
+    entered_at: "2026-11-08T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+    pnl: 100, return_pct: 10, held_days: 2, idea: "Idea One", ...over,
+  });
+
+  function servePerf() {
+    const main = payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000, max_drawdown_pct: -1, win_rate: 50 },
+      curve: [
+        { t: "2026-11-09T20:00:00Z", portfolio_pct: 1, spy_pct: 0.5 },
+        { t: "2026-11-10T20:00:00Z", portfolio_pct: 0, spy_pct: 0 },
+        { t: "2026-11-11T20:00:00Z", portfolio_pct: 2.02, spy_pct: 1 },
+      ],
+      composition: [{ idea: "Idea One", pct_of_book: 10, unrealized_pl: 40 }],
+      positions: [
+        { symbol: "NVDA", sector: "Technology", qty: 10, side: "long", market_value: 5000, pct_of_book: 5, unrealized_pl: 25, idea: "Idea One" },
+        { symbol: "Cash", qty: null, side: null, market_value: 95000, pct_of_book: 95, unrealized_pl: null, idea: null },
+      ],
+    });
+    const closed = {
+      state: "live", as_of: "2026-11-12T15:00:00Z", book: "main",
+      trades: [
+        closedTrade({}),
+        closedTrade({
+          symbol: "XLE", sector: "Energy", exit_price: 95, exited_at: "2026-11-12T20:00:00Z",
+          pnl: -50, return_pct: -5, held_days: 4, idea: "No idea yet (manual)",
+        }),
+      ],
+      results_split: null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(
+      JSON.stringify(String(url).includes("/api/portfolio/closed") ? closed : main), { status: 200 })));
+  }
+
+  it("renders the deepened panels: daily returns, attribution, split, weeks and the closed list", async () => {
+    servePerf();
+    pageAt("/portfolio?tab=performance");
+    expect(await screen.findByText("Daily returns")).toBeInTheDocument();
+    // Best and worst day from the curve's closes: Nov 11 +2.0%, Nov 10 -1.0%.
+    expect(screen.getByText(/Best/)).toBeInTheDocument();
+    expect(screen.getByText(/Nov 11 \+2\.0%/)).toBeInTheDocument();
+    expect(screen.getByText(/Nov 10 −1\.0%/)).toBeInTheDocument();
+    expect(screen.getByText("Where the return came from")).toBeInTheDocument();
+    expect(screen.getByText("By idea")).toBeInTheDocument();
+    expect(screen.getByText("By sector")).toBeInTheDocument();
+    expect(screen.getByText("Tested ideas vs discretionary, cumulative realized")).toBeInTheDocument();
+    expect(screen.getByText("Realized P&L by week")).toBeInTheDocument();
+    expect(screen.getByText("Closed trades · All")).toBeInTheDocument();
+    // The trade-stats line over the closed list: 2 trades, one win of $100,
+    // one loss of $50, profit factor 2, average hold 3 days.
+    expect(screen.getByText(/2 closed/)).toBeInTheDocument();
+    expect(screen.getByText(/profit factor 2\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/avg hold 3\.0d/)).toBeInTheDocument();
+  });
+
+  it("sorts the closed-trade list by the column clicked", async () => {
+    servePerf();
+    pageAt("/portfolio?tab=performance");
+    const table = await screen.findByRole("table");
+    const dataRows = () => within(table).getAllByRole("row").slice(1);
+    // Default: newest exit first, so the Nov 12 XLE loss leads.
+    expect(dataRows()[0]).toHaveTextContent("XLE");
+    expect(dataRows()[1]).toHaveTextContent("NVDA");
+    fireEvent.click(within(table).getByRole("button", { name: /Sort closed trades by Symbol/ }));
+    expect(dataRows()[0]).toHaveTextContent("NVDA");
+    expect(dataRows()[1]).toHaveTextContent("XLE");
   });
 });

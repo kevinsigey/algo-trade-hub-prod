@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateToRow, curveTradingDays, dayMovers, fmtPct, fmtPts, fmtUsd, ideaScorecard, orderDetailLabel, orderLabel, stateLabel, type PositionRow } from "@/lib/paperPortfolio";
+import { aggregateToRow, betaToSpy, curveTradingDays, dailyReturns, dayMovers, drawdownSeries, fmtPct, fmtPts, fmtUsd, ideaScorecard, isTestedTrade, MANUAL_IDEA, maxDrawdown, orderDetailLabel, orderLabel, pnlByIdea, pnlBySector, realizedByWeek, splitOverTime, stateLabel, tradeStats, tradesInRange, volatilityPct, type ClosedTrade, type PositionRow, type TodaySplit } from "@/lib/paperPortfolio";
 
 describe("paper portfolio formatting", () => {
   it("shows unknown as a dash, never zero", () => {
@@ -147,5 +147,145 @@ describe("curve trading days and order labels (2026-11-12 fixes)", () => {
       { symbol: "SPY261111P00750000", side: "buy_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
       { symbol: "SPY261111P00749000", side: "sell_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
     ] })).toBe("SPY Nov 11 2026 $750 put / SPY Nov 11 2026 $749 put");
+  });
+});
+
+describe("performance derivations (2026-11-12 redesign PR 2)", () => {
+  const pt = (t: string, portfolio_pct: number, spy_pct: number) => ({ t, portfolio_pct, spy_pct });
+  // Curve points at 15:00Z (10:00 ET) and 20:00Z (15:00 ET); the day's last
+  // point is its close. Mon Nov 9 close +1.0/+0.5, Tue Nov 10 close 0/0,
+  // Wed Nov 11 close +2.02/+1.0.
+  const curve = [
+    pt("2026-11-09T15:00:00Z", 0.2, 0.1), pt("2026-11-09T20:00:00Z", 1.0, 0.5),
+    pt("2026-11-10T20:00:00Z", 0.0, 0.0),
+    pt("2026-11-11T20:00:00Z", 2.02, 1.0),
+  ];
+
+  it("differences each trading day's close against the previous close", () => {
+    const daily = dailyReturns(curve, null, new Date("2026-11-12T15:00:00Z"));
+    expect(daily.map((d) => d.date)).toEqual(["2026-11-10", "2026-11-11"]);
+    expect(daily[0].portfolio_pct).toBeCloseTo(-0.9901, 3);
+    expect(daily[0].spy_pct).toBeCloseTo(-0.4975, 3);
+    expect(daily[1].portfolio_pct).toBeCloseTo(2.02, 6);
+    expect(daily[1].spy_pct).toBeCloseTo(1.0, 6);
+    expect(daily.every((d) => !d.provisional)).toBe(true);
+  });
+
+  it("skips weekend points instead of inventing weekend trading days", () => {
+    const withWeekend = [
+      pt("2026-11-13T20:00:00Z", 1.0, 0.5), // Fri close
+      pt("2026-11-14T20:00:00Z", 9.0, 9.0), // Sat live point: not a trading day
+      pt("2026-11-16T20:00:00Z", 2.0, 1.0), // Mon close, differenced off Friday
+    ];
+    const daily = dailyReturns(withWeekend, null, new Date("2026-11-16T21:00:00Z"));
+    expect(daily).toHaveLength(1);
+    expect(daily[0].date).toBe("2026-11-16");
+    expect(daily[0].portfolio_pct).toBeCloseTo(0.9901, 3);
+  });
+
+  it("marks today provisional and, after the close, reads the split's regular-session figures", () => {
+    const withToday = [...curve, pt("2026-11-12T20:30:00Z", 3.03, 1.7)];
+    const now = new Date("2026-11-12T20:30:00Z");
+    const regular = dailyReturns(withToday, null, now);
+    expect(regular[regular.length - 1].date).toBe("2026-11-12");
+    expect(regular[regular.length - 1].provisional).toBe(true);
+    // Pre-close, the provisional day is the live point differenced: +0.99%.
+    expect(regular[regular.length - 1].portfolio_pct).toBeCloseTo(0.9901, 3);
+
+    const split: TodaySplit = {
+      state: "after_hours", prior_close_at: null, close_at: "2026-11-12T21:05:00Z",
+      regular_pl: 150, regular_pct: 1.5, after_hours_pl: 30, after_hours_pct: 0.3,
+      spy_regular_pct: 0.7, spy_after_hours_pct: 0.1,
+    };
+    const afterHours = dailyReturns(withToday, split, now);
+    const last = afterHours[afterHours.length - 1];
+    // The live point carries after-hours moves; the day's close figures win.
+    expect(last.portfolio_pct).toBe(1.5);
+    expect(last.spy_pct).toBe(0.7);
+    expect(last.provisional).toBe(true);
+  });
+
+  it("builds the drawdown series and finds its bottom", () => {
+    const points = [0, 2, 1, 3, -1].map((v, i) => pt(`2026-11-0${i + 1}T20:00:00Z`, v, 0));
+    expect(drawdownSeries(points).map((d) => d.dd_pct)).toEqual([0, 0, -1, 0, -4]);
+    expect(maxDrawdown(points)).toEqual({ pct: -4, at: "2026-11-05T20:00:00Z" });
+    expect(maxDrawdown([])).toEqual({ pct: null, at: null });
+  });
+
+  it("computes volatility and beta from daily returns", () => {
+    const daily = [1, -1, 1, -1].map((p, i) => ({
+      date: `2026-11-0${i + 1}`, portfolio_pct: p, spy_pct: p / 2, provisional: false,
+    }));
+    expect(betaToSpy(daily)).toBeCloseTo(2.0, 6); // the portfolio moves exactly twice SPY
+    expect(volatilityPct(daily)).toBeCloseTo(18.33, 1);
+    expect(volatilityPct(daily.slice(0, 1))).toBeNull();
+    expect(betaToSpy([{ date: "2026-11-01", portfolio_pct: 1, spy_pct: null, provisional: false }])).toBeNull();
+  });
+
+  const trade = (over: Partial<ClosedTrade>): ClosedTrade => ({
+    symbol: "GLD", sector: "Commodities (Gold)", qty: 10, entry_price: 100, exit_price: 110,
+    entered_at: "2026-11-02T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+    pnl: 100, return_pct: 10, held_days: 2, idea: "Idea One", ...over,
+  });
+  const trades = [
+    trade({ pnl: 100, held_days: 2, exited_at: "2026-11-10T20:00:00Z", idea: "Idea One", sector: "Technology", symbol: "NVDA" }),
+    trade({ pnl: -50, held_days: 4, exited_at: "2026-11-12T20:00:00Z", idea: MANUAL_IDEA, sector: "Energy", symbol: "XLE" }),
+    trade({ pnl: 300, held_days: 6, exited_at: "2026-11-17T20:00:00Z", idea: "Idea One", sector: "Technology", symbol: "NVDA" }),
+    trade({ pnl: -50, held_days: 8, exited_at: "2026-11-17T21:00:00Z", idea: MANUAL_IDEA, sector: "Energy", symbol: "XLE" }),
+  ];
+
+  it("splits tested from discretionary by the backend's own rule", () => {
+    expect(isTestedTrade(trades[0])).toBe(true);
+    expect(isTestedTrade(trades[1])).toBe(false);
+    expect(isTestedTrade(trade({ idea: "" }))).toBe(false);
+  });
+
+  it("summarizes closed trades: win rate, average win and loss, profit factor, holding time", () => {
+    const s = tradeStats(trades);
+    expect(s).toEqual({
+      trades: 4, win_rate: 50, avg_win: 200, avg_loss: -50, profit_factor: 4, avg_held_days: 5,
+    });
+    expect(tradeStats([]).win_rate).toBeNull();
+  });
+
+  it("filters trades to the curve ranges the same way the curve slices", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    expect(tradesInRange(trades, "All", now)).toHaveLength(4);
+    expect(tradesInRange(trades, "1W", now).map((t) => t.pnl)).toEqual([-50, 300, -50]);
+    expect(tradesInRange(trades, "YTD", now)).toHaveLength(4);
+  });
+
+  it("merges realized and open P&L by idea and by sector", () => {
+    const byIdea = pnlByIdea(trades, [
+      { idea: "Idea One", unrealized_pl: 40 }, { idea: MANUAL_IDEA, unrealized_pl: -10 },
+    ]);
+    expect(byIdea).toEqual([
+      { key: "Idea One", realized: 400, open: 40, total: 440 },
+      { key: MANUAL_IDEA, realized: -100, open: -10, total: -110 },
+    ]);
+    const rows: PositionRow[] = [
+      { symbol: "GLD", sector: "Commodities (Gold)", qty: 1, side: "long", market_value: 100, pct_of_book: 1, unrealized_pl: 25, idea: null },
+      { symbol: "XLE", sector: "Energy", qty: 1, side: "long", market_value: 100, pct_of_book: 1, unrealized_pl: -30, idea: null },
+    ];
+    expect(pnlBySector(trades, rows)).toEqual([
+      { key: "Technology", realized: 400, open: 0, total: 400 },
+      { key: "Energy", realized: -100, open: -30, total: -130 },
+      { key: "Commodities (Gold)", realized: 0, open: 25, total: 25 },
+    ]);
+  });
+
+  it("accumulates the tested-vs-discretionary split in exit order", () => {
+    expect(splitOverTime([trades[2], trades[0], trades[1]])).toEqual([
+      { t: "2026-11-10T20:00:00Z", tested: 100, discretionary: 0 },
+      { t: "2026-11-12T20:00:00Z", tested: 100, discretionary: -50 },
+      { t: "2026-11-17T20:00:00Z", tested: 400, discretionary: -50 },
+    ]);
+  });
+
+  it("buckets realized P&L by ET week, Monday first", () => {
+    expect(realizedByWeek(trades)).toEqual([
+      { week: "2026-11-09", pnl: 50, trades: 2 },
+      { week: "2026-11-16", pnl: 250, trades: 2 },
+    ]);
   });
 });
