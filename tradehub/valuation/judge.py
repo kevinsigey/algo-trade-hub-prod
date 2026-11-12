@@ -39,6 +39,24 @@ KEV_MODEL = "jaredpalmer/kev-4b"
 KEV_STATE_TOKEN_BUDGET = 6000
 
 _DIRECTIONS = ("long", "short", "none")
+_ACT_CHOICES = ("act_at_band_low", "act_at_band_mid")
+_NO_ACT_CHOICES = ("watch", "pass")
+
+
+def _consistent_direction(choice_id: str, direction: str) -> str:
+    """Kev answers the choice and the direction as two independent
+    questions, so the pair can contradict itself. A watch or pass
+    carries no position: its direction is forced to none. An act
+    choice with direction none is the contradiction the other way --
+    acting needs a side -- so the seat abstains (SeatUnavailable)
+    rather than storing a directionless act."""
+    if choice_id in _NO_ACT_CHOICES:
+        return "none"
+    if choice_id in _ACT_CHOICES and direction == "none":
+        raise SeatUnavailable(
+            f"Kev answered {choice_id} with direction none; an act "
+            "without a direction is not a verdict, so the seat abstains")
+    return direction
 
 
 class SeatUnavailable(Exception):
@@ -191,7 +209,7 @@ class SystemOneClient:
         probability = (decision.get("probabilities") or {}).get(choice_id)
         return {
             "choice_id": choice_id,
-            "direction": dir_choice,
+            "direction": _consistent_direction(choice_id, dir_choice),
             "probability": probability,
             # A decision model generates no text; the rationale stays
             # empty and the judge stamp carries the provenance.
@@ -216,7 +234,12 @@ class KevSeat:
                 "the Kev seat needs an OpenRouter key wired in "
                 "(OPENROUTER_API_KEY); until then the configured seat "
                 "renders no verdicts")
-        return self._client.decide(packet)
+        decision = self._client.decide(packet)
+        # The consistency rule binds the seat, not just the wire
+        # client: any client behind this seat gets the same forcing.
+        return {**decision,
+                "direction": _consistent_direction(
+                    decision["choice_id"], decision["direction"])}
 
 
 def seat_for_env(env: dict | None = None) -> DecisionSeat:
