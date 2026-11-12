@@ -52,6 +52,9 @@ class FakePortfolio:
     def get_order(self, order_id):
         return None
 
+    def get_orders(self, status=None):
+        return []
+
     def get_fills(self, limit=200):
         return self.fills
 
@@ -267,6 +270,60 @@ def test_never_orders_twice():
     kd.run_once(db, pf, NOW)
     kd.run_once(db, pf, NOW)
     assert len(pf.placed) == 1
+
+
+def test_fresh_decision_found_behind_1200_stale_buys():
+    # The decisions query must filter the freshness window itself: an
+    # ascending page of the 1,000 oldest buys would bury the one fresh
+    # decision and the runner would silently place nothing.
+    stale = []
+    for i in range(1200):
+        ticker = f"KXNATGAS15M-26NOV110000-{i:04d}"
+        stale.append(decision(
+            target=f"kalshi:{ticker}", ticker=ticker,
+            close_time=(NOW - timedelta(days=1, minutes=i % 60)).isoformat(),
+            frozen_at=(NOW - timedelta(days=1)).isoformat()))
+    db = seed(DB(), decisions=[*stale, decision()])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    assert pf.placed[0]["ticker"] == TICKER
+
+
+class LostResponsePortfolio(FakePortfolio):
+    """The first create is accepted by the exchange, then its response is
+    lost (a timeout): the order exists, but the runner saw an exception."""
+
+    def __init__(self):
+        super().__init__()
+        self.accepted: list[dict] = []
+        self.create_calls = 0
+
+    def create_order(self, **kw):
+        self.create_calls += 1
+        if self.create_calls == 1:
+            self.accepted.append({"order_id": "ord-lost", "status": "resting",
+                                  "client_order_id": kw["client_order_id"]})
+            raise TimeoutError("response lost after acceptance")
+        return super().create_order(**kw)
+
+    def get_orders(self, status=None):
+        return list(self.accepted)
+
+
+def test_timed_out_placement_is_adopted_not_replaced():
+    db = seed(DB(), decisions=[decision()])
+    pf = LostResponsePortfolio()
+    first = kd.run_once(db, pf, NOW)
+    assert first["placed"] == 0 and pf.create_calls == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "pending" and row.get("kalshi_order_id") is None
+
+    second = kd.run_once(db, pf, NOW + timedelta(minutes=1))
+    assert second["adopted"] == 1
+    assert pf.create_calls == 1  # adopted by client_order_id, never re-placed
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "resting" and row["kalshi_order_id"] == "ord-lost"
 
 
 def test_depth_under_one_skips():

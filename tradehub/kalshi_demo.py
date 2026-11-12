@@ -82,10 +82,15 @@ def size_contracts(balance_usd: float, price: float, pct: float) -> int:
 # -- reads --------------------------------------------------------------------
 
 def _select(supa, table: str, filters: dict, order: str | None = None,
-            desc: bool = False, limit: int = 1000) -> list[dict]:
+            desc: bool = False, limit: int = 1000,
+            gt: dict | None = None, gte: dict | None = None) -> list[dict]:
     query = supa.table(table).select("*")
     for col, val in filters.items():
         query = query.eq(col, val)
+    for col, val in (gt or {}).items():
+        query = query.gt(col, val)
+    for col, val in (gte or {}).items():
+        query = query.gte(col, val)
     if order:
         query = query.order(order, desc=desc)
     rows = query.limit(limit).execute().data or []
@@ -125,7 +130,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     """
     summary: dict[str, Any] = {
         "gate_version": None, "candidates": 0, "other_gate_versions": 0,
-        "placed": 0, "skipped_cap": 0, "skipped_no_depth": 0,
+        "placed": 0, "adopted": 0, "skipped_cap": 0, "skipped_no_depth": 0,
         "cancelled": 0, "settled": 0, "errors": [],
     }
     try:
@@ -143,9 +148,15 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     _reconcile(supa, portfolio, rows, now, summary)
 
     # Fresh gated gas buys, stamped with the live gate's version only.
-    decisions = _select(supa, DECISIONS, {"series": SERIES, "action": "buy"},
-                        order="close_time", limit=1000)
+    # The freshness window is filtered in the query, not in Python: an
+    # ascending page of the 1,000 oldest buys would go blind once the
+    # table outgrows the page (77 buys in the first 6 days -- about 11
+    # weeks), silently placing nothing while looking healthy.
     cutoff = now + CANCEL_BUFFER
+    decisions = _select(supa, DECISIONS, {"series": SERIES, "action": "buy"},
+                        order="close_time", limit=1000,
+                        gt={"close_time": _iso(cutoff)},
+                        gte={"frozen_at": _iso(now - FRESHNESS)})
     fresh = []
     for d in decisions:
         if d.get("gate_version") != version:
@@ -179,6 +190,13 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         existing = by_target.get(target)
         if existing is not None and existing["status"] != "pending":
             continue  # already traded or terminally skipped -- never twice
+        if existing is not None and _adopt_if_accepted(supa, portfolio, existing, summary):
+            # The earlier pass's order WAS accepted (its response was
+            # lost) and is tracked now. Its contracts already count in
+            # contracts_today (the row predates this pass); add its
+            # at-risk amount to the loss tally, as a fresh placement does.
+            loss_used += int(existing["contracts"]) * float(existing["limit_price"])
+            continue
         cost = float(d["cost"])
         balance = _balance_usd(portfolio)
         if balance is None:
@@ -237,6 +255,35 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         loss_used += contracts * cost
         summary["placed"] += 1
     return summary
+
+
+def _find_by_client_order_id(portfolio, client_order_id: str) -> dict | None:
+    """The exchange's own record of an order we may already have placed."""
+    get_orders = getattr(portfolio, "get_orders", None)
+    if get_orders is None:
+        return None
+    try:
+        orders = get_orders()
+    except Exception:  # noqa: BLE001 -- unreadable is not absent; the caller falls through
+        return None
+    for order in orders or []:
+        if order.get("client_order_id") == client_order_id:
+            return order
+    return None
+
+
+def _adopt_if_accepted(supa, portfolio, row: dict, summary: dict) -> bool:
+    """A `pending` row whose create_order response was lost may name a
+    real, resting Kalshi order. Adopt it -- record the order id and mark
+    the row resting -- instead of re-placing: Kalshi rejects the duplicate
+    client_order_id, and reconcile would then write the row off as
+    placement_interrupted while a live order sat untracked."""
+    found = _find_by_client_order_id(portfolio, row["client_order_id"])
+    if not found or not found.get("order_id"):
+        return False
+    _update(supa, row, {"kalshi_order_id": found["order_id"], "status": "resting"})
+    summary["adopted"] += 1
+    return True
 
 
 def _balance_usd(portfolio) -> float | None:

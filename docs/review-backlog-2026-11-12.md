@@ -23,14 +23,17 @@ production database on Nov 12, 00:20 UTC.
 | Debate grading scheduled (deploy crontab, 05:07 UTC daily; 3 graded at +5 days, 0 hits) | #488 (A6) |
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
+| Health/Macro/Weather precompute: the hourly journal job now writes the Health report plus the Macro, Weather and Weather-map compositions to file snapshots, and the four endpoints serve a fresh (<90 min) snapshot instead of rebuilding live (Health was 16.1 s per request at the Nov 12 check); a missing/stale snapshot falls back to the live build, and a degraded Macro build is never snapshotted | Health precompute PR (branch `rev/health-precompute`) |
+| Gas fill check: every settled gated gas trade marked with the contracts on offer at its ask (#472 depth). Of 77 settled gated trades only 18 have depth (tape carries sizes only since Nov 11); all 18 would have filled at 1 contract, 12 of 18 at the demo's launch size; median ask size ~101, bottom tenth ~1. The check validates the frozen-quote fill assumption at 1-contract size; the depth-era trades themselves were net losers in shadow terms (-$1.48 of the +$7.82 all-time per-contract sum), so it says nothing for the edge | Gas fill check PR (branch `rev/gas-fill-check`) |
+| Follow-ups from the #488-#496 reviews: Kev seat direction consistency (watch/pass force direction `none`; an act choice with direction `none` abstains and is never stored); the LEAPS gate never stores an `insufficient_data` verdict (it stays a live read and re-reads nightly, so a thin night cannot freeze the trial); the #496 CodeRabbit items (curveTradingDays counts weekdays only, Portfolio position rows keyed symbol+idea on the fallback path, the full orders table names each leg's side and ratio, the BandCrossings await-the-button flake) | Follow-up PR (branch `rev/followup-kev-leaps-496`) |
 
 ## In flight (open PRs from Muse)
 | Item | PR |
 |---|---|
-| Kalshi demo runner (action plan step 2): demo-guarded order writes in `KalshiPortfolio`, `tradehub/kalshi_demo.py` trading the live gate's gas buys at Kevin's 1%-of-balance sizing, ask size recorded with a skip under 1, daily caps. Migration `20261112000002_kalshi_demo_orders.sql` is IN the PR and NOT applied -- waiting on Kevin's go; the timer/dispatcher install text is in the PR for Claude. The Portfolio tab is step 3, a separate PR | branch `rev/kalshi-demo-runner` |
+| Kalshi demo runner (action plan step 2): demo-guarded order writes in `KalshiPortfolio`, `tradehub/kalshi_demo.py` trading the live gate's gas buys at Kevin's 1%-of-balance sizing, ask size recorded with a skip under 1, daily caps (Kevin confirmed the defaults Nov 12: 100 contracts/day, $20 daily loss, 1% budget). Migration `20261112000002_kalshi_demo_orders.sql` APPLIED 2026-11-12 by Claude via the connector after Kevin's go (read back: 25 columns, RLS on, no anon/authenticated grants, 0 rows) and recorded as ledger row 84 in this PR. Claude's review fixes are in: the decisions read filters the freshness window in the query (an ascending 1,000-row page of oldest buys would have gone blind in ~11 weeks), and a placement whose response is lost is adopted by `client_order_id` on the next pass instead of being re-placed and written off. Remaining: Claude's re-review, merge, deploy -- then Claude installs the timer/dispatcher (install text in the PR) and does the watched manual run. The Portfolio tab is step 3, a separate PR | branch `rev/kalshi-demo-runner` |
 
 The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
-(`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 18 there.
+(`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 19 there.
 
 ## Not started: product
 1. **Overview rework and visitor landing page.** Overview hasn't changed since the Nov 9 polish. Plan: say what the
@@ -54,27 +57,23 @@ The order of the remaining work is in `action-plan-2026-11-12.md`. The volatilit
    - Fold Agent debates into Guidance.
    - Admin pages behind a lock in the public menu.
    - Screening preset blurbs (`--`, "W18-style selection layer", "FCC lens", "bundled proxy — not yet refreshed").
-7. **Health page**: still slow (15 s, and still "Loading…" after a 10-second wait). Precompute it in the hourly job;
-   do the same for Macro and Weather.
-8. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
+7. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
    source.
-9. **Code health**:
+8. **Code health**:
    - Split `tradehub/api/main.py` into routers by area. It has grown to 4,770 lines from 4,410.
    - Rewrite the README, which still describes the Vercel-reads-Supabase architecture.
 
 ## Not started: models (each as a new shadow version, preregistered first)
-1. **Gas fill check.** Mark every gated gas trade with the contracts on offer at its ask, using the #472 depth data.
-   This comes before any gas automation, demo or live.
-2. **Scoreboard**:
+1. **Scoreboard**:
    - Wire `earned_weight` (needs a jsonb column on `journal_scores`).
    - Score contested rows only (10–90%).
    - Count error bars in days, not rows.
    - Hide rows with zero settled forecasts, and label retired rows as retired.
-3. **Hourly oil v7**: v4 with the spread from 1-minute realised volatility (v4 says 65/75/85% and gets 73/83/93%).
-4. **Replay**: anchor daily natural gas and Brent on the latest Kalshi 15-minute strike (the free Pyth read).
-5. **Oil 15-minute filters**: no trades on the side the model puts under 50%, and trade only at spreads of 3¢ or more.
+2. **Hourly oil v7**: v4 with the spread from 1-minute realised volatility (v4 says 65/75/85% and gets 73/83/93%).
+3. **Replay**: anchor daily natural gas and Brent on the latest Kalshi 15-minute strike (the free Pyth read).
+4. **Oil 15-minute filters**: no trades on the side the model puts under 50%, and trade only at spreads of 3¢ or more.
    Preregister both.
-6. **Rain**: preregister the paper rule; judge it by days.
+5. **Rain**: preregister the paper rule; judge it by days.
 
 ## Decisions for Kevin (nobody can build these without an answer)
 - MRK and any guide step over 35%: hold the band until confirmed?
