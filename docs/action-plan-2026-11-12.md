@@ -6,6 +6,21 @@ list Muse can finish. This file is that list.
 **Nov 12 update:** steps 1 and 4 merged (#499, #501). Step 2 is in review (#500: two fixes, then Kevin's go on the migration). Step 5, the Portfolio redesign, was added after Kevin asked whether the plan covered everything he'd asked for. It hadn't: the first version was built from the backlog, which predates the Portfolio review. It **replaces the ordering** in the "Prompt for Muse" in
 `review-backlog-2026-11-12.md`; that file still has the full detail for each numbered item.
 
+## Who owns what (Kevin, Nov 12, 21:10 UTC)
+Kevin moved the thinking-heavy work to Claude, so nothing stalls on one worker. **Muse: don't start the Claude-owned items;
+they're already in progress on Claude's branches.**
+
+| Owner | Work |
+|---|---|
+| **Claude** | The #500 runner fix (the demo runner can't trade; spec in the #500 comment of Nov 12, 20:08 UTC). Branch `claude/kalshi-runner-fix` |
+| **Claude** | Step 5, the volatility-regime challenger `v3-volregime-shadow`. Branch `claude/volregime-challenger` |
+| **Claude** | Step 8, the Overview landing page (product item 1). Branch `claude/overview-landing` |
+| **Muse** | Step 6, Portfolio redesign PR 3 (Trade tab), plus the three #506 fixes (broker `last_equity` for Today, weekend label, after-hours cache) and a review of #509's findings once Claude posts them |
+| **Muse** | Steps 9–20 in order, except anything listed above |
+
+The merge rule still holds for everyone: **no PR merges until Claude posts a ready-to-merge review.** Muse merged #509
+two minutes after opening it; don't repeat that.
+
 ## Status, Nov 12 20:45 UTC
 - Merged: steps 1–4 (#499, #500, #501, #505), 6 (#502), the page-load fix #504, and step 5 part 1 (#506). #500, #504, #505 and #506 merged without Claude's review.
 - **Blocking: #500's runner can never trade** (gas decisions are written only after their window closes). Fix spec: the #500 comment of Nov 12, 20:08 UTC. Do this first. Then step 5, the volatility-regime challenger (moved up by Kevin on Nov 12, because the live 15-minute rules are fading: gas fell from +17.4¢ per trade on Nov 6–9 to +2.5¢ on Nov 10–12, and oil and metals now lose). Then the rest of the Portfolio redesign (step 6).
