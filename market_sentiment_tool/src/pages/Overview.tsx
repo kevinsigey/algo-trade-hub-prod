@@ -1,151 +1,230 @@
-import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
-import { NextRelease, type Preview } from "@/components/NextRelease";
 import { useApi } from "@/hooks/usePaperPortfolio";
-import { getJson } from "@/lib/getJson";
-import type { JournalResponse, SeriesEntry, SeriesResponse } from "@/lib/journal";
-import { beatingCount, edgeText, league } from "@/lib/league";
-import { biggestMovers } from "@/lib/overview";
-import { viewRows } from "@/lib/journalView";
-import { fmtUsd, type PortfolioPayload } from "@/lib/paperPortfolio";
-import { adminJson } from "@/lib/workshop";
+import {
+  cents, count, dayRange, gasRecord, gasTrend, metalsPerTrade, modelsBeating, oilPerTrade, testedVsManual, tone,
+  type FifteenLite, type Interval, type JournalLite,
+} from "@/lib/overview";
+import { fmtUsd, type ResultsSplit } from "@/lib/paperPortfolio";
 
 /**
- * The home page (Kevin's 2026-11-01 redesign: "Overview as home"). Three questions, in order:
- * what is live right now, which models moved, and what happens next. It replaces both the old
- * portfolio-at-/ (the portfolio keeps its own page at /portfolio) and the retired /predictions
- * overview, which duplicated the journal's standings. Every number is the server's, read from
- * the same endpoints the Tracker and Portfolio pages use, so the home page can never disagree
- * with the page it links to.
+ * The landing page (2026-11-12 rework, backlog product item 1). It answers a first-time visitor in
+ * order: what the hub is, three numbers that grade it, what works and what failed, and how it is
+ * built. Public reads only (no admin call), so a signed-out visitor sees the whole page; any number
+ * a read could not supply prints as a dash.
  */
 
-function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+const DASH = "—";
+const TONE_TEXT = { up: "text-profit", down: "text-loss", flat: "text-foreground", unknown: "text-muted-foreground" } as const;
+
+function Figure({ value, className = "text-5xl md:text-6xl" }: { value: string; className?: string }) {
+  return <div className={`whitespace-nowrap font-display font-semibold leading-none tabular-nums ${className}`}>{value}</div>;
+}
+
+/** The 95% range on one axis with zero marked: whether the range clears zero is the whole question. */
+function RangeBar({ r }: { r: Interval }) {
+  if (r.low == null || r.high == null) return null;
+  const reach = Math.max(Math.abs(r.low), Math.abs(r.high), 0.01) * 1.15;
+  const at = (v: number) => `${50 + (v / reach) * 50}%`;
+  const clears = r.low > 0;
   return (
-    <div className="border border-border bg-card px-4 py-3">
-      <div className="font-display text-4xl leading-none tracking-wide text-foreground tabular-nums">{value}</div>
-      <div className="mt-1 text-sm text-foreground">{label}</div>
-      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
+    <div className="mt-4" aria-hidden="true">
+      <div className="relative h-5">
+        <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
+        <div className="absolute top-0 h-5 w-px bg-muted-foreground/60" style={{ left: "50%" }} />
+        <div className={`absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full ${clears ? "bg-profit/70" : "bg-warn/60"}`}
+             style={{ left: at(r.low), width: `calc(${at(r.high)} - ${at(r.low)})` }} />
+        <div className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground"
+             style={{ left: at(r.perTrade) }} />
+      </div>
+      <div className="mt-1 flex justify-between text-xs tabular-nums text-muted-foreground">
+        <span>{cents(r.low)}</span>
+        <span>0</span>
+        <span>{cents(r.high)}</span>
+      </div>
     </div>
   );
 }
 
-function LiveBook() {
-  const { data, error } = useApi<PortfolioPayload>("/api/portfolio");
-  const [staged, setStaged] = useState<number | null>(null);
-  useEffect(() => {
-    adminJson<{ email: string }>("/api/admin/me")
-      .then(() => adminJson<{ orders: unknown[] }>("/api/portfolio/open-orders"))
-      .then((r) => setStaged(r.orders.length))
-      .catch(() => setStaged(null));
-  }, []);
-  if (error) return <p className="text-sm text-muted-foreground">Portfolio unavailable right now.</p>;
-  if (!data) return <p className="text-sm text-muted-foreground">{error ? "Portfolio unavailable right now." : "Loading the book…"}</p>;
-  const s = data.scoreboard;
-  if (data.state !== "live" || s.equity === null) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        The paper book is {data.state === "pre_start" ? "not started yet" : data.state.replace("_", " ")}.{" "}
-        <Link to="/portfolio" className="font-semibold text-foreground underline">Open the portfolio</Link>
-      </p>
-    );
-  }
+function ModelsNumber({ j }: { j: JournalLite | null }) {
+  const m = modelsBeating(j);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Tile label="account equity" value={fmtUsd(s.equity, { whole: true })} />
-      <Tile
-        label="return vs SPY"
-        value={s.ahead_pts === null ? "—" : `${s.ahead_pts > 0 ? "+" : s.ahead_pts < 0 ? "−" : ""}${Math.abs(s.ahead_pts).toFixed(2)} pts`}
-        sub={s.return_pct === null ? undefined : `${s.return_pct > 0 ? "+" : ""}${s.return_pct.toFixed(2)}% all-in`}
-      />
-      <Tile label="open positions" value={String(data.positions.length)} />
-      {staged !== null ? (
-        <Tile label="staged orders waiting" value={String(staged)} sub="Signed-in view" />
-      ) : (
-        <Tile label="open positions value" value={fmtUsd(data.positions.reduce((a, p) => a + Math.abs(p.market_value), 0), { whole: true })} />
-      )}
+    <div>
+      <Figure value={m ? `${m.beating} of ${m.measured}` : DASH} />
+      <p className="mt-3 text-sm text-foreground">models beating what they&rsquo;re measured against</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        The Model Tracker&rsquo;s count: the market price where one exists, otherwise climatology. Ahead with 95%
+        confidence, on settled forecasts only.
+      </p>
     </div>
   );
 }
+
+function GasNumber({ f }: { f: FifteenLite | null }) {
+  const g = gasRecord(f);
+  return (
+    <div>
+      <Figure value={g ? cents(g.perTrade) : DASH} className={`text-5xl md:text-6xl ${TONE_TEXT[tone(g?.perTrade ?? null)]}`} />
+      <p className="mt-3 text-sm text-foreground">
+        per paper trade, 15-minute gas rule{g ? `, ${count(g.n)} settled` : ""}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        After Kalshi&rsquo;s fee. 95% range {g ? `${cents(g.low)} to ${cents(g.high)}` : DASH}
+        {g?.low != null ? (g.low > 0 ? ", clear of zero." : ", still touching zero.") : "."}
+      </p>
+      {g && <RangeBar r={g} />}
+    </div>
+  );
+}
+
+function SplitNumber({ s }: { s: ResultsSplit | null }) {
+  const side = (label: string, v: ResultsSplit["tested"] | undefined) => (
+    <div className="min-w-0">
+      <Figure value={v ? fmtUsd(v.pnl, { signed: true, whole: true }) : DASH}
+              className={`text-4xl xl:text-5xl ${TONE_TEXT[tone(v ? v.pnl : null)]}`} />
+      <p className="mt-3 text-sm text-foreground">{label}</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {v ? `${count(v.wins)} wins in ${count(v.trades)} closed trades` : DASH}
+      </p>
+    </div>
+  );
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      {side("tested ideas", s?.tested)}
+      {side("manual trades", s?.discretionary)}
+    </div>
+  );
+}
+
+function Line({ mark, label, children }: { mark: string; label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="flex items-center gap-2 font-semibold text-foreground">
+        <span className={`h-2.5 w-2.5 rounded-sm ${mark}`} aria-hidden="true" />{label}
+      </dt>
+      <dd className="text-muted-foreground">{children}</dd>
+    </>
+  );
+}
+
+function Record({ j, f }: { j: JournalLite | null; f: FifteenLite | null }) {
+  const m = modelsBeating(j);
+  const g = gasRecord(f);
+  const trend = gasTrend(f);
+  const oil = oilPerTrade(f);
+  const metals = metalsPerTrade(f);
+  const word = (v: number | null) => ({ up: "positive", down: "negative", flat: "flat", unknown: "unknown" })[tone(v)];
+  const clears = g != null && g.low != null && g.low > 0;
+  const span = (s: { from: string; to: string; n: number }) => `${dayRange(s.from, s.to)}, ${count(s.n)} trades`;
+  const gas = g
+    ? `Gas so far: ${cents(g.perTrade)} a paper trade over ${count(g.n)} settled paper trades, 95% range ${cents(g.low)} to ${cents(g.high)}${clears ? ", clear of zero." : ", still touching zero."}`
+    : "";
+  const holding = trend?.verdict === "holding"
+    ? ` It is holding: ${cents(trend.recent.perTrade)} a trade over the last 3 days with trades (${span(trend.recent)}) against ${cents(trend.earlier.perTrade)} before (${span(trend.earlier)}).`
+    : "";
+  return (
+    <dl className="grid gap-x-6 gap-y-3 text-sm md:grid-cols-[7rem_1fr]">
+      <Line mark="bg-profit" label="What works">
+        The grading: {count(m?.scored)} calibrated forecasts frozen before the outcome and scored, against the market
+        price where there is one and climatology where there isn&rsquo;t, losses included.
+        {clears && ` ${gas}${holding}`}
+      </Line>
+      {g && !clears && (
+        <Line mark="bg-warn" label="Too early">{gas}{holding}</Line>
+      )}
+      <Line mark="bg-loss" label="What failed">
+        {count(m?.retired)} models retired from freezing; their records stay public.{" "}
+        {trend?.verdict === "fading"
+          ? `The 15-minute gas edge is fading: ${cents(trend.recent.perTrade)} a paper trade over the last 3 days with trades (${span(trend.recent)}), down from ${cents(trend.earlier.perTrade)} before (${span(trend.earlier)}). `
+          : ""}
+        Oil is {word(oil)} at {cents(oil)} a paper trade and metals {word(metals)} at {cents(metals)}.
+      </Line>
+    </dl>
+  );
+}
+
+const START = [
+  { to: "/strategies", title: "The 15-minute rules", body: "Kalshi oil, gas and metals contracts, each paper trade graded at settlement." },
+  { to: "/portfolio", title: "The stock book", body: "A $100k Alpaca paper account against SPY, tested ideas split from manual trades." },
+  { to: "/portfolio?book=kalshi", title: "Kalshi demo", body: "The gas rule placing orders on Kalshi’s demo exchange, play money only." },
+];
+
+const STEPS = [
+  { title: "Freeze", body: "Each forecast is stored with a timestamp before the outcome is known, and never edited." },
+  { title: "Settle", body: "When the market resolves, the official result is attached: Kalshi settlements, official data releases." },
+  { title: "Score", body: "Every forecast is scored against the market price it could have traded at, fees included." },
+  { title: "Shadow, then paper", body: "A change runs as a shadow version beside the current one, preregistered, before it can trade. All trading is paper or demo money." },
+];
 
 export default function Overview() {
-  const [journal, setJournal] = useState<JournalResponse | null>(null);
-  const [series, setSeries] = useState<SeriesEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    Promise.all([getJson<JournalResponse>("/api/journal"), getJson<SeriesResponse>("/api/journal/series")])
-      .then(([j, s]) => {
-        // A stubbed or error body must read as "no board", never crash the home page.
-        if (j && Array.isArray(j.forecasters)) setJournal(j);
-        setSeries(Array.isArray(s?.series) ? s.series : []);
-      })
-      .catch((e: Error) => setError(e.message));
-  }, []);
-
-  // The "Coming up" heading sat over nothing whenever no preview existed (2026-11-09): fetch once, show it only with rows.
-  const [upcoming, setUpcoming] = useState<Preview[]>([]);
-  useEffect(() => {
-    getJson<{ previews: Preview[] }>("/api/journal/previews")
-      .then((r) => setUpcoming(Array.isArray(r?.previews) ? r.previews : []))
-      .catch(() => setUpcoming([]));
-  }, []);
-
-  const movers = biggestMovers(series);
-  const table = journal ? league(viewRows(journal.forecasters)) : [];
-  const { beating, measured } = beatingCount(table);
-  const h = journal?.headline;
+  const journal = useApi<JournalLite>("/api/journal");
+  const fifteen = useApi<FifteenLite>("/api/oil/fifteen-rule");
+  const closed = useApi<{ results_split?: ResultsSplit }>("/api/portfolio/closed");
+  const split = testedVsManual(closed.data);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-10 p-4 md:p-8">
-      <header>
-        <h1 className="font-display text-5xl uppercase tracking-wide text-foreground">Overview</h1>
-        <p className="mt-2 max-w-2xl text-muted-foreground">What is live, which models moved, and what happens next.</p>
-      </header>
-
-      <section aria-label="What's live" className="space-y-3">
-        <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">What&rsquo;s live</h2>
-        <LiveBook />
+    <div className="mx-auto max-w-6xl px-[16px] py-6 md:px-8 md:py-10">
+      <section aria-label="What this is" className="max-w-4xl">
+        <h1 className="font-display text-4xl font-semibold leading-[1.05] text-foreground md:text-[3.25rem]">
+          A solo research desk that forecasts markets, then grades every forecast and paper trade in public against
+          the market price.
+        </h1>
+        <nav aria-label="Start here" className="mt-5 flex flex-wrap gap-2">
+          {START.map((s) => (
+            <Link key={s.to} to={s.to}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-foreground hover:bg-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+              {s.title}
+            </Link>
+          ))}
+        </nav>
       </section>
 
-      <section aria-label="Biggest movers" className="space-y-3">
-        <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">Biggest movers</h2>
-        {error ? (
-          <p className="text-sm text-muted-foreground">Model record unavailable: {error}</p>
-        ) : movers.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Not enough settled history yet to rank movers.</p>
-        ) : (
-          <ul className="space-y-2">
-            {movers.map((m) => (
-              <li key={m.key} className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-border bg-card px-4 py-3">
-                <span className="font-semibold text-foreground">{m.label}</span>
-                <span className="text-sm tabular-nums text-muted-foreground">
-                  edge {edgeText(m.delta, null)} since {m.since} — {m.delta > 0 ? "improving" : "slipping"}
-                </span>
+      <section aria-label="Headline numbers"
+               className="mt-8 grid border border-border bg-card md:grid-cols-[1fr_1.15fr_1.35fr] md:divide-x md:divide-border max-md:divide-y max-md:divide-border">
+        <div className="p-5"><ModelsNumber j={journal.data} /></div>
+        <div className="p-5"><GasNumber f={fifteen.data} /></div>
+        <div className="p-5"><SplitNumber s={split} /></div>
+      </section>
+
+      <section aria-label="The record so far" className="mt-6">
+        <Record j={journal.data} f={fifteen.data} />
+      </section>
+
+      <div className="mt-14 grid gap-12 lg:grid-cols-2">
+        <section aria-labelledby="start-here">
+          <h2 id="start-here" className="font-display text-2xl font-semibold text-foreground">Start here</h2>
+          <ul className="mt-4 divide-y divide-border border-y border-border">
+            {START.map((s) => (
+              <li key={s.to}>
+                <Link to={s.to} className="block py-3 hover:bg-secondary/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+                  <span className="font-semibold text-foreground underline-offset-4 hover:underline">{s.title}</span>
+                  <span className="mt-0.5 block text-sm text-muted-foreground">{s.body}</span>
+                </Link>
               </li>
             ))}
           </ul>
-        )}
-        {h && (
-          <p className="text-sm text-muted-foreground">
-            {h.frozen_calibrated.toLocaleString()} forecasts locked in · {h.settled_calibrated.toLocaleString()} scored ·{" "}
-            {measured === 0 ? "none beating their baseline yet" : `${beating} of ${measured} beating their baseline`}.{" "}
-            <Link to="/journal" className="font-semibold text-foreground underline">
-              Open the Model Tracker
-            </Link>
-          </p>
-        )}
-      </section>
-
-      {upcoming.some((r) => r.family === "labor" || r.family === "oil") && (
-        <section aria-label="Coming up" className="space-y-3">
-          <h2 className="font-display text-2xl uppercase tracking-wide text-foreground">Coming up</h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            <NextRelease family="labor" title="Next jobs report" previews={upcoming} />
-            <NextRelease family="oil" title="Next oil settlement" previews={upcoming} />
-          </div>
         </section>
-      )}
+
+        <section aria-labelledby="how-built">
+          <h2 id="how-built" className="font-display text-2xl font-semibold text-foreground">How it&rsquo;s built</h2>
+          <p className="mt-4 text-sm text-muted-foreground">
+            Prices and settlements from Kalshi, paper fills from Alpaca, live ticks from Pyth, and public data from FRED
+            and the National Weather Service. Every result moves through the same four steps.
+          </p>
+          <ol className="mt-4 space-y-3">
+            {STEPS.map((s, i) => (
+              <li key={s.title} className="grid grid-cols-[1.75rem_1fr] text-sm">
+                <span className="font-display text-lg font-semibold leading-5 text-muted-foreground tabular-nums">{i + 1}</span>
+                <span>
+                  <span className="font-semibold text-foreground">{s.title}.</span>{" "}
+                  <span className="text-muted-foreground">{s.body}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
     </div>
   );
 }

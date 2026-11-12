@@ -339,3 +339,36 @@ def test_macro_built_after_a_failed_read_is_not_kept(monkeypatch):
     db = FakeJournalDB(lambda: T0)  # this fake has no jobs_scorecard table: that read fails
     assert _client(db).get("/api/macro").json() == {"cards": [1]}
     assert _client(db).get("/api/macro").json() == {"cards": [2]}
+
+
+def test_journal_counts_retired_models_once_each_and_fails_soft_to_unknown(monkeypatch):
+    from types import SimpleNamespace as F
+
+    import tradehub.journal.registry as registry
+
+    monkeypatch.setattr(registry, "RETIRED", [
+        F(name="gas", version="v2"),
+        F(name="gas_cautious", version="v2"),          # a copy of gas v2
+        F(name="gas_cal", version="v2+w30"),           # a calibrated window copy of gas v2
+        F(name="kalshi_implied_gas", version="v1"),    # the market row, not a model
+        F(name="baseline_persistence_gas", version="v1"),
+        F(name="sports_nfl_spread", version="feed-v1"),
+        F(name="sports_nfl_spread", version="feed-v1+cal"),
+        F(name="weather_high", version="ens-v1"),
+        F(name="weather_high", version="ens-v2.1"),     # a second version is a second model
+    ])
+    db = FakeJournalDB(lambda: T0)
+    assert _client(db).get("/api/journal").json()["retired_models"] == 4
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def broken(name, *a, **k):
+        if name == "tradehub.journal.registry":
+            raise ImportError("registry down")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", broken)
+    res = _client(db).get("/api/journal")
+    assert res.status_code == 200 and res.json()["retired_models"] is None  # unknown, never 0

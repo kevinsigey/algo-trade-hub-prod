@@ -3244,7 +3244,29 @@ def get_journal(supabase=Depends(get_supabase)):
         "forecasters": rows,
         "headline": journal_headline(rows),
         "standings": {**rows_out, "verdict": journal_verdict_sentence(rows_out)},
+        "retired_models": _retired_models(),
     }
+
+
+def _retired_models() -> int | None:
+    """How many models the Nov 10 retirement stopped freezing (registry.RETIRED): real model rows
+    only -- market (`kalshi_implied_*`) and baseline rows dropped, and a model's cautious, calibrated
+    (`_cal`, `+cal`) and window (`+wNN`) copies counted once with it. Their records stay scored and
+    public. None (unknown, never 0) if the registry won't load."""
+    try:
+        from tradehub.journal.registry import RETIRED
+
+        models = set()
+        for f in RETIRED:
+            if f.name.startswith(("kalshi_implied_", "baseline_")):
+                continue
+            name = f.name.removesuffix("_cautious").removesuffix("_cal")
+            version = re.sub(r"(\+w\d+|\+cal)+$", "", str(f.version))
+            models.add((name, version))
+        return len(models)
+    except Exception:  # noqa: BLE001
+        log.exception("api: journal registry unreadable")
+        return None
 
 
 @app.get("/api/journal/previews", tags=["Journal"])
