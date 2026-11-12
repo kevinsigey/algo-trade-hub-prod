@@ -27,10 +27,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import time
+
 from tradehub import fifteen_tracking
 from tradehub import oil_fifteen_rule as rule
 from tradehub.core.kalshi_portfolio import NotDemoHostError
 from tradehub.journal.kalshi_linked import ticker_of
+from tradehub.markets import quote_cents
 
 SERIES = "KXNATGAS15M"
 ORDERS = "kalshi_demo_orders"
@@ -404,3 +407,214 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
             if filled == 0 and row["status"] == "resting":
                 _update(supa, row, {"status": "cancelled"})
                 summary["cancelled"] += 1
+
+
+# -- the Portfolio tab report --------------------------------------------------
+# Read side for GET /api/kalshi-demo: the live demo account (balance and
+# positions, cached ~15s -- the market-data enrichment is one Kalshi read
+# per open position) plus this table's own record against the shadow
+# record for the same decisions. No new snapshot table: curves and stats
+# are computed from kalshi_demo_orders joined to fifteen_rule_decisions.
+
+STARTING_BALANCE_USD = 500.0
+NOTE = ("Demo account, fake money, demo order book. Demo fills don't prove "
+        "the edge; the shadow record is the measure.")
+SUMMARY_TTL_SECONDS = 15.0
+
+_summary_cache: tuple[float, dict] | None = None
+
+
+def _contracts_of(pos: dict) -> int:
+    raw = pos.get("position_fp")
+    if raw is None:
+        raw = pos.get("position") or 0
+    try:
+        return int(abs(float(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _avg_price_of(pos: dict, contracts: int, db_row: dict | None) -> float | None:
+    """Entry price for a live position: our own order row first (the fill,
+    else the limit we placed), the position's traded total as fallback.
+    A figure outside (0, 1) is not a price for these contracts -- None."""
+    if db_row is not None:
+        for key in ("fill_price", "limit_price"):
+            value = db_row.get(key)
+            if value is not None and 0 < float(value) < 1:
+                return float(value)
+    if contracts > 0:
+        total = pos.get("total_traded_dollars")
+        if total is None and pos.get("total_traded") is not None:
+            total = float(pos["total_traded"]) / 100.0
+        if total:
+            avg = float(total) / contracts
+            if 0 < avg < 1:
+                return avg
+    return None
+
+
+def _live_summary(portfolio, rows_by_ticker: dict[str, dict]) -> dict:
+    """Balance + enriched open positions from the demo account (one pass;
+    the caller caches it). A failed read yields Nones, never a crash."""
+    balance = None
+    portfolio_value = None
+    try:
+        data = portfolio.get_balance()
+    except Exception:  # noqa: BLE001 -- the tab renders dashes, not a 500
+        data = None
+    if data:
+        if data.get("balance") is not None:
+            balance = float(data["balance"]) / 100.0
+        if data.get("portfolio_value") is not None:
+            portfolio_value = float(data["portfolio_value"]) / 100.0
+
+    positions = []
+    try:
+        raw_positions = portfolio.get_positions() or []
+    except Exception:  # noqa: BLE001
+        raw_positions = []
+    for pos in raw_positions:
+        contracts = _contracts_of(pos)
+        ticker = pos.get("ticker")
+        if not ticker or contracts <= 0:
+            continue
+        signed = float(pos.get("position_fp") or pos.get("position") or 0)
+        side = "yes" if signed >= 0 else "no"
+        db_row = rows_by_ticker.get(ticker)
+        avg_price = _avg_price_of(pos, contracts, db_row)
+        market = None
+        try:
+            got = portfolio.get_market_data(ticker)
+            market = (got or {}).get("market") if got else None
+        except Exception:  # noqa: BLE001
+            market = None
+        quotes = quote_cents(market) if market else {}
+        bid_cents = quotes.get("yes_bid") if side == "yes" else quotes.get("no_bid")
+        open_pnl = None
+        if bid_cents is not None and avg_price is not None:
+            open_pnl = round((bid_cents / 100.0 - avg_price) * contracts, 2)
+        strike = None
+        if market and market.get("floor_strike") is not None:
+            try:
+                strike = float(market["floor_strike"])
+            except (TypeError, ValueError):
+                strike = None
+        positions.append({
+            "ticker": ticker,
+            "series": ticker.split("-")[0],
+            "strike": strike,
+            "side": side,
+            "contracts": contracts,
+            "avg_price": avg_price,
+            "yes_bid": None if quotes.get("yes_bid") is None else quotes["yes_bid"] / 100.0,
+            "yes_ask": None if quotes.get("yes_ask") is None else quotes["yes_ask"] / 100.0,
+            "open_pnl": open_pnl,
+            "close_time": (market or {}).get("close_time")
+                          or (db_row or {}).get("window_close"),
+        })
+    return {"balance": balance, "portfolio_value": portfolio_value,
+            "positions": positions}
+
+
+def live_summary(portfolio, rows_by_ticker: dict[str, dict],
+                 clock=time.monotonic) -> dict:
+    """The live account read behind a ~15s cache. There is exactly one
+    demo account, and the endpoint constructs a fresh client per request,
+    so the cache is a single slot; tests clear it between cases."""
+    global _summary_cache
+    if _summary_cache is not None and clock() - _summary_cache[0] < SUMMARY_TTL_SECONDS:
+        return _summary_cache[1]
+    summary = _live_summary(portfolio, rows_by_ticker)
+    _summary_cache = (clock(), summary)
+    return summary
+
+
+def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
+    rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=500)
+    rows_by_ticker = {r["ticker"]: r for r in rows
+                      if r["status"] in ("resting", "filled")}
+    live = live_summary(portfolio, rows_by_ticker, clock=clock)
+
+    settled = sorted((r for r in rows if r["status"] == "settled"),
+                     key=lambda r: str(r["window_close"]))
+    decisions = {}
+    if settled:
+        for d in _select(supa, DECISIONS, {"series": SERIES},
+                         order="close_time", desc=True, limit=1000):
+            decisions[d["target"]] = d
+    demo_curve: list[dict] = []
+    shadow_curve: list[dict] = []
+    shadow_pc_curve: list[dict] = []
+    demo_total = shadow_total = shadow_pc_total = 0.0
+    for r in settled:
+        at = _iso(_dt(r["window_close"]))
+        demo_total += float(r.get("settlement_pnl") or 0)
+        demo_curve.append({"at": at, "pnl": round(demo_total, 2)})
+        d = decisions.get(r["target"])
+        if d is not None and d.get("pnl") is not None:
+            filled = int(r.get("contracts_filled") or 0)
+            shadow_total += float(d["pnl"]) * filled
+            shadow_pc_total += float(d["pnl"])
+            shadow_curve.append({"at": at, "pnl": round(shadow_total, 2)})
+            shadow_pc_curve.append({"at": at, "pnl": round(shadow_pc_total, 2)})
+
+    placed = [r for r in rows if r.get("kalshi_order_id")]
+    filled_orders = [r for r in placed if int(r.get("contracts_filled") or 0) > 0]
+    slips = [(float(r["fill_price"]) - float(r["frozen_quote"])) * 100.0
+             for r in rows if r.get("fill_price") is not None]
+    settled_filled = sum(int(r.get("contracts_filled") or 0) for r in settled)
+    wins = sum(1 for r in settled if float(r.get("settlement_pnl") or 0) > 0)
+    today_et = now.astimezone(ET).date()
+    pnl_today = sum(float(r.get("settlement_pnl") or 0) for r in settled
+                    if _dt(r["window_close"]).astimezone(ET).date() == today_et)
+    if live["balance"] is not None:
+        pnl_since_start = round(live["balance"]
+                                + (live["portfolio_value"] or 0.0)
+                                - STARTING_BALANCE_USD, 2)
+    else:
+        pnl_since_start = round(demo_total, 2)
+
+    return {
+        "state": "live",
+        "demo": True,
+        "as_of": _iso(now),
+        "balance": live["balance"],
+        "starting_balance": STARTING_BALANCE_USD,
+        "pnl_since_start": pnl_since_start,
+        "pnl_today": round(pnl_today, 2),
+        "positions": live["positions"],
+        "performance": {
+            "demo_curve": demo_curve,
+            "shadow_curve": shadow_curve,
+            "shadow_curve_per_contract": shadow_pc_curve,
+            "fill_rate": (round(len(filled_orders) / len(placed), 4)
+                          if placed else None),
+            "avg_slippage_cents": (round(sum(slips) / len(slips), 2)
+                                   if slips else None),
+            "win_rate": round(wins / len(settled), 4) if settled else None,
+            "pnl_per_contract": (round(demo_total / settled_filled, 4)
+                                 if settled_filled else None),
+            "decisions_not_traded": {
+                "caps": sum(1 for r in rows if r["status"] == "skipped_cap"),
+                "no_depth": sum(1 for r in rows
+                                if r["status"] == "skipped_no_depth"),
+                "missed": sum(1 for r in rows if r["status"] == "cancelled"
+                              and r.get("skip_reason") == "placement_interrupted"),
+            },
+        },
+        "orders": [{
+            "id": r["id"], "created_at": r["created_at"],
+            "target": r["target"], "ticker": r["ticker"], "side": r["side"],
+            "gate_version": r.get("gate_version"),
+            "contracts": r["contracts"],
+            "contracts_filled": r.get("contracts_filled") or 0,
+            "limit_price": r["limit_price"], "frozen_quote": r["frozen_quote"],
+            "ask_size": r.get("ask_size"), "status": r["status"],
+            "skip_reason": r.get("skip_reason"),
+            "fill_price": r.get("fill_price"), "filled_at": r.get("filled_at"),
+            "window_close": r["window_close"], "outcome": r.get("outcome"),
+            "settlement_pnl": r.get("settlement_pnl"),
+        } for r in rows],
+        "note": NOTE,
+    }

@@ -6,6 +6,7 @@ import { ArrowDown, ArrowRight, ArrowUp, Loader2, TriangleAlert } from "lucide-r
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import CompositionBox from "@/components/CompositionMap";
+import KalshiDemoBook from "@/pages/KalshiDemoBook";
 import { Panel } from "@/components/Panel";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
@@ -206,13 +207,31 @@ function BookTabs({ book }: { book: string }) {
           </Link>
         );
       })}
+      <Link to="/portfolio?book=kalshi" aria-current={book === "kalshi" ? "page" : undefined}
+            className={`rounded-lg border px-3 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${book === "kalshi" ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-700 hover:bg-slate-800/60"}`}>
+        <span className={book === "kalshi" ? "font-semibold text-white" : "text-slate-200"}>Kalshi (demo)</span>
+        <span className="ml-2 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">DEMO</span>
+      </Link>
     </nav>
   );
 }
 
 export default function Portfolio() {
   const [searchParams] = useSearchParams();
-  const book = searchParams.get("book") === "big" ? "big" : "main";
+  const rawBook = searchParams.get("book");
+  const book = rawBook === "big" ? "big" : rawBook === "kalshi" ? "kalshi" : "main";
+  return (
+    <div className="mx-auto max-w-[100rem] px-4 py-5 md:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
+        <BookTabs book={book} />
+      </div>
+      {book === "kalshi" ? <KalshiDemoBook /> : <AlpacaBook book={book} />}
+    </div>
+  );
+}
+
+function AlpacaBook({ book }: { book: string }) {
   const { data, error, loading } = useApi<PortfolioPayload>(`/api/portfolio?book=${book}`);
   type IdeaRow = { id: number; title: string; size_pct: number | null; live_at: string | null; killed_at: string | null; auto_orders: boolean; books?: { big?: { live_at: string | null; size_pct: number | null; auto_orders: boolean; killed_at: string | null } } };
   const [ideaRows, setIdeaRows] = useState<IdeaRow[]>([]);
@@ -239,12 +258,7 @@ export default function Portfolio() {
   });
 
   return (
-    <div className="mx-auto max-w-[100rem] px-4 py-5 md:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
-        <BookTabs book={book} />
-      </div>
-
+    <>
       {data && data.state !== "not_connected" && (
         <div className="mt-4 empty:hidden"><ManualActions book={book} /></div>
       )}
@@ -268,7 +282,7 @@ export default function Portfolio() {
       {data && data.state !== "not_connected" && data.scoreboard && (
         <Body data={data} liveIdeas={liveIdeas} book={book} />
       )}
-    </div>
+    </>
   );
 }
 
