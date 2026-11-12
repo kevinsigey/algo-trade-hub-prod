@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Overview from "@/pages/Overview";
-import { biggestMovers } from "@/lib/overview";
-import type { SeriesEntry } from "@/lib/journal";
+import { cents, dayRange, gasRecord, gasTrend, metalsPerTrade, modelsBeating, oilPerTrade, testedVsManual } from "@/lib/overview";
+import type { JournalScore } from "@/lib/journal";
 
-// The signed-in staged-orders probe loads the Supabase client: stub it (no session).
+// Nothing on this page may need a session; stub the client so an accidental import can't reach the network.
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
@@ -16,104 +16,135 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
+function score(forecaster: string, gap: number, se: number, baseline: JournalScore["baseline"] = "market"): JournalScore {
+  return {
+    forecaster, forecaster_version: "v1", cadence: "daily", baseline, n_targets: 300, n_settled: 300,
+    brier: 0.2, brier_baseline: 0.21, bss: 0.05, gap, gap_se: se, reliability: [], murphy: {},
+    calibration_ready: true, gate_status: "SHADOW", gate_reasons: [], computed_at: "2026-11-12T00:00:00+00:00",
+  };
+}
+
 const journal = {
-  as_of: "2026-11-02T06:00:00+00:00",
-  forecasters: [],
-  headline: { forecasters: 0, calibrated: 0, frozen_calibrated: 1420, settled_calibrated: 1210, promoted: 0, market_skill: null },
+  forecasters: [
+    score("cpi_nowcast", -0.02, 0.005),       // beating its market
+    score("labor_nowcast", 0.001, 0.004),     // level
+    score("gas", 0.05, 0.01),                 // behind, and retired
+    score("vix_direction", -0.02, 0.005, "climatology"),  // beating, but not a market
+  ],
+  headline: { settled_calibrated: 185_526 },
+  retired: [{ forecaster: "gas", version: "v1" }, { forecaster: "oil", version: "v1" }],
 };
 
-const series: SeriesEntry[] = [
-  {
-    forecaster: "oil_wti_hourly", version: "wti-hourly-v1",
-    points: [
-      { date: "2026-10-27", gap: -0.01, se: 0.004, n: 40 },
-      { date: "2026-10-28", gap: -0.012, se: 0.004, n: 55 },
-      { date: "2026-10-29", gap: -0.011, se: 0.004, n: 70 },
-      { date: "2026-10-30", gap: -0.014, se: 0.004, n: 88 },
-      { date: "2026-10-31", gap: -0.016, se: 0.004, n: 99 },
-      { date: "2026-11-01", gap: -0.03, se: 0.005, n: 120 },
-    ],
-  },
-  {
-    forecaster: "labor_nowcast", version: "jobs-v1",
-    points: [
-      { date: "2026-10-01", gap: 0.004, se: 0.003, n: 30 },
-      { date: "2026-11-01", gap: 0.006, se: 0.003, n: 42 },
-    ],
-  },
-];
+const daily = (rows: [string, number, number][]) => rows.map(([day, n, total]) => ({ day, n, total }));
 
-const portfolio = {
-  state: "live",
-  as_of: "2026-11-02T06:00:00+00:00",
-  account_number: "PA123",
-  scoreboard: { start_at: null, equity: 100_450, return_pct: 0.45, spy_return_pct: 0.3, ahead_pts: 0.15, max_drawdown_pct: null, sharpe: null, win_rate: null },
-  curve: [],
-  composition: [],
-  positions: [{ symbol: "XLE", qty: 100, side: "long", market_value: 6900, pct_of_book: 6.9, unrealized_pl: 40, idea: null }],
+const fifteen = {
+  gate: {
+    by_series: {
+      WTI: { n: 31, net_per_contract: -0.0191, total: -0.59, low95: -0.15 },
+      Brent: { n: 31, net_per_contract: 0.0205, total: 0.64, low95: -0.12 },
+      "Natural gas": { n: 66, net_per_contract: 0.1233, total: 8.14, low95: 0.0112 },
+    },
+    daily: {
+      "Natural gas": daily([["2026-11-06", 10, 1.9], ["2026-11-07", 10, 1.6], ["2026-11-08", 0, 0],
+                            ["2026-11-09", 10, 1.72], ["2026-11-10", 10, 0.3], ["2026-11-11", 10, 0.2], ["2026-11-12", 10, 0.25]]),
+    },
+  },
+  metals: { gate: { forward: { n: 167, net_per_contract: -0.061, total: -10.18, low95: -0.12 } } },
 };
 
-let previews: unknown[] = [];
+const closed = {
+  results_split: {
+    tested: { trades: 31, pnl: 177.28, wins: 20 },
+    discretionary: { trades: 33, pnl: -1767.55, wins: 3, reasons: [] },
+  },
+};
 
-function stubFetch() {
+function stubFetch(bodies: Record<string, unknown>) {
+  const urls: string[] = [];
   vi.stubGlobal("fetch", vi.fn((url: string) => {
-    const body = url.includes("/api/journal/series")
-      ? { series }
-      : url.includes("/api/journal/previews")
-        ? { previews }
-        : url.includes("/api/portfolio")
-          ? portfolio
-          : url.includes("/api/admin/me")
-            ? Promise.reject(new Error("not signed in"))
-            : journal;
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    urls.push(url);
+    const key = Object.keys(bodies).find((k) => url.endsWith(k));
+    if (!key) return Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ detail: "down" }) });
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(bodies[key]) });
   }));
+  return urls;
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("biggestMovers", () => {
-  it("ranks by absolute edge change with the sign flipped to edge", () => {
-    const movers = biggestMovers(series);
-    expect(movers[0].label).toContain("WTI");
-    expect(movers[0].delta).toBeCloseTo(0.02);
-    expect(movers[1].delta).toBeCloseTo(-0.002);
+describe("headline numbers from fixture payloads", () => {
+  it("counts live predictors beating their market, leaving retired and non-market rows out", () => {
+    expect(modelsBeating(journal)).toEqual({ beating: 1, measured: 2, retired: 2, scored: 185_526 });
+    // Without the retired list the count still works, over every row, and the retired figure is unknown.
+    expect(modelsBeating({ ...journal, retired: null })).toMatchObject({ beating: 1, measured: 3, retired: null });
+    expect(modelsBeating(null)).toBeNull();
   });
 
-  it("needs at least two measured points", () => {
-    expect(biggestMovers([{ forecaster: "x", version: "v", points: [{ date: "2026-11-01", gap: -0.01, se: null, n: 1 }] }])).toEqual([]);
+  it("reads gas's gated record and its 95% range", () => {
+    const g = gasRecord(fifteen)!;
+    expect(g.perTrade).toBeCloseTo(0.1233);
+    expect(g.low).toBeCloseTo(0.0112);
+    expect(g.high).toBeCloseTo(0.2354);
+    expect(g.n).toBe(66);
+    expect(gasRecord({})).toBeNull();
+  });
+
+  it("splits gas's last three trading days from the days before them", () => {
+    const t = gasTrend(fifteen)!;
+    expect(dayRange(t.earlier.from, t.earlier.to)).toBe("Nov 6–9");
+    expect(t.earlier.perTrade).toBeCloseTo(5.22 / 30);
+    expect(dayRange(t.recent.from, t.recent.to)).toBe("Nov 10–12");
+    expect(t.recent.perTrade).toBeCloseTo(0.75 / 30);
+    expect(gasTrend({ gate: { daily: { "Natural gas": daily([["2026-11-10", 1, 0.1]]) } } })).toBeNull();
+  });
+
+  it("pools oil across WTI and Brent and reads metals' gated forward record", () => {
+    expect(oilPerTrade(fifteen)).toBeCloseTo(0.05 / 62);
+    expect(metalsPerTrade(fifteen)).toBeCloseTo(-0.061);
+    expect(oilPerTrade({})).toBeNull();
+  });
+
+  it("reads tested ideas against manual trades, and words cents", () => {
+    expect(testedVsManual(closed)?.tested.pnl).toBeCloseTo(177.28);
+    expect(testedVsManual({})).toBeNull();
+    expect(cents(0.1233)).toBe("+12.3¢");
+    expect(cents(-0.061)).toBe("−6.1¢");
+    expect(cents(null)).toBe("—");
   });
 });
 
 describe("Overview page", () => {
-  it("leads with the live book, then movers, then what is next", async () => {
-    stubFetch();
-    render(
-      <MemoryRouter>
-        <Overview />
-      </MemoryRouter>,
-    );
-    expect(await screen.findByText("$100,450")).toBeInTheDocument();
-    expect(screen.getByText("open positions")).toBeInTheDocument();
-    expect(await screen.findByText(/improving/)).toBeInTheDocument();
-    expect(screen.getByText(/1,420 forecasts locked in/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Open the Model Tracker/ })).toHaveAttribute("href", "/journal");
+  it("renders the whole page for a signed-out visitor from public reads only", async () => {
+    const urls = stubFetch({ "/api/journal": journal, "/api/oil/fifteen-rule": fifteen, "/api/portfolio/closed": closed });
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/solo research desk/);
+    const numbers = screen.getByRole("region", { name: "Headline numbers" });
+    expect(await within(numbers).findByText("1 of 2")).toBeInTheDocument();
+    expect(await within(numbers).findByText("+12.3¢")).toBeInTheDocument();
+    expect(within(numbers).getByText(/\+1\.1¢ to \+23\.5¢, clear of zero/)).toBeInTheDocument();
+    expect(await within(numbers).findByText("+$177")).toBeInTheDocument();
+    expect(within(numbers).getByText("−$1,768")).toBeInTheDocument();
+    const record = screen.getByRole("region", { name: "The record so far" });
+    expect(record).toHaveTextContent("Retired for trailing their markets: 2 models.");
+    expect(record).toHaveTextContent("gas went from +17.4¢ a trade on Nov 6–9 to +2.5¢ on Nov 10–12");
+    expect(record).toHaveTextContent("Oil is flat at +0.1¢ a trade and metals negative at −6.1¢");
+    const start = screen.getByRole("navigation", { name: "Start here" });
+    expect(within(start).getByRole("link", { name: "The 15-minute rules" })).toHaveAttribute("href", "/strategies");
+    expect(within(start).getByRole("link", { name: "The stock book" })).toHaveAttribute("href", "/portfolio");
+    expect(within(start).getByRole("link", { name: "Kalshi demo" })).toHaveAttribute("href", "/portfolio?book=kalshi");
+    expect(urls.some((u) => u.includes("/api/admin"))).toBe(false);
   });
 
-  it("shows Coming up with its card when a preview exists", async () => {
-    previews = [{ target: "KXPAYROLLS-26NOV-T100000", forecaster: "labor_nowcast", forecaster_version: "jobs-v1", family: "labor",
-                  close_at: "2026-12-04T13:30:00+00:00", probability: 0.6, market_prob: 0.5, payload: { mu_k: 120 }, computed_at: "2026-11-09T00:00:00+00:00" }];
-    stubFetch();
+  it("shows a dash, never a zero, for every number a read could not supply", async () => {
+    const urls = stubFetch({});  // every read fails
     render(<MemoryRouter><Overview /></MemoryRouter>);
-    expect(await screen.findByText("Coming up")).toBeInTheDocument();
-    expect(await screen.findByText("Next jobs report")).toBeInTheDocument();
-    previews = [];
-  });
-
-  it("shows no Coming up heading when nothing is coming up", async () => {
-    stubFetch();  // previews: []
-    render(<MemoryRouter><Overview /></MemoryRouter>);
-    expect(await screen.findByText("$100,450")).toBeInTheDocument();
-    expect(screen.queryByText("Coming up")).not.toBeInTheDocument();
+    const numbers = screen.getByRole("region", { name: "Headline numbers" });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });  // let the failed reads settle
+    expect(urls).toHaveLength(3);
+    expect(await within(numbers).findAllByText("—")).toHaveLength(6);  // models, gas, tested and manual with their win lines
+    expect(numbers).not.toHaveTextContent(/\b0 of|\+0\.0¢|\$0/);
+    const record = screen.getByRole("region", { name: "The record so far" });
+    expect(record).toHaveTextContent("Retired for trailing their markets: — models.");
+    expect(record).not.toHaveTextContent(/\b0 models|\+0\.0¢/);
   });
 });

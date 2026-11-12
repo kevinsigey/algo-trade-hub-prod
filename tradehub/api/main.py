@@ -3244,7 +3244,21 @@ def get_journal(supabase=Depends(get_supabase)):
         "forecasters": rows,
         "headline": journal_headline(rows),
         "standings": {**rows_out, "verdict": journal_verdict_sentence(rows_out)},
+        "retired": _retired_forecasters(),
     }
+
+
+def _retired_forecasters() -> list[dict] | None:
+    """The (forecaster, version) rows retired from freezing (registry.RETIRED, Nov 10): still
+    settled and scored, so they stay on the board; the Overview names how many and leaves them
+    out of "beating their market". None (unknown, never an empty list) if the registry won't load."""
+    try:
+        from tradehub.journal.registry import RETIRED
+
+        return [{"forecaster": f.name, "version": f.version} for f in RETIRED]
+    except Exception:  # noqa: BLE001
+        log.exception("api: journal registry unreadable")
+        return None
 
 
 @app.get("/api/journal/previews", tags=["Journal"])

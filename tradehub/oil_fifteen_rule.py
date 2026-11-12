@@ -200,6 +200,15 @@ def _series_trades(supa, first: dict[str, dict], label: str, picker) -> tuple[li
     return trades, pending
 
 
+def _daily(trades: list[dict]) -> list[dict[str, Any]]:
+    """Trades and P&L per New York trading day, oldest first, replay and forward together:
+    the Overview reads whether a series' per-trade edge is holding or fading from this."""
+    days: dict[str, list[float]] = {}
+    for t in trades:
+        days.setdefault(datetime.fromisoformat(t["frozen_at"]).astimezone(NY).date().isoformat(), []).append(t["pnl"])
+    return [{"day": d, "n": len(xs), "total": round(sum(xs), 4)} for d, xs in sorted(days.items())]
+
+
 def _session_split(trades: list[dict]) -> dict[str, Any]:
     forward = [t for t in trades if t["frozen_at"] >= PREREG_AT]
     return {"open": _stats([t for t in forward if futures_open(t["frozen_at"])]),
@@ -286,7 +295,8 @@ def record(supa) -> dict[str, Any]:
             # the Strategies page lists one entry per market, each with its gated record.
             "by_series": {label: _stats([t for t in gated if t["series"] == label
                                          and t["frozen_at"] >= PREREG_AT])
-                          for _, _, label in SERIES}}
+                          for _, _, label in SERIES},
+            "daily": {label: _daily([t for t in gated if t["series"] == label]) for _, _, label in SERIES}}
     return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **raw,
             "by_series": by_series, "by_session": _session_split(trades), "pending": pending,
             "recent": trades[:12], "gate": gate,

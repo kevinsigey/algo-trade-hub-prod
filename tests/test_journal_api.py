@@ -339,3 +339,25 @@ def test_macro_built_after_a_failed_read_is_not_kept(monkeypatch):
     db = FakeJournalDB(lambda: T0)  # this fake has no jobs_scorecard table: that read fails
     assert _client(db).get("/api/macro").json() == {"cards": [1]}
     assert _client(db).get("/api/macro").json() == {"cards": [2]}
+
+
+def test_journal_names_the_retired_rows_and_fails_soft_to_unknown(monkeypatch):
+    db = FakeJournalDB(lambda: T0)
+    body = _client(db).get("/api/journal").json()
+    from tradehub.journal.registry import RETIRED
+
+    assert len(body["retired"]) == len(RETIRED) > 0
+    assert {"forecaster": "gas", "version": RETIRED[[f.name for f in RETIRED].index("gas")].version} in body["retired"]
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def broken(name, *a, **k):
+        if name == "tradehub.journal.registry":
+            raise ImportError("registry down")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", broken)
+    res = _client(db).get("/api/journal")
+    assert res.status_code == 200 and res.json()["retired"] is None  # unknown, never "none retired"

@@ -319,3 +319,22 @@ def test_record_returns_by_session_split(monkeypatch):
     # windows in by_session
     assert out["by_session"]["open"]["windows"] == 2  # two distinct open windows
     assert out["by_session"]["closed"]["windows"] == 1
+
+
+def test_record_reports_the_gated_record_per_new_york_day(monkeypatch):
+    # The Overview reads the gas trend from this: per series, per NY day, oldest first.
+    rows = {("natgas_15m", "natgas-15m-v2"): [
+        {"target": "a", "probability": 0.70, "payload": {"yes_ask": 0.50, "yes_bid": 0.48},
+         "frozen_at": "2026-11-08T03:30:00+00:00"},  # 10:30 PM ET on Nov 7
+        {"target": "b", "probability": 0.70, "payload": {"yes_ask": 0.50, "yes_bid": 0.48},
+         "frozen_at": "2026-11-10T15:00:00+00:00"},
+        {"target": "c", "probability": 0.70, "payload": {"yes_ask": 0.50, "yes_bid": 0.48},
+         "frozen_at": "2026-11-10T15:15:00+00:00"},
+    ]}
+    monkeypatch.setattr(rule.store, "fetch_forecasts", lambda supa, f, v: rows.get((f, v), []))
+    monkeypatch.setattr(rule.store, "fetch_settlements", lambda supa, targets: {"a": 1, "b": 1, "c": 0})
+    daily = rule.record(FakeSupa())["gate"]["daily"]
+    assert daily["WTI"] == []
+    win, loss = rule.pnl("yes", 0.50, 1), rule.pnl("yes", 0.50, 0)
+    assert daily["Natural gas"] == [{"day": "2026-11-07", "n": 1, "total": round(win, 4)},
+                                    {"day": "2026-11-10", "n": 2, "total": round(win + loss, 4)}]
