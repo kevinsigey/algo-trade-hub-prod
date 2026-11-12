@@ -1688,7 +1688,7 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
     except Exception:  # noqa: BLE001
         if strict:
             raise
-    # The volatility-regime challenger (preregistration 2026-11-13) and the
+    # The volatility-regime challenger (preregistration frozen 2026-11-12) and the
     # decline monitor (per day and series: live rule, blend, challenger side
     # by side). Additive and fail-soft the same way.
     try:

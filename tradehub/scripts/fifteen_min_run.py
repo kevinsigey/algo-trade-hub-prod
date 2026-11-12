@@ -35,7 +35,7 @@ docs/superpowers/specs/2026-11-11-fifteen-blend-shadow-prereg.md) -- its
 decision record for all six series and its once-a-day promotion
 evaluation, under the same fail-soft rule.
 
-Amendment 2026-11-13: the same run also writes the volatility-regime
+Amendment 2026-11-12: the same run also writes the volatility-regime
 challenger (tradehub/fifteen_volregime.py, preregistration
 docs/superpowers/specs/2026-11-13-fifteen-volregime-shadow-prereg.md) -- its
 decision record and its once-a-day evaluation (a record only, it never

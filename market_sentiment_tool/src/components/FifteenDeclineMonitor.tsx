@@ -7,7 +7,8 @@ export interface DeclineRow { day: string; series: string; live: DeclineCell; bl
 
 type Model = "live" | "blend" | "volregime";
 type SortKey = "day" | "series" | `${Model}:trades` | `${Model}:pnl`;
-const MODELS: [Model, string][] = [["live", "Live rule"], ["blend", "Blend"], ["volregime", "Vol-regime"]];
+// The decisions table's v1 rule: the live gate for oil and gas, a record only for metals (live_gate=False).
+const MODELS: [Model, string][] = [["live", "v1 rule"], ["blend", "Blend"], ["volregime", "Vol-regime"]];
 
 const cent1 = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
 

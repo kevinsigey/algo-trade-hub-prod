@@ -239,3 +239,101 @@ def test_decline_monitor_side_by_side_per_et_day_and_series():
     assert by[("2026-11-15", "Natural gas")]["live"]["trades"] == 1
     assert by[("2026-11-16", "Copper")]["live"]["pnl_per_trade"] == -0.3
     assert rows[0]["day"] == "2026-11-16"
+
+
+# -- review fixes ---------------------------------------------------------------
+
+def test_one_history_read_per_series_day_matches_the_per_regime_split(monkeypatch):
+    high, low = _base_history()
+    world = _world(high, low, _history(DAY - timedelta(days=2), 6, sigma=LOW, right=True, tag="X"))
+    _use(monkeypatch, world)
+    calls = []
+    real = blend._history_triples
+    monkeypatch.setattr(blend, "_history_triples", lambda *a, **k: calls.append(1) or real(*a, **k))
+    median, weights = vr.weights_for_day(FakeSupa(), "natgas_15m", "natgas-15m-v2", "KXNATGAS15M", DAY, NOW)
+    assert len(calls) == 1
+    # The reference: each regime's triples built straight from the fixture.
+    _cals, forecasts, settled = world
+    for regime in vr.REGIMES:
+        triples = [(f["probability"], 0.5, settled[f["target"]]) for f in forecasts["natgas_15m"]
+                   if vr.regime_of(f["payload"]["sigma_1m"], median) == regime]
+        assert weights[regime] == vr.regime_weight(triples)[0]
+    assert weights == {"high": 1.0, "low": 0.0}
+
+
+def test_saved_weights_are_read_back_and_a_late_settlement_never_rewrites_the_day(monkeypatch):
+    high, low = _base_history()
+    _use(monkeypatch, _world(high, low))
+    supa = FakeSupa()
+    first = vr.weights_for_day(supa, "natgas_15m", "natgas-15m-v2", "KXNATGAS15M", DAY, NOW)
+    saved = [dict(r) for r in supa.tables[vr.WEIGHTS_TABLE]]
+    # Late settlements land for earlier days: 40 high-vol windows the model got wrong.
+    late = _history(DAY - timedelta(days=3), 40, sigma=HIGH, right=False, tag="LATE")
+    _use(monkeypatch, _world(high, low, late))
+    again = vr.weights_for_day(supa, "natgas_15m", "natgas-15m-v2", "KXNATGAS15M", DAY,
+                               NOW + timedelta(hours=2))
+    assert again == first and supa.tables[vr.WEIGHTS_TABLE] == saved
+    # A fresh compute on the same evidence would have differed: the read-back is what held it.
+    fresh = vr.weights_for_day(FakeSupa(), "natgas_15m", "natgas-15m-v2", "KXNATGAS15M", DAY, NOW)
+    assert fresh != first
+
+
+def test_a_failed_weights_read_raises_instead_of_computing(monkeypatch):
+    high, low = _base_history()
+    _use(monkeypatch, _world(high, low))
+
+    class Broken(FakeSupa):
+        def table(self, name):
+            if name == vr.WEIGHTS_TABLE:
+                raise RuntimeError("statement timeout")
+            return super().table(name)
+
+    supa = Broken()
+    try:
+        vr.weights_for_day(supa, "natgas_15m", "natgas-15m-v2", "KXNATGAS15M", DAY, NOW)
+    except RuntimeError as exc:
+        assert "timeout" in str(exc)
+    else:
+        raise AssertionError("a failed weights read must raise")
+    assert vr.WEIGHTS_TABLE not in supa.tables
+
+
+def test_day_clustered_low95_is_wider_when_same_day_windows_move_together():
+    # Six days, 20 windows each; every window on a day has the same result.
+    days = [0.5, -0.4, 0.45, -0.35, 0.5, -0.3]
+    items = [(("KXNATGAS15M", f"d{i}"), x + (0.01 if j % 2 else -0.01))
+             for i, x in enumerate(days) for j in range(20)]
+    _n, mean, iid = blend._mean_low95([x for _k, x in items])
+    clustered = vr.clustered_low95(items)
+    assert clustered < iid < mean
+    assert vr.clustered_low95(items[:20]) is None   # one day: not measurable
+
+
+def test_clustered_figures_ride_the_evals_row_and_summary():
+    supa = FakeSupa()
+    mine = supa.tables.setdefault(vr.DECISIONS_TABLE, [])
+    theirs = supa.tables.setdefault(blend.DECISIONS_TABLE, [])
+    for d, pnl in ((16, 0.4), (17, -0.2), (18, 0.3)):
+        for j in range(3):
+            at = f"2026-11-{d}T15:{15 * j:02d}:00+00:00"
+            _decision(mine, target=f"{d}{j}", window_open=at, action="buy", pnl=pnl)
+            _decision(theirs, target=f"{d}{j}", window_open=at, action="skip", pnl=None)
+    vr.evaluate_daily(supa, NOW)
+    row = supa.tables[vr.EVALS_TABLE][0]
+    assert row["low95_clustered"] is not None and row["low95_clustered"] < row["low95"]
+    assert row["paired_low95_clustered"] is not None
+    s = vr.summary(supa)
+    assert s["fresh"]["clustered_low95"] == row["low95_clustered"]
+    assert s["paired"]["clustered_low95"] == row["paired_low95_clustered"]
+
+
+def test_decline_monitor_starts_at_new_york_midnight():
+    supa = FakeSupa()
+    live = supa.tables.setdefault(rule.DECISIONS_TABLE, [])
+    # NOW is Nov 16 11:00 ET; 14 days back is Nov 2 00:00 ET (05:00 UTC, EST after Nov 1).
+    _decision(live, target="in", window_open="2026-11-02T05:00:00+00:00", action="buy", pnl=0.1)
+    _decision(live, target="in2", window_open="2026-11-02T20:00:00+00:00", action="buy", pnl=0.3)
+    _decision(live, target="out", window_open="2026-11-02T04:45:00+00:00", action="buy", pnl=0.9)
+    by = {r["day"]: r for r in vr.decline_monitor(supa, NOW)}
+    assert "2026-11-01" not in by
+    assert by["2026-11-02"]["live"] == {"trades": 2, "pnl_per_trade": 0.2}

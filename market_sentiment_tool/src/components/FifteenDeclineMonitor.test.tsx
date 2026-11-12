@@ -14,7 +14,7 @@ describe("FifteenDeclineMonitor", () => {
   it("shows the three models side by side per day and market, newest first", () => {
     render(<FifteenDeclineMonitor rows={ROWS} />);
     const table = screen.getByRole("table", { name: "15-minute decline monitor" });
-    for (const label of ["Live rule", "Blend", "Vol-regime"]) expect(within(table).getByText(label)).toBeInTheDocument();
+    for (const label of ["v1 rule", "Blend", "Vol-regime"]) expect(within(table).getByText(label)).toBeInTheDocument();
     const body = within(table).getAllByRole("row").slice(2);
     expect(body).toHaveLength(3);
     expect(within(body[0]).getByText("11-12")).toBeInTheDocument();

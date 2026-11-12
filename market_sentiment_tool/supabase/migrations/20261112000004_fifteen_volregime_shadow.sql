@@ -64,9 +64,11 @@ create table if not exists public.fifteen_volregime_evals (
   trades int not null default 0,
   net_per_contract real,
   low95 real,
+  low95_clustered real,
   paired_windows int not null default 0,
   paired_delta real,
   paired_low95 real,
+  paired_low95_clustered real,
   criterion_met boolean not null default false,
   blend_promoted boolean not null default false,
   eligible boolean not null default false

@@ -1,6 +1,6 @@
 # Preregistration — the volatility-regime challenger to the 15-minute blend (v3-volregime-shadow)
 
-Frozen 2026-11-13 (Kevin's commission, action plan step 5, on Claude's review
+Frozen 2026-11-12 (Kevin's commission, action plan step 5, on Claude's review
 `docs/review-2026-11-11-muse-round2-and-regime-challenger.md`, Part 2 and
 Part 3 item 4). Frozen BEFORE the first row: only windows opening at or after
 PREREG_AT count toward anything, and no row is written for an earlier window.
@@ -65,6 +65,11 @@ window), a skip scoring 0, counted only where both rows exist and are settled.
 Evaluated once a day on the 15-minute runner's first pass, one row in
 `fifteen_volregime_evals`.
 
+Beside the frozen low95 and paired low95, the evals row and the page also carry
+a **day-clustered low95** (windows clustered by series and ET day, the
+cluster-robust standard error of the mean): it is informational only, was added
+before any rows exist, and is not part of the promotion bar.
+
 ## Promotion bar (frozen, all required)
 
     n >= 100 fresh trades (pooled across all six series);
@@ -77,6 +82,13 @@ The challenger may take the live gate only after the blend has been promoted
 bar is met and whether the blend is promoted, and nothing writes to any
 promotions log or touches the live gate. Wiring a promotion, if the bar is ever
 met after the blend's promotion, is a separate commission.
+
+## Stopping rule (frozen)
+
+If the promotion bar is not met within 60 days of PREREG_AT (2027-01-13
+00:00 UTC) or by 300 fresh trades, whichever comes first, the challenger is
+retired as a record: it stops counting toward promotion and its rows stay as
+they are.
 
 ## Not in this build
 

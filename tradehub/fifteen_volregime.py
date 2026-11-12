@@ -1,6 +1,6 @@
 """The volatility-regime challenger to the 15-minute blend (preregistration
 docs/superpowers/specs/2026-11-13-fifteen-volregime-shadow-prereg.md, frozen
-2026-11-13; review docs/review-2026-11-11-muse-round2-and-regime-challenger.md
+2026-11-12; review docs/review-2026-11-11-muse-round2-and-regime-challenger.md
 Part 2).
 
 The blend with one change: each series gets two daily weights instead of one.
@@ -99,15 +99,16 @@ def weights_for_day(supa, name: str, version: str, series: str, day,
             {r["regime"]: float(r["weight"]) for r in rows}
     day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     median = trailing_median(supa, name, version, day_start)
+    # One history read per series per day, split by regime in memory.
+    tagged = [] if median is None else blend._history_triples(
+        supa, name, version, day_start, tag=lambda f: regime_of(_sigma(f), median))
     out: dict[str, float] = {}
     persist = []
     for regime in REGIMES:
         if median is None:
             weight, slope, n = 0.0, None, 0
         else:
-            weight, slope, n = regime_weight(blend._history_triples(
-                supa, name, version, day_start,
-                keep=lambda f, r=regime: regime_of(_sigma(f), median) == r))
+            weight, slope, n = regime_weight([t[:3] for t in tagged if t[3] == regime])
         out[regime] = weight
         persist.append({"series": series, "day": day.isoformat(), "regime": regime,
                         "median_sigma": median, "weight": weight, "raw_slope": slope,
@@ -184,6 +185,29 @@ def record_volregime(supa, now: datetime, *,
     return {"windows": len(rows), "buy": sum(r["action"] == "buy" for r in rows)}
 
 
+def _et_day(value: Any) -> str:
+    return _dt(value).astimezone(_ET).date().isoformat()
+
+
+def clustered_low95(items: list[tuple[Any, float]]) -> float | None:
+    """Informational, not part of the frozen bar: the low end of the mean
+    per item with windows clustered by (series, ET day) -- the cluster-robust
+    standard error of a mean, mean - 1.96 * sqrt(k/(k-1) * sum_c (T_c - mean
+    * n_c)^2) / n over k clusters with totals T_c of n_c items. Same-day
+    windows move together, so this is the honest width; None under 2 days."""
+    n = len(items)
+    totals: dict[Any, list[float]] = defaultdict(lambda: [0.0, 0])
+    for key, x in items:
+        totals[key][0] += x
+        totals[key][1] += 1
+    k = len(totals)
+    if k < 2:
+        return None
+    mean = sum(x for _k, x in items) / n
+    var = k / (k - 1) * sum((t - mean * c) ** 2 for t, c in totals.values())
+    return mean - 1.96 * var ** 0.5 / n
+
+
 def _pnl_or_zero(r: dict) -> float:
     return float(r["pnl"]) if r["action"] == "buy" and r.get("pnl") is not None else 0.0
 
@@ -203,8 +227,11 @@ def _evaluate(supa) -> dict[str, Any]:
         b = other.get((r["series"], r["target"]))
         if r.get("outcome") is None or b is None or b.get("outcome") is None:
             continue
-        deltas.append(_pnl_or_zero(r) - _pnl_or_zero(b))
-    pn, pmean, plow = blend._mean_low95(deltas)
+        deltas.append(((r["series"], _et_day(r["window_open"])), _pnl_or_zero(r) - _pnl_or_zero(b)))
+    pn, pmean, plow = blend._mean_low95([d for _k, d in deltas])
+    clow = clustered_low95([((r["series"], _et_day(r["window_open"])), float(r["pnl"]))
+                            for r in trades])
+    pclow = clustered_low95(deltas)
     met = blend.criterion_met(n, low, plow)
     blend_promoted = blend.current_state(supa) == blend.LIVE_VERSION
     return {"windows": len(fresh), "trades": n,
@@ -214,6 +241,8 @@ def _evaluate(supa) -> dict[str, Any]:
             "paired_windows": pn,
             "paired_delta": round(pmean, 4) if pmean is not None else None,
             "paired_low95": round(plow, 4) if plow is not None else None,
+            "low95_clustered": round(clow, 4) if clow is not None else None,
+            "paired_low95_clustered": round(pclow, 4) if pclow is not None else None,
             "criterion_met": met, "blend_promoted": blend_promoted,
             "eligible": met and blend_promoted}
 
@@ -228,7 +257,8 @@ def evaluate_daily(supa, now: datetime) -> dict[str, Any]:
         "evaluated_at": now.isoformat(),
         **{k: ev[k] for k in ("windows", "trades", "net_per_contract", "low95",
                               "paired_windows", "paired_delta", "paired_low95",
-                              "criterion_met", "blend_promoted", "eligible")}}).execute()
+                              "low95_clustered", "paired_low95_clustered", "criterion_met",
+                              "blend_promoted", "eligible")}}).execute()
     return ev
 
 
@@ -244,9 +274,11 @@ def summary(supa) -> dict[str, Any]:
         if str(r["day"]) == cur["day"]:
             cur[r["regime"]] = {"weight": r["weight"], "n_contested": r.get("n_contested")}
     return {"gate_version": SHADOW_VERSION, "prereg_at": PREREG_AT,
-            "fresh": {k: ev[k] for k in ("windows", "trades", "net_per_contract", "low95", "win_rate")},
+            "fresh": {**{k: ev[k] for k in ("windows", "trades", "net_per_contract", "low95",
+                                            "win_rate")},
+                      "clustered_low95": ev["low95_clustered"]},
             "paired": {"windows": ev["paired_windows"], "delta_per_window": ev["paired_delta"],
-                       "low95": ev["paired_low95"]},
+                       "low95": ev["paired_low95"], "clustered_low95": ev["paired_low95_clustered"]},
             "weights": weights,
             "promotion": {"met": ev["criterion_met"], "blend_promoted": ev["blend_promoted"],
                           "eligible": ev["eligible"], "path_built": False,
@@ -263,14 +295,16 @@ def decline_monitor(supa, now: datetime, *, days: int = 14) -> list[dict]:
     for the live rule, the blend and the challenger, side by side. Read only;
     an absent table reads as no trades."""
     labels = {blend._BY_NAME[name]["series"]: label for name, _v, label in blend.ALL_SERIES}
-    since = (now - timedelta(days=days)).isoformat()
+    # Whole ET days only: start at New York midnight `days` days back.
+    start = datetime.combine(now.astimezone(_ET).date() - timedelta(days=days),
+                             datetime.min.time(), tzinfo=_ET)
+    since = start.astimezone(UTC).isoformat()
     cells: dict[tuple, dict] = defaultdict(lambda: {k: [] for k, _t in MONITOR_SOURCES})
     for key, table in MONITOR_SOURCES:
         for r in _read(supa, table, lambda q: q.gte("window_open", since)):
             if r.get("series") not in labels or not r.get("window_open"):
                 continue
-            cell = cells[(_dt(r["window_open"]).astimezone(_ET).date().isoformat(),
-                          labels[r["series"]])]
+            cell = cells[(_et_day(r["window_open"]), labels[r["series"]])]
             if r.get("action") == "buy" and r.get("pnl") is not None:
                 cell[key].append(float(r["pnl"]))
     out = []

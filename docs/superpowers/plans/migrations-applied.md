@@ -107,8 +107,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 82 | `20261111000005_leaps_open_pair_unique.sql` |
 | 83 | `20261112000001_leaps_trial_verdicts.sql` |
 | 84 | `20261112000002_kalshi_demo_orders.sql` |
+| 85 | `20261112000004_fifteen_volregime_shadow.sql` (applied 2026-11-12 by Claude through the Supabase connector as `fifteen_volregime_shadow` on Kevin's go; renumbered from 000003 after a filename collision with #514, with `low95_clustered` and `paired_low95_clustered` on the evals table; read back: decisions 25 columns, weights 9, evals 14, RLS on for all three, no anon/authenticated grants, unique keys present) |
 
-**Watermark: `20261112000002_kalshi_demo_orders.sql`**
+**Watermark: `20261112000004_fifteen_volregime_shadow.sql`**
 
 ## How to record a new one
 
