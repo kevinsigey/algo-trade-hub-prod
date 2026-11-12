@@ -153,6 +153,50 @@ def test_structurer_schema_names_the_choice_enum_and_rubric_fields():
     assert choice_props["choice_id"]["enum"] == list(debate_fork.CHOICE_IDS)
     rubric_props = defs.get("RubricWeights", {}).get("properties", {})
     assert sorted(rubric_props) == sorted(debate_fork.RUBRIC_KEYS)
+    assert sorted(defs["RubricWeights"]["required"]) == \
+        sorted(debate_fork.RUBRIC_KEYS)
+
+
+def test_fork_voids_an_extra_rubric_key_beside_all_five():
+    weights = {"guide_credibility": 0.3, "gap_size": 0.25,
+               "direction_momentum": 0.15, "options_expression": 0.1,
+               "falsifier_proximity": 0.2, "extra_signal": 0.1}
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+
+
+def test_fork_voids_conflicting_duplicate_rubric_spellings():
+    weights = {"guide_credibility": 0.3, "Guide Credibility": 0.5,
+               "gap_size": 0.25, "direction_momentum": 0.15,
+               "options_expression": 0.1, "falsifier_proximity": 0.2}
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+
+
+def test_fork_accepts_agreeing_duplicate_rubric_spellings():
+    weights = {"guide_credibility": 0.3, "Guide Credibility": 0.3,
+               "gap_size": 0.25, "direction_momentum": 0.15,
+               "options_expression": 0.1, "falsifier_proximity": 0.2}
+    out = debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+    assert abs(out["packet"]["rubric_weights"]["guide_credibility"]
+               - 0.3) < 1e-6
+
+
+def test_fork_voids_a_nonfinite_choice_price():
+    bad = _packet()
+    bad["choices"] = [dict(c) for c in bad["choices"]]
+    bad["choices"][2]["price"] = float("nan")
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(bad))
+
+
+def test_fork_voids_a_bad_price_hidden_behind_a_duplicate_choice():
+    bad = _packet()
+    bad["choices"] = [dict(c) for c in bad["choices"]]
+    bad["choices"].append({"choice_id": "watch", "label": "Watch",
+                           "price": float("inf")})
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(bad))
 
 
 def test_fork_caps_the_digest_at_the_frozen_token_budget():

@@ -17,6 +17,7 @@ a band price (or the live price, for watch/pass) voids the verdict — the
 """
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from pydantic import BaseModel
@@ -128,12 +129,32 @@ def _repair_raw(raw):
       A 'watch_and_pass' proposer pick maps to 'watch' only when its
       direction is 'none' (both halves are directionless); a directional
       merged pick is ambiguous and still voids.
+    Hard fails added on CodeRabbit's #487 review: a non-finite choice
+    price anywhere in the filed list (checked before dedup, so a
+    duplicate cannot hide one), rubric keys that normalize to the same
+    key with conflicting weights, and unknown rubric keys no
+    substitution consumed.
     Anything else is left exactly as filed and fails validation as before."""
     if not isinstance(raw, dict):
         return raw
     raw = dict(raw)
     choices = raw.get("choices")
     if isinstance(choices, list):
+        # Every filed price is checked BEFORE expansion and dedup: a
+        # non-finite price passes the tolerance comparison in
+        # validate_packet silently (NaN comparisons are False), and a
+        # duplicate id would otherwise hide a later choice's bad price
+        # behind the first copy (CodeRabbit on #487). A bad price voids;
+        # it is never repaired.
+        for choice in choices:
+            if isinstance(choice, dict):
+                price = choice.get("price")
+                if isinstance(price, bool) or \
+                        not isinstance(price, (int, float)) or \
+                        not math.isfinite(float(price)):
+                    raise ValueError(
+                        f"choice {choice.get('choice_id')!r} price "
+                        f"{price!r} is not a finite number")
         expanded: list = []
         for choice in choices:
             if isinstance(choice, dict):
@@ -168,11 +189,26 @@ def _repair_raw(raw):
         norm: dict = {}
         for key, val in weights.items():
             nk = _RUBRIC_ALIASES.get(_norm_id(key), _norm_id(key))
+            if nk in norm and norm[nk] != val:
+                # Two spellings of one key carrying different weights:
+                # which one the proposer meant is unknowable, so the
+                # packet voids rather than silently keeping the last
+                # (CodeRabbit on #487). Agreeing duplicates are fine.
+                raise ValueError(
+                    f"rubric key {nk!r} filed twice with conflicting "
+                    f"weights {norm[nk]!r} and {val!r}")
             norm[nk] = val
         missing = [k for k in RUBRIC_KEYS if k not in norm]
         unknown = [k for k in norm if k not in RUBRIC_KEYS]
         if len(missing) == 1 and len(unknown) == 1:
             norm[missing[0]] = norm.pop(unknown[0])
+            unknown = []
+        if unknown:
+            # The structurer contract names exactly the five keys; an
+            # unknown key that no substitution consumed is not silently
+            # dropped by the schema's extra-field default (CodeRabbit
+            # on #487).
+            raise ValueError(f"unknown rubric keys {sorted(unknown)}")
         raw["rubric_weights"] = norm
     return raw
 
