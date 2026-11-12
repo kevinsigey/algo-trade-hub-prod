@@ -17,16 +17,16 @@ production database on Nov 12, 00:20 UTC.
 | Self-weighting blend shadow | #482 (rows start Nov 12) |
 | LEAPS gate faults: pooled delivery definition (Kevin's Nov 11 call — the 80% bar stays constant), cohort judged only at 90+ days of marks or closed, first verdict stored and never recomputed | LEAPS gate fix PR (branch `rev/leaps-gate-fix`) |
 | Portfolio page bugs: Sharpe guard counts distinct trading days; movers, composition and position counts read `positions_aggregate`; by-idea header counts its rendered rows; multi-leg orders name their legs. The GLD "reappearing" sell was checked live and is not a bug (26 of 52 shares sold; the remaining 26 sit in two idea slices) | Portfolio review (`review-2026-11-12-portfolio.md`), branch `rev/portfolio-bugs` |
+| Quarterly figures rejected as full-year guides (TMUS); MRK filing check + step-change note | #484 |
+| LEAPS one-open-pair index | #485 |
+| Debate packets repaired (10 of 10 verdicts were void) | #487 (A5), NaN guard #493 |
+| Debate grading scheduled (deploy crontab, 05:07 UTC daily; 3 graded at +5 days, 0 hits) | #488 (A6) |
+| Tests stop calling the live Alpaca paper API | #489 (A7) |
+| Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
 
 ## In flight (open PRs from Muse)
-| Item | PR |
-|---|---|
-| Quarterly figures rejected as full-year guides (TMUS); needs the MRK "basis break" amendment | #484 |
-| LEAPS one-open-pair index | #485 |
-| Debate packets repaired (10 of 10 verdicts were void) | #487 (A5) |
-| Debate grading scheduled (0 graded since Nov 2) | #488 (A6) |
-| Tests stop calling the live Alpaca paper API | #489 (A7) |
-| Volatility-regime challenger | `review-2026-11-11-muse-round2-and-regime-challenger.md` |
+None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
+(`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 18 there.
 
 ## Not started: product
 1. **Overview rework and visitor landing page.** Overview hasn't changed since the Nov 9 polish. Plan: say what the
@@ -76,9 +76,9 @@ production database on Nov 12, 00:20 UTC.
 - MRK and any guide step over 35%: hold the band until confirmed?
 - Freeze Deals and IPOs, the Level watcher, and the Agent debates page (no new work until used)?
 - Screening: wire one screen into a tracked idea as a real test, or keep it as a lookup tool?
-- Gas demo plumbing needs a demo API key on the server.
+- ~~Gas demo plumbing needs a demo API key on the server.~~ Done Nov 11 (RSA demo key on the VPS, $500 balance).
 
-## Prompt for Muse (after the current A5–A7 PRs)
+## Prompt for Muse (superseded Nov 12: follow `action-plan-2026-11-12.md`)
 > Work from `docs/review-backlog-2026-11-12.md`, top to bottom within each section, one PR per numbered item,
 > CodeRabbit on every PR, migrations only with Kevin's go and recorded in `migrations-applied.md`.
 > - Start with model item 1 (the gas fill check), product item 1 (the Overview landing page) and product item 7
