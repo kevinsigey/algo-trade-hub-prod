@@ -127,6 +127,29 @@ def test_persist_stores_the_first_verdict_and_never_a_second():
     assert row["state"] == "pass"
 
 
+def test_insufficient_data_is_not_stored_and_a_later_pass_is():
+    # Night one: the share line lost money in total, so pooled delivery
+    # is undefined and the gate reads insufficient_data. That read must
+    # NOT be stored -- stored verdicts are never recomputed, so freezing
+    # an insufficient_data would freeze the trial forever on no evidence.
+    db = DB()
+    db.db["leaps_shadow_pairs"] = [
+        _gate_pair(i, leaps_pnl=-50.0, share_pnl=-100.0) for i in range(1, 5)]
+    out = leaps.persist_gate_verdicts(db, now=NOW + timedelta(days=60))
+    assert out["stored"] == []
+    assert db.db.get("leaps_trial_verdicts", []) == []
+
+    # A later night, with both metrics marked, judges a pass -- and
+    # that pass is the verdict that gets stored.
+    for r in db.db["leaps_shadow_pairs"]:
+        r["leaps_pnl"] = 900.0
+        r["share_pnl"] = 1000.0
+    out = leaps.persist_gate_verdicts(db, now=NOW + timedelta(days=70))
+    assert out["stored"] == ["first4"]
+    (row,) = db.db["leaps_trial_verdicts"]
+    assert row["state"] == "pass" and row["cohort"] == "first4"
+
+
 def test_panel_serves_the_stored_verdict():
     db = DB()
     db.db["leaps_shadow_pairs"] = [_gate_pair(i, drag=9.0, leaps_pnl=100.0)
