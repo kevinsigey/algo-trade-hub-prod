@@ -1352,7 +1352,7 @@ export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
           {s.pairs_opened} pair{s.pairs_opened === 1 ? "" : "s"} opened ({s.pairs_open} open, {s.pairs_closed} closed)
           {s.unfilled > 0 && <> · {s.unfilled} trigger{s.unfilled === 1 ? "" : "s"} could not open a line</>}
           {" · "}mean carry drag {s.mean_carry_drag_pct == null ? "—" : `${s.mean_carry_drag_pct.toFixed(2)}%/yr`}
-          {" · "}mean delta delivered {s.mean_delta_delivered == null ? "—" : s.mean_delta_delivered.toFixed(2)}
+          {" · "}delta delivered (pooled) {s.mean_delta_delivered == null ? "—" : s.mean_delta_delivered.toFixed(2)}
         </p>
         <p className="mt-1 text-slate-300">
           {s.pairs_opened === 0
@@ -1362,6 +1362,7 @@ export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
         </p>
         <p className={`mt-1 font-medium ${gate.state === "killed" ? "text-rose-300" : gate.state === "pass" || gate.state === "complete" ? "text-emerald-300" : "text-slate-200"}`}>
           Gate: {gateText}.
+          {gate.stored && gate.judged_at && <> Verdict stored {ctDateTime(gate.judged_at)} — the first judged verdict stands and is never recomputed.</>}
         </p>
         {gate.extension?.state === "killed" && (
           <p className="mt-1 text-slate-300">

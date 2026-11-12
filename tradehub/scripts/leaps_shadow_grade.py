@@ -20,7 +20,8 @@ def main() -> int:
     client = get_client()
     intake = leaps_shadow.run_intake(client)
     grading = leaps_shadow.run_grading(client)
-    print(f"leaps shadow: intake {intake}; grading {grading}")
+    verdicts = leaps_shadow.persist_gate_verdicts(client)
+    print(f"leaps shadow: intake {intake}; grading {grading}; verdicts {verdicts}")
     return 0
 
 

@@ -21,9 +21,18 @@ from the final close), and at trial end (12 months from the first pair).
 
 The frozen gate, read by trial_summary and never acted on: at the first
 4 opened pairs (or 12 months), mean carry drag over 3.5%/yr of
-delta-notional or mean delta delivery under 80% kills the vehicle; a
+delta-notional or pooled delta delivery under 80% kills the vehicle; a
 pass extends the trial to 8 pairs. Promotion to live capital is Kevin's
 separate call.
+
+Gate amendment (Kevin's call, 2026-11-11, before any pair opened — no
+evidence is regraded): delivery is POOLED dollars, sum(leaps_pnl) /
+sum(share_pnl) over the cohort, so the 80% bar stays constant. The
+original definition (a mean of per-pair ratios of return-on-cash) read
+~3.0 for a perfectly tracking LEAPS and could only fire on near-total
+failure. The cohort is judged only once every pair in it carries at
+least 90 days of marks or is closed, and the first verdict is stored
+(leaps_trial_verdicts, by the nightly grade) and never recomputed.
 """
 from __future__ import annotations
 
@@ -31,6 +40,7 @@ import math
 from datetime import UTC, date, datetime, timedelta
 
 PAIRS = "leaps_shadow_pairs"
+VERDICTS = "leaps_trial_verdicts"
 CROSSINGS = "band_crossings"
 IDEA_ID = 81
 TAG = "leaps-trial"
@@ -43,6 +53,7 @@ MAX_SPREAD_PCT = 25.0               # the options plumbing's own tradability bar
 ROLL_DTE = 180
 DRAG_KILL_PCT = 3.5
 DELIVERY_KILL = 0.80
+MIN_MARKS_DAYS = 90                 # a cohort pair judges only this mature
 GATE_PAIRS = 4
 EXTENDED_PAIRS = 8
 TRIAL_DAYS = 365
@@ -164,21 +175,45 @@ def pair_marks(pair: dict, *, leaps_mid: float | None, share_price: float | None
         spread_paid = (float(pair["entry_ask"]) - float(pair["entry_mid"])) * contracts * 100
         years = max((_dt(marked_at) - _dt(pair["opened_at"])).days, 1) / 365.0
         patch["carry_drag_pct"] = (decay + spread_paid) / float(pair["delta_notional"]) / years * 100
-        share_cash = float(pair["share_shares"]) * float(pair["share_entry_price"])
-        share_ret = patch["share_pnl"] / share_cash if share_cash else 0.0
-        leaps_ret = leaps_pnl / float(pair["premium_total"]) if pair["premium_total"] else 0.0
-        patch["delta_delivered"] = (leaps_ret / share_ret) if share_ret != 0 else None
+        # The pair's own delivery, in the gate's pooled units: LEAPS P&L
+        # dollars per share P&L dollar. Undefined when the share line
+        # made nothing — a ratio against a zero or negative denominator
+        # would punish or reward the LEAPS for the shares' result.
+        share_pnl = patch["share_pnl"]
+        patch["delta_delivered"] = (leaps_pnl / share_pnl) if share_pnl > 0 else None
     return patch
 
 
 def _cohort_read(cohort: list[dict]) -> dict:
-    """One gate cohort's verdict inputs: the two frozen means over the
-    cohort's rows that carry them."""
+    """One gate cohort's verdict inputs: mean carry drag over the rows
+    that carry it, and POOLED delivery — total LEAPS P&L dollars over
+    total share P&L dollars across the pairs carrying both legs (the
+    definition Kevin froze on 2026-11-11; the bar stays a constant
+    80%). Delivery is None when no pair carries both legs or the share
+    line made nothing in total: the ratio is undefined there, and the
+    gate reads that as missing evidence, never as a pass or a kill."""
     drags = [float(r["carry_drag_pct"]) for r in cohort if r.get("carry_drag_pct") is not None]
-    deliveries = [float(r["delta_delivered"]) for r in cohort
-                  if r.get("delta_delivered") is not None]
+    both = [r for r in cohort
+            if r.get("leaps_pnl") is not None and r.get("share_pnl") is not None]
+    leaps_sum = sum(float(r["leaps_pnl"]) for r in both)
+    share_sum = sum(float(r["share_pnl"]) for r in both)
+    delivery = leaps_sum / share_sum if both and share_sum > 0 else None
     return {"mean_drag": sum(drags) / len(drags) if drags else None,
-            "mean_delivery": sum(deliveries) / len(deliveries) if deliveries else None}
+            "mean_delivery": delivery,
+            "pooled_leaps_pnl": leaps_sum if both else None,
+            "pooled_share_pnl": share_sum if both else None}
+
+
+def _pair_mature(pair: dict) -> bool:
+    """A cohort pair may be judged only once it is closed, or its marks
+    span at least MIN_MARKS_DAYS from its open — before that the drag
+    annualization (which floors at one day) and the delivery read are
+    noise, and the old gate could fire the day the cohort filled."""
+    if pair.get("status") in ("closed", "expired"):
+        return True
+    if not pair.get("marked_at"):
+        return False
+    return (_dt(pair["marked_at"]) - _dt(pair["opened_at"])).days >= MIN_MARKS_DAYS
 
 
 def _cohort_verdict(read: dict) -> tuple[str | None, str | None]:
@@ -189,7 +224,7 @@ def _cohort_verdict(read: dict) -> tuple[str | None, str | None]:
         return "killed", (f"mean carry drag {read['mean_drag']:.2f}%/yr over the "
                           f"{DRAG_KILL_PCT}%/yr bar")
     if read["mean_delivery"] is not None and read["mean_delivery"] < DELIVERY_KILL:
-        return "killed", (f"mean delta delivery {read['mean_delivery']:.2f} under "
+        return "killed", (f"pooled delta delivery {read['mean_delivery']:.2f} under "
                           f"the {DELIVERY_KILL:.0%} bar")
     if read["mean_drag"] is None or read["mean_delivery"] is None:
         return "insufficient_data", ("the gate's metrics are incomplete for this "
@@ -197,48 +232,72 @@ def _cohort_verdict(read: dict) -> tuple[str | None, str | None]:
     return "pass", None
 
 
-def trial_summary(rows: list[dict], *, now: datetime) -> dict:
+def _gate_from_stored(row: dict, gate: dict) -> None:
+    """Fill the gate dict from a stored verdict row: the stored read is
+    the verdict, served verbatim — live marks never recompute it."""
+    gate.update({"state": row["state"], "judged": True,
+                 "reason": row.get("reason"),
+                 "cohort_pairs": row.get("cohort_pairs"),
+                 "mean_carry_drag_pct": row.get("mean_carry_drag_pct"),
+                 "mean_delta_delivered": row.get("pooled_delta_delivered"),
+                 "stored": True, "judged_at": row.get("judged_at")})
+
+
+def trial_summary(rows: list[dict], *, now: datetime,
+                  stored: dict | None = None) -> dict:
     """The frozen gate read over the trial's rows. A read, never an
     actor: promotion is Kevin's call.
 
     The gate judges a FROZEN cohort — the first GATE_PAIRS opened pairs,
     or every pair opened by the 12-month cutoff when fewer arrived — so
-    a later pair can never rewrite the verdict. A pass extends the trial
-    to EXTENDED_PAIRS; that extension cohort (pairs 5–8) is read
-    separately under gate["extension"] and never mutates the first
-    verdict."""
+    a later pair can never rewrite the verdict. The cohort is judged
+    only once every pair in it is mature (closed, or carrying at least
+    MIN_MARKS_DAYS of marks). A pass extends the trial to
+    EXTENDED_PAIRS; that extension cohort (pairs 5–8) is read separately
+    under gate["extension"] and never mutates the first verdict. When a
+    stored verdict exists (see persist_gate_verdicts), it is served
+    verbatim and the live rows are not re-read for that cohort."""
+    stored = stored or {}
     opened = [r for r in rows if r.get("status") != "unfilled"]
     unfilled = [r for r in rows if r.get("status") == "unfilled"]
     opened.sort(key=lambda r: (_dt(r["opened_at"]), r.get("id") or 0))
     drags = [float(r["carry_drag_pct"]) for r in opened if r.get("carry_drag_pct") is not None]
-    deliveries = [float(r["delta_delivered"]) for r in opened
-                  if r.get("delta_delivered") is not None]
     premium_cash = sum(float(r["premium_total"] or 0) for r in opened)
     share_cash = sum(float(r["share_shares"] or 0) * float(r["share_entry_price"] or 0)
                      for r in opened)
     trial_start = _dt(opened[0]["opened_at"]) if opened else None
     months_hit = trial_start is not None and now >= trial_start + timedelta(days=TRIAL_DAYS)
-    judged = len(opened) >= GATE_PAIRS or months_hit
+    cohort = opened[:GATE_PAIRS]
+    cohort_complete = len(opened) >= GATE_PAIRS or (months_hit and bool(opened))
+    judged = cohort_complete and all(_pair_mature(r) for r in cohort)
     mean_drag = sum(drags) / len(drags) if drags else None
-    mean_delivery = sum(deliveries) / len(deliveries) if deliveries else None
+    mean_delivery = _cohort_read(opened)["mean_delivery"]
     gate: dict = {"state": "waiting", "judged": False, "pairs": len(opened),
-                  "needed": GATE_PAIRS, "reason": None, "extension": None}
+                  "needed": GATE_PAIRS, "reason": None, "extension": None,
+                  "stored": False, "judged_at": None}
     if opened:
         gate["state"] = "open"
-    if judged:
+    if stored.get("first4"):
+        _gate_from_stored(stored["first4"], gate)
+    elif judged:
         gate["judged"] = True
-        read = _cohort_read(opened[:GATE_PAIRS])
-        gate["cohort_pairs"] = min(len(opened), GATE_PAIRS)
+        read = _cohort_read(cohort)
+        gate["cohort_pairs"] = len(cohort)
         gate["mean_carry_drag_pct"] = read["mean_drag"]
         gate["mean_delta_delivered"] = read["mean_delivery"]
-        state, reason = _cohort_verdict(read)
-        gate["state"], gate["reason"] = state, reason
-        if state == "pass" and len(opened) >= EXTENDED_PAIRS:
-            ext_state, ext_reason = _cohort_verdict(
-                _cohort_read(opened[GATE_PAIRS:EXTENDED_PAIRS]))
-            gate["extension"] = {"state": ext_state, "reason": ext_reason}
-            if ext_state == "pass":
-                gate["state"] = "complete"
+        gate["state"], gate["reason"] = _cohort_verdict(read)
+    if gate["state"] == "pass" and len(opened) >= EXTENDED_PAIRS:
+        ext_cohort = opened[GATE_PAIRS:EXTENDED_PAIRS]
+        if stored.get("extension"):
+            ext = stored["extension"]
+            gate["extension"] = {"state": ext["state"], "reason": ext.get("reason"),
+                                 "stored": True, "judged_at": ext.get("judged_at")}
+        elif all(_pair_mature(r) for r in ext_cohort):
+            ext_state, ext_reason = _cohort_verdict(_cohort_read(ext_cohort))
+            gate["extension"] = {"state": ext_state, "reason": ext_reason,
+                                 "stored": False, "judged_at": None}
+        if gate["extension"] and gate["extension"]["state"] == "pass":
+            gate["state"] = "complete"
     return {"pairs_opened": len(opened),
             "pairs_open": sum(1 for r in opened if r["status"] == "open"),
             "pairs_closed": sum(1 for r in opened if r["status"] in ("closed", "expired")),
@@ -270,12 +329,66 @@ def t8_symbols(client) -> set[str]:
     return {str(s).upper() for s in sleeve.get("symbols") or []}
 
 
+def _stored_verdicts(client) -> dict:
+    """The trial's stored verdicts by cohort ('first4', 'extension').
+    Fail-soft: a missing table (pre-migration) reads as no verdicts and
+    the panel falls back to the live read."""
+    try:
+        rows = (client.table(VERDICTS).select("*").eq("idea_id", IDEA_ID)
+                .execute().data) or []
+    except Exception:  # noqa: BLE001 -- absence is a state, not a crash
+        return {}
+    return {r["cohort"]: r for r in rows if r.get("cohort")}
+
+
+def persist_gate_verdicts(client, *, now: datetime | None = None) -> dict:
+    """Store the first judged verdict for each cohort, exactly once
+    (the nightly grade calls this after marking). A cohort's verdict is
+    written the first night its gate read judges, from that night's
+    numbers, and is never recomputed or overwritten — later marks move
+    the live read, not the verdict. The unique (idea_id, cohort) index
+    is the backstop if two passes race."""
+    now = now or datetime.now(UTC)
+    rows = _rows(client)
+    stored = _stored_verdicts(client)
+    gate = trial_summary(rows, now=now, stored=stored)["gate"]
+    out: dict = {"stored": []}
+    candidates = []
+    if gate.get("judged") and not stored.get("first4"):
+        candidates.append(("first4", gate))
+    ext = gate.get("extension")
+    if ext and not stored.get("extension") and gate["state"] in ("pass", "complete"):
+        candidates.append(("extension", {"state": ext["state"],
+                                         "reason": ext.get("reason")}))
+    opened = [r for r in rows if r.get("status") != "unfilled"]
+    opened.sort(key=lambda r: (_dt(r["opened_at"]), r.get("id") or 0))
+    for cohort_name, g in candidates:
+        cohort_rows = opened[:GATE_PAIRS] if cohort_name == "first4" \
+            else opened[GATE_PAIRS:EXTENDED_PAIRS]
+        read = _cohort_read(cohort_rows)
+        row = {"idea_id": IDEA_ID, "cohort": cohort_name,
+               "state": g["state"], "reason": g.get("reason"),
+               "mean_carry_drag_pct": read["mean_drag"],
+               "pooled_delta_delivered": read["mean_delivery"],
+               "pooled_leaps_pnl": read["pooled_leaps_pnl"],
+               "pooled_share_pnl": read["pooled_share_pnl"],
+               "cohort_pairs": len(cohort_rows),
+               "judged_at": now.isoformat()}
+        try:
+            client.table(VERDICTS).insert(row).execute()
+        except Exception:  # noqa: BLE001 -- a concurrent pass stored it first
+            continue
+        out["stored"].append(cohort_name)
+    return out
+
+
 def panel(client, idea: dict) -> dict:
     """The idea page's Spec F payload: the trial summary, then the pairs
     and the unfilled triggers."""
     rows = _rows(client)
     return {"idea_id": idea["id"],
-            "summary": trial_summary(rows, now=datetime.now(UTC)),
+            "summary": trial_summary(rows, now=datetime.now(UTC),
+                                     stored=_stored_verdicts(client)),
             "pairs": [r for r in rows if r.get("status") != "unfilled"],
             "unfilled": [r for r in rows if r.get("status") == "unfilled"]}
 

@@ -15,6 +15,7 @@ production database on Nov 12, 00:20 UTC.
 | Verdicts re-labelled under the current bar | A2, #478 and #479 |
 | Ideas carry their search, with "Trial N of M" | A3, #480 |
 | Self-weighting blend shadow | #482 (rows start Nov 12) |
+| LEAPS gate faults: pooled delivery definition (Kevin's Nov 11 call — the 80% bar stays constant), cohort judged only at 90+ days of marks or closed, first verdict stored and never recomputed | LEAPS gate fix PR (branch `rev/leaps-gate-fix`) |
 
 ## In flight (open PRs from Muse)
 | Item | PR |
@@ -24,7 +25,7 @@ production database on Nov 12, 00:20 UTC.
 | Debate packets repaired (10 of 10 verdicts were void) | #487 (A5) |
 | Debate grading scheduled (0 graded since Nov 2) | #488 (A6) |
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
-| LEAPS gate faults and the volatility-regime challenger | `review-2026-11-11-muse-round2-and-regime-challenger.md` |
+| Volatility-regime challenger | `review-2026-11-11-muse-round2-and-regime-challenger.md` |
 
 ## Not started: product
 1. **Overview rework and visitor landing page.** Overview hasn't changed since the Nov 9 polish. Plan: say what the
@@ -71,7 +72,6 @@ production database on Nov 12, 00:20 UTC.
 6. **Rain**: preregister the paper rule; judge it by days.
 
 ## Decisions for Kevin (nobody can build these without an answer)
-- LEAPS: change the delivery definition or the 80% bar.
 - MRK and any guide step over 35%: hold the band until confirmed?
 - Freeze Deals and IPOs, the Level watcher, and the Agent debates page (no new work until used)?
 - Screening: wire one screen into a tracked idea as a real test, or keep it as a lookup tool?
