@@ -360,7 +360,11 @@ export interface LeapsSummary {
   premium_pct_of_share_cash: number | null;
   trial_start: string | null;
   gate: { state: string; judged: boolean; pairs: number; needed: number; reason: string | null;
-          extension?: { state: string; reason: string | null } | null };
+          stored?: boolean; judged_at?: string | null;
+          cohort_pairs?: number | null;
+          mean_carry_drag_pct?: number | null; mean_delta_delivered?: number | null;
+          extension?: { state: string; reason: string | null;
+                        stored?: boolean; judged_at?: string | null } | null };
 }
 
 export interface LeapsPanelData {

@@ -220,8 +220,10 @@ def test_marks_math_on_fixed_numbers():
     patch = leaps.pair_marks(pair, leaps_mid=36.0, share_price=110.0, marked_at=later)
     assert patch["leaps_pnl"] == pytest.approx((36.0 - 32.0) * 300)
     assert patch["share_pnl"] == pytest.approx(10.0 * 237.0)
-    # delivery: leaps return on premium (1200/9600) over share return (2370/23700)
-    assert patch["delta_delivered"] == pytest.approx((1200 / 9600) / (2370 / 23700))
+    # delivery (Kevin's 2026-11-11 definition): LEAPS P&L dollars over
+    # share P&L dollars for the pair -- 1200 / 2370, not a ratio of
+    # per-dollar returns (which read ~3.0 for a perfect tracker).
+    assert patch["delta_delivered"] == pytest.approx(1200 / 2370)
     # drag: extrinsic now = 36 - (110-70) < 0 -> 0; decay = 2*300 - 0 = 600;
     # spread paid = (32-31.85)*300 = 45; years = 182/365
     assert patch["carry_drag_pct"] == pytest.approx((600 + 45) / 23_700 / (182 / 365) * 100)
@@ -275,9 +277,16 @@ def test_grading_expires_at_expiry_settled_at_intrinsic():
     assert pair["leaps_pnl"] == pytest.approx((90.0 - 70.0) * 300 - 9_600.0)
 
 
+def _gate_pair(i, drag=2.0, leaps_pnl=900.0, share_pnl=1000.0, **over):
+    pair = _open_pair(id=i, crossing_id=i, carry_drag_pct=drag,
+                      leaps_pnl=leaps_pnl, share_pnl=share_pnl,
+                      status="closed")
+    pair.update(over)
+    return pair
+
+
 def test_gate_read_pass_and_kill():
-    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=2.0, delta_delivered=0.9,
-                       status="closed" if i < 3 else "open") for i in range(1, 5)]
+    rows = [_gate_pair(i) for i in range(1, 5)]   # pooled delivery 3600/4000 = 0.9
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["pairs_opened"] == 4 and s["gate"]["state"] == "pass" and s["gate"]["judged"]
 
@@ -285,8 +294,7 @@ def test_gate_read_pass_and_kill():
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "killed" and "drag" in s["gate"]["reason"]
 
-    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=2.0, delta_delivered=0.7,
-                       status="closed") for i in range(1, 5)]
+    rows = [_gate_pair(i, leaps_pnl=700.0) for i in range(1, 5)]  # pooled 0.7
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "killed" and "delivery" in s["gate"]["reason"]
 
@@ -348,29 +356,27 @@ def test_grading_closes_on_a_guide_cut_even_when_the_spot_read_fails():
 
 
 def test_gate_with_no_metrics_is_insufficient_data_never_a_pass():
-    rows = [_open_pair(id=i, crossing_id=i) for i in range(1, 5)]  # no marks
+    rows = [_open_pair(id=i, crossing_id=i, status="closed")
+            for i in range(1, 5)]  # closed (mature) but never marked
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["judged"] and s["gate"]["state"] == "insufficient_data"
 
 
 def test_gate_verdict_is_frozen_on_the_first_four_pairs():
-    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=d, delta_delivered=0.9,
-                       status="closed")
+    rows = [_gate_pair(i, drag=d)
             for i, d in enumerate([9.0, 2.0, 2.0, 2.0], start=1)]  # mean 3.75: killed
-    rows.append(_open_pair(id=5, crossing_id=5, carry_drag_pct=0.1,
-                           delta_delivered=0.99, status="closed"))
+    rows.append(_gate_pair(5, drag=0.1, leaps_pnl=990.0))
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "killed"                   # pair 5 cannot un-kill
 
 
 def test_gate_extension_is_read_separately_from_the_first_verdict():
-    rows = [_open_pair(id=i, crossing_id=i, carry_drag_pct=2.0, delta_delivered=0.9,
-                       status="closed") for i in range(1, 9)]
+    rows = [_gate_pair(i) for i in range(1, 9)]
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "complete" and s["gate"]["extension"]["state"] == "pass"
 
     for r in rows[4:]:
-        r["delta_delivered"] = 0.5                          # extension cohort fails
+        r["leaps_pnl"] = 500.0                               # extension cohort fails
     s = leaps.trial_summary(rows, now=NOW + timedelta(days=60))
     assert s["gate"]["state"] == "pass"                      # first verdict stands
     assert s["gate"]["extension"]["state"] == "killed"

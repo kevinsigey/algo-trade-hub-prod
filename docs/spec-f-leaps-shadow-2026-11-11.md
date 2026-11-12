@@ -110,6 +110,21 @@ or delivery under 80% kills the vehicle; a pass extends the trial to 8
 pairs. The summary is a read, never an actor: promotion to live capital is
 Kevin's separate call.
 
+**Gate amendment (Kevin's call, 2026-11-11, before any pair opened — no
+evidence is regraded).** Three faults in the gate as first built, found by
+Claude's round-2 review: (1) "mean delta delivery" averaged per-pair
+ratios of return-on-cash, which reads ~3.0 for a perfectly tracking LEAPS,
+so the 80% bar could only fire on near-total failure. Delivery is now
+POOLED dollars — sum(leaps_pnl) / sum(share_pnl) over the cohort — and the
+80% bar stays constant, meaning 80¢ delivered per $1 the share line made.
+Delivery is undefined (the gate reads insufficient data) when the cohort's
+share line made nothing in total. (2) The cohort could be judged the day
+the 4th pair opened, with carry drag annualized off a 1-day floor; the
+cohort is now judged only once every pair in it is closed or carries at
+least 90 days of marks. (3) The verdict was recomputed on every read; the
+first judged verdict is now stored (table `leaps_trial_verdicts`, written
+by the nightly grade) and served verbatim, never recomputed.
+
 ## 6. Surfaces
 
 - Idea 81's Workshop page gains a Spec F panel (rendered for any idea

@@ -105,8 +105,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 80 | `20261111000003_fifteen_blend_shadow.sql` |
 | 81 | `20261111000004_leaps_shadow.sql` |
 | 82 | `20261111000005_leaps_open_pair_unique.sql` |
+| 83 | `20261112000001_leaps_trial_verdicts.sql` |
 
-**Watermark: `20261111000005_leaps_open_pair_unique.sql`**
+**Watermark: `20261112000001_leaps_trial_verdicts.sql`**
 
 ## How to record a new one
 
