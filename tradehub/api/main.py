@@ -38,6 +38,7 @@ from tradehub.api.schemas import (
 from tradehub.api.dependencies import get_supabase
 from tradehub.api import admin
 from tradehub.api.frontend import mount_frontend
+from tradehub.api.swr import SwrCache
 from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol, bars as workshop_bars, closes as workshop_closes, \
     analyst as workshop_analyst, earnings_dates as workshop_earnings, fred_series as workshop_fred, \
@@ -283,6 +284,7 @@ def _table_fault(table: str, exc: Exception) -> HTTPException:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     load_local_env()
+    threading.Thread(target=_warm_swr_caches, daemon=True).start()
     yield
 
 
@@ -1594,10 +1596,23 @@ def oil_itm_record(supabase=Depends(get_supabase)) -> dict:
                 "ev_per_dollar": None, "recent": []}
 
 
+# The record below composes four live builds (oil record, shadow, blend,
+# metals) and took 9-12s on EVERY hit -- the Strategies page's biggest
+# single wait. The underlying decisions change on the 5-minute runner's
+# cadence, so the composed payload is served stale-while-revalidate:
+# visitors get the last build instantly, one background rebuild refreshes
+# it, and only a cold cache ever waits (once, shared under the lock).
+_FIFTEEN_RULE_CACHE = SwrCache(120)
+
+
 @app.get("/api/oil/fifteen-rule", tags=["Oil"])
 def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
     """The 15-minute trade rule's paper record (Kevin, 2026-11-05): replay and forward apart.
     Public and fail-soft: an unreadable journal reads as an empty record, never a 500."""
+    return _FIFTEEN_RULE_CACHE.get(lambda: _fifteen_rule_payload(supabase), client=supabase)
+
+
+def _fifteen_rule_payload(supabase) -> dict:
     from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, go_live_bar, record, summarize
 
     try:
@@ -1709,7 +1724,13 @@ def _ttl_by_client(seconds: float):
     return deco
 
 
-_GAP_DESK_CACHE: dict = {"at": 0.0, "payload": None}
+# The desk build takes ~5s and intermittently hit the Postgres statement
+# timeout under load, which the old dict cache turned into a visitor-facing
+# 500 (a failed build cached nothing). Stale-while-revalidate instead: once
+# any build has succeeded, visitors always get that payload; rebuilds happen
+# in the background and their failures never reach the page. A cold failure
+# (no payload ever built) still raises the table fault, as before.
+_GAP_DESK_CACHE = SwrCache(120)
 
 
 @app.get("/api/gaps/desk", tags=["Gap tracker"])
@@ -1719,14 +1740,30 @@ def get_gap_desk(supabase=Depends(get_supabase)):
 
     if supabase is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
-    if _GAP_DESK_CACHE["payload"] is not None and time.time() - _GAP_DESK_CACHE["at"] < 120:
-        return _GAP_DESK_CACHE["payload"]
     try:
-        payload = desk(supabase, datetime.now(timezone.utc))
+        return _GAP_DESK_CACHE.get(lambda: desk(supabase, datetime.now(timezone.utc)),
+                                   client=supabase)
     except Exception as exc:  # noqa: BLE001
         raise _table_fault("gap_snapshots", exc) from exc
-    _GAP_DESK_CACHE.update(at=time.time(), payload=payload)
-    return payload
+
+
+def _warm_swr_caches() -> None:
+    """Build the SWR-cached payloads once at boot, so a container restart
+    doesn't hand the first visitor a 10s wait (Nov 12: the post-deploy
+    restart left every cache cold at once and pages hung). Fail-soft: a
+    failed warm-up leaves the caches cold and the endpoints behave
+    exactly as they did before this cache existed."""
+    try:
+        supabase = get_supabase()
+        if supabase is None:
+            return
+        _FIFTEEN_RULE_CACHE.get(lambda: _fifteen_rule_payload(supabase), client=supabase)
+        from tradehub.gaps.report import desk
+
+        _GAP_DESK_CACHE.get(lambda: desk(supabase, datetime.now(timezone.utc)),
+                            client=supabase)
+    except Exception:  # noqa: BLE001
+        log.exception("api: cache warm-up failed")
 
 
 @app.get("/api/deals/public/{ticker}", tags=["Deals"])
