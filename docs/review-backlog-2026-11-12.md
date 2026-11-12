@@ -23,6 +23,7 @@ production database on Nov 12, 00:20 UTC.
 | Debate grading scheduled (deploy crontab, 05:07 UTC daily; 3 graded at +5 days, 0 hits) | #488 (A6) |
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
+| Health/Macro/Weather precompute: the hourly journal job now writes the Health report plus the Macro, Weather and Weather-map compositions to file snapshots, and the four endpoints serve a fresh (<90 min) snapshot instead of rebuilding live (Health was 16.1 s per request at the Nov 12 check); a missing/stale snapshot falls back to the live build, and a degraded Macro build is never snapshotted | Health precompute PR (branch `rev/health-precompute`) |
 
 ## In flight (open PRs from Muse)
 None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
@@ -50,11 +51,9 @@ None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12
    - Fold Agent debates into Guidance.
    - Admin pages behind a lock in the public menu.
    - Screening preset blurbs (`--`, "W18-style selection layer", "FCC lens", "bundled proxy — not yet refreshed").
-7. **Health page**: still slow (15 s, and still "Loading…" after a 10-second wait). Precompute it in the hourly job;
-   do the same for Macro and Weather.
-8. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
+7. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
    source.
-9. **Code health**:
+8. **Code health**:
    - Split `tradehub/api/main.py` into routers by area. It has grown to 4,770 lines from 4,410.
    - Rewrite the README, which still describes the Vercel-reads-Supabase architecture.
 
