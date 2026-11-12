@@ -86,6 +86,119 @@ def test_fork_rejects_a_pick_outside_the_choices():
         debate_fork.run_debate(_ex(), chat=_chat(bad))
 
 
+# --- A5 (2026-11-11): near-miss repairs -------------------------------------
+# Production: 10 of 10 rendered verdicts void, on "rubric weight
+# guide_credibility missing" (x5) and "unknown choice 'watch_and_pass'" (x3).
+# The parser repairs the deterministic near-misses -- a renamed rubric key,
+# one unknown key standing in for one missing key, and the two live-priced
+# choices merged into one -- because no number is invented by any of them:
+# watch and pass are both priced at the live price by construction. Anything
+# ambiguous still voids.
+
+def test_fork_repairs_a_combined_watch_and_pass_choice():
+    pkt = _packet()
+    pkt["choices"] = [c for c in pkt["choices"]
+                      if c["choice_id"] not in ("watch", "pass")]
+    pkt["choices"].append({"choice_id": "watch_and_pass",
+                           "label": "Watch and pass", "price": 460.42})
+    out = debate_fork.run_debate(_ex(), chat=_chat(pkt))
+    ids = [c["choice_id"] for c in out["packet"]["choices"]]
+    assert sorted(ids) == ["act_at_band_low", "act_at_band_mid",
+                           "pass", "watch"]
+    prices = {c["choice_id"]: c["price"] for c in out["packet"]["choices"]}
+    assert prices["watch"] == prices["pass"] == 460.42
+
+
+def test_fork_repairs_a_directionless_watch_and_pass_pick():
+    pkt = _packet(proposer_pick={"choice_id": "watch_and_pass",
+                                 "direction": "none", "probability": 0.5})
+    out = debate_fork.run_debate(_ex(), chat=_chat(pkt))
+    assert out["packet"]["proposer_pick"]["choice_id"] == "watch"
+
+
+def test_fork_still_voids_a_directional_watch_and_pass_pick():
+    pkt = _packet(proposer_pick={"choice_id": "watch_and_pass",
+                                 "direction": "short", "probability": 0.5})
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(pkt))
+
+
+def test_fork_repairs_a_renamed_rubric_key():
+    weights = {"guidance_credibility": 0.3, "gap_size": 0.25,
+               "direction_momentum": 0.15, "options_expression": 0.1,
+               "falsifier_proximity": 0.2}
+    out = debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+    assert abs(out["packet"]["rubric_weights"]["guide_credibility"] - 0.3) < 1e-6
+
+
+def test_fork_repairs_one_unknown_rubric_key_for_one_missing():
+    weights = {"guide_credibility": 0.3, "gap_size": 0.25,
+               "direction_momentum": 0.15, "options_expression": 0.1,
+               "falsifier_risk": 0.2}
+    out = debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+    assert abs(out["packet"]["rubric_weights"]["falsifier_proximity"] - 0.2) < 1e-6
+
+
+def test_fork_still_voids_when_two_rubric_keys_are_missing():
+    weights = {"guide_credibility": 0.3, "gap_size": 0.25,
+               "direction_momentum": 0.15, "something_else": 0.3}
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+
+
+def test_structurer_schema_names_the_choice_enum_and_rubric_fields():
+    schema = debate_fork.DecisionPacket.model_json_schema()
+    defs = schema.get("$defs", {})
+    choice_props = defs.get("Choice", {}).get("properties", {})
+    assert choice_props["choice_id"]["enum"] == list(debate_fork.CHOICE_IDS)
+    rubric_props = defs.get("RubricWeights", {}).get("properties", {})
+    assert sorted(rubric_props) == sorted(debate_fork.RUBRIC_KEYS)
+    assert sorted(defs["RubricWeights"]["required"]) == \
+        sorted(debate_fork.RUBRIC_KEYS)
+
+
+def test_fork_voids_an_extra_rubric_key_beside_all_five():
+    weights = {"guide_credibility": 0.3, "gap_size": 0.25,
+               "direction_momentum": 0.15, "options_expression": 0.1,
+               "falsifier_proximity": 0.2, "extra_signal": 0.1}
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+
+
+def test_fork_voids_conflicting_duplicate_rubric_spellings():
+    weights = {"guide_credibility": 0.3, "Guide Credibility": 0.5,
+               "gap_size": 0.25, "direction_momentum": 0.15,
+               "options_expression": 0.1, "falsifier_proximity": 0.2}
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+
+
+def test_fork_accepts_agreeing_duplicate_rubric_spellings():
+    weights = {"guide_credibility": 0.3, "Guide Credibility": 0.3,
+               "gap_size": 0.25, "direction_momentum": 0.15,
+               "options_expression": 0.1, "falsifier_proximity": 0.2}
+    out = debate_fork.run_debate(_ex(), chat=_chat(_packet(rubric_weights=weights)))
+    assert abs(out["packet"]["rubric_weights"]["guide_credibility"]
+               - 0.3) < 1e-6
+
+
+def test_fork_voids_a_nonfinite_choice_price():
+    bad = _packet()
+    bad["choices"] = [dict(c) for c in bad["choices"]]
+    bad["choices"][2]["price"] = float("nan")
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(bad))
+
+
+def test_fork_voids_a_bad_price_hidden_behind_a_duplicate_choice():
+    bad = _packet()
+    bad["choices"] = [dict(c) for c in bad["choices"]]
+    bad["choices"].append({"choice_id": "watch", "label": "Watch",
+                           "price": float("inf")})
+    with pytest.raises(debate_fork.PacketInvalid):
+        debate_fork.run_debate(_ex(), chat=_chat(bad))
+
+
 def test_fork_caps_the_digest_at_the_frozen_token_budget():
     big = _packet(digest="x" * 100_000)
     out = debate_fork.run_debate(_ex(), chat=_chat(big))
