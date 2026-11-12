@@ -208,10 +208,16 @@ def _fold_after_hours(aggregate: list[dict], now: datetime) -> None:
     """Per-position after-hours move: the latest trade against today's
     regular-session close, from one batched data snapshot. Only once the
     ET day has closed (16:00) and only for stocks (options have no daily
-    bar here); anything missing stays None -- unknown, never zero."""
+    bar here); anything missing stays None -- unknown, never zero.
+
+    The trade itself must be an after-hours trade from today and recent:
+    the IEX post-market session ends at 17:00 ET, after which its latest
+    trade stops moving -- a figure older than an hour is the day's final
+    print, not a current move, and stays unknown rather than stale."""
     from zoneinfo import ZoneInfo
 
-    et_now = now.astimezone(ZoneInfo("America/New_York"))
+    et_zone = ZoneInfo("America/New_York")
+    et_now = now.astimezone(et_zone)
     if et_now.hour < 16:
         return
     symbols = [a["symbol"] for a in aggregate if a.get("asset") == "stock"]
@@ -224,8 +230,18 @@ def _fold_after_hours(aggregate: list[dict], now: datetime) -> None:
     today = et_now.date().isoformat()
     for row in aggregate:
         snap = snaps.get(row["symbol"])
-        if snap and snap["day"] == today and snap["day_close"]:
-            row["ah_change_pct"] = (snap["price"] / snap["day_close"] - 1) * 100
+        if not snap or snap["day"] != today or not snap["day_close"]:
+            continue
+        try:
+            trade_et = datetime.fromisoformat(
+                str(snap.get("trade_at", "")).replace("Z", "+00:00")).astimezone(et_zone)
+        except ValueError:
+            continue
+        if trade_et.date().isoformat() != today or trade_et.hour < 16:
+            continue  # not an after-hours trade from today
+        if (now - trade_et).total_seconds() > 3600:
+            continue  # frozen print, not a current move
+        row["ah_change_pct"] = (snap["price"] / snap["day_close"] - 1) * 100
 
 
 _TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}

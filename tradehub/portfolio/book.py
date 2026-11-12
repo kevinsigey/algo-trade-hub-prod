@@ -306,9 +306,12 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
         out["regular_pct"] = _pct(close_eq, prior_eq) if prior_eq else None
         out["after_hours_pl"] = round(current_eq - close_eq, 2)
         out["after_hours_pct"] = _pct(current_eq, close_eq) if close_eq else None
-        if current_spy is not None and prior.get("spy_price") and close.get("spy_price"):
+        if prior.get("spy_price") and close.get("spy_price"):
+            # The regular SPY figure needs only the two snapshots; the
+            # after-hours figure additionally needs a current price.
             out["spy_regular_pct"] = _pct(float(close["spy_price"]), float(prior["spy_price"]))
-            out["spy_after_hours_pct"] = _pct(float(current_spy), float(close["spy_price"]))
+            if current_spy is not None:
+                out["spy_after_hours_pct"] = _pct(float(current_spy), float(close["spy_price"]))
     else:
         out["state"] = "regular"
         out["regular_pl"] = round(current_eq - prior_eq, 2)

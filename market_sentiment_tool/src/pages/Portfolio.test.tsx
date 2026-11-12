@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
 import { concentration, curveRange } from "@/lib/paperPortfolio";
+import { checkChips } from "@/pages/portfolio/Header";
 import type { ActivityPayload, BooksPayload, PortfolioPayload, PositionRow } from "@/lib/paperPortfolio";
 
 // Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
@@ -276,7 +277,14 @@ describe("Portfolio books (master view and the $1M book)", () => {
     expect(urls.some((u) => u.includes("/api/portfolio?book=big"))).toBe(true);
     expect(urls.some((u) => u.includes("/api/portfolio/closed?book=big"))).toBe(true);
     expect(screen.getByRole("link", { name: /\$1M book/ })).toHaveAttribute("aria-current", "page");
-    // Signed out, the hand order form and staged orders stay off the page.
+    // Signed out, the hand order form and staged orders stay off the page --
+    // asserted on the Trade tab too, where they would render if their own
+    // access checks failed.
+    expect(screen.queryByText("Place an order by hand")).toBeNull();
+    expect(screen.queryByText(/^Staged orders/)).toBeNull();
+    cleanup();
+    render(<MemoryRouter initialEntries={["/portfolio?book=big&tab=trade"]}><Portfolio /></MemoryRouter>);
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
     expect(screen.queryByText("Place an order by hand")).toBeNull();
     expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
@@ -384,6 +392,23 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText("Chips")).toBeInTheDocument(); // the By-idea row carries it
   });
 
+  it("expands a manual holding's slices under its per-symbol card key", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        { symbol: "GLD", qty: 10, side: "long", avg_price: 300, last_price: 300, change_pct: 0, day_pl: 0, cost_basis: 3000, market_value: 3000, pct_of_book: 3, unrealized_pl: 0, idea: "No idea yet (manual)" },
+        { symbol: "Cash", qty: null, side: null, market_value: 97000, pct_of_book: 97, unrealized_pl: null, idea: null },
+      ],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText("GLD (manual)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Slices of GLD (manual)" }));
+    // The card is keyed "GLD (manual)" while the row carries the backend's
+    // manual label; the slice lookup must still find the holding.
+    expect(screen.queryByText("Nothing held under this idea right now.")).toBeNull();
+    expect(screen.getByText(/10 sh/)).toBeInTheDocument();
+  });
+
   it("reads 'All within limits' on the warnings strip when nothing needs attention", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -403,6 +428,24 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     page(<Portfolio />);
     expect(await screen.findByText(/All within limits/)).toBeInTheDocument();
     expect(screen.getByText("pass")).toBeInTheDocument();
+  });
+});
+
+describe("checkChips unresolved inputs", () => {
+  const base = {
+    book: "main", as_of: "2026-11-09T19:00:00Z", equity: 100000, cash: 0, cash_pct: 0, invested: 100000,
+    sleeves: [], clusters: {}, recent_checks: [], targets_updated_at: null, series_refreshed_at: null,
+  };
+  it("chips an unassigned holding over the 5% cap instead of reading all-clear", () => {
+    const chips = checkChips({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 7.5 }], unpriced: [] });
+    expect(chips).toEqual(["XYZ unassigned 7.5% / 5%"]);
+  });
+  it("chips unpriced holdings -- the check never priced them", () => {
+    const chips = checkChips({ ...base, unassigned: [], unpriced: ["ABC"] });
+    expect(chips).toEqual(["ABC unpriced — not checked"]);
+  });
+  it("stays quiet when everything resolved within limits", () => {
+    expect(checkChips({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 3 }], unpriced: [] })).toEqual([]);
   });
 });
 

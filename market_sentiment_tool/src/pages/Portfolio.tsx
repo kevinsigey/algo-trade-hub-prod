@@ -65,17 +65,18 @@ type TabId = (typeof TABS)[number]["id"];
 
 function TabNav({ book, tab }: { book: string; tab: TabId }) {
   return (
-    <nav aria-label="Portfolio sections" className="mt-3 flex gap-1 border-b border-slate-800">
+    <div role="tablist" aria-label="Portfolio sections" className="mt-3 flex gap-1 border-b border-slate-800">
       {TABS.map((t) => {
         const active = t.id === tab;
         return (
-          <Link key={t.id} to={`/portfolio?book=${book}&tab=${t.id}`} aria-current={active ? "page" : undefined}
+          <Link key={t.id} to={`/portfolio?book=${book}&tab=${t.id}`} role="tab" id={`portfolio-tab-${t.id}`}
+                aria-selected={active} aria-controls="portfolio-panel"
                 className={`rounded-t-lg px-3 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${active ? "bg-slate-800 font-semibold text-white" : "text-slate-400 hover:text-white"}`}>
             {t.label}
           </Link>
         );
       })}
-    </nav>
+    </div>
   );
 }
 
@@ -147,7 +148,7 @@ function AlpacaBook({ book }: { book: string }) {
           <PortfolioHeader data={data} lastUpdatedAt={lastUpdatedAt} stale={stale} />
           <WarningsStrip book={book} data={data} />
           <TabNav book={book} tab={tab} />
-          <div className="mt-2">
+          <div className="mt-2" role="tabpanel" id="portfolio-panel" aria-labelledby={`portfolio-tab-${tab}`}>
             {tab === "book" && <BookTab data={data} liveIdeas={liveIdeas} book={book} />}
             {tab === "performance" && <PerformanceTab data={data} book={book} />}
             {tab === "trade" && <TradeTab book={book} />}

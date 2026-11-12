@@ -23,8 +23,10 @@ export function useApi<T>(path: string, refreshMs = 0) {
     setError(null);
     setLastUpdatedAt(null);
     setStale(false);
-    const load = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    const load = (poll: boolean) => {
+      // Only polls are suppressed in a hidden tab; the initial read always
+      // runs, or a page opened in a background tab would sit empty forever.
+      if (poll && typeof document !== "undefined" && document.visibilityState === "hidden") return;
       getJson<T>(path)
         .then((body) => {
           if (cancelled) return;
@@ -43,9 +45,9 @@ export function useApi<T>(path: string, refreshMs = 0) {
           }
         });
     };
-    load();
+    load(false);
     if (!refreshMs) return () => { cancelled = true; };
-    const timer = setInterval(load, refreshMs);
+    const timer = setInterval(() => load(true), refreshMs);
     return () => {
       cancelled = true;
       clearInterval(timer);

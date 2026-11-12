@@ -9,6 +9,7 @@ import {
   curveTradingDays,
   fmtPct,
   fmtPts,
+  fmtUsd,
   tone,
   type ClosedPayload,
   type CurveRange,

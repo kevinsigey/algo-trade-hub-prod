@@ -29,6 +29,21 @@ PRIOR = [
 ]
 
 
+def test_spy_regular_pct_survives_a_missing_current_spy_price():
+    # The close snapshot carries a SPY price but the latest one does not
+    # and no live price was fetched: the regular SPY figure is still
+    # computable from the two snapshots; only the after-hours one is not.
+    now = datetime(2026, 11, 12, 23, 30, tzinfo=UTC)  # 18:30 ET
+    snaps = PRIOR + [
+        snap("2026-11-12T21:05:00+00:00", 990.0, 594.0),  # 16:05 ET -- today's close
+        {"taken_at": "2026-11-12T23:05:00+00:00", "equity": 985.0, "spy_price": None},
+    ]
+    out = book.today_split(snaps, now)
+    assert out["state"] == "after_hours"
+    assert out["spy_regular_pct"] == pytest.approx(-1.0)
+    assert out["spy_after_hours_pct"] is None
+
+
 def test_regular_hours_whole_day_is_the_regular_figure():
     now = datetime(2026, 11, 12, 20, 30, tzinfo=UTC)  # 15:30 ET
     snaps = PRIOR + [snap("2026-11-12T15:00:00+00:00", 1010.0, 603.0)]  # 10:00 ET

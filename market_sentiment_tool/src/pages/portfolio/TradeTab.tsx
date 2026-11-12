@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 
-import { adminJson } from "@/lib/workshop";
+import { adminJson, ApiError } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
@@ -13,7 +13,7 @@ import {
   type ActivityPayload,
   type ManualAction,
 } from "@/lib/paperPortfolio";
-import { Box, price, REFRESH_MS } from "./shared";
+import { Box, pollWhileVisible, price, REFRESH_MS } from "./shared";
 
 /** Tab 3: Trade (2026-11-12 redesign). Manual actions at the top, the
  * order ticket open on the page (Single and Combo tabs inside it), then
@@ -37,16 +37,39 @@ export default function TradeTab({ book }: { book: string }) {
  * clicks; the runner never resolves its own hand-offs. */
 function ManualActions({ book }: { book: string }) {
   const [actions, setActions] = useState<ManualAction[] | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
-      .then((body) => { if (!cancelled) setActions(Array.isArray(body.actions) ? body.actions : []); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
+    const load = () => {
+      adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
+        .then((body) => {
+          if (!cancelled) {
+            setActions(Array.isArray(body.actions) ? body.actions : []);
+            setFailed(false);
+          }
+        })
+        .catch((err) => {
+          // 401/403 is the signed-out view; anything else is a failed
+          // read, which shows as one rather than as an empty queue.
+          if (!cancelled && !(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
+            setFailed(true);
+          }
+        });
+    };
+    load();
+    const stop = pollWhileVisible(load);
+    return () => { cancelled = true; stop(); };
   }, [book]);
 
-  if (actions === null || actions.length === 0) return null;
+  if (actions === null) {
+    return failed ? (
+      <Box title="Needs your hand" className="border-amber-500/40">
+        <p className="text-xs text-slate-400">Couldn&apos;t read the hand-off list — it retries on the refresh cycle.</p>
+      </Box>
+    ) : null;
+  }
+  if (actions.length === 0) return null;
 
   async function resolve(id: number, state: "done" | "dismissed") {
     try {
@@ -112,11 +135,15 @@ function StagedOrders({ book }: { book: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    adminJson<{ email: string }>("/api/admin/me")
-      .then(() => adminJson<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
-      .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
+    const load = () => {
+      adminJson<{ email: string }>("/api/admin/me")
+        .then(() => adminJson<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
+        .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
+        .catch(() => undefined); // a failed refresh keeps the last read
+    };
+    load();
+    const stop = pollWhileVisible(load);
+    return () => { cancelled = true; stop(); };
   }, [book]);
 
   if (orders === null) return null;
@@ -162,8 +189,15 @@ const STATUS_TONE: Record<string, string> = {
 };
 /** What the broker did with recent orders: an order the hub sent can still expire unfilled. */
 function OrdersBox({ book }: { book: string }) {
-  const { data } = useApi<ActivityPayload>(`/api/portfolio/activity?book=${book}`, REFRESH_MS);
-  const all: ActivityOrder[] = Array.isArray(data?.recent) ? data.recent : [];
+  const { data, loading } = useApi<ActivityPayload>(`/api/portfolio/activity?book=${book}`, REFRESH_MS);
+  // On a broker-read failure the endpoint answers 200 with state "stale"
+  // and an empty list; that must not blank orders already on screen.
+  const [lastGood, setLastGood] = useState<ActivityOrder[]>([]);
+  useEffect(() => {
+    if (data && data.state !== "stale" && Array.isArray(data.recent)) setLastGood(data.recent);
+  }, [data]);
+  const staleNow = data?.state === "stale";
+  const all: ActivityOrder[] = staleNow ? lastGood : (Array.isArray(data?.recent) ? data.recent : []);
   const table = (list: ActivityOrder[]) => (
         <div className="-mx-4 overflow-x-auto px-4">
           <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">
@@ -184,7 +218,7 @@ function OrdersBox({ book }: { book: string }) {
                   <td className="whitespace-nowrap py-1.5 pr-3">{o.legs && o.legs.length > 0
                     ? <span className="font-semibold text-white">{orderDetailLabel(o)}</span>
                     : <>{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span></>} <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
-                  <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? 0}/{o.qty ?? "—"}</td>
+                  <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? "—"}/{o.qty ?? "—"}</td>
                   <td className="py-1.5 pr-3 text-right">{price(o.filled_avg_price)}</td>
                   <td className={`py-1.5 pr-3 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</td>
                   <td className="max-w-[12rem] truncate py-1.5 text-slate-400" title={o.source}>{o.source}</td>
@@ -197,12 +231,17 @@ function OrdersBox({ book }: { book: string }) {
   return (
     <Box title="Recent orders"
          right={(
-           <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
-             All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-           </Link>
+           <span className="inline-flex items-center gap-2">
+             {staleNow && all.length > 0 && <span className="text-xs text-amber-300">stale — broker read failed</span>}
+             <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+               All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+             </Link>
+           </span>
          )}>
-      {all.length === 0 ? (
-        <p className="text-sm text-slate-400">No orders yet.</p>
+      {loading && all.length === 0 ? (
+        <p className="text-sm text-slate-400">Reading orders…</p>
+      ) : all.length === 0 ? (
+        <p className="text-sm text-slate-400">{staleNow ? "Orders unavailable — the broker read failed." : "No orders yet."}</p>
       ) : table(all)}
     </Box>
   );

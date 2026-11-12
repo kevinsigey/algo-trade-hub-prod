@@ -425,8 +425,9 @@ export interface IdeaCard {
   id: number | null;
   positions: number;
   value: number;
-  /** Gross exposure over equity: a short counts at its size, not netted against longs. */
-  pct: number;
+  /** Gross exposure over equity: a short counts at its size, not netted
+   * against longs. Null when equity itself is unknown. */
+  pct: number | null;
   /** Null when any holding's figure is unknown: a missing figure is never read as zero. */
   day_pl: number | null;
   unrealized: number | null;
@@ -442,7 +443,7 @@ export interface IdeaCard {
  * a bucket. Live ideas that hold nothing yet still appear, at zero.
  * ponytail: keyed by title, since positions carry only the title; two live ideas sharing a title would merge.
  */
-export function ideaScorecard(rows: PositionRow[], equity: number,
+export function ideaScorecard(rows: PositionRow[], equity: number | null,
                               live: { id: number; title: string; size_pct: number | null }[]): IdeaCard[] {
   const cards = new Map<string, IdeaCard & { gross: number; cost: number }>();
   const card = (idea: string) => {
@@ -466,7 +467,7 @@ export function ideaScorecard(rows: PositionRow[], equity: number,
   return [...cards.values()]
     .map(({ gross, cost, ...c }) => ({
       ...c,
-      pct: equity ? (gross / equity) * 100 : 0,
+      pct: equity ? (gross / equity) * 100 : null,
       return_pct: c.positions && c.unrealized != null && cost ? (c.unrealized / cost) * 100 : null,
     }))
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));

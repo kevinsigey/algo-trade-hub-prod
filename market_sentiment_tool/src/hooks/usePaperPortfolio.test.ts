@@ -37,6 +37,26 @@ describe("useApi live refresh", () => {
     expect(calls).toBe(3);
   });
 
+  it("runs the initial read even in a hidden tab -- only polls are suppressed", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ n: calls }), { status: 200 });
+    }));
+    try {
+      const { result } = renderHook(() => useApi<{ n: number }>("/api/portfolio/books", 30_000));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.data).toEqual({ n: 1 });
+      // The poll turn is skipped while hidden.
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(calls).toBe(1);
+    } finally {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    }
+  });
+
   it("does not poll without an interval", async () => {
     vi.useFakeTimers();
     let calls = 0;

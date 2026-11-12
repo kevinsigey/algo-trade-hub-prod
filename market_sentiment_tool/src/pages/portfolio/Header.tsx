@@ -13,8 +13,8 @@ import {
   type PortfolioCheckState,
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
-import { adminJson } from "@/lib/workshop";
-import { money, signed } from "./shared";
+import { adminJson, ApiError } from "@/lib/workshop";
+import { money, pollWhileVisible, signed } from "./shared";
 
 /** The fixed header (2026-11-12 redesign): net liquidation value, today
  * split at the 4:00 PM ET close, SPY beside both, and how fresh the page
@@ -38,7 +38,9 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
   const cashRow = data.positions.find((p) => p.symbol === "Cash");
   const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
-  const unrealized = rows.some((p) => p.unrealized_pl != null)
+  // A total only when every holding's figure is known -- a partial sum
+  // presented as the total would invent a number.
+  const unrealized = rows.length > 0 && rows.every((p) => p.unrealized_pl != null)
     ? rows.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0) : null;
   const figures: { label: string; value: string; className?: string }[] = [
     { label: "Cash", value: money(a?.cash ?? cashRow?.market_value) },
@@ -160,6 +162,18 @@ export function checkChips(state: PortfolioCheckState): string[] {
   if (gold && gold.pct > GOLD_FLAG_PCT) {
     chips.push(`Gold cluster ${gold.pct.toFixed(0)}% (flag ${GOLD_FLAG_PCT}%)`);
   }
+  // The strip's quiet line claims a complete check, so an unresolved
+  // input is itself something to show: a holding in no sleeve over the
+  // unassigned cap (5%, the cap the detail table reads against), and
+  // any holding the check could not price.
+  for (const u of state.unassigned) {
+    if (u.weight_pct > 5) {
+      chips.push(`${u.symbol} unassigned ${u.weight_pct.toFixed(1)}% / 5%`);
+    }
+  }
+  if (state.unpriced.length > 0) {
+    chips.push(`${state.unpriced.join(", ")} unpriced — not checked`);
+  }
   return chips;
 }
 
@@ -176,18 +190,32 @@ export function checkChips(state: PortfolioCheckState): string[] {
  */
 export function WarningsStrip({ book, data }: { book: string; data: PortfolioPayload }) {
   const [state, setState] = useState<PortfolioCheckState | null>(null);
+  const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    adminJson<PortfolioCheckState>(`/api/portfolio/portfolio-check?book=${book}`)
-      .then((body) => {
-        if (!cancelled && body && Array.isArray(body.sleeves) && Array.isArray(body.recent_checks)) {
-          setState(body);
-        }
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
+    const load = () => {
+      adminJson<PortfolioCheckState>(`/api/portfolio/portfolio-check?book=${book}`)
+        .then((body) => {
+          if (!cancelled && body && Array.isArray(body.sleeves) && Array.isArray(body.recent_checks)) {
+            setState(body);
+            setFailed(false);
+          }
+        })
+        .catch((err) => {
+          // A 401/403 is the signed-out view (stay silent); any other
+          // failure is a check that could not be read, which must not
+          // look like a quiet book. A failed refresh keeps the last
+          // good state on screen.
+          if (!cancelled && !(err instanceof ApiError && (err.status === 401 || err.status === 403))) {
+            setFailed(true);
+          }
+        });
+    };
+    load();
+    const stop = pollWhileVisible(load);
+    return () => { cancelled = true; stop(); };
   }, [book]);
 
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
@@ -209,6 +237,11 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
           {h.sector} is {h.pct.toFixed(0)}% of what&apos;s invested. These positions tend to move together.
         </p>
       ))}
+      {!state && failed && (
+        <p className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
+          Portfolio check unavailable — the read failed; it retries on the refresh cycle.
+        </p>
+      )}
       {state && (
         <div className="rounded-lg border border-slate-800 bg-slate-900/60">
           <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}

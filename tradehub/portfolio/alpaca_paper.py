@@ -69,6 +69,7 @@ def latest_snapshots(symbols: list[str], *, session=requests,
         try:
             out[symbol] = {
                 "price": float(trade["p"]),
+                "trade_at": str(trade.get("t", "")),
                 "day_close": float(bar["c"]),
                 "day": str(bar.get("t", ""))[:10],
             }

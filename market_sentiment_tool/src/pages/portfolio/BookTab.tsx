@@ -38,7 +38,7 @@ export default function BookTab({ data, liveIdeas, book }: {
     <div className="space-y-2">
       <CompositionSection data={data} aggRows={aggRows} cashRow={cashRow} />
       <PositionsSection rows={aggRows} cashRow={cashRow} />
-      <ByIdea rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={liveIdeas} book={book} />
+      <ByIdea rows={rows} equity={data.scoreboard.equity} liveIdeas={liveIdeas} book={book} />
       <MoversBox rows={aggRows} />
     </div>
   );
@@ -55,13 +55,16 @@ function CompositionSection({ data, aggRows, cashRow }: {
   const [grouping, setGrouping] = useState<"sector" | "idea">("sector");
   const segments = useMemo(() => {
     if (grouping === "idea") {
-      return data.composition
+      const out = data.composition
         .filter((c) => (c.pct_of_book ?? 0) > 0)
         .map((c, i) => ({
           label: c.idea, pct: c.pct_of_book ?? 0,
           color: ["#34d399", "#38bdf8", "#a78bfa", "#f472b6", "#fb923c", "#2dd4bf"][i % 6],
-        }))
-        .sort((a, b) => b.pct - a.pct);
+        }));
+      // The bar is the whole book in both groupings: cash rides along
+      // (the composition read itself groups holdings by idea only).
+      if (cashRow?.pct_of_book) out.push({ label: "Cash", pct: cashRow.pct_of_book, color: sectorColor("Cash") });
+      return out.sort((a, b) => b.pct - a.pct);
     }
     const bySector = new Map<string, number>();
     for (const r of aggRows) {
@@ -247,6 +250,13 @@ function PositionsSection({ rows, cashRow }: {
 
 type IdeaSort = "value" | "today" | "open" | "realized" | "return";
 
+/** The scorecard's key for a row or a closed trade: a manual holding is
+ * carded per symbol ("GLD (manual)") while its rows and trades still
+ * carry the backend's manual label. Lookups must use the card's key. */
+const MANUAL_IDEA = "No idea yet (manual)";
+export const cardKeyFor = (idea: string | null | undefined, symbol: string): string =>
+  idea && idea !== MANUAL_IDEA ? idea : `${symbol} (manual)`;
+
 /** By idea: where the idea information lives. One expandable row per
  * idea -- value, weight against its set size, today, open and realized
  * P&L, return -- expanding to the idea's own slice of each ticker, so
@@ -254,7 +264,7 @@ type IdeaSort = "value" | "today" | "open" | "realized" | "return";
  * trades are totalled separately at the foot. */
 function ByIdea({ rows, equity, liveIdeas, book }: {
   rows: PositionRow[];
-  equity: number;
+  equity: number | null;
   liveIdeas: { id: number; title: string; size_pct: number | null }[];
   book: string;
 }) {
@@ -264,7 +274,10 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
   const cards = useMemo(() => ideaScorecard(rows, equity, liveIdeas), [rows, equity, liveIdeas]);
   const realizedByIdea = useMemo(() => {
     const out = new Map<string, number>();
-    for (const t of closed?.trades ?? []) out.set(t.idea, (out.get(t.idea) ?? 0) + t.pnl);
+    for (const t of closed?.trades ?? []) {
+      const key = cardKeyFor(t.idea, t.symbol);
+      out.set(key, (out.get(key) ?? 0) + t.pnl);
+    }
     return out;
   }, [closed]);
   const read = (c: (typeof cards)[number]): number | null => {
@@ -281,7 +294,7 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
     return sort.desc ? y - x : x - y;
   }), [cards, sort, realizedByIdea]);  // eslint-disable-line react-hooks/exhaustive-deps
-  const scale = Math.max(10, ...cards.map((c) => Math.max(c.pct, c.target_pct ?? 0)));
+  const scale = Math.max(10, ...cards.map((c) => Math.max(c.pct ?? 0, c.target_pct ?? 0)));
   const known = cards.some((c) => c.target_pct != null);
   const headBtn = (key: IdeaSort, label: string) => (
     <button type="button" onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : true })}
@@ -308,9 +321,9 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
           <tbody className="divide-y divide-slate-800/70">
             {ordered.map((c) => {
               const manual = c.id == null && c.idea.endsWith("(manual)");
-              const off = c.target_pct != null ? c.pct - c.target_pct : null;
+              const off = c.target_pct != null && c.pct != null ? c.pct - c.target_pct : null;
               const realized = realizedByIdea.get(c.idea);
-              const slices = rows.filter((r) => r.idea === c.idea);
+              const slices = rows.filter((r) => cardKeyFor(r.idea, r.symbol) === c.idea);
               const isOpen = expanded === c.idea;
               return [
                 <tr key={c.idea} className={manual ? "text-slate-400" : "text-slate-200"}>
@@ -333,15 +346,15 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
                   </td>
                   <td className="w-44 py-1 pr-3">
                     <div className="relative h-1.5 rounded-full bg-slate-800" role="img"
-                         aria-label={`${c.pct.toFixed(1)}% of the book${c.target_pct != null ? `, set size ${c.target_pct}%` : ""}`}>
+                         aria-label={`${c.pct != null ? `${c.pct.toFixed(1)}% of the book` : "share of the book unknown"}${c.target_pct != null ? `, set size ${c.target_pct}%` : ""}`}>
                       <div className={`absolute inset-y-0 left-0 rounded-full ${manual ? "bg-slate-500" : "bg-emerald-400/80"}`}
-                           style={{ width: `${Math.min(100, (c.pct / scale) * 100)}%` }} />
+                           style={{ width: `${Math.min(100, ((c.pct ?? 0) / scale) * 100)}%` }} />
                       {c.target_pct != null && (
                         <div className="absolute -top-1 h-3.5 w-px bg-slate-200" style={{ left: `${Math.min(100, (c.target_pct / scale) * 100)}%` }} />
                       )}
                     </div>
                     <div className="mt-1 text-[11px] text-slate-400">
-                      {c.pct.toFixed(1)}%
+                      {c.pct != null ? `${c.pct.toFixed(1)}%` : "—"}
                       {off != null && Math.abs(off) >= 1 && (
                         <span className="text-amber-300"> · {off > 0 ? `${off.toFixed(1)} pts over` : `${(-off).toFixed(1)} pts under`}</span>
                       )}
