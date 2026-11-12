@@ -23,6 +23,21 @@ from tradehub.portfolio import alpaca_paper, options as options_mod, paper_order
 
 # ── shares fixture (the test_machine_api pattern, plus a held-positions stub) ──
 
+@pytest.fixture(autouse=True)
+def _no_real_alpaca(monkeypatch):
+    """A7 (2026-11-11): these tests must never call the real Alpaca API.
+    Every external read is stubbed at the module level; the transport
+    itself is poisoned so a future unstubbed path fails loudly here
+    instead of silently reaching the paper account on any host that has
+    keys configured."""
+    def boom(*args, **kwargs):
+        raise AssertionError("test reached the real HTTP transport — "
+                             "stub the Alpaca read instead (A7)")
+    monkeypatch.setattr(requests, "get", boom)
+    monkeypatch.setattr(requests, "post", boom)
+    monkeypatch.setattr(requests, "request", boom)
+
+
 @pytest.fixture
 def api(monkeypatch):
     db = DB()
@@ -38,6 +53,10 @@ def api(monkeypatch):
 
     monkeypatch.setattr(paper_orders, "submit", fake_submit)
     monkeypatch.setattr(alpaca_paper, "latest_price", lambda symbol: 100.0)
+    # A7: any validation read that still routes through paper_get (the
+    # netting read, open-order reads) sees an empty book by default.
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: [])
     monkeypatch.setattr(machine_api, "position_qty",
                         lambda symbol, book=None: held.get(symbol, 0.0))
     # These scenarios rest no orders: the 2026-11-10 netting read sees an empty
