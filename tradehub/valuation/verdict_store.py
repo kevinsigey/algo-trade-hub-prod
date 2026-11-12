@@ -4,6 +4,8 @@ valuation_watch_state (the band watch's memory) and valuation_triggers
 (the pending debate queue, drained by section 5 priority)."""
 from __future__ import annotations
 
+import math
+
 VERDICTS = "valuation_verdicts"
 GRADES = "valuation_verdict_grades"
 WATCH = "valuation_watch_state"
@@ -12,8 +14,23 @@ TRIGGERS = "valuation_triggers"
 
 # -- verdicts ---------------------------------------------------------------
 
+def _json_safe(value):
+    """A copy of the row with every non-finite float (NaN / ±inf) replaced
+    by None. Postgrest encodes the insert body with a strict JSON encoder,
+    so one NaN anywhere in the row loses the whole verdict (seen live:
+    AMGN's options_inputs.implied_move_pct, 2026-11-12). Absence is data;
+    a stored null says the same thing without taking the verdict down."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def insert_verdict(client, row: dict) -> dict:
-    resp = client.table(VERDICTS).insert(row).execute()
+    resp = client.table(VERDICTS).insert(_json_safe(row)).execute()
     data = resp.data or []
     return data[0] if data else row
 
