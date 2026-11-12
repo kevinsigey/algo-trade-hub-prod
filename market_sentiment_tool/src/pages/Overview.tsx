@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useApi } from "@/hooks/usePaperPortfolio";
@@ -51,9 +52,10 @@ function ModelsNumber({ j }: { j: JournalLite | null }) {
   return (
     <div>
       <Figure value={m ? `${m.beating} of ${m.measured}` : DASH} />
-      <p className="mt-3 text-sm text-foreground">live models beating their market price</p>
+      <p className="mt-3 text-sm text-foreground">models beating what they&rsquo;re measured against</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        The Model Tracker&rsquo;s rule: ahead with 95% confidence, on settled forecasts only.
+        The Model Tracker&rsquo;s count: the market price where one exists, otherwise climatology. Ahead with 95%
+        confidence, on settled forecasts only.
       </p>
     </div>
   );
@@ -65,7 +67,7 @@ function GasNumber({ f }: { f: FifteenLite | null }) {
     <div>
       <Figure value={g ? cents(g.perTrade) : DASH} className={`text-5xl md:text-6xl ${TONE_TEXT[tone(g?.perTrade ?? null)]}`} />
       <p className="mt-3 text-sm text-foreground">
-        per trade, 15-minute gas rule{g ? `, ${count(g.n)} settled paper trades` : ""}
+        per paper trade, 15-minute gas rule{g ? `, ${count(g.n)} settled` : ""}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
         After Kalshi&rsquo;s fee. 95% range {g ? `${cents(g.low)} to ${cents(g.high)}` : DASH}
@@ -95,6 +97,17 @@ function SplitNumber({ s }: { s: ResultsSplit | null }) {
   );
 }
 
+function Line({ mark, label, children }: { mark: string; label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="flex items-center gap-2 font-semibold text-foreground">
+        <span className={`h-2.5 w-2.5 rounded-sm ${mark}`} aria-hidden="true" />{label}
+      </dt>
+      <dd className="text-muted-foreground">{children}</dd>
+    </>
+  );
+}
+
 function Record({ j, f }: { j: JournalLite | null; f: FifteenLite | null }) {
   const m = modelsBeating(j);
   const g = gasRecord(f);
@@ -102,25 +115,31 @@ function Record({ j, f }: { j: JournalLite | null; f: FifteenLite | null }) {
   const oil = oilPerTrade(f);
   const metals = metalsPerTrade(f);
   const word = (v: number | null) => ({ up: "positive", down: "negative", flat: "flat", unknown: "unknown" })[tone(v)];
+  const clears = g != null && g.low != null && g.low > 0;
+  const span = (s: { from: string; to: string; n: number }) => `${dayRange(s.from, s.to)}, ${count(s.n)} trades`;
+  const gas = g
+    ? `Gas so far: ${cents(g.perTrade)} a paper trade over ${count(g.n)} settled paper trades, 95% range ${cents(g.low)} to ${cents(g.high)}${clears ? ", clear of zero." : ", still touching zero."}`
+    : "";
+  const holding = trend?.verdict === "holding"
+    ? ` It is holding: ${cents(trend.recent.perTrade)} a trade over the last 3 days with trades (${span(trend.recent)}) against ${cents(trend.earlier.perTrade)} before (${span(trend.earlier)}).`
+    : "";
   return (
     <dl className="grid gap-x-6 gap-y-3 text-sm md:grid-cols-[7rem_1fr]">
-      <dt className="flex items-center gap-2 font-semibold text-foreground">
-        <span className="h-2.5 w-2.5 rounded-sm bg-profit" aria-hidden="true" />What works
-      </dt>
-      <dd className="text-muted-foreground">
-        The grading: {count(m?.scored)} forecasts frozen before the outcome and scored against the market price, losses
-        included. And gas, so far: {cents(g?.perTrade)} a trade over {count(g?.n)} paper trades.
-      </dd>
-      <dt className="flex items-center gap-2 font-semibold text-foreground">
-        <span className="h-2.5 w-2.5 rounded-sm bg-loss" aria-hidden="true" />What failed
-      </dt>
-      <dd className="text-muted-foreground">
-        Retired for trailing their markets: {count(m?.retired)} models.{" "}
-        {trend
-          ? `The 15-minute edge is fading: gas went from ${cents(trend.earlier.perTrade)} a trade on ${dayRange(trend.earlier.from, trend.earlier.to)} to ${cents(trend.recent.perTrade)} on ${dayRange(trend.recent.from, trend.recent.to)}. `
+      <Line mark="bg-profit" label="What works">
+        The grading: {count(m?.scored)} calibrated forecasts frozen before the outcome and scored, against the market
+        price where there is one and climatology where there isn&rsquo;t, losses included.
+        {clears && ` ${gas}${holding}`}
+      </Line>
+      {g && !clears && (
+        <Line mark="bg-warn" label="Too early">{gas}{holding}</Line>
+      )}
+      <Line mark="bg-loss" label="What failed">
+        {count(m?.retired)} models retired from freezing; their records stay public.{" "}
+        {trend?.verdict === "fading"
+          ? `The 15-minute gas edge is fading: ${cents(trend.recent.perTrade)} a paper trade over the last 3 days with trades (${span(trend.recent)}), down from ${cents(trend.earlier.perTrade)} before (${span(trend.earlier)}). `
           : ""}
-        Oil is {word(oil)} at {cents(oil)} a trade and metals {word(metals)} at {cents(metals)}.
-      </dd>
+        Oil is {word(oil)} at {cents(oil)} a paper trade and metals {word(metals)} at {cents(metals)}.
+      </Line>
     </dl>
   );
 }

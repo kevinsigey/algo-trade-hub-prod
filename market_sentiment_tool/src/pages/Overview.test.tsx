@@ -3,7 +3,9 @@ import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Overview from "@/pages/Overview";
-import { cents, dayRange, gasRecord, gasTrend, metalsPerTrade, modelsBeating, oilPerTrade, testedVsManual } from "@/lib/overview";
+import { cents, dayRange, gasRecord, gasTrend, metalsPerTrade, modelsBeating, oilPerTrade, testedVsManual, type FifteenLite } from "@/lib/overview";
+import { viewRows } from "@/lib/journalView";
+import { beatingCount, league } from "@/lib/league";
 import type { JournalScore } from "@/lib/journal";
 
 // Nothing on this page may need a session; stub the client so an accidental import can't reach the network.
@@ -28,14 +30,18 @@ const journal = {
   forecasters: [
     score("cpi_nowcast", -0.02, 0.005),       // beating its market
     score("labor_nowcast", 0.001, 0.004),     // level
-    score("gas", 0.05, 0.01),                 // behind, and retired
-    score("vix_direction", -0.02, 0.005, "climatology"),  // beating, but not a market
+    score("gas", 0.05, 0.01),                 // behind
+    score("vix_direction", -0.02, 0.005, "climatology"),  // beating its climatology baseline
   ],
   headline: { settled_calibrated: 185_526 },
-  retired: [{ forecaster: "gas", version: "v1" }, { forecaster: "oil", version: "v1" }],
+  retired_models: 24,
 };
 
 const daily = (rows: [string, number, number][]) => rows.map(([day, n, total]) => ({ day, n, total }));
+
+function withGasDays(rows: [string, number, number][]): FifteenLite {
+  return { gate: { daily: { "Natural gas": daily(rows) } } };
+}
 
 const fifteen = {
   gate: {
@@ -73,10 +79,12 @@ function stubFetch(bodies: Record<string, unknown>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("headline numbers from fixture payloads", () => {
-  it("counts live predictors beating their market, leaving retired and non-market rows out", () => {
-    expect(modelsBeating(journal)).toEqual({ beating: 1, measured: 2, retired: 2, scored: 185_526 });
-    // Without the retired list the count still works, over every row, and the retired figure is unknown.
-    expect(modelsBeating({ ...journal, retired: null })).toMatchObject({ beating: 1, measured: 3, retired: null });
+  it("is exactly the Model Tracker's count, and passes the retired count through", () => {
+    const tracker = beatingCount(league(viewRows(journal.forecasters)));
+    expect(modelsBeating(journal)).toEqual({ ...tracker, retired: 24, scored: 185_526 });
+    expect(tracker).toEqual({ beating: 2, measured: 4 });
+    expect(modelsBeating({ ...journal, retired_models: null })?.retired).toBeNull();
+    expect(modelsBeating({ forecasters: journal.forecasters })?.retired).toBeNull();  // an older server
     expect(modelsBeating(null)).toBeNull();
   });
 
@@ -89,13 +97,26 @@ describe("headline numbers from fixture payloads", () => {
     expect(gasRecord({})).toBeNull();
   });
 
-  it("splits gas's last three trading days from the days before them", () => {
+  it("calls the gas edge fading only when recent is lower and both spans hold 10 trades", () => {
     const t = gasTrend(fifteen)!;
+    expect(t.verdict).toBe("fading");
     expect(dayRange(t.earlier.from, t.earlier.to)).toBe("Nov 6–9");
+    expect(t.earlier).toMatchObject({ n: 30 });
     expect(t.earlier.perTrade).toBeCloseTo(5.22 / 30);
     expect(dayRange(t.recent.from, t.recent.to)).toBe("Nov 10–12");
+    expect(t.recent).toMatchObject({ n: 30 });
     expect(t.recent.perTrade).toBeCloseTo(0.75 / 30);
-    expect(gasTrend({ gate: { daily: { "Natural gas": daily([["2026-11-10", 1, 0.1]]) } } })).toBeNull();
+  });
+
+  it("calls it holding when recent is at or above earlier", () => {
+    const up = withGasDays([["2026-11-07", 12, 0.6], ["2026-11-10", 4, 0.4], ["2026-11-11", 4, 0.4], ["2026-11-12", 4, 0.4]]);
+    expect(gasTrend(up)?.verdict).toBe("holding");
+  });
+
+  it("says nothing when either span is under 10 trades", () => {
+    expect(gasTrend(withGasDays([["2026-11-07", 9, 1.8], ["2026-11-10", 10, 0.1], ["2026-11-11", 1, 0], ["2026-11-12", 1, 0]]))).toBeNull();
+    expect(gasTrend(withGasDays([["2026-11-07", 30, 3], ["2026-11-10", 3, 0], ["2026-11-11", 3, 0], ["2026-11-12", 3, 0]]))).toBeNull();
+    expect(gasTrend(withGasDays([["2026-11-10", 20, 0.1]]))).toBeNull();
   });
 
   it("pools oil across WTI and Brent and reads metals' gated forward record", () => {
@@ -119,15 +140,21 @@ describe("Overview page", () => {
     render(<MemoryRouter><Overview /></MemoryRouter>);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/solo research desk/);
     const numbers = screen.getByRole("region", { name: "Headline numbers" });
-    expect(await within(numbers).findByText("1 of 2")).toBeInTheDocument();
+    expect(await within(numbers).findByText("2 of 4")).toBeInTheDocument();
     expect(await within(numbers).findByText("+12.3¢")).toBeInTheDocument();
     expect(within(numbers).getByText(/\+1\.1¢ to \+23\.5¢, clear of zero/)).toBeInTheDocument();
     expect(await within(numbers).findByText("+$177")).toBeInTheDocument();
     expect(within(numbers).getByText("−$1,768")).toBeInTheDocument();
     const record = screen.getByRole("region", { name: "The record so far" });
-    expect(record).toHaveTextContent("Retired for trailing their markets: 2 models.");
-    expect(record).toHaveTextContent("gas went from +17.4¢ a trade on Nov 6–9 to +2.5¢ on Nov 10–12");
-    expect(record).toHaveTextContent("Oil is flat at +0.1¢ a trade and metals negative at −6.1¢");
+    expect(record).toHaveTextContent("24 models retired from freezing; their records stay public.");
+    expect(record).not.toHaveTextContent(/trailing/);
+    expect(record).toHaveTextContent(
+      "The 15-minute gas edge is fading: +2.5¢ a paper trade over the last 3 days with trades (Nov 10–12, 30 trades), down from +17.4¢ before (Nov 6–9, 30 trades).");
+    expect(record).toHaveTextContent("Oil is flat at +0.1¢ a paper trade and metals negative at −6.1¢");
+    expect(record).toHaveTextContent(/185,526 calibrated forecasts .* against the market price where there is one and climatology/);
+    // Gas's range clears zero in this fixture, so it sits under what works.
+    expect(within(record).getByText(/^The grading/)).toHaveTextContent("Gas so far: +12.3¢ a paper trade over 66 settled paper trades");
+    expect(within(record).queryByText("Too early")).toBeNull();
     const start = screen.getByRole("navigation", { name: "Start here" });
     expect(within(start).getByRole("link", { name: "The 15-minute rules" })).toHaveAttribute("href", "/strategies");
     expect(within(start).getByRole("link", { name: "The stock book" })).toHaveAttribute("href", "/portfolio");
@@ -144,7 +171,18 @@ describe("Overview page", () => {
     expect(await within(numbers).findAllByText("—")).toHaveLength(6);  // models, gas, tested and manual with their win lines
     expect(numbers).not.toHaveTextContent(/\b0 of|\+0\.0¢|\$0/);
     const record = screen.getByRole("region", { name: "The record so far" });
-    expect(record).toHaveTextContent("Retired for trailing their markets: — models.");
+    expect(record).toHaveTextContent("— models retired from freezing");
     expect(record).not.toHaveTextContent(/\b0 models|\+0\.0¢/);
+  });
+
+  it("moves gas out of what works while its 95% range still touches zero", async () => {
+    const touching = { ...fifteen, gate: { ...fifteen.gate, by_series: { ...fifteen.gate.by_series,
+      "Natural gas": { n: 66, net_per_contract: 0.05, total: 3.3, low95: -0.01 } } } };
+    stubFetch({ "/api/journal": journal, "/api/oil/fifteen-rule": touching, "/api/portfolio/closed": closed });
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    const record = screen.getByRole("region", { name: "The record so far" });
+    expect(await within(record).findByText("Too early")).toBeInTheDocument();
+    expect(within(record).getByText(/^Gas so far/)).toHaveTextContent("still touching zero");
+    expect(within(record).getByText(/^The grading/)).not.toHaveTextContent("Gas");
   });
 });

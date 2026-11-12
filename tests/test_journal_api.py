@@ -341,13 +341,24 @@ def test_macro_built_after_a_failed_read_is_not_kept(monkeypatch):
     assert _client(db).get("/api/macro").json() == {"cards": [2]}
 
 
-def test_journal_names_the_retired_rows_and_fails_soft_to_unknown(monkeypatch):
-    db = FakeJournalDB(lambda: T0)
-    body = _client(db).get("/api/journal").json()
-    from tradehub.journal.registry import RETIRED
+def test_journal_counts_retired_models_once_each_and_fails_soft_to_unknown(monkeypatch):
+    from types import SimpleNamespace as F
 
-    assert len(body["retired"]) == len(RETIRED) > 0
-    assert {"forecaster": "gas", "version": RETIRED[[f.name for f in RETIRED].index("gas")].version} in body["retired"]
+    import tradehub.journal.registry as registry
+
+    monkeypatch.setattr(registry, "RETIRED", [
+        F(name="gas", version="v2"),
+        F(name="gas_cautious", version="v2"),          # a copy of gas v2
+        F(name="gas_cal", version="v2+w30"),           # a calibrated window copy of gas v2
+        F(name="kalshi_implied_gas", version="v1"),    # the market row, not a model
+        F(name="baseline_persistence_gas", version="v1"),
+        F(name="sports_nfl_spread", version="feed-v1"),
+        F(name="sports_nfl_spread", version="feed-v1+cal"),
+        F(name="weather_high", version="ens-v1"),
+        F(name="weather_high", version="ens-v2.1"),     # a second version is a second model
+    ])
+    db = FakeJournalDB(lambda: T0)
+    assert _client(db).get("/api/journal").json()["retired_models"] == 4
 
     import builtins
 
@@ -360,4 +371,4 @@ def test_journal_names_the_retired_rows_and_fails_soft_to_unknown(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", broken)
     res = _client(db).get("/api/journal")
-    assert res.status_code == 200 and res.json()["retired"] is None  # unknown, never "none retired"
+    assert res.status_code == 200 and res.json()["retired_models"] is None  # unknown, never 0

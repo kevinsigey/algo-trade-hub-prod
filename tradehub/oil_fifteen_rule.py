@@ -201,8 +201,8 @@ def _series_trades(supa, first: dict[str, dict], label: str, picker) -> tuple[li
 
 
 def _daily(trades: list[dict]) -> list[dict[str, Any]]:
-    """Trades and P&L per New York trading day, oldest first, replay and forward together:
-    the Overview reads whether a series' per-trade edge is holding or fading from this."""
+    """Trades and P&L per New York day, oldest first (the caller passes forward trades only, the
+    same basis as by_series): the Overview reads whether a series' edge is holding from this."""
     days: dict[str, list[float]] = {}
     for t in trades:
         days.setdefault(datetime.fromisoformat(t["frozen_at"]).astimezone(NY).date().isoformat(), []).append(t["pnl"])
@@ -296,7 +296,8 @@ def record(supa) -> dict[str, Any]:
             "by_series": {label: _stats([t for t in gated if t["series"] == label
                                          and t["frozen_at"] >= PREREG_AT])
                           for _, _, label in SERIES},
-            "daily": {label: _daily([t for t in gated if t["series"] == label]) for _, _, label in SERIES}}
+            "daily": {label: _daily([t for t in gated if t["series"] == label and t["frozen_at"] >= PREREG_AT])
+                      for _, _, label in SERIES}}
     return {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **raw,
             "by_series": by_series, "by_session": _session_split(trades), "pending": pending,
             "recent": trades[:12], "gate": gate,

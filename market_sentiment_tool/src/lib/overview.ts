@@ -16,26 +16,28 @@ const DASH = "—";
 export interface JournalLite {
   forecasters?: JournalScore[];
   headline?: { settled_calibrated?: number };
-  /** Rows retired from freezing (registry.RETIRED); null when the server could not read them. */
-  retired?: { forecaster: string; version: string }[] | null;
+  /** Models the Nov 10 retirement stopped freezing, each counted once; null when the server could not read them. */
+  retired_models?: number | null;
 }
 
 export interface ModelsBeating {
   beating: number;
   measured: number;
-  /** null: the server could not say which rows are retired. */
+  /** null: unknown (an older server, or the registry would not load). */
   retired: number | null;
   scored: number | null;
 }
 
-/** The Model Tracker's own league rule, on live (not retired) predictors measured against a market price. */
+/** Exactly the Model Tracker's headline count (Journal.tsx: beatingCount(league(viewRows(all)))), so the
+ * two pages always agree: every predictor against its own baseline, the market price or climatology. */
 export function modelsBeating(j: JournalLite | null | undefined): ModelsBeating | null {
   if (!j || !Array.isArray(j.forecasters)) return null;
-  const retired = Array.isArray(j.retired) ? new Set(j.retired.map((r) => `${r.forecaster}@${r.version}`)) : null;
-  const live = retired ? j.forecasters.filter((f) => !retired.has(`${f.forecaster}@${f.forecaster_version}`)) : j.forecasters;
-  const rows = league(viewRows(live)).filter((r) => r.primary.score.baseline === "market");
   const scored = j.headline?.settled_calibrated;
-  return { ...beatingCount(rows), retired: retired ? retired.size : null, scored: typeof scored === "number" ? scored : null };
+  return {
+    ...beatingCount(league(viewRows(j.forecasters))),
+    retired: typeof j.retired_models === "number" ? j.retired_models : null,
+    scored: typeof scored === "number" ? scored : null,
+  };
 }
 
 // --- The 15-minute rules ---------------------------------------------------------------------
@@ -57,15 +59,24 @@ export function gasRecord(f: FifteenLite | null | undefined): Interval | null {
 
 export interface Span { from: string; to: string; perTrade: number; n: number }
 
-/** Gas per trade over its last `recentDays` trading days against every day before them. */
-export function gasTrend(f: FifteenLite | null | undefined, recentDays = 3): { earlier: Span; recent: Span } | null {
+/** Each span needs this many trades before the page calls the edge fading or holding. */
+export const TREND_MIN_TRADES = 10;
+
+export interface Trend { earlier: Span; recent: Span; verdict: "fading" | "holding" }
+
+/** Gas per forward paper trade over its last `recentDays` days with trades against every day before them.
+ * null (the page says nothing) unless both spans hold TREND_MIN_TRADES trades. */
+export function gasTrend(f: FifteenLite | null | undefined, recentDays = 3): Trend | null {
   const days = (f?.gate?.daily?.["Natural gas"] ?? []).filter((d) => d.n > 0);
   if (days.length <= recentDays) return null;
   const span = (ds: Day[]): Span => {
     const n = ds.reduce((a, d) => a + d.n, 0);
     return { from: ds[0].day, to: ds[ds.length - 1].day, n, perTrade: ds.reduce((a, d) => a + d.total, 0) / n };
   };
-  return { earlier: span(days.slice(0, -recentDays)), recent: span(days.slice(-recentDays)) };
+  const earlier = span(days.slice(0, -recentDays));
+  const recent = span(days.slice(-recentDays));
+  if (earlier.n < TREND_MIN_TRADES || recent.n < TREND_MIN_TRADES) return null;
+  return { earlier, recent, verdict: recent.perTrade < earlier.perTrade ? "fading" : "holding" };
 }
 
 /** Pooled per-trade net of several gated series (oil = WTI + Brent). null when none traded. */
