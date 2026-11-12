@@ -51,6 +51,16 @@ def main() -> int:
         alertable.append(f"journal run failed for: {', '.join(summary['failures'])}")
     alert_on_failures({**report, "problems": alertable})
 
+    # Page precompute (step 5): persist the slow read-only pages' payloads
+    # for the API to serve. Reuses the health report computed above; never
+    # fatal to the run.
+    try:
+        from tradehub.precompute import write_all
+
+        summary["precompute"] = write_all(supa, datetime.now(UTC), health_report=report)
+    except Exception as exc:  # noqa: BLE001
+        summary["precompute"] = f"failed: {exc}"
+
     print(json.dumps(summary, default=str))
     return 1 if summary["failures"] else 0
 

@@ -187,3 +187,64 @@ def build_macro(*, jobs_rows: Sequence[Mapping[str, Any]],
                    forecasts=journal_forecasts, outcomes=outcomes, record=ppi_record),
     ]
     return {"as_of": today.isoformat(), "quick": [], "cards": cards}
+
+
+MACRO_FORECASTERS = ("cpi_nowcast", "kalshi_implied_cpi", "ppi_nowcast", "kalshi_implied_ppi",
+                     "unrate_nowcast", "kalshi_implied_unrate")
+
+
+def compose_macro(supabase) -> tuple[dict[str, Any], bool]:
+    """The /api/macro payload plus a degraded flag: (payload, degraded).
+
+    The reads the endpoint used to make inline, moved here so the hourly
+    precompute (tradehub/precompute.py) builds the identical payload.
+    Per-source isolation is the design: one dead source degrades its own
+    card's sections (and sets degraded, so the result is never cached or
+    snapshotted as if it were whole) instead of taking the dashboard down.
+    """
+    import logging
+    from datetime import datetime, timezone
+
+    from tradehub.gate_status import DEFAULT_GATE_STATUS, latest_gate_statuses
+    from tradehub.journal import store
+    from tradehub.scoreboard import current_runs as _current_runs
+
+    log = logging.getLogger(__name__)
+    degraded = False
+
+    def guarded(read, fallback):
+        nonlocal degraded
+        try:
+            return read()
+        except Exception:  # noqa: BLE001 - per-source isolation is the design
+            log.exception("macro source read failed")
+            degraded = True
+            return fallback
+
+    runs = guarded(lambda: store.select_all(
+        supabase, "backtest_runs", lambda q: q, ("id",)), [])
+    rows = _current_runs(runs) if runs else []
+    pairs = {(r["engine"], r["engine_version"]) for r in rows if r["engine"] and r["engine_version"]}
+    if pairs:
+        try:
+            promotion = latest_gate_statuses(supabase, pairs)
+        except Exception:  # noqa: BLE001 - fails closed, like the scoreboard
+            log.exception("macro promotion lookup failed")
+            degraded = True
+            promotion = {}
+        for r in rows:
+            r["promotion_status"] = promotion.get((r["engine"], r["engine_version"]), DEFAULT_GATE_STATUS)
+    jobs_rows = guarded(lambda: (supabase.table("jobs_scorecard").select("*")
+                                 .eq("series", "payrolls").order("reference_month").execute().data or []), [])
+    scores = guarded(lambda: store.select_all(
+        supabase, "journal_scores", lambda q: q,
+        ("forecaster", "forecaster_version")), [])
+    forecasts = guarded(lambda: store.select_all(
+        supabase, "journal_forecasts",
+        lambda q: q.in_("forecaster", list(MACRO_FORECASTERS)), ("id",)), [])
+    settlements = guarded(lambda: store.select_all(
+        supabase, "journal_settlements", lambda q: q, ("target",)), [])
+    payload = build_macro(jobs_rows=jobs_rows, scoreboard_rows=rows, journal_scores=scores,
+                          journal_forecasts=forecasts, journal_settlements=settlements,
+                          today=datetime.now(timezone.utc).date())
+    return payload, degraded

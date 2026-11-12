@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from tradehub.core.env import load_local_env
+from tradehub import snapshots as _snapshots
 from tradehub.health import collect_health, public_health_report
 from tradehub.api.schemas import (
     HealthResponse, Position, PnLSummary,
@@ -330,6 +331,18 @@ async def security_headers(request, call_next):
 # ════════════════════════════════════════════════════════════════════════════
 # ENDPOINT 1: /api/health
 # ════════════════════════════════════════════════════════════════════════════
+# The slow read-only pages (health, macro, weather, weather map) are built
+# hourly by the journal job into snapshots (tradehub/precompute.py) and
+# served from them while fresh; the live build below remains the fallback
+# for a missing or stale snapshot, so a stopped job degrades to the old
+# behaviour, never to an error. 90 minutes covers one missed hourly run.
+SNAPSHOT_MAX_AGE_SECONDS = 5400
+
+
+def _snapshot(name: str) -> dict | None:
+    return _snapshots.read_snapshot(name, max_age_seconds=SNAPSHOT_MAX_AGE_SECONDS)
+
+
 @app.get("/api/health", response_model=HealthResponse, tags=["System"])
 def health(supabase=Depends(get_supabase)):
     """Liveness plus a read-only health report. Returns 200 if the API process is running.
@@ -345,6 +358,11 @@ def health(supabase=Depends(get_supabase)):
     `missing` rather than the whole report to a 500, because "no data" is itself the thing an operator
     needs to see, and a reader shown an error page cannot tell it from a broken query.
     """
+    snap = _snapshot("health")
+    if snap is not None:
+        built = datetime.fromisoformat(str(snap["built_at"]).replace("Z", "+00:00"))
+        return HealthResponse(status="ok", timestamp=built,
+                              report=public_health_report(snap["payload"]))
     now = datetime.now(timezone.utc)
     return HealthResponse(status="ok", timestamp=now,
                           report=public_health_report(collect_health(supabase, now=now)))
@@ -355,6 +373,10 @@ def health_full(supabase=Depends(get_supabase), _admin: dict = Depends(admin.req
     """The complete health report, history matrices included -- the Health
     page's payload, admin-gated since the item-6 trim took the internals off
     the public endpoint."""
+    snap = _snapshot("health")
+    if snap is not None:
+        built = datetime.fromisoformat(str(snap["built_at"]).replace("Z", "+00:00"))
+        return HealthResponse(status="ok", timestamp=built, report=snap["payload"])
     now = datetime.now(timezone.utc)
     return HealthResponse(status="ok", timestamp=now, report=collect_health(supabase, now=now))
 
@@ -3268,12 +3290,7 @@ def _target_day(target: str):
         return None
 
 
-MACRO_FORECASTERS = ("cpi_nowcast", "kalshi_implied_cpi", "ppi_nowcast", "kalshi_implied_ppi",
-                     "unrate_nowcast", "kalshi_implied_unrate")
-
-
 @app.get("/api/macro", tags=["Macro"])
-@_ttl_by_client(300)
 def get_macro(supabase=Depends(get_supabase)):
     """The Macro predictions dashboard (phase-3 §1): one card per macro engine,
     composed from reads the hub already makes (jobs scorecard, scoreboard
@@ -3281,71 +3298,54 @@ def get_macro(supabase=Depends(get_supabase)):
     verdict: every read is guarded separately, so one dead source degrades its
     own card's sections to null -- the page renders those as "unavailable" --
     instead of taking the dashboard down or, worse, filling the gap with a
-    plausible zero."""
+    plausible zero.
+
+    Served from the hourly snapshot while fresh (step 5); the live build
+    below is the fallback."""
     if supabase is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
-    from datetime import datetime as _dt
-    from tradehub.macro import build_macro
-    from tradehub.scoreboard import current_runs as _current_runs
+    snap = _snapshot("macro")
+    if snap is not None:
+        return snap["payload"]
+    return _macro_live(supabase)
 
-    def guarded(read, fallback):
-        try:
-            return read()
-        except Exception:  # noqa: BLE001 - per-source isolation is the design
-            log.exception("api: macro source read failed")
-            _DEGRADED.flag = True
-            return fallback
 
-    runs = guarded(lambda: _fetch_all(supabase, "backtest_runs", lambda q: q.select("*")), [])
-    rows = _current_runs(runs) if runs else []
-    pairs = {(r["engine"], r["engine_version"]) for r in rows if r["engine"] and r["engine_version"]}
-    if pairs:
-        try:
-            promotion = latest_gate_statuses(supabase, pairs)
-        except Exception:  # noqa: BLE001 - fails closed, like the scoreboard
-            log.exception("api: macro promotion lookup failed")
-            _DEGRADED.flag = True
-            promotion = {}
-        for r in rows:
-            r["promotion_status"] = promotion.get((r["engine"], r["engine_version"]), DEFAULT_GATE_STATUS)
-    jobs_rows = guarded(lambda: (supabase.table("jobs_scorecard").select("*")
-                                 .eq("series", "payrolls").order("reference_month").execute().data or []), [])
-    scores = guarded(lambda: _fetch_all(supabase, "journal_scores", lambda q: q.select("*"),
-                                        order=("forecaster", "forecaster_version")), [])
-    forecasts = guarded(lambda: _fetch_all(supabase, "journal_forecasts",
-                                           lambda q: q.select("*").in_("forecaster", list(MACRO_FORECASTERS))), [])
-    settlements = guarded(lambda: _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
-                                             order=("target",)), [])
-    return build_macro(jobs_rows=jobs_rows, scoreboard_rows=rows, journal_scores=scores,
-                       journal_forecasts=forecasts, journal_settlements=settlements,
-                       today=_dt.now(timezone.utc).date())
+@_ttl_by_client(300)
+def _macro_live(supabase=Depends(get_supabase)):
+    from tradehub.macro import compose_macro
+
+    payload, degraded = compose_macro(supabase)
+    if degraded:  # a build with a failed source read is served once, never kept
+        _DEGRADED.flag = True
+    return payload
 
 
 @app.get("/api/weather/map", tags=["Weather"])
-@_ttl_by_client(300)
 def get_weather_map(supabase=Depends(get_supabase)):
     """Per-city weather summaries for the map page (phase-3 §3.1), composed
     from journal forecasts WITH their payloads -- the station and the
     ensemble mean live in the payload, which /api/weather strips. A failed
     read is a 503, never an empty map: an empty map would claim the ensemble
-    forecasts nowhere."""
+    forecasts nowhere.
+
+    Served from the hourly snapshot while fresh (step 5); the live build
+    below is the fallback."""
     if supabase is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
-    from tradehub.weather_map import build_weather_map
-    names = ("weather_high", "weather_low", "weather_rain",
-             "kalshi_implied_weather_high", "kalshi_implied_weather_low", "kalshi_implied_weather_rain",
-             "baseline_climatology_weather_high", "baseline_climatology_weather_low",
-             "baseline_climatology_weather_rain")
+    snap = _snapshot("weather_map")
+    if snap is not None:
+        return snap["payload"]
+    return _weather_map_live(supabase)
+
+
+@_ttl_by_client(300)
+def _weather_map_live(supabase=Depends(get_supabase)):
+    from tradehub.weather_map import compose_weather_map
+
     try:
-        forecasts = _fetch_all(supabase, "journal_forecasts",
-                               lambda q: q.select("*").in_("forecaster", list(names)).order("frozen_at", desc=True),
-                               cap=6000)
-        settlements = _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
-                                 order=("target",))
+        return compose_weather_map(supabase)
     except Exception as e:
         raise HTTPException(status_code=503, detail=_missing_table_message("journal_forecasts", e))
-    outcomes = {s["target"]: s["outcome"] for s in settlements if s.get("outcome") is not None}
-    return build_weather_map(forecasts=forecasts, settlements=outcomes)
 
 
 @app.get("/api/weather/degree-days", tags=["Weather"])
@@ -3370,127 +3370,21 @@ def get_weather(supabase=Depends(get_supabase)):
     - weather_high/low/rain: the ensemble model
     - baseline_climatology_weather_*: the climatology baseline
     - kalshi_implied_weather_*: the Kalshi market probability
+
+    Served from the hourly snapshot while fresh (step 5); the composition
+    itself lives in tradehub/weather_page.py and is the fallback.
     """
     if supabase is None:
         raise HTTPException(status_code=503, detail="Supabase is not configured")
-    # Weather forecaster patterns
-    weather_forecasters = {
-        "ensemble": ("weather_high", "weather_low", "weather_rain"),
-        "climatology": ("baseline_climatology_weather_high", "baseline_climatology_weather_low",
-                        "baseline_climatology_weather_rain"),
-        "kalshi": ("kalshi_implied_weather_high", "kalshi_implied_weather_low",
-                   "kalshi_implied_weather_rain"),
-    }
+    snap = _snapshot("weather")
+    if snap is not None:
+        return snap["payload"]
+    from tradehub.weather_page import WeatherReadError, build_weather
 
-    names = [n for group in weather_forecasters.values() for n in group]
     try:
-        forecasts = _fetch_all(supabase, "journal_forecasts",
-                               lambda q: q.select("*").in_("forecaster", names), order=("frozen_at",))
-    except Exception as exc:  # noqa: BLE001 - classified by _table_fault
-        raise _table_fault("journal_forecasts", exc) from exc
-    try:
-        settlements = _fetch_all(supabase, "journal_settlements", lambda q: q.select("*"),
-                                 order=("settled_at",))
-    except Exception as exc:  # noqa: BLE001 - classified by _table_fault
-        raise _table_fault("journal_settlements", exc) from exc
-
-    # Group by target, keep only weather forecasters
-    # Also track the payload from kalshi_implied for market metadata (fallback to ensemble if needed)
-    by_target: dict[str, dict[str, float]] = {}
-    target_metadata: dict[str, dict[str, Any]] = {}
-    # First pass: collect all forecasts and capture metadata from kalshi_implied
-    for row in forecasts:
-        target = row.get("target", "")
-        forecaster = row.get("forecaster", "")
-        prob = row.get("probability")
-        if prob is None:
-            continue
-        # Check if this is a weather forecaster
-        is_weather = False
-        for kind, names in weather_forecasters.items():
-            if forecaster in names:
-                is_weather = True
-                break
-        if not is_weather:
-            continue
-        if target not in by_target:
-            by_target[target] = {}
-        # Map forecaster to kind
-        for kind, names in weather_forecasters.items():
-            if forecaster in names:
-                by_target[target][kind] = float(prob)
-                break
-        # Capture market metadata from kalshi_implied payload (primary source)
-        if forecaster.startswith("kalshi_implied_") and row.get("payload"):
-            payload = row["payload"]
-            target_metadata[target] = {
-                "strike_type": payload.get("strike_type"),
-                "floor_strike": payload.get("floor_strike"),
-                "cap_strike": payload.get("cap_strike"),
-                "yes_sub_title": payload.get("yes_sub_title"),
-                "no_sub_title": payload.get("no_sub_title"),
-            }
-    # Second pass: for targets without metadata, try to get from ensemble forecaster payload
-    for row in forecasts:
-        target = row.get("target", "")
-        forecaster = row.get("forecaster", "")
-        if target in target_metadata:
-            continue  # already have metadata
-        if not forecaster.startswith("weather_") or forecaster.startswith("baseline_") or forecaster.startswith("kalshi_"):
-            continue
-        if not row.get("payload"):
-            continue
-        payload = row["payload"]
-        # Only set if we actually have the fields
-        if any(k in payload for k in ("strike_type", "floor_strike", "cap_strike", "yes_sub_title", "no_sub_title")):
-            target_metadata[target] = {
-                "strike_type": payload.get("strike_type"),
-                "floor_strike": payload.get("floor_strike"),
-                "cap_strike": payload.get("cap_strike"),
-                "yes_sub_title": payload.get("yes_sub_title"),
-                "no_sub_title": payload.get("no_sub_title"),
-            }
-
-    # Split into today (the operating day is today or later in Eastern time) and settled history
-    from zoneinfo import ZoneInfo
-    today_day = datetime.now(ZoneInfo("America/New_York")).date()
-    outcome_by_target = {st.get("target"): st for st in settlements}
-    today = []
-    settled = []
-    for target, probs in by_target.items():
-        day = _target_day(target)
-        if day is None:
-            continue
-        meta = target_metadata.get(target, {})
-        row = {
-            "target": target,
-            "date": day.isoformat(),
-            "ensemble": probs.get("ensemble"),
-            "kalshi": probs.get("kalshi"),
-            "climatology": probs.get("climatology"),
-            "strike_type": meta.get("strike_type"),
-            "floor_strike": meta.get("floor_strike"),
-            "cap_strike": meta.get("cap_strike"),
-            "yes_sub_title": meta.get("yes_sub_title"),
-            "no_sub_title": meta.get("no_sub_title"),
-        }
-        if day >= today_day:
-            today.append(row)
-            continue
-        st = outcome_by_target.get(target)
-        if st is None:
-            continue                       # a past day not settled yet is not history
-        row["outcome"] = st.get("outcome")
-        row["realized_value"] = st.get("realized_value")
-        row["settled_at"] = st.get("settled_at")
-        settled.append(row)
-    settled.sort(key=lambda r: (r["date"], r["target"]), reverse=True)
-
-    return {
-        "as_of": datetime.now(timezone.utc).isoformat(),
-        "today": today,
-        "settled": settled,
-    }
+        return build_weather(supabase)
+    except WeatherReadError as exc:
+        raise _table_fault(exc.table, exc.__cause__ or exc) from exc
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,7 @@ production database on Nov 12, 00:20 UTC.
 | Debate grading scheduled (deploy crontab, 05:07 UTC daily; 3 graded at +5 days, 0 hits) | #488 (A6) |
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
+| Health/Macro/Weather precompute: the hourly journal job now writes the Health report plus the Macro, Weather and Weather-map compositions to file snapshots, and the four endpoints serve a fresh (<90 min) snapshot instead of rebuilding live (Health was 16.1 s per request at the Nov 12 check); a missing/stale snapshot falls back to the live build, and a degraded Macro build is never snapshotted | Health precompute PR (branch `rev/health-precompute`) |
 | Gas fill check: every settled gated gas trade marked with the contracts on offer at its ask (#472 depth). Of 77 settled gated trades only 18 have depth (tape carries sizes only since Nov 11); all 18 would have filled at 1 contract, 12 of 18 at the demo's launch size; median ask size ~101, bottom tenth ~1. The check validates the frozen-quote fill assumption at 1-contract size; the depth-era trades themselves were net losers in shadow terms (-$1.48 of the +$7.82 all-time per-contract sum), so it says nothing for the edge | Gas fill check PR (branch `rev/gas-fill-check`) |
 | Follow-ups from the #488-#496 reviews: Kev seat direction consistency (watch/pass force direction `none`; an act choice with direction `none` abstains and is never stored); the LEAPS gate never stores an `insufficient_data` verdict (it stays a live read and re-reads nightly, so a thin night cannot freeze the trial); the #496 CodeRabbit items (curveTradingDays counts weekdays only, Portfolio position rows keyed symbol+idea on the fallback path, the full orders table names each leg's side and ratio, the BandCrossings await-the-button flake) | Follow-up PR (branch `rev/followup-kev-leaps-496`) |
 
@@ -52,11 +53,9 @@ None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12
    - Fold Agent debates into Guidance.
    - Admin pages behind a lock in the public menu.
    - Screening preset blurbs (`--`, "W18-style selection layer", "FCC lens", "bundled proxy — not yet refreshed").
-7. **Health page**: still slow (15 s, and still "Loading…" after a 10-second wait). Precompute it in the hourly job;
-   do the same for Macro and Weather.
-8. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
+7. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
    source.
-9. **Code health**:
+8. **Code health**:
    - Split `tradehub/api/main.py` into routers by area. It has grown to 4,770 lines from 4,410.
    - Rewrite the README, which still describes the Vercel-reads-Supabase architecture.
 
