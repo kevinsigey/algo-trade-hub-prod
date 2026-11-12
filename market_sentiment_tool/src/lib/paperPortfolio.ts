@@ -29,6 +29,24 @@ export interface PositionRow {
   avg_price?: number | null;
   cost_basis?: number | null;
   day_pl?: number | null;
+  /** After-hours move vs today's regular close (aggregate rows only, after 4 PM ET). */
+  ah_change_pct?: number | null;
+}
+
+/** Today split at the 4:00 PM ET close (tradehub.portfolio.book.today_split).
+ * regular_* is the regular session against the prior close; after_hours_* is
+ * the move since the close snapshot. state is "regular" until a post-close
+ * snapshot exists, then "after_hours"; "no_prior" on the book's first day. */
+export interface TodaySplit {
+  state: "regular" | "after_hours" | "no_prior";
+  prior_close_at: string | null;
+  close_at: string | null;
+  regular_pl: number | null;
+  regular_pct: number | null;
+  after_hours_pl: number | null;
+  after_hours_pct: number | null;
+  spy_regular_pct: number | null;
+  spy_after_hours_pct: number | null;
 }
 
 /** The account rail's balances, as the broker reports them. */
@@ -84,6 +102,8 @@ export interface AggregatePositionRow {
   day_pl?: number | null;
   cost_basis?: number | null;
   unrealized_pl: number | null;
+  /** After-hours move vs today's regular close; null before the close or when unknown. */
+  ah_change_pct?: number | null;
 }
 
 /** The aggregate line in the PositionRow shape the page's tables read.
@@ -103,6 +123,7 @@ export function aggregateToRow(a: AggregatePositionRow): PositionRow {
     avg_price: a.avg_entry,
     cost_basis: a.cost_basis ?? null,
     day_pl: a.day_pl ?? null,
+    ah_change_pct: a.ah_change_pct ?? null,
   };
 }
 
@@ -137,6 +158,8 @@ export interface PortfolioPayload {
   positions: PositionRow[];
   /** One line per symbol (book.positions_aggregate); absent on old payloads. */
   positions_aggregate?: AggregatePositionRow[];
+  /** Today split at the 4 PM ET close; absent on old payloads. */
+  today?: TodaySplit | null;
 }
 
 export interface ClosedTrade {
@@ -402,8 +425,9 @@ export interface IdeaCard {
   id: number | null;
   positions: number;
   value: number;
-  /** Gross exposure over equity: a short counts at its size, not netted against longs. */
-  pct: number;
+  /** Gross exposure over equity: a short counts at its size, not netted
+   * against longs. Null when equity itself is unknown. */
+  pct: number | null;
   /** Null when any holding's figure is unknown: a missing figure is never read as zero. */
   day_pl: number | null;
   unrealized: number | null;
@@ -419,7 +443,7 @@ export interface IdeaCard {
  * a bucket. Live ideas that hold nothing yet still appear, at zero.
  * ponytail: keyed by title, since positions carry only the title; two live ideas sharing a title would merge.
  */
-export function ideaScorecard(rows: PositionRow[], equity: number,
+export function ideaScorecard(rows: PositionRow[], equity: number | null,
                               live: { id: number; title: string; size_pct: number | null }[]): IdeaCard[] {
   const cards = new Map<string, IdeaCard & { gross: number; cost: number }>();
   const card = (idea: string) => {
@@ -443,7 +467,7 @@ export function ideaScorecard(rows: PositionRow[], equity: number,
   return [...cards.values()]
     .map(({ gross, cost, ...c }) => ({
       ...c,
-      pct: equity ? (gross / equity) * 100 : 0,
+      pct: equity ? (gross / equity) * 100 : null,
       return_pct: c.positions && c.unrealized != null && cost ? (c.unrealized / cost) * 100 : null,
     }))
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
