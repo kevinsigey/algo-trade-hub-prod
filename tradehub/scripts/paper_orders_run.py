@@ -5,6 +5,8 @@ whose orders are on: today's target from its confirmed rule (engine.target_today
 the orders that close the gap (autotrade.plan), sent through the one paper-only order path. Ideas switched off or
 killed get their own shares closed. Every row - sent, already sent, skipped, rejected - is logged in paper_orders.
 Nothing is sent unless TRADEHUB_PAPER_ORDERS=on; one idea failing never stops the others.
+Nothing runs at all unless TRADEHUB_AUTO_TRADER=on (books.auto_trader_enabled, the
+auto-trader's master switch, off since 2026-11-12 on Kevin's call).
 """
 
 from __future__ import annotations
@@ -354,6 +356,10 @@ def exit_code(summary: dict, failed: dict) -> int:
 
 def main() -> int:
     load_local_env()
+    if not books.auto_trader_enabled():
+        print(json.dumps({"orders": "disabled",
+                          "reason": "TRADEHUB_AUTO_TRADER is not 'on': the auto-trader is off (Kevin, 2026-11-12)"}))
+        return 0
     supa = get_client()
     all_summary: dict = {}
     all_failed: dict = {}

@@ -52,3 +52,14 @@ def reset_book(token) -> None:
 def orders_enabled(book: str | None = None) -> bool:
     env = BOOKS[resolve(book)]["orders_env"]
     return os.getenv(env, "").strip().strip('"') == "on"
+
+
+def auto_trader_enabled() -> bool:
+    """The auto-trader's own master switch (Kevin, 2026-11-12): the morning order
+    runner and the protective-stop job place orders only when TRADEHUB_AUTO_TRADER
+    is exactly "on". It defaults OFF, unlike the per-book switches above: those
+    stay on because Kevin's own orders and the machine keys' orders funnel through
+    the same order path and are a different flow entirely. Switched off after the
+    runner re-bought positions Kevin had deliberately exited, off stale sim-era
+    idea weights; it stays off until those weights are reconciled."""
+    return os.getenv("TRADEHUB_AUTO_TRADER", "").strip().strip('"') == "on"

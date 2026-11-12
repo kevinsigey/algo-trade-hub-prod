@@ -6,6 +6,9 @@ relabels), the one resting exit Alpaca should hold for them (autotrade.protectiv
 stop orders for that idea. Same shape -> left alone; otherwise the stale ones are cancelled and the right one placed.
 Ideas switched off or killed have their stops cancelled (the morning job closes the shares). Every action is
 logged in paper_orders. Fails closed on unreadable holdings, like the morning job.
+Placement is gated by the same master switch as the morning job (books.auto_trader_enabled,
+TRADEHUB_AUTO_TRADER, off since 2026-11-12 on Kevin's call); the read-only fills reconcile
+in main() still runs while the switch is off.
 """
 
 from __future__ import annotations
@@ -189,6 +192,13 @@ def main() -> int:
     supa = get_client()
     now = datetime.now(UTC)
     fills, fills_failed = check_fills(now, supa)
+    if not books.auto_trader_enabled():
+        # The fills reconcile above is read-only reporting and still runs; only the
+        # placement half is the auto-trader's, and it is off (Kevin, 2026-11-12).
+        print(json.dumps({"protect": "disabled",
+                          "reason": "TRADEHUB_AUTO_TRADER is not 'on': the auto-trader is off (Kevin, 2026-11-12)",
+                          "fills": fills, "fills_failed": fills_failed}))
+        return 1 if fills_failed else 0
     try:
         summary, failed = run(now, supa)
     except Exception as exc:  # noqa: BLE001
