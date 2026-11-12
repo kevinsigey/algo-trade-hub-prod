@@ -13,6 +13,8 @@ debit, by construction.
 """
 from __future__ import annotations
 
+import math
+
 LONG_ZONES = ("buy_zone", "buy_zone_strong")
 SHORT_ZONES = ("short_zone", "short_zone_strong")
 
@@ -26,6 +28,12 @@ def spread_inputs(*, price: float | None, bands: dict | None, zone: str | None,
                   implied_move_pct: float | None) -> dict:
     """The options inputs for one fact sheet. implied_move_pct is in percent
     (the price layer's convention: ATM straddle / spot x 100)."""
+    # A non-finite read is "no data", not a number: NaN compares False
+    # against every distance (reading as "the move covers the distance")
+    # and is not JSON-encodable, which crashed verdict storage live
+    # (AMGN, 2026-11-12). Treat it exactly like a missing read.
+    if implied_move_pct is not None and not math.isfinite(implied_move_pct):
+        implied_move_pct = None
     out: dict = {
         "implied_move_pct": implied_move_pct,
         "expression": "none",
