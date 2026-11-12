@@ -150,3 +150,30 @@ def test_a_different_client_never_sees_the_cached_payload():
     assert cache.get(lambda: {"who": "a"}, client=a) == {"who": "a"}
     assert cache.get(lambda: {"who": "b"}, client=b) == {"who": "b"}
     assert cache.get(lambda: {"who": "b2"}, client=b) == {"who": "b"}
+
+
+def test_an_obsolete_rebuild_cannot_overwrite_a_newer_client_cycle():
+    clock = Clock()
+    cache = SwrCache(120, clock=clock)
+    a, b = object(), object()
+    release = threading.Event()
+    built = threading.Event()
+
+    def slow_stale_build():
+        release.wait(5)
+        built.set()
+        return {"who": "a-stale"}
+
+    assert cache.get(lambda: {"who": "a1"}, client=a) == {"who": "a1"}
+    clock.now = 200.0
+    # Stale hit: serves a1 and starts a background rebuild that blocks.
+    assert cache.get(slow_stale_build, client=a) == {"who": "a1"}
+    # Two client switches lap the blocked rebuild with newer cold builds.
+    assert cache.get(lambda: {"who": "b"}, client=b) == {"who": "b"}
+    clock.now = 210.0
+    assert cache.get(lambda: {"who": "a2"}, client=a) == {"who": "a2"}
+    release.set()
+    assert built.wait(5)
+    time.sleep(0.2)  # give the obsolete rebuild its chance to (not) publish
+    # The newer a2 payload survives, still fresh from its own build time.
+    assert cache.get(lambda: {"who": "a3"}, client=a) == {"who": "a2"}

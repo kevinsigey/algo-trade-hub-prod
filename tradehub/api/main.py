@@ -1609,15 +1609,30 @@ _FIFTEEN_RULE_CACHE = SwrCache(120)
 def oil_fifteen_rule(supabase=Depends(get_supabase)) -> dict:
     """The 15-minute trade rule's paper record (Kevin, 2026-11-05): replay and forward apart.
     Public and fail-soft: an unreadable journal reads as an empty record, never a 500."""
-    return _FIFTEEN_RULE_CACHE.get(lambda: _fifteen_rule_payload(supabase), client=supabase)
+    try:
+        return _FIFTEEN_RULE_CACHE.get(
+            lambda: _fifteen_rule_payload(supabase, strict=True), client=supabase)
+    except Exception:  # noqa: BLE001
+        # A cold build failed and the cache holds no last-good payload:
+        # serve the fail-soft empty record uncached, exactly as this
+        # endpoint behaved before the cache existed.
+        return _fifteen_rule_payload(supabase)
 
 
-def _fifteen_rule_payload(supabase) -> dict:
+def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
+    """Compose the fifteen-rule payload from its four live builds.
+
+    Fail-soft by default (each read degrades in place, the endpoint never
+    500s). With `strict=True` -- the form the SWR cache builds -- any
+    failed read raises instead, so the cache keeps serving its last good
+    payload rather than caching a degraded one over it."""
     from tradehub.oil_fifteen_rule import PREREG_AT, READY_TRADES, RULE, go_live_bar, record, summarize
 
     try:
         payload = record(supabase)
     except Exception:  # noqa: BLE001
+        if strict:
+            raise
         empty = summarize([])["forward"]
         payload = {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
                    "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
@@ -1630,7 +1645,8 @@ def _fifteen_rule_payload(supabase) -> dict:
 
         payload["shadow"] = fifteen_shadow.summary(supabase)
     except Exception:  # noqa: BLE001
-        pass
+        if strict:
+            raise
     # The self-weighting blend shadow (preregistration 2026-11-11): one
     # additive block -- its fresh record, the daily weights, and the
     # promotion flag. Fail-soft the same way.
@@ -1639,7 +1655,8 @@ def _fifteen_rule_payload(supabase) -> dict:
 
         payload["blend"] = fifteen_blend.summary(supabase)
     except Exception:  # noqa: BLE001
-        pass
+        if strict:
+            raise
     # The metals family (preregistration 2026-11-09): one additive block --
     # its own record in this payload's shape (gated by_series leading, the
     # raw reconstruction beside it), labeled as its own family and counted
@@ -1649,7 +1666,8 @@ def _fifteen_rule_payload(supabase) -> dict:
 
         payload["metals"] = metals_fifteen_rule.record(supabase)
     except Exception:  # noqa: BLE001
-        pass
+        if strict:
+            raise
     return payload
 
 
@@ -1757,7 +1775,8 @@ def _warm_swr_caches() -> None:
         supabase = get_supabase()
         if supabase is None:
             return
-        _FIFTEEN_RULE_CACHE.get(lambda: _fifteen_rule_payload(supabase), client=supabase)
+        _FIFTEEN_RULE_CACHE.get(lambda: _fifteen_rule_payload(supabase, strict=True),
+                                client=supabase)
         from tradehub.gaps.report import desk
 
         _GAP_DESK_CACHE.get(lambda: desk(supabase, datetime.now(timezone.utc)),

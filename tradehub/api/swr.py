@@ -20,6 +20,10 @@ Semantics, per cache instance:
 
 Keyed on the Supabase client object's identity, like `_ttl_by_client`:
 a different client (a test's fake) never sees another client's payload.
+A client switch bumps a generation counter: a background rebuild started
+under an older generation may finish, but it never publishes -- a newer
+cold build for a returning client must not be overwritten by the stale
+rebuild it lapped.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ class SwrCache:
         self._has = False
         self._building = False
         self._retry_after = 0.0
+        self._generation = 0
         self.last_error: Exception | None = None
 
     def get(self, builder: Callable[[], T], *, client: object = None) -> T:
@@ -54,12 +59,18 @@ class SwrCache:
         with self._lock:
             if client is not None and self._client is not None and client is not self._client:
                 self._value, self._has, self._at = None, False, 0.0
+                # A rebuild still running belongs to the old client's
+                # generation: it may finish but must not publish or clear
+                # the new generation's build flag (reset here).
+                self._generation += 1
+                self._building = False
             if self._has:
                 if self._clock() - self._at < self._ttl:
                     return self._value  # type: ignore[return-value]
                 if not self._building and self._clock() >= self._retry_after:
                     self._building = True
-                    threading.Thread(target=self._rebuild, args=(builder, client),
+                    threading.Thread(target=self._rebuild,
+                                     args=(builder, client, self._generation),
                                      daemon=True).start()
                 return self._value  # type: ignore[return-value]
             # Cold: build while holding the lock so concurrent first
@@ -74,15 +85,19 @@ class SwrCache:
             self._value, self._at, self._has, self._client = value, self._clock(), True, client
             return value
 
-    def _rebuild(self, builder: Callable[[], T], client: object) -> None:
+    def _rebuild(self, builder: Callable[[], T], client: object, generation: int) -> None:
         try:
             value = builder()
         except Exception as exc:  # noqa: BLE001 -- a failed rebuild never reaches a visitor
             with self._lock:
+                if generation != self._generation:
+                    return  # obsolete generation: its state is no longer ours to move
                 self.last_error = exc
                 self._retry_after = self._clock() + self._retry_seconds
                 self._building = False
             return
         with self._lock:
+            if generation != self._generation:
+                return  # a newer client cycle already published; stay out of its way
             self._value, self._at, self._has, self._client = value, self._clock(), True, client
             self._building = False

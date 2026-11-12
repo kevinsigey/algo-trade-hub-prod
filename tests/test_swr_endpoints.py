@@ -32,10 +32,12 @@ def wait_for(predicate, timeout: float = 5.0) -> None:
 
 @pytest.fixture()
 def fifteen_builds(monkeypatch):
-    calls = {"record": 0}
+    calls = {"record": 0, "fail": False}
 
     def record(_supa):
         calls["record"] += 1
+        if calls["fail"]:
+            raise RuntimeError("canceling statement due to statement timeout")
         return {"record_build": calls["record"]}
 
     monkeypatch.setattr("tradehub.oil_fifteen_rule.record", record)
@@ -58,6 +60,36 @@ def test_fifteen_rule_composes_once_per_ttl(fifteen_builds):
 def test_fifteen_rule_rebuilds_for_a_new_client(fifteen_builds):
     assert main.oil_fifteen_rule(supabase=object())["record_build"] == 1
     assert main.oil_fifteen_rule(supabase=object())["record_build"] == 2
+
+
+def test_fifteen_rule_failed_rebuild_keeps_the_last_good_payload(fifteen_builds, monkeypatch):
+    cache = SwrCache(0.05)
+    monkeypatch.setattr(main, "_FIFTEEN_RULE_CACHE", cache)
+    fake = object()
+    assert main.oil_fifteen_rule(supabase=fake)["record_build"] == 1
+
+    fifteen_builds["fail"] = True
+    time.sleep(0.08)  # past the TTL: the next hit serves stale and rebuilds
+    assert main.oil_fifteen_rule(supabase=fake)["record_build"] == 1
+    wait_for(lambda: cache.last_error is not None)
+    # The failed (fail-soft, unavailable) build was never cached over the
+    # last good payload, and serving it does not count as a fresh build.
+    served = main.oil_fifteen_rule(supabase=fake)
+    assert served["record_build"] == 1
+    assert "unavailable" not in served
+
+
+def test_fifteen_rule_cold_failure_serves_the_fail_soft_record_uncached(fifteen_builds):
+    fifteen_builds["fail"] = True
+    fake = object()
+    first = main.oil_fifteen_rule(supabase=fake)
+    assert first["unavailable"] is True
+    # Nothing was cached: the next hit builds again rather than serving
+    # the degraded payload for a TTL. (Each hit reads record twice: the
+    # cache's strict build, then the route's fail-soft fallback.)
+    second = main.oil_fifteen_rule(supabase=fake)
+    assert second["unavailable"] is True
+    assert fifteen_builds["record"] == 4
 
 
 @pytest.fixture()

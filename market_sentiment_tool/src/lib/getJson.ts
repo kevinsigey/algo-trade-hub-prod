@@ -10,9 +10,13 @@ export const GET_JSON_TIMEOUT_MS = 25_000;
 export async function getJson<T>(path: string, timeoutMs: number = GET_JSON_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
   try {
-    response = await fetch(buildApiUrl(path), { signal: controller.signal });
+    const response = await fetch(buildApiUrl(path), { signal: controller.signal });
+    // The timer stays armed until the body is read: fetch resolves on the
+    // headers, and a body that stalls after them must still time out.
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
+    return payload as T;
   } catch (err) {
     if (controller.signal.aborted) {
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
@@ -21,7 +25,4 @@ export async function getJson<T>(path: string, timeoutMs: number = GET_JSON_TIME
   } finally {
     clearTimeout(timer);
   }
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload?.detail || `Request failed with status ${response.status}`);
-  return payload as T;
 }

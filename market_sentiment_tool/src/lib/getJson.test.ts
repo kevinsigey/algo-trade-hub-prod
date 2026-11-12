@@ -34,4 +34,21 @@ describe("getJson", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await assertion;
   });
+
+  it("rejects as a timeout when the body stalls after the headers arrive", async () => {
+    vi.useFakeTimers();
+    // fetch resolves as soon as the headers land; the body read is what
+    // stalls, and it rejects only when the abort signal fires.
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: () => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      }),
+    }) as unknown as Response));
+    const pending = getJson("/api/stalls", 5_000);
+    const assertion = expect(pending).rejects.toThrow("Request timed out after 5s");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+  });
 });
