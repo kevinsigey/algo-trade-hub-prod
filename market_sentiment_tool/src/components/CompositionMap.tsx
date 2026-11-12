@@ -238,14 +238,22 @@ function CompositionView({ tiles, grouping, heightClass, rowHeight }: {
   );
 }
 
-export default function CompositionBox({ positions, composition, className = "" }: {
+export default function CompositionBox({ positions, composition, aggregate, className = "" }: {
   positions: PositionRow[];
   composition: PortfolioPayload["composition"];
+  /** One line per ticker (positions_aggregate, mapped to rows, Cash line
+   * appended by the caller). The sector view reads these so a ticker held
+   * by three ideas draws ONE tile (2026-11-12 review); the By-idea view
+   * keeps the per-idea slices, where a ticker appearing once per holding
+   * idea is the attribution itself. Absent on old payloads. */
+  aggregate?: PositionRow[];
   className?: string;
 }) {
   const [grouping, setGrouping] = useState<Grouping>("sector");
   const [open, setOpen] = useState(false);
   const tiles = useMemo(() => positions.map(toTile), [positions]);
+  const sectorTiles = useMemo(() => (aggregate ?? positions).map(toTile), [aggregate, positions]);
+  const activeTiles = grouping === "sector" ? sectorTiles : tiles;
 
   return (
     <section aria-label="Composition" className={`rounded-lg border border-slate-800 bg-slate-900/60 p-3 ${className}`}>
@@ -260,8 +268,8 @@ export default function CompositionBox({ positions, composition, className = "" 
         </div>
       </div>
       <div className="mt-2">
-        <CompositionView tiles={tiles} grouping={grouping} heightClass="h-44" rowHeight={72} />
-        <Legend tiles={tiles} />
+        <CompositionView tiles={activeTiles} grouping={grouping} heightClass="h-44" rowHeight={72} />
+        <Legend tiles={activeTiles} />
       </div>
 
       {open && (
@@ -282,8 +290,8 @@ export default function CompositionBox({ positions, composition, className = "" 
               </div>
             </div>
             <div className="mt-4">
-              <CompositionView tiles={tiles} grouping={grouping} heightClass="h-[55vh]" rowHeight={120} />
-              <Legend tiles={tiles} />
+              <CompositionView tiles={activeTiles} grouping={grouping} heightClass="h-[55vh]" rowHeight={120} />
+              <Legend tiles={activeTiles} />
             </div>
           </div>
         </div>

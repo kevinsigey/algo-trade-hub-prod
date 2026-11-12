@@ -110,3 +110,22 @@ describe("CompositionBox tooltip clamping", () => {
     expect(top).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("CompositionBox with the per-ticker aggregate", () => {
+  const SLICES: PositionRow[] = [
+    { symbol: "XLU", sector: "Utilities", qty: 111, side: "long", market_value: 4864, pct_of_book: 5, unrealized_pl: 73, idea: "Utilities + health care" },
+    { symbol: "XLU", sector: "Utilities", qty: 59, side: "long", market_value: 2586, pct_of_book: 3, unrealized_pl: 20, idea: "Ballast" },
+    { symbol: "Cash", sector: "Cash", qty: null, side: null, market_value: 72000, pct_of_book: 72, unrealized_pl: null, idea: null },
+  ];
+  const AGGREGATE: PositionRow[] = [
+    { symbol: "XLU", sector: "Utilities", qty: 170, side: "long", market_value: 7450, pct_of_book: 8, unrealized_pl: 93, idea: null },
+    { symbol: "Cash", sector: "Cash", qty: null, side: null, market_value: 72000, pct_of_book: 72, unrealized_pl: null, idea: null },
+  ];
+
+  it("draws one tile per ticker in the sector view, one per idea in the idea view", () => {
+    render(<CompositionBox positions={SLICES} composition={COMPOSITION} aggregate={AGGREGATE} />);
+    expect(screen.queryAllByTestId("tile-XLU")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "By idea" }));
+    expect(screen.queryAllByTestId("tile-XLU")).toHaveLength(2);
+  });
+});

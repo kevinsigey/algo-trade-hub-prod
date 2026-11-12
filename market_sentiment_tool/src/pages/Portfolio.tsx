@@ -10,11 +10,14 @@ import { Panel } from "@/components/Panel";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
+  aggregateToRow,
   breakerLabel,
   concentration,
+  curveTradingDays,
   dayMovers,
   ideaScorecard,
   contractLabel,
+  orderLabel,
   CURVE_RANGES,
   curveRange,
   fmtPct,
@@ -108,14 +111,13 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
             {head("symbol", "Instrument", "sticky left-0 bg-slate-900 text-left")}
             <th scope="col" className="px-2 py-1.5 text-right font-medium">Position</th>
             {COLUMNS.map((c) => head(c.key, c.label))}
-            <th scope="col" className="px-2 py-1.5 font-medium">Idea</th>
           </tr>
         </thead>
         <tbody>
           {ordered.map((r) => {
             const option = contractLabel(r.symbol);
             return (
-              <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/80 hover:bg-slate-800/40">
+              <tr key={r.symbol} className="border-t border-slate-800/80 hover:bg-slate-800/40">
                 <td className={`sticky left-0 whitespace-nowrap bg-slate-900 px-2 py-1.5 font-semibold text-white ${option ? "pl-6 font-normal text-slate-200" : ""}`}>
                   {option ?? r.symbol}
                   {r.side === "short" && <span className="ml-1.5 text-xs font-normal text-amber-300">short</span>}
@@ -129,7 +131,6 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
                 <td className="px-2 py-1.5 text-right text-slate-300">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}</td>
                 <td className={`px-2 py-1.5 text-right ${tone(r.day_pl)}`}>{signed(r.day_pl)}</td>
                 <td className={`px-2 py-1.5 text-right ${tone(r.unrealized_pl)}`}>{signed(r.unrealized_pl)}</td>
-                <td className="max-w-[16rem] truncate px-2 py-1.5 text-slate-300" title={r.idea ?? undefined}>{r.idea ?? "—"}</td>
               </tr>
             );
           })}
@@ -143,7 +144,6 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
             <td className="px-2 py-1.5 text-right">{`${(total((r) => r.pct_of_book) ?? 0).toFixed(1)}%`}</td>
             <td className={`px-2 py-1.5 text-right ${tone(total((r) => r.day_pl))}`}>{signed(total((r) => r.day_pl))}</td>
             <td className={`px-2 py-1.5 text-right ${tone(total((r) => r.unrealized_pl))}`}>{signed(total((r) => r.unrealized_pl))}</td>
-            <td />
           </tr>
         </tfoot>
       </table>
@@ -168,7 +168,7 @@ function PositionsSummary({ rows, n = 5 }: { rows: PositionRow[]; n?: number }) 
         </tr></thead>
         <tbody>
           {top.map((r) => (
-            <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/70">
+            <tr key={r.symbol} className="border-t border-slate-800/70">
               <td className="py-1 pr-2 font-semibold text-white">{contractLabel(r.symbol) ?? r.symbol}</td>
               <td className="py-1 pr-2 text-right text-slate-200">{money(r.market_value)}</td>
               <td className="py-1 pr-2 text-right text-slate-400">{r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}</td>
@@ -299,7 +299,7 @@ function AccountRail({ data }: { data: PortfolioPayload }) {
         <RailRow label="Unrealized P&L" value={signed(unrealized)} className={tone(unrealized)} />
         <RailRow label="Realized P&L" value={signed(a?.realized_pl)} className={tone(a?.realized_pl)} />
         <RailRow label="Maintenance margin" value={money(a?.maintenance_margin)} />
-        <RailRow label="Positions" value={String(rows.length)} />
+        <RailRow label="Positions" value={String(data.positions_aggregate?.length ?? rows.length)} />
         {data.breaker && (
           <RailRow label="Circuit breaker" value={breakerLabel(data.breaker)}
                    className={data.breaker.tripped ? "text-rose-400" : "text-slate-100"} />
@@ -324,8 +324,10 @@ function Performance({ data }: { data: PortfolioPayload }) {
     { label: `SPY, ${range}`, value: fmtPct(last?.spy_pct) },
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
     { label: "Max drawdown", value: fmtPct(s.max_drawdown_pct) },
-    // A Sharpe ratio on under a month of days is noise (it read -8.11 on day 5, 2026-11-09).
-    { label: "Sharpe", value: data.curve.length < 21 ? "after 1 month" : s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
+    // A Sharpe ratio on under a month of trading days is noise (it read -10.01
+    // after 8 trading days, 2026-11-11: the guard counted curve snapshots --
+    // 65 of them -- not days, so it never held).
+    { label: "Sharpe", value: curveTradingDays(data.curve) < 20 ? "after 1 month" : s.sharpe == null ? "—" : s.sharpe.toFixed(2) },
     { label: "Closed-trade wins", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
   ];
   return (
@@ -377,6 +379,13 @@ function Body({ data, liveIdeas, book }: {
   book: string;
 }) {
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
+  // One line per ticker for positions, movers and composition (2026-11-12
+  // review): the per-idea slices repeated GLD and XLU once per holding idea.
+  // The slices stay for the By-idea view and the concentration check only.
+  // Old payloads without the aggregate fall back to the slices.
+  const aggRows = data.positions_aggregate?.length
+    ? data.positions_aggregate.map(aggregateToRow) : rows;
+  const cashRow = data.positions.find((p) => p.symbol === "Cash");
   const heavy = concentration(rows);
   // One screen at 1440x900 (Kevin, 2026-11-06): every panel is a summary that opens in full, in a tight grid.
   return (
@@ -396,14 +405,15 @@ function Body({ data, liveIdeas, book }: {
       <div className="grid gap-2 xl:grid-cols-12">
         <div className="flex min-w-0 flex-col gap-2 xl:col-span-3">
           <AccountRail data={data} />
-          <MoversBox rows={rows} />
+          <MoversBox rows={aggRows} />
           <OrderForm book={book} />
         </div>
         <div className="grid min-w-0 content-start gap-2 lg:grid-cols-2 xl:col-span-9">
           <Performance data={data} />
-          <CompositionBox positions={data.positions} composition={data.composition} />
-          <Box title={`Positions · ${rows.length}`} full={<PositionsTable rows={rows} />}>
-            <PositionsSummary rows={rows} />
+          <CompositionBox positions={data.positions} composition={data.composition}
+                          aggregate={cashRow ? [...aggRows, cashRow] : aggRows} />
+          <Box title={`Positions · ${aggRows.length}`} full={<PositionsTable rows={aggRows} />}>
+            <PositionsSummary rows={aggRows} />
           </Box>
           {/* Targets belong to the book in view: a payload still from the other book shows holdings only. */}
           <IdeasBox rows={rows} equity={data.scoreboard.equity ?? 0} liveIdeas={(data.book ?? "main") === book ? liveIdeas : []} />
@@ -486,7 +496,7 @@ function IdeasBox({ rows, equity, liveIdeas }: {
       </div>
     );
   return (
-    <Box title={`By idea · ${cards.filter((c) => c.id != null || !c.idea.endsWith("(manual)")).length} ideas`}
+    <Box title={`By idea · ${cards.length} ideas`}
          full={table(cards)}
          right={<span className="text-xs text-slate-500">{known ? "bar: held · tick: set size" : "bar: % of book"}</span>}>
       {table(cards.slice(0, 4))}
@@ -547,7 +557,7 @@ function OrdersBox({ book }: { book: string }) {
               {list.map((o, i) => (
                 <tr key={`${o.symbol}-${o.submitted_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
                   <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</td>
-                  <td className="whitespace-nowrap py-1.5 pr-3">{o.side} <span className="font-semibold text-white">{contractLabel(o.symbol) ?? o.symbol}</span> <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
+                  <td className="whitespace-nowrap py-1.5 pr-3">{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span> <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
                   <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? 0}/{o.qty ?? "—"}</td>
                   <td className="py-1.5 pr-3 text-right">{price(o.filled_avg_price)}</td>
                   <td className={`py-1.5 pr-3 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</td>
@@ -573,7 +583,7 @@ function OrdersBox({ book }: { book: string }) {
             <li key={`${o.symbol}-${o.submitted_at}-${i}`} className="flex items-baseline justify-between gap-2 border-t border-slate-800/70 pt-1">
               <span className="truncate text-slate-300">
                 <span className="text-slate-500">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</span>{" "}
-                {o.side} <span className="font-semibold text-white">{contractLabel(o.symbol) ?? o.symbol}</span> {o.filled_qty ?? 0}/{o.qty ?? "—"}
+                {o.side} <span className="font-semibold text-white">{orderLabel(o)}</span> {o.filled_qty ?? 0}/{o.qty ?? "—"}
               </span>
               <span className={`shrink-0 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</span>
             </li>

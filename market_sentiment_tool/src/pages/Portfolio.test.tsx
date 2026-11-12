@@ -492,3 +492,66 @@ describe("Portfolio check card", () => {
     expect(dialog.getByText("portfolio check passes")).toBeInTheDocument();
   });
 });
+
+describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
+  const slice = (symbol: string, idea: string, over: Partial<PositionRow> = {}): PositionRow => ({
+    symbol, qty: 26, side: "long", market_value: 9500, pct_of_book: 9.5, unrealized_pl: 250,
+    idea, sector: "Commodities (Gold)", last_price: 365.4, change_pct: -0.84, day_pl: -44,
+    avg_price: 355, cost_basis: 9230, ...over,
+  });
+
+  it("counts, lists and moves by ticker, not by idea slice", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        slice("GLD", "Gold"), slice("GLD", "Rates hedge"),
+        slice("SPY", "Core", { sector: "Broad Market", day_pl: 120 }),
+        { symbol: "Cash", qty: null, side: null, market_value: 62000, pct_of_book: 62, unrealized_pl: null, idea: null },
+      ],
+      positions_aggregate: [
+        { symbol: "GLD", asset: "stock", qty: 52, market_value: 19000, pct_of_equity: 19, pct_of_book: 19,
+          avg_entry: 355, tags: [], sector: "Commodities (Gold)", side: "long", last_price: 365.4,
+          change_pct: -0.84, day_pl: -88, cost_basis: 18460, unrealized_pl: 500 },
+        { symbol: "SPY", asset: "stock", qty: 10, market_value: 7500, pct_of_equity: 7.5, pct_of_book: 7.5,
+          avg_entry: 740, tags: [], sector: "Broad Market", side: "long", last_price: 750,
+          change_pct: 0.4, day_pl: 120, cost_basis: 7400, unrealized_pl: 100 },
+      ],
+    }));
+    page(<Portfolio />);
+    // 3 slices, 2 tickers: the header counts tickers.
+    expect(await screen.findByText("Positions · 2")).toBeInTheDocument();
+    // GLD appears once as a mover (its two lots' day P&L summed) and once in
+    // the positions summary -- not once per idea that holds it.
+    expect(screen.getAllByText("GLD")).toHaveLength(2);
+    // The summed -$88 (two lots at -$44) is what both the mover and the
+    // positions row carry. (The per-slice -$44 still shows inside the
+    // By-idea cards, where per-idea attribution is the point.)
+    expect(screen.getAllByText(/\$88/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("holds the Sharpe back until 20 trading days, however many snapshots", async () => {
+    const curve = Array.from({ length: 65 }, (_, i) => {
+      const day = `2026-11-${String(2 + Math.floor(i / 9)).padStart(2, "0")}`;
+      return { t: `${day}T${String(14 + (i % 9)).padStart(2, "0")}:30:00Z`, portfolio_pct: 0.1 * i, spy_pct: 0.05 * i };
+    });
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000, sharpe: -10.01 }, curve,
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText("after 1 month")).toBeInTheDocument();
+    expect(screen.queryByText("-10.01")).toBeNull();
+  });
+
+  it("counts every rendered row in the By-idea header, manual ones included", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        slice("GLD", "No idea yet (manual)"), slice("SPY", "No idea yet (manual)"),
+        { symbol: "Cash", qty: null, side: null, market_value: 81000, pct_of_book: 81, unrealized_pl: null, idea: null },
+      ],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText("By idea · 2 ideas")).toBeInTheDocument();
+  });
+});

@@ -430,3 +430,30 @@ def test_the_portfolio_reports_its_breaker_state(client_with, monkeypatch):
     monkeypatch.delenv("TRADEHUB_BREAKER_MAX_DD_PCT")
     body = client_with(FakeSupabase()).get("/api/portfolio").json()
     assert body["breaker"]["enabled"] is False
+
+
+def test_activity_multileg_order_carries_its_leg_symbols(client_with, monkeypatch):
+    """A combo's parent order has no symbol of its own; the activity rows
+    must carry the legs so the page names what traded (2026-11-12 review,
+    bug known since 2026-11-09: a bare "3/3 filled" with no symbol)."""
+    orders = [
+        {"id": "m1", "client_order_id": "ext-2-acc-b1", "symbol": None, "side": "buy",
+         "qty": "1", "filled_qty": "1", "type": "limit", "time_in_force": "day", "status": "filled",
+         "limit_price": "0.31", "stop_price": None, "filled_avg_price": "0.31",
+         "submitted_at": "2026-11-09T14:30:00Z", "filled_at": "2026-11-09T14:30:05Z",
+         "order_class": "mleg",
+         "legs": [
+             {"symbol": "SPY261111P00750000", "side": "buy_to_open", "ratio_qty": "1",
+              "qty": "1", "filled_qty": "1"},
+             {"symbol": "SPY261111P00749000", "side": "sell_to_open", "ratio_qty": "1",
+              "qty": "1", "filled_qty": "1"},
+         ]},
+    ]
+    monkeypatch.setattr(service, "paper_get", alpaca(orders=orders))
+    c = client_with(FakeSupabase())
+    body = c.get("/api/portfolio/activity").json()
+    row = body["recent"][0]
+    assert row["symbol"] is None
+    assert [leg["symbol"] for leg in row["legs"]] == [
+        "SPY261111P00750000", "SPY261111P00749000"]
+    assert row["legs"][0]["filled_qty"] == 1 and row["asset"] == "option"

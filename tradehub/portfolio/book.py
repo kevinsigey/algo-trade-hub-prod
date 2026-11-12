@@ -132,7 +132,11 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
     truth was 518 shares, 20%. One line per symbol: total signed qty, market value,
     signed % of equity, the cost-basis-weighted blended entry, total unrealized P&L.
     Options keep their OCC symbol (their own line, asset="option"); cash is not a
-    position and never appears. Biggest line first, by absolute market value."""
+    position and never appears. Biggest line first, by absolute market value.
+    The fold also carries the fields the Portfolio page reads per ticker
+    (2026-11-12: sector, side, last price, the underlying's change, summed day
+    P&L and cost basis), so the page's positions, movers and composition can
+    read this one line per symbol instead of the per-idea lots."""
     groups: dict[str, dict] = {}
     for r in rows:
         symbol = r.get("symbol")
@@ -142,7 +146,10 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
                                        "asset": "option" if _OCC.match(symbol) else "stock",
                                        "qty": 0.0, "market_value": 0.0, "unrealized_pl": 0.0,
                                        "tags": [],
+                                       "sector": None, "last_price": None, "change_pct": None,
+                                       "day_pl": 0.0,
                                        "_pl_seen": False, "_cost": 0.0, "_cost_qty": 0.0,
+                                       "_cb_seen": False, "_day_seen": False,
                                        "_avg_num": 0.0, "_avg_den": 0.0})
         qty = float(r["qty"])
         g["qty"] += qty
@@ -150,12 +157,26 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
             if tag not in g["tags"]:
                 g["tags"].append(tag)
         g["market_value"] += float(r.get("market_value") or 0)
+        # The page's per-ticker fields (2026-11-12): sector, last price and the
+        # underlying's own change are the same on every lot of a symbol, so the
+        # first lot carrying them speaks for the fold; day P&L and cost basis
+        # are lot-scaled and sum back to the position's own totals.
+        if g["sector"] is None:
+            g["sector"] = r.get("sector")
+        if g["last_price"] is None and r.get("last_price") is not None:
+            g["last_price"] = float(r["last_price"])
+        if g["change_pct"] is None and r.get("change_pct") is not None:
+            g["change_pct"] = float(r["change_pct"])
+        if r.get("day_pl") is not None:
+            g["day_pl"] += float(r["day_pl"])
+            g["_day_seen"] = True
         if r.get("unrealized_pl") is not None:
             g["unrealized_pl"] += float(r["unrealized_pl"])
             g["_pl_seen"] = True
         if r.get("cost_basis") is not None:
             g["_cost"] += float(r["cost_basis"])
             g["_cost_qty"] += qty
+            g["_cb_seen"] = True
         if r.get("avg_price") is not None and qty:
             g["_avg_num"] += float(r["avg_price"]) * qty
             g["_avg_den"] += qty
@@ -170,7 +191,13 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
         out.append({"symbol": g["symbol"], "asset": g["asset"], "qty": g["qty"],
                     "market_value": g["market_value"],
                     "pct_of_equity": g["market_value"] / equity * 100 if equity else None,
+                    "pct_of_book": abs(g["market_value"]) / equity * 100 if equity else None,
                     "avg_entry": avg, "tags": g["tags"],
+                    "sector": g["sector"],
+                    "side": "long" if g["qty"] > 0 else "short" if g["qty"] < 0 else None,
+                    "last_price": g["last_price"], "change_pct": g["change_pct"],
+                    "day_pl": g["day_pl"] if g["_day_seen"] else None,
+                    "cost_basis": g["_cost"] if g["_cb_seen"] else None,
                     "unrealized_pl": g["unrealized_pl"] if g["_pl_seen"] else None})
     return sorted(out, key=lambda a: -abs(a["market_value"]))
 

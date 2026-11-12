@@ -239,3 +239,32 @@ def test_a_move_never_takes_manual_shares_bought_after_it():
 def test_a_move_never_overrides_a_label_someone_already_set():
     fills = [_move_fill("kept-manual", "buy", 5), _move_fill("a", "buy", 1)]
     assert book.manual_move_orders(fills, MOVE, {"kept-manual"}) == {"a": 9}
+
+
+def test_positions_aggregate_carries_the_pages_per_ticker_fields():
+    """The Portfolio page reads positions, movers and composition from the
+    aggregate (2026-11-12 review): the fold must carry sector, side, last
+    price and the underlying's change (the same on every lot), plus day P&L
+    and cost basis summed back from the lot-scaled slices."""
+    from tradehub.portfolio.book import positions_aggregate
+
+    rows = [
+        {**_agg_row("GLD", 26, 9500, 300, "Gold", cb=9200),
+         "sector": "Commodities (Gold)", "side": "long", "last_price": 365.4,
+         "change_pct": -0.84, "day_pl": -44.0},
+        {**_agg_row("GLD", 26, 9500, 200, "Rates hedge", cb=9300),
+         "sector": "Commodities (Gold)", "side": "long", "last_price": 365.4,
+         "change_pct": -0.84, "day_pl": -44.0},
+        {**_agg_row("XLE", -20, -2000, 50, "Short book", cb=-2100),
+         "sector": "Energy", "side": "short", "last_price": 100.0,
+         "change_pct": 1.2, "day_pl": None},
+    ]
+    agg = {a["symbol"]: a for a in positions_aggregate(rows, 100000)}
+    gld = agg["GLD"]
+    assert gld["sector"] == "Commodities (Gold)" and gld["side"] == "long"
+    assert gld["last_price"] == 365.4 and gld["change_pct"] == -0.84
+    assert gld["day_pl"] == -88.0  # the two lots' day P&L, summed once each
+    assert gld["cost_basis"] == 18500
+    assert gld["pct_of_book"] == pytest.approx(19.0)
+    xle = agg["XLE"]
+    assert xle["side"] == "short" and xle["day_pl"] is None  # no lot carried one
