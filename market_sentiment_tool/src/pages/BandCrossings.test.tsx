@@ -75,7 +75,10 @@ describe("Band crossings section", () => {
     serve();
     render(<BandCrossings />);
     const section = await screen.findByTestId("band-crossings");
-    fireEvent.click(within(section).getByLabelText("Detail for CVS crossing 2"));
+    // findByTestId resolves while the section still shows "Loading
+    // crossings…" — the row (and its Detail button) only exists once
+    // the fetch lands, so the button itself must be awaited.
+    fireEvent.click(await within(section).findByLabelText("Detail for CVS crossing 2"));
     await waitFor(() => {
       expect(within(section).getByText(/Portfolio check: portfolio check passes/)).toBeTruthy();
     });
@@ -98,7 +101,9 @@ describe("Band crossings freshness (Round 2)", () => {
     const section = await screen.findByTestId("band-crossings");
     // The last scan read snapshot #3 (the fixture's scan row); the page's
     // sheets come from #5 -- the header must say so, never silently stale.
-    expect(within(section).getByText(/snapshot #5 pending/)).toBeTruthy();
+    // Awaited, not getByText: findByTestId resolves during the loading
+    // state, before the header exists (same flake as the expand test).
+    expect(await within(section).findByText(/snapshot #5 pending/)).toBeTruthy();
   });
 
   it("shows no pending label when the last scan read the latest snapshot", async () => {

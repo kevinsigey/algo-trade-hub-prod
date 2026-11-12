@@ -24,6 +24,7 @@ production database on Nov 12, 00:20 UTC.
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
 | Gas fill check: every settled gated gas trade marked with the contracts on offer at its ask (#472 depth). Of 77 settled gated trades only 18 have depth (tape carries sizes only since Nov 11); all 18 would have filled at 1 contract, 12 of 18 at the demo's launch size; median ask size ~101, bottom tenth ~1. The check validates the frozen-quote fill assumption at 1-contract size; the depth-era trades themselves were net losers in shadow terms (-$1.48 of the +$7.82 all-time per-contract sum), so it says nothing for the edge | Gas fill check PR (branch `rev/gas-fill-check`) |
+| Follow-ups from the #488-#496 reviews: Kev seat direction consistency (watch/pass force direction `none`; an act choice with direction `none` abstains and is never stored); the LEAPS gate never stores an `insufficient_data` verdict (it stays a live read and re-reads nightly, so a thin night cannot freeze the trial); the #496 CodeRabbit items (curveTradingDays counts weekdays only, Portfolio position rows keyed symbol+idea on the fallback path, the full orders table names each leg's side and ratio, the BandCrossings await-the-button flake) | Follow-up PR (branch `rev/followup-kev-leaps-496`) |
 
 ## In flight (open PRs from Muse)
 None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
