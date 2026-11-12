@@ -209,13 +209,27 @@ def _order_row(o: dict, titles: dict[int, str]) -> dict:
     def num(key):
         v = o.get(key)
         return float(v) if v not in (None, "") else None
+
+    def leg_num(leg, key):
+        v = leg.get(key)
+        return float(v) if v not in (None, "") else None
+
+    # A multi-leg (mleg) parent carries no symbol of its own -- the legs are
+    # the order. They ride along so the page can name what traded instead of
+    # showing a bare "3/3 filled" (known since 2026-11-09, fixed 2026-11-12).
+    legs = [{"symbol": leg.get("symbol"), "side": leg.get("side"),
+             "ratio_qty": leg_num(leg, "ratio_qty"), "qty": leg_num(leg, "qty"),
+             "filled_qty": leg_num(leg, "filled_qty")}
+            for leg in o.get("legs") or []]
+    asset_symbol = o.get("symbol") or (legs[0]["symbol"] if legs else "")
     return {"symbol": o.get("symbol"), "side": o.get("side"), "qty": num("qty"),
             "filled_qty": num("filled_qty"), "type": o.get("type") or o.get("order_type"),
             "time_in_force": o.get("time_in_force"), "status": o.get("status"),
             "limit_price": num("limit_price"), "stop_price": num("stop_price"),
             "filled_avg_price": num("filled_avg_price"),
             "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
-            "asset": "option" if _OPTION_SYMBOL.match(o.get("symbol") or "") else "stock",
+            "asset": "option" if _OPTION_SYMBOL.match(asset_symbol or "") else "stock",
+            "legs": legs,
             "source": _order_source(o.get("client_order_id") or "", titles)}
 
 
@@ -276,7 +290,7 @@ def take_snapshot(supa, now: datetime | None = None, book_name: str | None = Non
     """Insert one snapshot of the paper account. None when there is no account to snapshot."""
     from tradehub.portfolio.books import resolve
 
-    name = resolve(book_name)
+    resolve(book_name)
     try:
         account = paper_get("/v2/account")
     except AccountNotConnected:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dayMovers, fmtPct, fmtPts, fmtUsd, ideaScorecard, stateLabel, type PositionRow } from "@/lib/paperPortfolio";
+import { aggregateToRow, curveTradingDays, dayMovers, fmtPct, fmtPts, fmtUsd, ideaScorecard, orderLabel, stateLabel, type PositionRow } from "@/lib/paperPortfolio";
 
 describe("paper portfolio formatting", () => {
   it("shows unknown as a dash, never zero", () => {
@@ -85,5 +85,37 @@ describe("dayMovers when day P&L is unknown", () => {
     const rows = [{ symbol: "A", day_pl: null, market_value: 1 }] as PositionRow[];
     expect(dayMovers(rows).known).toBe(false);
     expect(dayMovers([{ symbol: "A", day_pl: 0, market_value: 1 } as PositionRow]).known).toBe(true);
+  });
+});
+
+describe("curve trading days and order labels (2026-11-12 fixes)", () => {
+  it("counts distinct days in the curve, not snapshots", () => {
+    const curve = [
+      ...Array.from({ length: 40 }, (_, i) => ({ t: `2026-11-10T${String(14 + Math.floor(i / 10))}:0${i % 10}:00Z`, portfolio_pct: 0, spy_pct: 0 })),
+      ...Array.from({ length: 25 }, (_, i) => ({ t: `2026-11-11T15:0${i % 10}:00Z`, portfolio_pct: 0, spy_pct: 0 })),
+    ];
+    expect(curveTradingDays(curve)).toBe(2);
+    expect(curveTradingDays([])).toBe(0);
+  });
+
+  it("maps an aggregate line into the row shape the tables read", () => {
+    const row = aggregateToRow({
+      symbol: "GLD", asset: "stock", qty: 52, market_value: 19000, pct_of_equity: 19,
+      pct_of_book: 19, avg_entry: 355, tags: [], sector: "Commodities (Gold)", side: "long",
+      last_price: 365.4, change_pct: -0.84, day_pl: -88, cost_basis: 18460, unrealized_pl: 540,
+    });
+    expect(row).toMatchObject({ symbol: "GLD", qty: 52, avg_price: 355, pct_of_book: 19,
+                                day_pl: -88, idea: null, sector: "Commodities (Gold)" });
+  });
+
+  it("names a multi-leg order by its legs and a plain order by its symbol", () => {
+    const base = { side: "buy", qty: 1, filled_qty: 1, type: "limit", time_in_force: "day",
+                   status: "filled", limit_price: 0.31, stop_price: null, filled_avg_price: 0.31,
+                   submitted_at: null, filled_at: null, asset: "option" as const, source: "Machine order" };
+    expect(orderLabel({ ...base, symbol: "GLD" })).toBe("GLD");
+    expect(orderLabel({ ...base, symbol: null as unknown as string, legs: [
+      { symbol: "SPY261111P00750000", side: "buy_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+      { symbol: "SPY261111P00749000", side: "sell_to_open", ratio_qty: 1, qty: 1, filled_qty: 1 },
+    ] })).toBe("SPY Nov 11 2026 $750 put / SPY Nov 11 2026 $749 put");
   });
 });

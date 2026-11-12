@@ -66,6 +66,53 @@ export function breakerLabel(b: BreakerState): string {
   return `On, ${parts.join(", ")}`;
 }
 
+/** One line per symbol: the per-idea lots folded back into the position the
+ * broker actually holds (tradehub/portfolio/book.py positions_aggregate). */
+export interface AggregatePositionRow {
+  symbol: string;
+  asset: "stock" | "option";
+  qty: number;
+  market_value: number;
+  pct_of_equity: number | null;
+  pct_of_book: number | null;
+  avg_entry: number | null;
+  tags: string[];
+  sector?: string | null;
+  side?: string | null;
+  last_price?: number | null;
+  change_pct?: number | null;
+  day_pl?: number | null;
+  cost_basis?: number | null;
+  unrealized_pl: number | null;
+}
+
+/** The aggregate line in the PositionRow shape the page's tables read.
+ * Ideas live in the per-idea slices only, so `idea` is always null here. */
+export function aggregateToRow(a: AggregatePositionRow): PositionRow {
+  return {
+    symbol: a.symbol,
+    sector: a.sector ?? null,
+    qty: a.qty,
+    side: a.side ?? null,
+    market_value: a.market_value,
+    pct_of_book: a.pct_of_book,
+    unrealized_pl: a.unrealized_pl,
+    idea: null,
+    last_price: a.last_price ?? null,
+    change_pct: a.change_pct ?? null,
+    avg_price: a.avg_entry,
+    cost_basis: a.cost_basis ?? null,
+    day_pl: a.day_pl ?? null,
+  };
+}
+
+/** Distinct calendar days in the equity curve. The Sharpe guard counts
+ * these, not snapshots: intraday snapshots made 65 points out of 8 trading
+ * days and let a meaningless Sharpe print (2026-11-12 review). */
+export function curveTradingDays(curve: { t: string }[]): number {
+  return new Set(curve.map((p) => (p.t ?? "").slice(0, 10))).size;
+}
+
 export interface PortfolioPayload {
   state: PortfolioState;
   as_of: string | null;
@@ -77,6 +124,8 @@ export interface PortfolioPayload {
   curve: { t: string; portfolio_pct: number; spy_pct: number }[];
   composition: { idea: string; pct_of_book: number; unrealized_pl: number }[];
   positions: PositionRow[];
+  /** One line per symbol (book.positions_aggregate); absent on old payloads. */
+  positions_aggregate?: AggregatePositionRow[];
 }
 
 export interface ClosedTrade {
@@ -109,9 +158,20 @@ export interface ResultsSplit {
   };
 }
 
+export interface ActivityOrderLeg {
+  symbol: string | null;
+  side: string | null;
+  ratio_qty: number | null;
+  qty: number | null;
+  filled_qty: number | null;
+}
+
 export interface ActivityOrder {
   symbol: string;
   side: string;
+  /** A multi-leg parent's legs; empty for a plain order. The parent itself
+   * carries no symbol, so the legs are what the row names. */
+  legs?: ActivityOrderLeg[];
   qty: number | null;
   filled_qty: number | null;
   type: string | null;
@@ -242,6 +302,18 @@ export function contractLabel(symbol: string): string | null {
   if (!m) return null;
   const [, root, yy, mm, dd, kind, strike] = m;
   return `${root} ${MONTHS[Number(mm) - 1]} ${Number(dd)} 20${yy} $${Number(strike) / 1000} ${kind === "C" ? "call" : "put"}`;
+}
+
+/** What an order row names: a plain order names its symbol; a multi-leg
+ * parent has no symbol of its own, so it names its legs (2026-11-12 --
+ * the recent-orders list showed a bare "3/3 filled" for combos). */
+export function orderLabel(o: ActivityOrder): string {
+  if (o.legs && o.legs.length > 0) {
+    return o.legs
+      .map((l) => (l.symbol ? (contractLabel(l.symbol) ?? l.symbol) : "—"))
+      .join(" / ");
+  }
+  return o.symbol ? (contractLabel(o.symbol) ?? o.symbol) : "—";
 }
 
 /** Keeps the given order, but moves each option leg directly under its underlying's row. */

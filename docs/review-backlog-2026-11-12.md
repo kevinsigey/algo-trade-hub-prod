@@ -16,6 +16,7 @@ production database on Nov 12, 00:20 UTC.
 | Ideas carry their search, with "Trial N of M" | A3, #480 |
 | Self-weighting blend shadow | #482 (rows start Nov 12) |
 | LEAPS gate faults: pooled delivery definition (Kevin's Nov 11 call — the 80% bar stays constant), cohort judged only at 90+ days of marks or closed, first verdict stored and never recomputed | LEAPS gate fix PR (branch `rev/leaps-gate-fix`) |
+| Portfolio page bugs: Sharpe guard counts distinct trading days; movers, composition and position counts read `positions_aggregate`; by-idea header counts its rendered rows; multi-leg orders name their legs. The GLD "reappearing" sell was checked live and is not a bug (26 of 52 shares sold; the remaining 26 sit in two idea slices) | Portfolio review (`review-2026-11-12-portfolio.md`), branch `rev/portfolio-bugs` |
 
 ## In flight (open PRs from Muse)
 | Item | PR |
