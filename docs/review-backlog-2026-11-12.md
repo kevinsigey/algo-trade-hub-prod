@@ -28,7 +28,11 @@ production database on Nov 12, 00:20 UTC.
 | Follow-ups from the #488-#496 reviews: Kev seat direction consistency (watch/pass force direction `none`; an act choice with direction `none` abstains and is never stored); the LEAPS gate never stores an `insufficient_data` verdict (it stays a live read and re-reads nightly, so a thin night cannot freeze the trial); the #496 CodeRabbit items (curveTradingDays counts weekdays only, Portfolio position rows keyed symbol+idea on the fallback path, the full orders table names each leg's side and ratio, the BandCrossings await-the-button flake) | Follow-up PR (branch `rev/followup-kev-leaps-496`) |
 
 ## In flight (open PRs from Muse)
-None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
+| Item | PR |
+|---|---|
+| Kalshi demo runner (action plan step 2): demo-guarded order writes in `KalshiPortfolio`, `tradehub/kalshi_demo.py` trading the live gate's gas buys at Kevin's 1%-of-balance sizing, ask size recorded with a skip under 1, daily caps (Kevin confirmed the defaults Nov 12: 100 contracts/day, $20 daily loss, 1% budget). Migration `20261112000002_kalshi_demo_orders.sql` APPLIED 2026-11-12 by Claude via the connector after Kevin's go (read back: 25 columns, RLS on, no anon/authenticated grants, 0 rows) and recorded as ledger row 84 in this PR. Claude's review fixes are in: the decisions read filters the freshness window in the query (an ascending 1,000-row page of oldest buys would have gone blind in ~11 weeks), and a placement whose response is lost is adopted by `client_order_id` on the next pass instead of being re-placed and written off. Remaining: Claude's re-review, merge, deploy -- then Claude installs the timer/dispatcher (install text in the PR) and does the watched manual run. The Portfolio tab is step 3, a separate PR | branch `rev/kalshi-demo-runner` |
+
+The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
 (`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 19 there.
 
 ## Not started: product
