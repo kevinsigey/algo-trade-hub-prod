@@ -8,7 +8,7 @@ list Muse can finish. This file is that list.
 
 ## Status, Nov 12 20:45 UTC
 - Merged: steps 1–4 (#499, #500, #501, #505), 6 (#502), the page-load fix #504, and step 5 part 1 (#506). #500, #504, #505 and #506 merged without Claude's review.
-- **Blocking: #500's runner can never trade** (gas decisions are written only after their window closes). Fix spec: the #500 comment of Nov 12, 20:08 UTC. Do this before the rest of step 5.
+- **Blocking: #500's runner can never trade** (gas decisions are written only after their window closes). Fix spec: the #500 comment of Nov 12, 20:08 UTC. Do this first. Then step 5, the volatility-regime challenger (moved up by Kevin on Nov 12, because the live 15-minute rules are fading: gas fell from +17.4¢ per trade on Nov 6–9 to +2.5¢ on Nov 10–12, and oil and metals now lose). Then the rest of the Portfolio redesign (step 6).
 
 ## Where things stood (checked Nov 12 against `origin/main`, GitHub and the live site)
 
@@ -44,21 +44,21 @@ The order is sound, but three things need changing:
 | 2 | **Kalshi demo runner** (in review, #500) | Spec in the #492 comment "Kalshi demo runner". Demo host enforced in code, live host refused, guard test against other POSTs, 1-contract limit orders at the frozen quote, daily contract and loss caps, cancel if unfilled. **Add:** record the contracts on offer at the ask, and skip when it's under 1. Migration for the `kalshi_demo_orders` table | **Yes: go on the migration** |
 | 3 | **Kalshi Portfolio tab** | Spec in the #492 comment "Kalshi gets its own Portfolio tab": `/portfolio?book=kalshi`, `/api/kalshi-demo`, a header with DEMO, Positions, Performance (demo against shadow), Orders, no order ticket. May share step 2's PR | No |
 | 4 | **Gas fill check** (model 1) ✅ #501 | Mark every past gated gas trade with the contracts on offer at its ask (#472 data). Report how many would have filled | No |
-| 5 | **Portfolio redesign** (added Nov 12; it was missing from the first version of this plan) | Everything under "The redesign Kevin asked for" and "Live updates" in `review-2026-11-12-portfolio.md`. **Header:** today split at the 4:00 PM ET close, SPY and QQQ benchmarks, and a warnings strip that replaces the Portfolio check card. **Tab 1, Book:** composition readable without scrolling, Positions with no idea information, By idea as expandable rows, movers by ticker. **Tab 2, Performance:** curve against SPY and QQQ with a drawdown band, daily return bars, stats, return by idea and sector, tested against discretionary over time, realized P&L by week. **Tab 3, Trade:** the order ticket open on the page, and full lists of staged and recent orders and closed trades, with no pop-ups. Metrics refresh on the 30-second cycle. The Kalshi book from step 3 sits beside Main and $1M. Split it into 2–3 PRs (header + Book, Performance, Trade) if one gets too big | No |
-| 6 | **Health precompute** (product 7) | Build Health in the hourly job, then Macro and Weather. Target: `/api/health` under 1 s | No |
-| 7 | **Overview landing page** (product 1) | One-sentence pitch, three headline numbers, what works and what failed, how it's built | Domain: Kevin |
-| 8 | **Scoreboard** (model 2) | `earned_weight` column, contested rows only, error bars in days, hide empty rows, label retired rows | Yes: migration |
-| 9 | Guidance method and naming (product 2) | As in the backlog | Skip the MRK part until Kevin decides |
-| 10 | Workshop idea page split (product 3) | | No |
-| 11 | Workshop falsifiable claims (product 4) | Equal-beta SPY-plus-cash test | No |
-| 12 | Weather page trim (product 5) | | No |
-| 13 | Copy pass (product 6) | | No |
-| 14 | Oil "YES costs 0c" check (product 8) | | No |
-| 15 | Hourly oil v7 shadow (model 3) | Preregister first | No |
-| 16 | Replay anchors (model 4) | | No |
-| 17 | Oil 15-minute filters (model 5) | Preregister both | No |
-| 18 | Rain paper rule (model 6) | Preregister, judge by days | No |
-| 19 | Volatility-regime challenger | From `review-2026-11-11-muse-round2-and-regime-challenger.md`, as a new shadow version | No |
+| 5 | **Volatility-regime challenger `v3-volregime-shadow`** (moved up by Kevin, Nov 12: the 15-minute rules are fading) | From `review-2026-11-11-muse-round2-and-regime-challenger.md`, as a new shadow version. Preregister first, with PREREG_AT at least a day after merge; per-regime weights learned only from earlier days; fewer than 30 contested windows in a regime means weight 0; compared against `v2-blend-shadow`; can only take the gate after the blend is promoted | No |
+| 6 | **Portfolio redesign** (added Nov 12; it was missing from the first version of this plan) | Everything under "The redesign Kevin asked for" and "Live updates" in `review-2026-11-12-portfolio.md`. **Header:** today split at the 4:00 PM ET close, SPY and QQQ benchmarks, and a warnings strip that replaces the Portfolio check card. **Tab 1, Book:** composition readable without scrolling, Positions with no idea information, By idea as expandable rows, movers by ticker. **Tab 2, Performance:** curve against SPY and QQQ with a drawdown band, daily return bars, stats, return by idea and sector, tested against discretionary over time, realized P&L by week. **Tab 3, Trade:** the order ticket open on the page, and full lists of staged and recent orders and closed trades, with no pop-ups. Metrics refresh on the 30-second cycle. The Kalshi book from step 3 sits beside Main and $1M. Split it into 2–3 PRs (header + Book, Performance, Trade) if one gets too big | No |
+| 7 | **Health precompute** (product 7) | Build Health in the hourly job, then Macro and Weather. Target: `/api/health` under 1 s | No |
+| 8 | **Overview landing page** (product 1) | One-sentence pitch, three headline numbers, what works and what failed, how it's built | Domain: Kevin |
+| 9 | **Scoreboard** (model 2) | `earned_weight` column, contested rows only, error bars in days, hide empty rows, label retired rows | Yes: migration |
+| 10 | Guidance method and naming (product 2) | As in the backlog | Skip the MRK part until Kevin decides |
+| 11 | Workshop idea page split (product 3) | | No |
+| 12 | Workshop falsifiable claims (product 4) | Equal-beta SPY-plus-cash test | No |
+| 13 | Weather page trim (product 5) | | No |
+| 14 | Copy pass (product 6) | | No |
+| 15 | Oil "YES costs 0c" check (product 8) | | No |
+| 16 | Hourly oil v7 shadow (model 3) | Preregister first | No |
+| 17 | Replay anchors (model 4) | | No |
+| 18 | Oil 15-minute filters (model 5) | Preregister both | No |
+| 19 | Rain paper rule (model 6) | Preregister, judge by days | No |
 | 20 | Code health (product 9) | Split `api/main.py` into routers; rewrite the README. Do this last so it doesn't conflict with the steps above | No |
 
 **Skip until Kevin answers:** the MRK rule for guide steps over 35%; freezing Deals, IPOs, the Level watcher and
@@ -89,7 +89,8 @@ Agent debates; and whether Screening becomes a tracked idea.
 | Kalshi demo trading for the gas model, at 1% of the account per trade | Step 2 (#500) |
 | Kalshi as its own Portfolio tab | Step 3 |
 | Portfolio page bugs (Sharpe, duplicate tickers, counts, multi-leg names) | Done, #496 and #499 |
-| Portfolio redesign: header, SPY and QQQ, warnings strip, Book / Performance / Trade tabs, live metrics | Step 5 |
+| Portfolio redesign: header, SPY and QQQ, warnings strip, Book / Performance / Trade tabs, live metrics | Step 6 (PR 1 merged, #506) |
 | Auto-trader off until further notice | Done, #498 |
 | Debate grading on a schedule | Done, #488; deploy crontab at 05:07 UTC |
-| Everything in the Nov 9–11 reviews | Steps 6–20 (detail in `review-backlog-2026-11-12.md`) |
+| Self-improving 15-minute models: volatility-regime challenger | Step 5 |
+| Everything in the Nov 9–11 reviews | Steps 7–20 (detail in `review-backlog-2026-11-12.md`) |
