@@ -9,14 +9,30 @@ schema; and every authenticated outcome writes exactly one audit event.
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from workshop_fake import DB
 
 from tradehub.api import machine_api, machine_keys, main
 from tradehub.api.dependencies import get_supabase
-from tradehub.portfolio import alpaca_paper, paper_orders, service
+from tradehub.portfolio import alpaca_paper, paper_orders, portfolio_check, service
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_alpaca(monkeypatch):
+    """A7 (2026-11-11): these tests must never call the real Alpaca API.
+    Every external read is stubbed at the module level (paper_get,
+    latest_price, submit); the transport itself is poisoned so a future
+    unstubbed path fails loudly here instead of silently reaching the
+    paper account on any host that has keys configured."""
+    def boom(*args, **kwargs):
+        raise AssertionError("test reached the real HTTP transport — "
+                             "stub the Alpaca read instead (A7)")
+    monkeypatch.setattr(requests, "get", boom)
+    monkeypatch.setattr(requests, "post", boom)
+    monkeypatch.setattr(requests, "request", boom)
 
 
 @pytest.fixture
@@ -33,6 +49,23 @@ def api(monkeypatch):
 
     monkeypatch.setattr(paper_orders, "submit", fake_submit)
     monkeypatch.setattr(alpaca_paper, "latest_price", lambda symbol: 100.0)
+    # A7: the validation helpers (positions, resting orders, netting read)
+    # read through paper_get; the default book here is empty. Tests that
+    # need positions or resting orders stub the helper or paper_get again.
+    monkeypatch.setattr(alpaca_paper, "paper_get",
+                        lambda path, params=None, **kw: [])
+    # The portfolio-cohesion gate reads the whole book through
+    # positions_by_underlying. This fixture's book is a fake DB, not a
+    # readable Alpaca book, so the gate takes its documented
+    # "unavailable" path (stated in the outcome, never a block) instead
+    # of judging a $0 book: an empty-but-readable book makes a $20.8k
+    # split order "100% of invested" and blocks it on the single-name
+    # cap -- a stub artifact, not the caps under test. (Pre-A7 the gate
+    # reached the same path by accident, via missing keys.)
+    def _unreadable_book(book=None):
+        raise alpaca_paper.AccountNotConnected("test fixture: no readable book")
+    monkeypatch.setattr(portfolio_check, "positions_by_underlying",
+                        _unreadable_book)
     monkeypatch.setattr(machine_api, "LIMITER", machine_api.RateLimiter())  # buckets are per test
     monkeypatch.setenv("TRADEHUB_MACHINE_ORDERS", "on")
     main.app.dependency_overrides[get_supabase] = lambda: db
@@ -853,8 +886,8 @@ def test_a_day_order_staged_on_a_sunday_is_held_for_monday():
 
 
 def test_a_working_order_in_its_session_reads_active():
-    view = _order_view(time_in_force="day", submitted_at="2026-11-09T17:00:00+00:00",
-                       )  # Mon 12:00 ET
+    _order_view(time_in_force="day", submitted_at="2026-11-09T17:00:00+00:00",
+                )  # Mon 12:00 ET
     assert machine_api.session_fields(
         {"time_in_force": "day", "submitted_at": "2026-11-09T17:00:00+00:00", "status": "new"},
         now=_dt(2026, 11, 9, 17, 5, tzinfo=_tz.utc)) == {
@@ -980,7 +1013,7 @@ def test_open_orders_are_labelled_with_who_placed_them(api4, monkeypatch):
 
     client, db, _, _ = api4
     mine = _key(db)               # key 1, "mac scripts"
-    theirs = _key(db)             # key 2, also labelled "mac scripts" by the helper
+    _key(db)                      # key 2, also labelled "mac scripts" by the helper
     orders = [
         { "reason": "test placement",**BROKER_ORDER, "id": "alpaca-1", "client_order_id": "ext-1-run-1"},
         { "reason": "test placement","id": "alpaca-2", "client_order_id": "ext-2-big-1", "symbol": "GLD", "qty": "52",
