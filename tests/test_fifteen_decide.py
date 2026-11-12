@@ -142,3 +142,43 @@ def test_record_decisions_output_unchanged_by_refactor(monkeypatch):
                     ("v2-oil", "skip", "stale_tape"), ("v2-oil", "skip", "no_edge"),
                     ("v2-blend", "buy", None), ("v2-blend", "skip", "no_prediction"),
                     ("v2-blend", "skip", "no_weight"), ("v2-blend", "skip", "no_quote")}
+
+
+LATER = ("evaluated_at", "outcome", "pnl")  # what only the close can know
+
+
+def test_open_decisions_match_what_the_record_pass_later_writes(monkeypatch):
+    golden = {r["target"]: r for r in json.loads(GOLDEN.read_text())}
+    patch_world(monkeypatch)
+    monkeypatch.setattr(tracking, "_blend_weight_persisted",
+                        lambda supa, series, day: series in WEIGHTS)
+    seen = {}
+    for family in TARGETS.values():
+        for cal in family:
+            now = datetime.fromisoformat(cal["cutoff_at"]) - timedelta(minutes=5)
+            rows = {r["target"]: r for r in tracking.open_decisions(Capture(), now)}
+            if cal["target"] in rows:
+                seen[cal["target"]] = rows[cal["target"]]
+    # Every window with a frozen read is decided while still open, exactly as
+    # recorded later; a window with no read (no forecast, no minute-1 tick,
+    # no persisted blend weight) is not a decision and is simply absent.
+    assert set(seen) == {"kalshi:W1", "kalshi:W4", "kalshi:W6", "kalshi:W7",
+                         "kalshi:B1", "kalshi:G1"}
+    for target, row in seen.items():
+        want = golden[target]
+        assert {k: v for k, v in row.items() if k not in LATER} == \
+               {k: v for k, v in want.items() if k not in LATER}
+        assert row["outcome"] is None and row["pnl"] is None
+
+
+def test_open_window_bounds_and_unsettled_minute_one(monkeypatch):
+    patch_world(monkeypatch)
+    w4_open = _at(15, 0)
+    # Before minute 1.5 a closer minute-1 tick could still land: no decision yet.
+    early = tracking.open_decisions(Capture(), w4_open + timedelta(minutes=1, seconds=20))
+    assert "kalshi:W4" not in {r["target"] for r in early}
+    # A window within the runner's last minute is not open any more.
+    late = tracking.open_decisions(Capture(), w4_open + timedelta(minutes=14, seconds=10))
+    assert "kalshi:W4" not in {r["target"] for r in late}
+    ok = tracking.open_decisions(Capture(), w4_open + timedelta(minutes=13, seconds=50))
+    assert "kalshi:W4" in {r["target"] for r in ok}

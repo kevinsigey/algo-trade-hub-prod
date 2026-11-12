@@ -1,10 +1,18 @@
 """Kalshi DEMO auto-trader for the 15-minute natural gas rule.
 
 Kevin's build (approved 2026-11-11, sizing amended 2026-11-12): follow the
-live gate's gated natural-gas buys from `fifteen_rule_decisions` with real
+live gate's gated natural-gas buys with real
 orders on the Kalshi DEMO account only, sized at 1% of the demo balance per
 decision, scaling with the balance. Demo fills do not prove the edge; the
 shadow record (the decisions table itself) is the measure.
+
+Decided at freeze time (fix 2026-11-12): the record pass writes a window's
+`fifteen_rule_decisions` row only after the window has closed, so the
+runner could never see a tradable one. Candidates now come from
+fifteen_tracking.open_decisions -- the same per-window decision the
+record pass later writes, made while the window is open -- and each
+order is checked against the tracking row once it lands
+(`decision_mismatch`).
 
 Hard rules:
 - Demo only, enforced in code: every run asserts the demo host through
@@ -36,6 +44,7 @@ from tradehub.journal.kalshi_linked import ticker_of
 from tradehub.markets import quote_cents
 
 SERIES = "KXNATGAS15M"
+GAS_SERIES = tuple(s for s in rule.SERIES if s[0] == "natgas_15m")
 ORDERS = "kalshi_demo_orders"
 DECISIONS = rule.DECISIONS_TABLE
 TICKS = fifteen_tracking.TICKS_TABLE
@@ -85,15 +94,10 @@ def size_contracts(balance_usd: float, price: float, pct: float) -> int:
 # -- reads --------------------------------------------------------------------
 
 def _select(supa, table: str, filters: dict, order: str | None = None,
-            desc: bool = False, limit: int = 1000,
-            gt: dict | None = None, gte: dict | None = None) -> list[dict]:
+            desc: bool = False, limit: int = 1000) -> list[dict]:
     query = supa.table(table).select("*")
     for col, val in filters.items():
         query = query.eq(col, val)
-    for col, val in (gt or {}).items():
-        query = query.gt(col, val)
-    for col, val in (gte or {}).items():
-        query = query.gte(col, val)
     if order:
         query = query.order(order, desc=desc)
     rows = query.limit(limit).execute().data or []
@@ -134,7 +138,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "gate_version": None, "candidates": 0, "other_gate_versions": 0,
         "placed": 0, "adopted": 0, "skipped_cap": 0, "skipped_no_depth": 0,
-        "cancelled": 0, "settled": 0, "errors": [],
+        "cancelled": 0, "settled": 0, "decision_mismatch": 0, "errors": [],
     }
     try:
         portfolio.assert_demo_host()
@@ -148,18 +152,16 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=500)
     by_target = {r["target"]: r for r in rows}
 
-    _reconcile(supa, portfolio, rows, now, summary)
+    tracked = _tracked_decisions(supa)
+    summary["decision_mismatch"] = len(decision_mismatches(rows, tracked))
+    _reconcile(supa, portfolio, rows, now, summary, tracked)
 
-    # Fresh gated gas buys, stamped with the live gate's version only.
-    # The freshness window is filtered in the query, not in Python: an
-    # ascending page of the 1,000 oldest buys would go blind once the
-    # table outgrows the page (77 buys in the first 6 days -- about 11
-    # weeks), silently placing nothing while looking healthy.
+    # Fresh gated gas buys for windows still open, decided now exactly as
+    # the record pass will record them after the close, stamped with the
+    # live gate's version only.
     cutoff = now + CANCEL_BUFFER
-    decisions = _select(supa, DECISIONS, {"series": SERIES, "action": "buy"},
-                        order="close_time", limit=1000,
-                        gt={"close_time": _iso(cutoff)},
-                        gte={"frozen_at": _iso(now - FRESHNESS)})
+    decisions = [d for d in fifteen_tracking.open_decisions(supa, now, series_set=GAS_SERIES)
+                 if d["series"] == SERIES and d["action"] == "buy"]
     fresh = []
     for d in decisions:
         if d.get("gate_version") != version:
@@ -356,26 +358,51 @@ def _fills_by_order(portfolio) -> dict[str, dict]:
     return out
 
 
+def _tracked_decisions(supa) -> dict[str, dict]:
+    """The record pass's rows for recent gas windows, by target."""
+    return {d["target"]: d for d in _select(supa, DECISIONS, {"series": SERIES},
+                                            order="close_time", desc=True, limit=1000)}
+
+
+def decision_mismatches(rows: list[dict], tracked: dict[str, dict]) -> list[str]:
+    """Targets where what the runner traded on (a buy of `side` at
+    `limit_price`, which is the decision's cost) differs from the record
+    pass's row for the same window. No schema change: the order row
+    already carries the decision's side and cost."""
+    out = []
+    for r in rows:
+        d = tracked.get(r["target"])
+        if d is None:
+            continue  # the window has not been recorded yet
+        if (d.get("action") != "buy" or d.get("side") != r.get("side")
+                or d.get("cost") is None or r.get("limit_price") is None
+                or abs(float(d["cost"]) - float(r["limit_price"])) > 1e-9):
+            out.append(r["target"])
+    return out
+
+
 def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
-               summary: dict) -> None:
+               summary: dict, tracked: dict[str, dict]) -> None:
     open_rows = [r for r in rows if r["status"] in OPEN_STATUSES]
     if not open_rows:
         return
     fills = _fills_by_order(portfolio)
-    outcomes: dict[str, int | None] = {}
-    settled_decisions = _select(supa, DECISIONS, {"series": SERIES},
-                                 order="close_time", desc=True, limit=1000)
-    for d in settled_decisions:
-        outcomes[d["target"]] = d.get("outcome")
+    outcomes = {t: d.get("outcome") for t, d in tracked.items()}
 
     for row in open_rows:
         close = _dt(row["window_close"])
         if row["status"] == "pending":
-            if close - CANCEL_BUFFER <= now:
+            if close - CANCEL_BUFFER > now:
+                continue
+            # Cutoff. The last pass's create may have been accepted with its
+            # response lost: adopt the real order by client_order_id and let
+            # it fall through to the fill/cancel handling below, rather than
+            # writing a live order off as placement_interrupted.
+            if not _adopt_if_accepted(supa, portfolio, row, summary):
                 _update(supa, row, {"status": "cancelled",
                                     "skip_reason": "placement_interrupted"})
                 summary["cancelled"] += 1
-            continue
+                continue
         oid = row.get("kalshi_order_id")
         fill = fills.get(oid or "", {})
         # A row already marked filled in an earlier pass keeps its count
@@ -549,11 +576,7 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
 
     settled = sorted((r for r in rows if r["status"] == "settled"),
                      key=lambda r: str(r["window_close"]))
-    decisions = {}
-    if settled:
-        for d in _select(supa, DECISIONS, {"series": SERIES},
-                         order="close_time", desc=True, limit=1000):
-            decisions[d["target"]] = d
+    decisions = _tracked_decisions(supa) if rows else {}
     demo_curve: list[dict] = []
     shadow_curve: list[dict] = []
     shadow_pc_curve: list[dict] = []
@@ -607,6 +630,9 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
             "win_rate": round(wins / len(settled), 4) if settled else None,
             "pnl_per_contract": (round(demo_total / settled_filled, 4)
                                  if settled_filled else None),
+            # Orders whose decision differs from the record pass's row for
+            # the same window -- should be 0: both run the same decision.
+            "decision_mismatch": len(decision_mismatches(rows, decisions)),
             "decisions_not_traded": {
                 "caps": sum(1 for r in rows if r["status"] == "skipped_cap"),
                 "no_depth": sum(1 for r in rows
