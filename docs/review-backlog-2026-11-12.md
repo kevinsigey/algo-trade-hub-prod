@@ -23,6 +23,7 @@ production database on Nov 12, 00:20 UTC.
 | Debate grading scheduled (deploy crontab, 05:07 UTC daily; 3 graded at +5 days, 0 hits) | #488 (A6) |
 | Tests stop calling the live Alpaca paper API | #489 (A7) |
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
+| Gas fill check: every settled gated gas trade marked with the contracts on offer at its ask (#472 depth). Of 77 settled gated trades only 18 have depth (tape carries sizes only since Nov 11); all 18 would have filled at 1 contract, 12 of 18 at the demo's launch size; median ask size ~101, bottom tenth ~1. The check validates the frozen-quote fill assumption at 1-contract size; the depth-era trades themselves were net losers in shadow terms (-$1.48 of the +$7.82 all-time per-contract sum), so it says nothing for the edge | Gas fill check PR (branch `rev/gas-fill-check`) |
 
 ## In flight (open PRs from Muse)
 None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
@@ -59,18 +60,16 @@ None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12
    - Rewrite the README, which still describes the Vercel-reads-Supabase architecture.
 
 ## Not started: models (each as a new shadow version, preregistered first)
-1. **Gas fill check.** Mark every gated gas trade with the contracts on offer at its ask, using the #472 depth data.
-   This comes before any gas automation, demo or live.
-2. **Scoreboard**:
+1. **Scoreboard**:
    - Wire `earned_weight` (needs a jsonb column on `journal_scores`).
    - Score contested rows only (10–90%).
    - Count error bars in days, not rows.
    - Hide rows with zero settled forecasts, and label retired rows as retired.
-3. **Hourly oil v7**: v4 with the spread from 1-minute realised volatility (v4 says 65/75/85% and gets 73/83/93%).
-4. **Replay**: anchor daily natural gas and Brent on the latest Kalshi 15-minute strike (the free Pyth read).
-5. **Oil 15-minute filters**: no trades on the side the model puts under 50%, and trade only at spreads of 3¢ or more.
+2. **Hourly oil v7**: v4 with the spread from 1-minute realised volatility (v4 says 65/75/85% and gets 73/83/93%).
+3. **Replay**: anchor daily natural gas and Brent on the latest Kalshi 15-minute strike (the free Pyth read).
+4. **Oil 15-minute filters**: no trades on the side the model puts under 50%, and trade only at spreads of 3¢ or more.
    Preregister both.
-6. **Rain**: preregister the paper rule; judge it by days.
+5. **Rain**: preregister the paper rule; judge it by days.
 
 ## Decisions for Kevin (nobody can build these without an answer)
 - MRK and any guide step over 35%: hold the band until confirmed?
