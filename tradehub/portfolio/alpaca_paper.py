@@ -52,6 +52,31 @@ def latest_spy_price(*, session=requests, book: str | None = None) -> float:
     return latest_price("SPY", session=session, book=book)
 
 
+def latest_snapshots(symbols: list[str], *, session=requests,
+                     book: str | None = None) -> dict[str, dict]:
+    """Batched stock snapshots: the latest trade price and today's daily
+    bar (its close is the regular-session close once the day has closed)
+    per symbol. Feeds the Portfolio page's per-position after-hours move.
+    Symbols the feed doesn't return are simply absent."""
+    if not symbols:
+        return {}
+    data = _get(DATA_BASE + "/v2/stocks/snapshots",
+                {"symbols": ",".join(symbols), "feed": "iex"}, session, book)
+    out: dict[str, dict] = {}
+    for symbol, snap in (data or {}).items():
+        trade = (snap or {}).get("latestTrade") or {}
+        bar = (snap or {}).get("dailyBar") or {}
+        try:
+            out[symbol] = {
+                "price": float(trade["p"]),
+                "day_close": float(bar["c"]),
+                "day": str(bar.get("t", ""))[:10],
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def asset_flags(symbol: str, *, book: str | None = None, session=requests) -> dict:
     """Return tradable/shortable/easy_to_borrow/fractionable flags for a symbol."""
     url = PAPER_BASE + f"/v2/assets/{symbol}"

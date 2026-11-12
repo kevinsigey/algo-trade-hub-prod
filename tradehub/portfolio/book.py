@@ -10,9 +10,12 @@ import math
 import re
 import statistics
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from tradehub.portfolio.sectors import sector_for
+
+_ET = ZoneInfo("America/New_York")
 
 # A fill belongs to an idea by its order's client_order_id tag (`idea-<id>-...`) or a later relabel (spec §4.6).
 MANUAL = "No idea yet (manual)"
@@ -196,6 +199,7 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
                     "sector": g["sector"],
                     "side": "long" if g["qty"] > 0 else "short" if g["qty"] < 0 else None,
                     "last_price": g["last_price"], "change_pct": g["change_pct"],
+                    "ah_change_pct": None,
                     "day_pl": g["day_pl"] if g["_day_seen"] else None,
                     "cost_basis": g["_cost"] if g["_cb_seen"] else None,
                     "unrealized_pl": g["unrealized_pl"] if g["_pl_seen"] else None})
@@ -260,6 +264,58 @@ def curve(snapshots: list[dict]) -> list[dict]:
     e0, s0 = snapshots[0]["equity"], snapshots[0]["spy_price"]
     return [{"t": s["taken_at"], "portfolio_pct": _pct(s["equity"], e0), "spy_pct": _pct(s["spy_price"], s0)}
             for s in snapshots]
+
+
+def today_split(snapshots: list[dict], now: datetime, equity: float | None = None,
+                spy_price: float | None = None) -> dict:
+    """Today, split at the 4:00 PM ET close (Portfolio header, 2026-11-12).
+
+    The regular-session figure is the equity at the day's close snapshot
+    minus the prior ET day's last snapshot; the after-hours figure is the
+    live equity minus that close snapshot. Snapshots are stored hourly, so
+    the close snapshot is the first stored one at or after 16:00 ET on the
+    day -- before it exists, the whole day is the regular figure. The same
+    split is computed for SPY off the snapshots' own spy_price. Unknown is
+    None: a book on its first day has no prior close and no split."""
+    out: dict = {"state": "no_prior", "prior_close_at": None, "close_at": None,
+                 "regular_pl": None, "regular_pct": None,
+                 "after_hours_pl": None, "after_hours_pct": None,
+                 "spy_regular_pct": None, "spy_after_hours_pct": None}
+    if not snapshots:
+        return out
+    today = now.astimezone(_ET).date()
+    prior = close = None
+    for s in snapshots:  # sorted by taken_at: the last prior-day write wins
+        et = _day(s["taken_at"]).astimezone(_ET)
+        if et.date() < today:
+            prior = s
+        elif et.date() == today and close is None and et.time() >= time(16, 0):
+            close = s
+    if prior is None:
+        return out
+    last = snapshots[-1]
+    current_eq = float(equity) if equity is not None else float(last["equity"])
+    current_spy = float(spy_price) if spy_price is not None else last.get("spy_price")
+    prior_eq = float(prior["equity"])
+    out["prior_close_at"] = prior["taken_at"]
+    if close is not None:
+        close_eq = float(close["equity"])
+        out["state"] = "after_hours"
+        out["close_at"] = close["taken_at"]
+        out["regular_pl"] = round(close_eq - prior_eq, 2)
+        out["regular_pct"] = _pct(close_eq, prior_eq) if prior_eq else None
+        out["after_hours_pl"] = round(current_eq - close_eq, 2)
+        out["after_hours_pct"] = _pct(current_eq, close_eq) if close_eq else None
+        if current_spy is not None and prior.get("spy_price") and close.get("spy_price"):
+            out["spy_regular_pct"] = _pct(float(close["spy_price"]), float(prior["spy_price"]))
+            out["spy_after_hours_pct"] = _pct(float(current_spy), float(close["spy_price"]))
+    else:
+        out["state"] = "regular"
+        out["regular_pl"] = round(current_eq - prior_eq, 2)
+        out["regular_pct"] = _pct(current_eq, prior_eq) if prior_eq else None
+        if current_spy is not None and prior.get("spy_price"):
+            out["spy_regular_pct"] = _pct(float(current_spy), float(prior["spy_price"]))
+    return out
 
 
 def _day(ts: str) -> datetime:

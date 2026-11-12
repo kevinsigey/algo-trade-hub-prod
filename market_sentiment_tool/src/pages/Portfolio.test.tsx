@@ -35,6 +35,8 @@ function payload(over: Partial<PortfolioPayload>): PortfolioPayload {
 
 const page = (el: JSX.Element) => render(<MemoryRouter>{el}</MemoryRouter>);
 
+const pageAt = (url: string) => render(<MemoryRouter initialEntries={[url]}><Portfolio /></MemoryRouter>);
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -76,12 +78,10 @@ describe("Portfolio", () => {
     expect(screen.getByText("+2.7 pts")).toBeInTheDocument();
     expect(screen.queryByText("Strategy HQ")).toBeNull();
     expect(screen.getByText("Net liquidation value")).toBeInTheDocument();
-    expect(screen.getByText("58%")).toBeInTheDocument();
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     // Manual shares read as their own row in the By-idea summary, one per symbol.
     expect(screen.getByText("GLD (manual)")).toBeInTheDocument();
     expect(screen.getByText("Positions · 1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=main");
   });
 });
 
@@ -112,34 +112,34 @@ describe("Portfolio hand orders (signed-in only)", () => {
 
   it("shows no order form to a signed-out visitor", async () => {
     serveRoutes(false, []);
-    page(<Portfolio />);
-    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
     expect(screen.queryByText("Place an order by hand")).toBeNull();
   });
 
   it("shows the staged orders panel, signed in only", async () => {
     serveRoutes(true, []);
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText(/^Staged orders/)).toBeInTheDocument();
     expect(await screen.findByText("XOM")).toBeInTheDocument();
-    // The summary line carries the price and the time in force together.
-    expect(screen.getByText(/\$175\.00 · gtc/)).toBeInTheDocument();
+    // The full table carries the price and the time in force as their own cells.
+    expect(screen.getByText("$175.00")).toBeInTheDocument();
+    expect(screen.getByText("gtc")).toBeInTheDocument();
   });
 
   it("hides the staged orders panel from a signed-out visitor", async () => {
     serveRoutes(false, []);
-    page(<Portfolio />);
-    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
     expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
 
   it("places a market order through the endpoint when signed in", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
-    // The form opens from its panel, so the page stays one screen.
-    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
+    // The ticket is open on the Trade tab -- no pop-up to open first.
     fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
     fireEvent.change(screen.getByLabelText("Shares"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Place order" }));
@@ -150,9 +150,8 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("places a single-leg option order with an intent and a day time-in-force", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
     fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "SPY261113P00570000" } });
     // The form names the contract it parsed and counts contracts, not shares.
     expect(await screen.findByText("SPY Nov 13 2026 $570 put")).toBeInTheDocument();
@@ -168,9 +167,8 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("places a combo as legs plus one net limit, with absolute quantities", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open Place an order by hand in full" }));
     fireEvent.click(screen.getByRole("button", { name: "Combo (spread)" }));
     fireEvent.change(screen.getByLabelText("Leg 1 symbol"), { target: { value: "SPY261113P00570000" } });
     fireEvent.change(screen.getByLabelText("Leg 1 qty"), { target: { value: "6" } });
@@ -278,8 +276,7 @@ describe("Portfolio books (master view and the $1M book)", () => {
     expect(urls.some((u) => u.includes("/api/portfolio?book=big"))).toBe(true);
     expect(urls.some((u) => u.includes("/api/portfolio/closed?book=big"))).toBe(true);
     expect(screen.getByRole("link", { name: /\$1M book/ })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: /All orders and trades/ })).toHaveAttribute("href", "/portfolio/closed?book=big");
-    // The hand order form and staged orders are main-book doors; they stay off this page.
+    // Signed out, the hand order form and staged orders stay off the page.
     expect(screen.queryByText("Place an order by hand")).toBeNull();
     expect(screen.queryByText(/^Staged orders/)).toBeNull();
   });
@@ -299,10 +296,9 @@ describe("Portfolio positions", () => {
     }));
     page(<Portfolio />);
     await screen.findByText("Positions · 3");
-    // The panel shows the largest holdings; the full sortable table opens from it.
-    fireEvent.click(screen.getByRole("button", { name: "Open Positions · 3 in full" }));
-    const table = () => screen.getByRole("dialog", { name: "Positions · 3" });
-    const names = () => within(table()).getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
+    // The full sortable table sits on the Book tab itself -- no pop-up.
+    const table = () => within(screen.getByRole("region", { name: "Positions" }));
+    const names = () => table().getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
     expect(names()).toEqual(["MU", "NVDA", "NVDA Dec 4 2026 $200 call"]);
     expect(screen.getByText("$300.00")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Market value" }));
@@ -321,9 +317,8 @@ describe("Portfolio positions", () => {
     }));
     page(<Portfolio />);
     await screen.findByText("Positions · 4");
-    fireEvent.click(screen.getByRole("button", { name: "Open Positions · 4 in full" }));
-    const table = () => screen.getByRole("dialog", { name: "Positions · 4" });
-    const names = () => within(table()).getAllByRole("row").slice(1, 5).map((r) => r.querySelector("td")!.textContent);
+    const table = () => within(screen.getByRole("region", { name: "Positions" }));
+    const names = () => table().getAllByRole("row").slice(1, 5).map((r) => r.querySelector("td")!.textContent);
     // Highest to lowest means +5, +2, 0, -8: gainers on top, losers at the bottom.
     fireEvent.click(screen.getByRole("button", { name: "Chg %" }));
     expect(names()).toEqual(["DDD", "AAA", "CCC", "BBB"]);
@@ -353,6 +348,61 @@ describe("Portfolio circuit breaker", () => {
                     breaker: state({ tripped: true, reasons: ["daily loss 3%"] }) }));
     page(<Portfolio />);
     expect(await screen.findByText(/Circuit breaker tripped: daily loss 3%/)).toBeInTheDocument();
+  });
+});
+
+describe("Portfolio redesign (header, warnings strip, tabs)", () => {
+  it("splits today at the 4 PM close in the header, with SPY beside it", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 98839, return_pct: -3.5, spy_return_pct: -0.4, ahead_pts: -3.1 },
+      today: {
+        state: "after_hours", prior_close_at: "2026-11-10T21:30:00Z", close_at: "2026-11-11T21:05:00Z",
+        regular_pl: -1161, regular_pct: -1.16, after_hours_pl: -84, after_hours_pct: -0.08,
+        spy_regular_pct: -0.02, spy_after_hours_pct: 0.11,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 98839, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/Today −\$1,161/)).toBeInTheDocument();
+    expect(screen.getByText(/After hours −\$84 since 4:00 PM/)).toBeInTheDocument();
+    expect(screen.getByText("After hours", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
+  });
+
+  it("keeps idea information out of the Positions table -- it lives in By idea", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [
+        { symbol: "MU", qty: 10, side: "long", market_value: 3000, pct_of_book: 3, unrealized_pl: 10, idea: "Chips" },
+        { symbol: "Cash", qty: null, side: null, market_value: 97000, pct_of_book: 97, unrealized_pl: null, idea: null },
+      ],
+    }));
+    page(<Portfolio />);
+    const positions = within(await screen.findByRole("region", { name: "Positions" }));
+    expect(positions.getByText("MU")).toBeInTheDocument();
+    expect(positions.queryByText("Chips")).toBeNull();
+    expect(screen.getByText("Chips")).toBeInTheDocument(); // the By-idea row carries it
+  });
+
+  it("reads 'All within limits' on the warnings strip when nothing needs attention", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/portfolio-check")) {
+        return new Response(JSON.stringify({
+          book: "main", as_of: "2026-11-09T19:00:00Z", equity: 100000, cash: 100000, cash_pct: 100, invested: 0,
+          sleeves: [], unassigned: [], clusters: {},
+          recent_checks: [{ at: "2026-11-09T18:00:00Z", source: "manual", symbol: null, outcome: "pass", detail: "portfolio check passes" }],
+          targets_updated_at: null, series_refreshed_at: null, unpriced: [],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify(payload({
+        scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+        positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
+      })), { status: 200 });
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/All within limits/)).toBeInTheDocument();
+    expect(screen.getByText("pass")).toBeInTheDocument();
   });
 });
 
@@ -400,10 +450,11 @@ describe("Manual actions box", () => {
       if (url.includes("/api/portfolio/manual-actions")) return new Response(JSON.stringify({ book: "main", actions: [] }), { status: 200 });
       if (url.includes("/resolve")) return new Response(JSON.stringify({ resolved: 7, state: "done" }), { status: 200 });
       if (url.includes("/api/portfolio/books")) return new Response(JSON.stringify({ books: [] }), { status: 200 });
-      if (url.includes("/api/portfolio")) return new Response(JSON.stringify({ state: "live", book: "big", scoreboard: null }), { status: 200 });
+      if (url.includes("/api/portfolio")) return new Response(JSON.stringify(payload({ book: "big" })), { status: 200 });
       return new Response("{}", { status: 200 });
     }));
-    render(<MemoryRouter initialEntries={["/portfolio?book=big"]}><Portfolio /></MemoryRouter>);
+    // Manual actions live at the top of the Trade tab now.
+    render(<MemoryRouter initialEntries={["/portfolio?book=big&tab=trade"]}><Portfolio /></MemoryRouter>);
     expect(await screen.findByText("Needs your hand")).toBeInTheDocument();
     expect(screen.getByText(/over the budget/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -460,36 +511,37 @@ describe("Portfolio check card", () => {
       return new Response("{}", { status: 200 });
     }));
     page(<Portfolio />);
-    expect(await screen.findByText("Portfolio check")).toBeInTheDocument();
-    const card = within(screen.getByText("Portfolio check").closest("section") as HTMLElement);
-    // Resting state is bars, not rows: GLD (over its cap) and XLP (capped) earn
-    // bars with floor / target / cap ticks; NVDA (ok, uncapped) does not.
-    expect(card.getByText("GLD")).toBeInTheDocument();
+    // The card is a warnings strip now: resting state is the over-cap chip,
+    // and the detail stays shut until the strip is opened.
+    expect(await screen.findByText("GLD over cap 13.0% / 12%")).toBeInTheDocument();
+    const strip = within(screen.getByRole("region", { name: "Warnings" }));
+    expect(strip.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
+    expect(strip.queryByText(/0\.83/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Portfolio check").closest("button") as HTMLElement);
+    // Inside the drawer: GLD (over its cap) and XLP (capped) earn bars with
+    // floor / target / cap ticks; NVDA (ok, uncapped) earns no bar, though
+    // it does sit in the member table. GLD reads twice: its bar and its
+    // member-table row.
+    expect(strip.getAllByText("GLD")).toHaveLength(2);
     // GLD's bar value and the gold chip carry the same 13.0% (same position).
-    expect(card.getAllByText("13.0%")).toHaveLength(2);
-    expect(card.getAllByTitle("floor 2%")).toHaveLength(2);
-    expect(card.getByTitle("target 11%")).toBeInTheDocument();
-    expect(card.getByTitle("cap 12%")).toBeInTheDocument();
-    expect(card.getByTitle("cap 8%")).toBeInTheDocument();
-    expect(card.queryByText("NVDA")).not.toBeInTheDocument();
+    expect(strip.getAllByText("13.0%")).toHaveLength(2);
+    expect(strip.getAllByTitle("floor 2%")).toHaveLength(2);
+    expect(strip.getByTitle("target 11%")).toBeInTheDocument();
+    expect(strip.getByTitle("cap 12%")).toBeInTheDocument();
+    expect(strip.getByTitle("cap 8%")).toBeInTheDocument();
     // Sleeve bars, the cash bar, the exit-only note and the cluster chips.
-    expect(card.getByText("T4 ballast (W18 core)")).toBeInTheDocument();
-    expect(card.getByText(/exit-only/)).toBeInTheDocument();
-    expect(card.getByText("Cash")).toBeInTheDocument();
-    expect(card.getByText("14.3%")).toBeInTheDocument();
-    expect(card.getByText("Rates factor")).toBeInTheDocument();
-    expect(card.getByText("16.7%")).toBeInTheDocument();
-    expect(card.getByText(/29.7% incl. GLD/)).toBeInTheDocument();
-    // The latest outcome rides in the header; the detail (every recent outcome,
-    // the member table, the correlation readout) sits behind the open view.
-    expect(card.getByText("block")).toBeInTheDocument();
-    expect(card.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
-    expect(card.queryByText(/0\.83/)).not.toBeInTheDocument();
-    fireEvent.click(card.getByRole("button", { name: "Open Portfolio check in full" }));
-    const dialog = within(await screen.findByRole("dialog"));
-    expect(dialog.getByText(/over GLD's cap of 12%/)).toBeInTheDocument();
-    expect(dialog.getByText("0.83")).toBeInTheDocument();
-    expect(dialog.getByText("portfolio check passes")).toBeInTheDocument();
+    // (Sleeve labels read twice in the drawer: the bar and the member table.)
+    expect(strip.getAllByText("T4 ballast (W18 core)")).toHaveLength(2);
+    expect(strip.getAllByText(/exit-only/)).toHaveLength(2);
+    expect(strip.getByText("Cash")).toBeInTheDocument();
+    expect(strip.getByText("14.3%")).toBeInTheDocument();
+    expect(strip.getByText("Rates factor")).toBeInTheDocument();
+    expect(strip.getByText("16.7%")).toBeInTheDocument();
+    expect(strip.getByText(/29.7% incl. GLD/)).toBeInTheDocument();
+    // Every recent outcome, the member table and the correlation readout.
+    expect(strip.getByText(/over GLD's cap of 12%/)).toBeInTheDocument();
+    expect(strip.getByText("0.83")).toBeInTheDocument();
+    expect(strip.getByText("portfolio check passes")).toBeInTheDocument();
   });
 });
 
@@ -535,12 +587,13 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       return { t: `${day}T${String(14 + (i % 9)).padStart(2, "0")}:30:00Z`, portfolio_pct: 0.1 * i, spy_pct: 0.05 * i };
     });
     serve(payload({
-      scoreboard: { ...EMPTY_SCORE, equity: 100000, sharpe: -10.01 }, curve,
+      scoreboard: { ...EMPTY_SCORE, equity: 100000, sharpe: -10.01, win_rate: 58 }, curve,
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=performance");
     expect(await screen.findByText("after 1 month")).toBeInTheDocument();
     expect(screen.queryByText("-10.01")).toBeNull();
+    expect(screen.getByText("58%")).toBeInTheDocument();
   });
 
   it("keys position rows by symbol and idea, so duplicate tickers warn about nothing", async () => {
@@ -560,8 +613,7 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       }));
       page(<Portfolio />);
       expect(await screen.findByText("Positions · 2")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Open Positions · 2 in full" }));
-      expect(within(screen.getByRole("dialog", { name: "Positions · 2" })).getAllByText("GLD")).toHaveLength(2);
+      expect(within(screen.getByRole("region", { name: "Positions" })).getAllByText("GLD")).toHaveLength(2);
       const keyWarnings = errors.filter((a) => String(a[0]).includes("same key"));
       expect(keyWarnings).toEqual([]);
     } finally {
@@ -592,11 +644,10 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
         positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
       })), { status: 200 });
     }));
-    page(<Portfolio />);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("Recent orders")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Recent orders in full" }));
-    const dialog = within(screen.getByRole("dialog", { name: "Recent orders" }));
-    expect(dialog.getByText(/buy 1 SPY Nov 11 2026 \$750 put \/ sell 1 SPY Nov 11 2026 \$749 put/)).toBeInTheDocument();
+    // The full orders table is the tab's own content now -- no pop-up.
+    expect(await screen.findByText(/buy 1 SPY Nov 11 2026 \$750 put \/ sell 1 SPY Nov 11 2026 \$749 put/)).toBeInTheDocument();
   });
 
   it("counts every rendered row in the By-idea header, manual ones included", async () => {

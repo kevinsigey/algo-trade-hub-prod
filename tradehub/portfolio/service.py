@@ -15,7 +15,12 @@ import re
 from datetime import UTC, date, datetime
 
 from tradehub.portfolio import book, breakers
-from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_price, paper_get
+from tradehub.portfolio.alpaca_paper import (
+    AccountNotConnected,
+    latest_snapshots,
+    latest_spy_price,
+    paper_get,
+)
 from tradehub.workshop import store as workshop_store
 
 SNAPSHOTS = "portfolio_snapshots"
@@ -69,7 +74,7 @@ def _record_account(book_name: str | None = None) -> str:
 def _empty(state: str, as_of: str | None = None, account_number: str | None = None) -> dict:
     return {"state": state, "as_of": as_of, "account_number": account_number,
             "scoreboard": {**book.scoreboard([]), "win_rate": None}, "curve": [], "composition": [],
-            "positions": []}
+            "positions": [], "today": None}
 
 
 def _fills(book_name: str | None = None) -> list[dict]:
@@ -155,15 +160,19 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         out = _empty("stale", snaps[-1]["taken_at"], snaps[-1]["account_number"])
         out["scoreboard"] = {**book.scoreboard(snaps), "win_rate": None}
         out["curve"] = book.curve(snaps)
+        out["today"] = book.today_split(snaps, now)
         out["book"] = name
         return out
 
     number = account.get("account_number")
     snaps = read_snapshots(supa, number)
+    stored_snaps = snaps  # the split reads stored snapshots; the live point is separate
+    spy_now: float | None = None
     try:
+        spy_now = latest_spy_price()
         snaps = snaps + [{"taken_at": now.isoformat(), "account_number": number,
                           "equity": float(account["equity"]), "cash": float(account["cash"]),
-                          "spy_price": latest_spy_price()}]
+                          "spy_price": spy_now}]
     except Exception:  # noqa: BLE001 -- no SPY price: the curve ends at the last snapshot
         pass
     try:
@@ -175,6 +184,8 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
     rows = book.positions_view(account, positions, lots, lot_tags)
     score = book.scoreboard(snaps)
     score["equity"] = float(account["equity"])
+    aggregate = book.positions_aggregate(rows, float(account["equity"]))
+    _fold_after_hours(aggregate, now)
     record = _record_account(name)
     return {
         "book": name,
@@ -185,10 +196,36 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         "curve": book.curve(snaps),
         "composition": book.composition(rows),
         "positions": rows,
-        "positions_aggregate": book.positions_aggregate(rows, float(account["equity"])),
+        "positions_aggregate": aggregate,
+        "today": book.today_split(stored_snaps, now,
+                                  equity=float(account["equity"]), spy_price=spy_now),
         "account": book.account_view(account, trades),
         "breaker": breakers.check(supa, name, read_account=lambda: account, read_snapshots=lambda *_: snaps),
     }
+
+
+def _fold_after_hours(aggregate: list[dict], now: datetime) -> None:
+    """Per-position after-hours move: the latest trade against today's
+    regular-session close, from one batched data snapshot. Only once the
+    ET day has closed (16:00) and only for stocks (options have no daily
+    bar here); anything missing stays None -- unknown, never zero."""
+    from zoneinfo import ZoneInfo
+
+    et_now = now.astimezone(ZoneInfo("America/New_York"))
+    if et_now.hour < 16:
+        return
+    symbols = [a["symbol"] for a in aggregate if a.get("asset") == "stock"]
+    if not symbols:
+        return
+    try:
+        snaps = latest_snapshots(symbols)
+    except Exception:  # noqa: BLE001 -- the column just stays unknown
+        return
+    today = et_now.date().isoformat()
+    for row in aggregate:
+        snap = snaps.get(row["symbol"])
+        if snap and snap["day"] == today and snap["day_close"]:
+            row["ah_change_pct"] = (snap["price"] / snap["day_close"] - 1) * 100
 
 
 _TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
