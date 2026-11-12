@@ -1,8 +1,15 @@
 """
-Kalshi Portfolio — Read-Only API Integration (RSA-Signed Auth)
+Kalshi Portfolio — API Integration (RSA-Signed Auth)
 
 Fetches account balance, open positions, and settlement history.
 Uses RSA-PSS signing per Kalshi API docs.
+
+Order writes (create/cancel) exist ONLY for the demo auto-trader
+(tradehub/kalshi_demo.py) and are hard-guarded to the demo host: every
+write method calls assert_demo_host() first, which requires
+KALSHI_ENV=demo AND a resolved host of exactly demo-api.kalshi.co.
+There is no code path in this module that can place an order on the
+live Kalshi host.
 
 Required .env vars:
   KALSHI_API_KEY_ID  — Your API key ID (from Kalshi account settings)
@@ -14,6 +21,7 @@ import os
 import time
 import base64
 from pathlib import Path
+from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -27,11 +35,33 @@ root_dir = Path(__file__).resolve().parent.parent
 KALSHI_API_BASE = os.getenv("KALSHI_API_BASE", "https://demo-api.kalshi.co").strip('"').strip("'")
 KALSHI_BASE_URL = f"{KALSHI_API_BASE}/trade-api/v2"
 
+DEMO_HOST = "demo-api.kalshi.co"
+
+
+class NotDemoHostError(RuntimeError):
+    """A Kalshi order write was attempted outside the demo sandbox."""
+
+
+class KalshiWriteError(RuntimeError):
+    """A signed Kalshi write returned a non-2xx status; order calls never fail silently."""
+
+    def __init__(self, status: int, text: str):
+        super().__init__(f"Kalshi write failed: HTTP {status} -- {text[:200]}")
+        self.status = status
+
 
 class KalshiPortfolio:
-    """Read-only Kalshi portfolio client with RSA-PSS authentication."""
+    """Kalshi portfolio client with RSA-PSS authentication.
 
-    def __init__(self):
+    Reads work against whatever host the env resolves. Writes are
+    demo-only: see the module docstring and assert_demo_host().
+    """
+
+    def __init__(self, api_base: str | None = None):
+        # api_base is a test seam: production passes nothing and resolves
+        # the module constant exactly as before.
+        self.api_base = (api_base or KALSHI_API_BASE).strip('"').strip("'")
+        self.base_url = f"{self.api_base}/trade-api/v2"
         self.api_key_id = os.getenv("KALSHI_API_KEY_ID", "")
         private_key_pem = os.getenv("KALSHI_API_KEY", "")
         self.key_file_path = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")
@@ -121,7 +151,7 @@ class KalshiPortfolio:
     def _get(self, endpoint, params=None):
         """Make authenticated GET request."""
         path = f"/trade-api/v2{endpoint}"
-        url = f"{KALSHI_BASE_URL}{endpoint}"
+        url = f"{self.base_url}{endpoint}"
         headers = self._sign_request("GET", path)
         try:
             r = requests.get(url, headers=headers, params=params, timeout=10)
@@ -136,6 +166,84 @@ class KalshiPortfolio:
             if "/markets/" not in endpoint:
                 print(f"  Kalshi API error: {e}")
             return None
+
+    # -- demo-guarded writes -------------------------------------------------
+    # The ONLY order-writing surface in tradehub/. Every method below
+    # asserts the demo host before any request leaves the process.
+
+    def resolved_host(self) -> str:
+        return urlparse(self.base_url).hostname or ""
+
+    def assert_demo_host(self) -> None:
+        """Raise unless BOTH the env and the resolved host say demo.
+
+        The two checks are independent on purpose: the module default is
+        already the demo host, so a host check alone would bless a box
+        whose KALSHI_ENV was never set to demo; an env check alone would
+        bless a mis-set KALSHI_API_BASE pointing at the live host.
+        """
+        env = os.getenv("KALSHI_ENV", "")
+        if env != "demo":
+            raise NotDemoHostError(
+                f"KALSHI_ENV is {env!r}, not 'demo' -- Kalshi order writes refused")
+        host = self.resolved_host()
+        if host != DEMO_HOST:
+            raise NotDemoHostError(
+                f"resolved Kalshi host is {host!r}, not {DEMO_HOST!r} -- order writes refused")
+
+    def _write(self, method: str, endpoint: str, body: dict | None = None) -> dict:
+        path = f"/trade-api/v2{endpoint}"
+        url = f"{self.base_url}{endpoint}"
+        headers = self._sign_request(method, path)
+        r = requests.request(method, url, headers=headers, json=body, timeout=10)
+        if not 200 <= r.status_code < 300:
+            raise KalshiWriteError(r.status_code, r.text)
+        return r.json() if r.text else {}
+
+    def _post(self, endpoint: str, body: dict) -> dict:
+        self.assert_demo_host()
+        return self._write("POST", endpoint, body)
+
+    def _delete(self, endpoint: str) -> dict:
+        self.assert_demo_host()
+        return self._write("DELETE", endpoint)
+
+    def create_order(self, *, ticker: str, side: str, count: int,
+                     limit_price_cents: int, client_order_id: str,
+                     expiration_ts: int) -> dict:
+        """Place ONE buy limit order on the demo host.
+
+        Price field follows the side: a yes buy carries yes_price, a no
+        buy carries no_price (Kalshi prices the bought side).
+        """
+        body = {
+            "ticker": ticker,
+            "client_order_id": client_order_id,
+            "side": side,
+            "action": "buy",
+            "type": "limit",
+            "count": int(count),
+            "expiration_ts": int(expiration_ts),
+        }
+        body["yes_price" if side == "yes" else "no_price"] = int(limit_price_cents)
+        data = self._post("/portfolio/orders", body)
+        return data.get("order", data)
+
+    def cancel_order(self, order_id: str) -> dict:
+        return self._delete(f"/portfolio/orders/{order_id}")
+
+    def get_order(self, order_id: str) -> dict | None:
+        data = self._get(f"/portfolio/orders/{order_id}")
+        if data:
+            return data.get("order", data)
+        return None
+
+    def get_orders(self, status: str | None = None) -> list:
+        params = {"status": status} if status else None
+        data = self._get("/portfolio/orders", params=params)
+        if data:
+            return data.get("orders", [])
+        return []
 
     def get_market_data(self, ticker):
         """Get raw market data for a single ticker."""
@@ -240,10 +348,22 @@ class KalshiPortfolio:
 
 
 def check_portfolio_available():
-    """Check if portfolio integration is configured."""
-    api_key_id = os.getenv("KALSHI_API_KEY_ID", "")
-    api_key = os.getenv("KALSHI_API_KEY", "")
-    return bool(api_key_id and api_key)
+    """Check if portfolio integration is configured.
+
+    The key may be provisioned as a PEM string (KALSHI_API_KEY) or as a
+    mounted file (KALSHI_PRIVATE_KEY_PATH / KALSHI_KEY_FILE -- the VPS
+    demo service uses the file), so availability means a key id plus
+    either a key string or an existing key file.
+    """
+    if not os.getenv("KALSHI_API_KEY_ID", ""):
+        return False
+    if os.getenv("KALSHI_API_KEY", ""):
+        return True
+    for var in ("KALSHI_PRIVATE_KEY_PATH", "KALSHI_KEY_FILE"):
+        path = os.getenv(var, "")
+        if path and Path(path).is_file():
+            return True
+    return False
 
 
 if __name__ == "__main__":

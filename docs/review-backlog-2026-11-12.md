@@ -25,7 +25,11 @@ production database on Nov 12, 00:20 UTC.
 | Kev judge seat (inactive until `VALUATION_JUDGE=kev`) | #495 |
 
 ## In flight (open PRs from Muse)
-None as of Nov 12. The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
+| Item | PR |
+|---|---|
+| Kalshi demo runner (action plan step 2): demo-guarded order writes in `KalshiPortfolio`, `tradehub/kalshi_demo.py` trading the live gate's gas buys at Kevin's 1%-of-balance sizing, ask size recorded with a skip under 1, daily caps. Migration `20261112000002_kalshi_demo_orders.sql` is IN the PR and NOT applied -- waiting on Kevin's go; the timer/dispatcher install text is in the PR for Claude. The Portfolio tab is step 3, a separate PR | branch `rev/kalshi-demo-runner` |
+
+The order of the remaining work is in `action-plan-2026-11-12.md`. The volatility-regime challenger
 (`review-2026-11-11-muse-round2-and-regime-challenger.md`) is not built yet; it's step 18 there.
 
 ## Not started: product

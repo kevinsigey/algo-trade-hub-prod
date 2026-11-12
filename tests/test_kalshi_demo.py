@@ -1,0 +1,368 @@
+"""Kalshi demo gas runner: demo-host guard, sizing, caps, reconcile.
+
+Every Kalshi call is stubbed (FakePortfolio); the DB is the house fake.
+No network: the A7 fixture poisons real requests on top of this.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from tradehub import kalshi_demo as kd
+from tradehub import oil_fifteen_rule as rule
+from tradehub.core.kalshi_portfolio import (
+    KalshiPortfolio,
+    KalshiWriteError,
+    NotDemoHostError,
+    check_portfolio_available,
+)
+from tests.workshop_fake import DB
+
+NOW = datetime(2026, 11, 12, 17, 0, tzinfo=timezone.utc)  # Thu 12:00 ET
+TICKER = "KXNATGAS15M-26NOV121215-00"
+TARGET = f"kalshi:{TICKER}"
+
+
+class FakePortfolio:
+    def __init__(self, balance_cents=50000, refuse=False):
+        self.balance_cents = balance_cents
+        self.refuse = refuse
+        self.placed: list[dict] = []
+        self.cancelled: list[str] = []
+        self.fills: list[dict] = []
+
+    def assert_demo_host(self):
+        if self.refuse:
+            raise NotDemoHostError("KALSHI_ENV is 'live', not 'demo'")
+
+    def get_balance(self):
+        return {"balance": self.balance_cents}
+
+    def create_order(self, **kw):
+        self.placed.append(kw)
+        return {"order_id": f"ord-{len(self.placed)}"}
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
+        return {}
+
+    def get_order(self, order_id):
+        return None
+
+    def get_fills(self, limit=200):
+        return self.fills
+
+
+def decision(**over):
+    close = NOW + timedelta(minutes=10)
+    row = {
+        "series": kd.SERIES, "target": TARGET, "ticker": TICKER,
+        "action": "buy", "side": "yes", "cost": 0.40,
+        "gate_version": "v1", "outcome": None, "pnl": None,
+        "close_time": close.isoformat(),
+        "frozen_at": (NOW - timedelta(minutes=2)).isoformat(),
+    }
+    row.update(over)
+    return row
+
+
+def seed(db, decisions=(), orders=(), ticks=()):
+    db.db[kd.DECISIONS] = list(decisions)
+    db.db[kd.ORDERS] = list(orders)
+    db.db[kd.TICKS] = list(ticks)
+    return db
+
+
+def order_row(**over):
+    row = {
+        "id": 1, "series": kd.SERIES, "target": TARGET, "ticker": TICKER,
+        "side": "yes", "gate_version": "v1", "contracts": 12,
+        "contracts_filled": 0, "limit_price": 0.40, "frozen_quote": 0.40,
+        "kalshi_order_id": "ord-9", "client_order_id": f"kd-{TICKER}",
+        "status": "resting", "fill_price": None, "settlement_pnl": None,
+        "window_close": (NOW + timedelta(minutes=10)).isoformat(),
+        "created_at": NOW.isoformat(),
+    }
+    row.update(over)
+    return row
+
+
+# -- the demo guard ------------------------------------------------------------
+
+def test_runner_refuses_when_not_demo():
+    db = seed(DB(), decisions=[decision()])
+    out = kd.run_once(db, FakePortfolio(refuse=True), NOW)
+    assert "refused" in out
+    assert db.db[kd.ORDERS] == []
+
+
+def _rsa_pem() -> str:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+
+
+@pytest.fixture()
+def live_client(monkeypatch):
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "test-key-id")
+    monkeypatch.setenv("KALSHI_API_KEY", _rsa_pem())
+    return KalshiPortfolio()
+
+
+def test_assert_demo_host_matrix(monkeypatch, live_client):
+    monkeypatch.delenv("KALSHI_ENV", raising=False)
+    with pytest.raises(NotDemoHostError):
+        live_client.assert_demo_host()
+    monkeypatch.setenv("KALSHI_ENV", "live")
+    with pytest.raises(NotDemoHostError):
+        live_client.assert_demo_host()
+    monkeypatch.setenv("KALSHI_ENV", "demo")  # default base IS the demo host
+    live_client.assert_demo_host()
+    live = KalshiPortfolio(api_base="https://api.elections.kalshi.com")
+    with pytest.raises(NotDemoHostError):
+        live.assert_demo_host()
+
+
+def test_create_order_never_fires_without_demo(monkeypatch, live_client):
+    monkeypatch.delenv("KALSHI_ENV", raising=False)
+    called = []
+    monkeypatch.setattr("tradehub.core.kalshi_portfolio.requests.request",
+                        lambda *a, **k: called.append(a))
+    with pytest.raises(NotDemoHostError):
+        live_client.create_order(ticker=TICKER, side="yes", count=1,
+                                 limit_price_cents=40, client_order_id="x",
+                                 expiration_ts=1)
+    assert called == []
+
+
+def test_create_order_body_and_path(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    seen = {}
+
+    class Resp:
+        status_code = 201
+        text = '{"order": {"order_id": "abc"}}'
+
+        def json(self):
+            return {"order": {"order_id": "abc"}}
+
+    def fake_request(method, url, headers=None, json=None, timeout=None):
+        seen.update(method=method, url=url, body=json)
+        return Resp()
+
+    monkeypatch.setattr("tradehub.core.kalshi_portfolio.requests.request",
+                        fake_request)
+    out = live_client.create_order(
+        ticker=TICKER, side="no", count=12, limit_price_cents=40,
+        client_order_id="kd-x", expiration_ts=1794500000)
+    assert out == {"order_id": "abc"}
+    assert seen["method"] == "POST"
+    assert seen["url"] == ("https://demo-api.kalshi.co/trade-api/v2"
+                           "/portfolio/orders")
+    assert seen["body"]["no_price"] == 40 and "yes_price" not in seen["body"]
+    assert seen["body"]["count"] == 12 and seen["body"]["action"] == "buy"
+
+
+def test_write_error_raises(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+
+    class Resp:
+        status_code = 400
+        text = "bad order"
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr("tradehub.core.kalshi_portfolio.requests.request",
+                        lambda *a, **k: Resp())
+    with pytest.raises(KalshiWriteError):
+        live_client.create_order(ticker=TICKER, side="yes", count=1,
+                                 limit_price_cents=40, client_order_id="x",
+                                 expiration_ts=1)
+
+
+def test_availability_accepts_key_file(monkeypatch, tmp_path):
+    pem = tmp_path / "kalshi_demo.pem"
+    pem.write_text("key")
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "id")
+    monkeypatch.delenv("KALSHI_API_KEY", raising=False)
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", str(pem))
+    assert check_portfolio_available() is True
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", str(tmp_path / "nope.pem"))
+    monkeypatch.delenv("KALSHI_KEY_FILE", raising=False)
+    assert check_portfolio_available() is False
+
+
+def test_guard_only_kalshi_portfolio_writes_orders():
+    # The Kalshi endpoint fragment as an exact string token. (The hub's own
+    # Alpaca route "/api/portfolio/orders" contains the substring but is a
+    # different string and a different service entirely.)
+    root = Path("tradehub")
+    offenders = [str(p) for p in root.rglob("*.py")
+                 if '"/portfolio/orders' in p.read_text(errors="ignore")
+                 and p != root / "core" / "kalshi_portfolio.py"]
+    assert offenders == []
+    for mod in ("tradehub/kalshi_demo.py", "tradehub/scripts/kalshi_demo_run.py"):
+        assert "requests." not in Path(mod).read_text()
+
+
+# -- sizing (Kevin's 1% rule) ----------------------------------------------------
+
+@pytest.mark.parametrize("balance,price,want", [
+    (500, 0.30, 16), (500, 0.40, 12), (500, 0.60, 8),
+    (750, 0.30, 25), (750, 0.40, 18), (1000, 0.40, 25), (1000, 0.60, 16),
+    (40, 0.60, 1),   # floor is 0 -> the minimum-1 rule still trades
+])
+def test_size_contracts(balance, price, want):
+    assert kd.size_contracts(balance, price, 0.01) == want
+
+
+# -- placement -------------------------------------------------------------------
+
+def test_places_only_gated_gas_buys():
+    db = seed(DB(), decisions=[
+        decision(),
+        decision(target="kalshi:KXNATGAS15M-26NOV121230-00",
+                 ticker="KXNATGAS15M-26NOV121230-00", action="skip"),
+        decision(target="kalshi:KXWTI15M-26NOV121215-00",
+                 ticker="KXWTI15M-26NOV121215-00", series="KXWTI15M"),
+        decision(target="kalshi:KXNATGAS15M-26NOV121245-00",
+                 ticker="KXNATGAS15M-26NOV121245-00", gate_version="v2-blend"),
+        decision(target="kalshi:KXNATGAS15M-26NOV121300-00",
+                 ticker="KXNATGAS15M-26NOV121300-00",
+                 frozen_at=(NOW - timedelta(minutes=30)).isoformat()),
+    ])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["candidates"] == 1 and out["placed"] == 1
+    assert out["other_gate_versions"] == 1  # the blend row, counted not traded
+    placed = pf.placed[0]
+    assert placed["ticker"] == TICKER and placed["count"] == 12  # $500 x 1% / $0.40
+    assert placed["limit_price_cents"] == 40
+    assert placed["client_order_id"] == f"kd-{TICKER}"
+    close = NOW + timedelta(minutes=10)
+    assert placed["expiration_ts"] == int((close - timedelta(seconds=60)).timestamp())
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "resting" and row["contracts"] == 12
+    assert row["balance_at_sizing"] == 500.0 and row["budget_pct"] == 0.01
+
+
+def test_blend_shadow_decisions_never_traded():
+    db = seed(DB(), decisions=[decision(gate_version="v2-blend")])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["candidates"] == 0
+
+
+def test_never_orders_twice():
+    db = seed(DB(), decisions=[decision()])
+    pf = FakePortfolio()
+    kd.run_once(db, pf, NOW)
+    kd.run_once(db, pf, NOW)
+    assert len(pf.placed) == 1
+
+
+def test_depth_under_one_skips():
+    close = (NOW + timedelta(minutes=10)).isoformat()
+    db = seed(DB(), decisions=[decision()], ticks=[{
+        "series": kd.SERIES, "close_time": close, "at": NOW.isoformat(),
+        "yes_ask_size": 0, "no_ask_size": 9}])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["skipped_no_depth"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "skipped_no_depth" and row["ask_size"] == 0
+
+
+def test_depth_measured_and_recorded():
+    close = (NOW + timedelta(minutes=10)).isoformat()
+    db = seed(DB(), decisions=[decision()], ticks=[{
+        "series": kd.SERIES, "close_time": close, "at": NOW.isoformat(),
+        "yes_ask_size": 147, "no_ask_size": 3}])
+    kd.run_once(db, FakePortfolio(), NOW)
+    assert db.db[kd.ORDERS][0]["ask_size"] == 147
+
+
+def test_contract_cap_skips(monkeypatch):
+    monkeypatch.setenv("KALSHI_DEMO_MAX_CONTRACTS_PER_DAY", "12")
+    earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
+    db = seed(DB(), decisions=[decision()],
+              orders=[order_row(id=7, target=earlier,
+                                ticker="KXNATGAS15M-26NOV120900-00",
+                                kalshi_order_id="ord-8", contracts=12,
+                                status="settled", settlement_pnl=1.0)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["skipped_cap"] == 1
+    skip = [r for r in db.db[kd.ORDERS] if r["status"] == "skipped_cap"]
+    assert skip and skip[0]["skip_reason"] == "daily_contract_cap"
+
+
+def test_loss_cap_skips(monkeypatch):
+    earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
+    db = seed(DB(), decisions=[decision()],
+              orders=[order_row(id=7, target=earlier,
+                                ticker="KXNATGAS15M-26NOV120900-00",
+                                kalshi_order_id="ord-8", contracts=5,
+                                status="settled", settlement_pnl=-19.0)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["skipped_cap"] == 1
+    skip = [r for r in db.db[kd.ORDERS] if r["status"] == "skipped_cap"]
+    assert skip and skip[0]["skip_reason"] == "daily_loss_cap"
+
+
+# -- reconcile -------------------------------------------------------------------
+
+def test_unfilled_order_cancelled_at_cutoff():
+    db = seed(DB(), orders=[order_row(
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.cancelled == ["ord-9"] and out["cancelled"] == 1
+    assert db.db[kd.ORDERS][0]["status"] == "cancelled"
+
+
+def test_filled_order_settles_not_cancelled():
+    db = seed(DB(), decisions=[decision(outcome=1)],
+              orders=[order_row(
+                  window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    pf = FakePortfolio()
+    pf.fills = [{"order_id": "ord-9", "side": "yes", "yes_price": 40,
+                 "count_fp": "12.00", "created_ts": NOW.isoformat()}]
+    out = kd.run_once(db, pf, NOW)
+    row = db.db[kd.ORDERS][0]
+    assert pf.cancelled == []
+    assert row["status"] == "settled" and row["contracts_filled"] == 12
+    assert row["fill_price"] == pytest.approx(0.40)
+    assert row["settlement_pnl"] == pytest.approx(12 * rule.pnl("yes", 0.40, 1))
+    assert out["settled"] == 1
+
+
+def test_partial_fill_recorded():
+    db = seed(DB(), orders=[order_row(contracts=12)])
+    pf = FakePortfolio()
+    pf.fills = [{"order_id": "ord-9", "side": "yes", "yes_price": 41,
+                 "count_fp": "2.00", "created_ts": NOW.isoformat()}]
+    kd.run_once(db, pf, NOW)
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "filled" and row["contracts_filled"] == 2
+    assert row["fill_price"] == pytest.approx(0.41)
+
+
+def test_pending_past_cutoff_cancelled():
+    db = seed(DB(), orders=[order_row(
+        status="pending", kalshi_order_id=None,
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "cancelled"
+    assert row["skip_reason"] == "placement_interrupted"
+    assert out["cancelled"] == 1
