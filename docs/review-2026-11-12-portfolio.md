@@ -51,17 +51,23 @@ fixed header and three tabs.
     at a glance.
   - Keep the "By idea" toggle.
   - Drop the repeated legend: the bar is the legend.
-- **Positions as one row per ticker, made visual.**
-  - Columns: ticker and name, weight bar, today (% and $, coloured), open P&L as a bar that goes left or right of
-    zero, and the after-hours move.
-  - The ideas holding the ticker go underneath as small chips, for example
-    `XLU · 222 sh — Utilities+HC 111 · Chip core 59 · WSM core 52`.
+- **Positions: the account as the broker holds it. No idea information at all** (Kevin, Nov 12).
+  - One row per ticker, from `positions_aggregate`: ticker and name, shares, average price, weight bar, today
+    (% and $, coloured), after-hours move, and open P&L as a bar that goes left or right of zero.
+  - No idea tags or chips. Ideas live only in By idea.
   - Every column sorts. A "Heatmap" switch turns the table into the treemap.
-- **By idea, sortable.**
-  - Every column sorts (value, today, open P&L, return %, off target), plus a realized P&L column (closed trades
-    per idea, from the A1 attribution).
-  - The header count matches the rows.
-  - Tested ideas and discretionary trades are totalled separately at the foot of the table.
+  - **Live**: rows update as positions change (see "Live updates" below). A newly opened ticker appears, a fully
+    closed one disappears, and a changed quantity or price updates in place with a brief highlight.
+- **By idea: where the idea information lives, as expandable rows.**
+  - One row per idea: value, weight against its set size, today, open P&L, realized P&L (closed trades from the A1
+    attribution) and return %. Every column sorts.
+  - Each row expands to the idea's own slice of each ticker. For example, Utilities + health care expands to
+    `XLU 111 sh · $4,864 · today +$10 · open +$73` and `XLV 25 sh · …`.
+  - A ticker held by several ideas appears under each of them with that idea's shares only, so the slices add up to
+    the Positions row.
+  - The header count matches the rows. Tested ideas and discretionary trades are totalled separately at the foot of
+    the table.
+  - It is fed by the same live refresh as Positions.
 - **Today's movers** come from tickers, not slices.
 
 ### Tab 2: Performance (its own tab, much deeper)
@@ -89,6 +95,17 @@ fixed header and three tabs.
 The account rail figures (cash, buying power, margin, realized and unrealized), the book switcher, the circuit-breaker
 alert and the concentration warning all stay; the last two move into the warnings strip. Kevin called Net
 liquidation value fine as it is.
+
+## Live updates
+Today the page reads `/api/portfolio` once on load (`hooks/usePaperPortfolio.ts`, one GET) and never again, so
+nothing moves until a reload.
+- Refetch every 30 seconds while the browser tab is visible. Pause it when the tab is hidden.
+- Keep showing the last data while a refetch runs; never flash an empty book.
+- Show "updated 12 s ago" in the header. If a refetch fails, keep the last data and mark it stale.
+- Diff rows by ticker (Positions) and by idea and ticker (By idea), so rows update in place rather than redrawing.
+- Check the snapshot job's cadence. A 30-second page refresh shows nothing new if the server only re-reads the
+  broker every few minutes. If it reads live from Alpaca on each request, rate-limit it on the server (for example,
+  cache for 15 seconds).
 
 ## Build notes for Muse
 - Split `Portfolio.tsx` into one file per tab plus the header (`pages/portfolio/`). It is already 1,222 lines, and
