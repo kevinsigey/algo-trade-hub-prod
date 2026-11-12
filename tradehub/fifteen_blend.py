@@ -100,10 +100,13 @@ def earned_weight(triples) -> tuple[float | None, int]:
     return num / den, n
 
 
-def _history_triples(supa, name: str, version: str, before: datetime) -> list[tuple]:
+def _history_triples(supa, name: str, version: str, before: datetime,
+                     keep=None) -> list[tuple]:
     """Every settled (model, market, outcome) triple for one series from
     the forward record's start up to `before`: the first forecast's frozen
-    probability, the mid of its frozen quotes, the settlement."""
+    probability, the mid of its frozen quotes, the settlement. `keep`, when
+    given, filters on the frozen forecast row (the volatility-regime
+    challenger's regime split); the blend itself never passes it."""
     targets = tracking.fetch_targets(supa, name, _HISTORY_DT, before)
     names = [t["target"] for t in targets]
     if not names:
@@ -112,7 +115,7 @@ def _history_triples(supa, name: str, version: str, before: datetime) -> list[tu
     settled = store.fetch_settlements(supa, names)
     triples = []
     for target, frozen in first.items():
-        if target not in settled:
+        if target not in settled or (keep is not None and not keep(frozen)):
             continue
         pay = frozen.get("payload") or {}
         bid, ask = pay.get("yes_bid"), pay.get("yes_ask")

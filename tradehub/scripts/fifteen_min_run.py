@@ -34,6 +34,12 @@ shadow (tradehub/fifteen_blend.py, preregistration
 docs/superpowers/specs/2026-11-11-fifteen-blend-shadow-prereg.md) -- its
 decision record for all six series and its once-a-day promotion
 evaluation, under the same fail-soft rule.
+
+Amendment 2026-11-13: the same run also writes the volatility-regime
+challenger (tradehub/fifteen_volregime.py, preregistration
+docs/superpowers/specs/2026-11-13-fifteen-volregime-shadow-prereg.md) -- its
+decision record and its once-a-day evaluation (a record only, it never
+promotes), under the same fail-soft rule.
 """
 
 from __future__ import annotations
@@ -43,7 +49,13 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from tradehub import fifteen_blend, fifteen_shadow, fifteen_tracking, metals_fifteen_rule
+from tradehub import (
+    fifteen_blend,
+    fifteen_shadow,
+    fifteen_tracking,
+    fifteen_volregime,
+    metals_fifteen_rule,
+)
 from tradehub.core.env import load_local_env
 from tradehub.core.supabase_client import get_client
 from tradehub.data.kalshi_live import KalshiLive
@@ -59,6 +71,8 @@ def run(supa, forecasters, now: datetime) -> dict[str, Any]:
                     ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily),
                     ("fifteen_blend", fifteen_blend.record_blend),
                     ("fifteen_blend_eval", fifteen_blend.evaluate_daily),
+                    ("fifteen_volregime", fifteen_volregime.record_volregime),
+                    ("fifteen_volregime_eval", fifteen_volregime.evaluate_daily),
                     ("fifteen_metals_decisions",
                      lambda s, n: fifteen_tracking.record_decisions(
                          s, n, series_set=metals_fifteen_rule.SERIES, live_gate=False)),

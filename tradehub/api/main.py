@@ -1688,6 +1688,17 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
     except Exception:  # noqa: BLE001
         if strict:
             raise
+    # The volatility-regime challenger (preregistration 2026-11-13) and the
+    # decline monitor (per day and series: live rule, blend, challenger side
+    # by side). Additive and fail-soft the same way.
+    try:
+        from tradehub import fifteen_volregime
+
+        payload["volregime"] = fifteen_volregime.summary(supabase)
+        payload["decline"] = fifteen_volregime.decline_monitor(supabase, datetime.now(timezone.utc))
+    except Exception:  # noqa: BLE001
+        if strict:
+            raise
     # The metals family (preregistration 2026-11-09): one additive block --
     # its own record in this payload's shape (gated by_series leading, the
     # raw reconstruction beside it), labeled as its own family and counted
