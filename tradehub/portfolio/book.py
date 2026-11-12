@@ -344,7 +344,8 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
             matched = min(abs(qty), abs(lot[0]))
             signed = math.copysign(matched, lot[0])
             trades.append({
-                "symbol": f["symbol"], "qty": signed, "entry_price": lot[1], "exit_price": price,
+                "symbol": f["symbol"], "sector": sector_for(f["symbol"]),
+                "qty": signed, "entry_price": lot[1], "exit_price": price,
                 "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed,
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
                 "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],

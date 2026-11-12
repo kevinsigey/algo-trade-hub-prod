@@ -94,6 +94,14 @@ def test_fifo_closed_trades_with_partial_fills():
     assert t[0]["idea"] == MANUAL
 
 
+def test_closed_trades_carry_their_sector():
+    # The Performance tab's P&L-by-sector panel reads realized P&L per sector,
+    # so a closed trade carries the same sector its position row carried.
+    t = closed_trades([fill("GLD", "buy", 10, 200, "2026-11-02"), fill("GLD", "sell", 10, 220, "2026-11-05"),
+                       fill("ZZZZ", "buy", 5, 10, "2026-11-02"), fill("ZZZZ", "sell", 5, 9, "2026-11-03")])
+    assert {x["symbol"]: x["sector"] for x in t} == {"GLD": "Commodities (Gold)", "ZZZZ": "Other"}
+
+
 def test_short_round_trip():
     t = closed_trades([fill("XLE", "sell", 20, 100, "2026-11-02"), fill("XLE", "buy", 20, 90, "2026-11-04")])
     assert len(t) == 1 and t[0]["qty"] == -20 and t[0]["pnl"] == pytest.approx(200)

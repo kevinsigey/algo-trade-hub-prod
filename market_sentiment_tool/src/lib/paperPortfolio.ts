@@ -164,6 +164,8 @@ export interface PortfolioPayload {
 
 export interface ClosedTrade {
   symbol: string;
+  /** Curated sector (tradehub/portfolio/sectors.py); absent on old payloads. */
+  sector?: string | null;
   qty: number;
   entry_price: number;
   exit_price: number;
@@ -325,6 +327,268 @@ export function curveRange(curve: CurvePoint[], range: CurveRange, now: Date = n
   return kept.map((p) => ({
     t: p.t, portfolio_pct: rebase(p.portfolio_pct, kept[0].portfolio_pct), spy_pct: rebase(p.spy_pct, kept[0].spy_pct),
   }));
+}
+
+/** The backend's label for a lot no Workshop idea claims (book.MANUAL). */
+export const MANUAL_IDEA = "No idea yet (manual)";
+
+/** A closed trade counts as tested when its lot was attributed to a Workshop
+ * idea — the same rule book.results_split applies server-side. */
+export function isTestedTrade(t: ClosedTrade): boolean {
+  return !!t.idea && t.idea !== MANUAL_IDEA;
+}
+
+const etDateFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+/** The America/New_York calendar date of an instant, YYYY-MM-DD. Trading
+ * days are ET days; the hourly snapshots straddle UTC midnight. */
+export function etDay(iso: string): string {
+  return etDateFmt.format(new Date(iso));
+}
+
+export interface DailyReturn {
+  date: string;
+  portfolio_pct: number;
+  spy_pct: number | null;
+  /** Today, before its close is fixed history: the value still moves with
+   * the live read (regular session) or was fixed by the 4 PM ET snapshot. */
+  provisional: boolean;
+}
+
+/** One return per ET trading day from the curve: the day's last point is its
+ * close, differenced against the previous trading day's close. Weekends are
+ * skipped (a weekend live point is not a trading day — the curveTradingDays
+ * rule). Today is provisional; once the close snapshot exists (the today
+ * split reads "after_hours"), today's figures are the split's regular-session
+ * returns, because the curve's live point after 4 PM ET carries after-hours
+ * moves and those never enter daily-close stats. */
+export function dailyReturns(curve: CurvePoint[], today?: TodaySplit | null, now: Date = new Date()): DailyReturn[] {
+  const lastByDay = new Map<string, CurvePoint>();
+  for (const p of curve) {
+    const d = etDay(p.t);
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    lastByDay.set(d, p); // the curve is time-ordered: the day's last point is its close
+  }
+  const days = [...lastByDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+  const ratio = (a: number, b: number) => ((1 + a / 100) / (1 + b / 100) - 1) * 100;
+  const out: DailyReturn[] = [];
+  for (let i = 1; i < days.length; i++) {
+    const [date, p] = days[i];
+    const prev = days[i - 1][1];
+    out.push({
+      date,
+      portfolio_pct: ratio(p.portfolio_pct, prev.portfolio_pct),
+      spy_pct: p.spy_pct == null || prev.spy_pct == null ? null : ratio(p.spy_pct, prev.spy_pct),
+      provisional: false,
+    });
+  }
+  const last = out[out.length - 1];
+  if (last && last.date === etDay(now.toISOString())) {
+    last.provisional = true;
+    if (today?.state === "after_hours") {
+      if (today.regular_pct != null) last.portfolio_pct = today.regular_pct;
+      if (today.spy_regular_pct != null) last.spy_pct = today.spy_regular_pct;
+    }
+  }
+  return out;
+}
+
+/** Running drawdown of the curve's portfolio line, in points (0 or negative). */
+export function drawdownSeries(points: CurvePoint[]): { t: string; dd_pct: number }[] {
+  let peak = -Infinity;
+  return points.map((p) => {
+    peak = Math.max(peak, p.portfolio_pct);
+    return { t: p.t, dd_pct: p.portfolio_pct - peak };
+  });
+}
+
+/** The deepest drawdown in the points and when it bottomed. */
+export function maxDrawdown(points: CurvePoint[]): { pct: number | null; at: string | null } {
+  let pct: number | null = null;
+  let at: string | null = null;
+  for (const d of drawdownSeries(points)) {
+    if (pct == null || d.dd_pct < pct) {
+      pct = d.dd_pct;
+      at = d.t;
+    }
+  }
+  return { pct, at };
+}
+
+/** Annualized volatility (%) of the daily portfolio returns; null under 2 days. */
+export function volatilityPct(daily: DailyReturn[]): number | null {
+  if (daily.length < 2) return null;
+  const xs = daily.map((d) => d.portfolio_pct);
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const variance = xs.reduce((a, x) => a + (x - mean) ** 2, 0) / (xs.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(252);
+}
+
+/** Beta of the daily portfolio returns to SPY's; null under 2 paired days
+ * or when SPY never moved. The caller applies the 20-trading-day guard. */
+export function betaToSpy(daily: DailyReturn[]): number | null {
+  const pairs = daily.filter((d) => d.spy_pct != null);
+  if (pairs.length < 2) return null;
+  const mp = pairs.reduce((a, d) => a + d.portfolio_pct, 0) / pairs.length;
+  const ms = pairs.reduce((a, d) => a + (d.spy_pct ?? 0), 0) / pairs.length;
+  let cov = 0;
+  let variance = 0;
+  for (const d of pairs) {
+    cov += (d.portfolio_pct - mp) * ((d.spy_pct ?? 0) - ms);
+    variance += ((d.spy_pct ?? 0) - ms) ** 2;
+  }
+  return variance === 0 ? null : cov / variance;
+}
+
+export function bestWorstDay(daily: DailyReturn[]): { best: DailyReturn | null; worst: DailyReturn | null } {
+  let best: DailyReturn | null = null;
+  let worst: DailyReturn | null = null;
+  for (const d of daily) {
+    if (!best || d.portfolio_pct > best.portfolio_pct) best = d;
+    if (!worst || d.portfolio_pct < worst.portfolio_pct) worst = d;
+  }
+  return { best, worst };
+}
+
+export interface TradeStats {
+  trades: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  /** Mean losing trade, as a negative dollar figure. */
+  avg_loss: number | null;
+  profit_factor: number | null;
+  avg_held_days: number | null;
+}
+
+export function tradeStats(trades: ClosedTrade[]): TradeStats {
+  const empty: TradeStats = {
+    trades: 0, win_rate: null, avg_win: null, avg_loss: null, profit_factor: null, avg_held_days: null,
+  };
+  if (trades.length === 0) return empty;
+  const wins = trades.filter((t) => t.pnl > 0);
+  const losses = trades.filter((t) => t.pnl < 0);
+  const grossWin = wins.reduce((a, t) => a + t.pnl, 0);
+  const grossLoss = losses.reduce((a, t) => a + t.pnl, 0);
+  return {
+    trades: trades.length,
+    win_rate: (wins.length / trades.length) * 100,
+    avg_win: wins.length ? grossWin / wins.length : null,
+    avg_loss: losses.length ? grossLoss / losses.length : null,
+    profit_factor: grossLoss < 0 ? grossWin / -grossLoss : null,
+    avg_held_days: trades.reduce((a, t) => a + t.held_days, 0) / trades.length,
+  };
+}
+
+/** The cutoff curveRange applies, for filtering closed trades to a range. */
+export function rangeCutoff(range: CurveRange, now: Date = new Date()): Date | null {
+  if (range === "All") return null;
+  const since = new Date(now);
+  if (range === "1W") since.setDate(since.getDate() - 7);
+  else if (range === "1M") since.setMonth(since.getMonth() - 1);
+  else since.setMonth(0, 1);
+  return since;
+}
+
+export function tradesInRange(trades: ClosedTrade[], range: CurveRange, now: Date = new Date()): ClosedTrade[] {
+  const cut = rangeCutoff(range, now);
+  return cut ? trades.filter((t) => new Date(t.exited_at) >= cut) : trades;
+}
+
+export interface PnlSlice {
+  key: string;
+  realized: number;
+  open: number;
+  total: number;
+}
+
+function pnlSlices(slotOf: (add: (key: string, realized: number, open: number) => void) => void): PnlSlice[] {
+  const map = new Map<string, PnlSlice>();
+  const add = (key: string, realized: number, open: number) => {
+    let s = map.get(key);
+    if (!s) {
+      s = { key, realized: 0, open: 0, total: 0 };
+      map.set(key, s);
+    }
+    s.realized += realized;
+    s.open += open;
+  };
+  slotOf(add);
+  return [...map.values()]
+    .map((s) => ({ ...s, total: s.realized + s.open }))
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+}
+
+/** Realized P&L (the trades given — the caller range-filters them) plus the
+ * book's current open P&L, per idea. */
+export function pnlByIdea(
+  trades: ClosedTrade[],
+  composition: { idea: string; unrealized_pl: number }[],
+): PnlSlice[] {
+  return pnlSlices((add) => {
+    for (const t of trades) add(t.idea || MANUAL_IDEA, t.pnl, 0);
+    for (const c of composition) add(c.idea, 0, c.unrealized_pl);
+  });
+}
+
+/** The same split per sector: realized off the trades' sector, open off the
+ * position rows'. A trade from an old payload without a sector reads Other,
+ * the sector map's own fallback. */
+export function pnlBySector(trades: ClosedTrade[], positions: PositionRow[]): PnlSlice[] {
+  return pnlSlices((add) => {
+    for (const t of trades) add(t.sector || "Other", t.pnl, 0);
+    for (const r of positions) {
+      if (r.unrealized_pl != null) add(r.sector || "Other", 0, r.unrealized_pl);
+    }
+  });
+}
+
+export interface SplitPoint {
+  t: string;
+  tested: number;
+  discretionary: number;
+}
+
+/** Cumulative realized P&L of tested ideas vs discretionary trades, one
+ * point per closed trade in exit order. */
+export function splitOverTime(trades: ClosedTrade[]): SplitPoint[] {
+  const sorted = [...trades].sort((a, b) => (a.exited_at < b.exited_at ? -1 : 1));
+  let tested = 0;
+  let discretionary = 0;
+  return sorted.map((t) => {
+    if (isTestedTrade(t)) tested += t.pnl;
+    else discretionary += t.pnl;
+    return { t: t.exited_at, tested: Math.round(tested * 100) / 100, discretionary: Math.round(discretionary * 100) / 100 };
+  });
+}
+
+export interface WeekPnl {
+  /** The week's Monday, YYYY-MM-DD (ET). */
+  week: string;
+  pnl: number;
+  trades: number;
+}
+
+export function realizedByWeek(trades: ClosedTrade[]): WeekPnl[] {
+  const map = new Map<string, WeekPnl>();
+  for (const t of trades) {
+    const day = new Date(`${etDay(t.exited_at)}T00:00:00Z`);
+    const monday = new Date(day);
+    monday.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+    const key = monday.toISOString().slice(0, 10);
+    let s = map.get(key);
+    if (!s) {
+      s = { week: key, pnl: 0, trades: 0 };
+      map.set(key, s);
+    }
+    s.pnl += t.pnl;
+    s.trades += 1;
+  }
+  return [...map.values()]
+    .sort((a, b) => (a.week < b.week ? -1 : 1))
+    .map((w) => ({ ...w, pnl: Math.round(w.pnl * 100) / 100 }));
 }
 
 const OCC = /^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/;
