@@ -25,6 +25,7 @@ const LIVE = {
   starting_balance: 500,
   pnl_since_start: 7.5,
   pnl_today: 2.3,
+  positions_unavailable: false,
   positions: [{
     ticker: "KXNATGAS15M-26NOV121215-00", series: "KXNATGAS15M", strike: 2.5,
     side: "yes", contracts: 12, avg_price: 0.4, yes_bid: 0.45, yes_ask: 0.47,
@@ -87,7 +88,7 @@ describe("Kalshi (demo) Portfolio tab", () => {
     );
     expect(await screen.findByText("Kalshi (demo)")).toBeInTheDocument();
     expect(screen.getAllByText("DEMO").length).toBeGreaterThanOrEqual(1);
-    expect(await screen.findByText("$505")).toBeInTheDocument();
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
     expect(screen.getByText(NOTE)).toBeInTheDocument();
     expect(screen.getByText("KXNATGAS15M-26NOV121215-00")).toBeInTheDocument();
     expect(screen.getByText("KXNATGAS15M-26NOV121200-00")).toBeInTheDocument();
@@ -122,5 +123,33 @@ describe("Kalshi (demo) Portfolio tab", () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
     expect(kalshiCalls()).toBe(2);
+  });
+
+  it("shows a failed refresh alongside the last good report", async () => {
+    vi.useFakeTimers();
+    let kalshiCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/kalshi-demo")) {
+        kalshiCalls += 1;
+        if (kalshiCalls > 1) throw new Error("network down");
+        return new Response(JSON.stringify(LIVE), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    render(
+      <MemoryRouter>
+        <KalshiDemoBook />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+    expect(screen.getByText("$505.00")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(screen.getByText(/Refresh failed/)).toBeInTheDocument();
+    // The retained report is still on screen, marked with its as_of time.
+    expect(screen.getByText("$505.00")).toBeInTheDocument();
+    expect(screen.getByText(/showing the last report, as of/)).toBeInTheDocument();
   });
 });

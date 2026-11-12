@@ -545,6 +545,7 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
     from tradehub import kalshi_demo
     from tradehub.core.kalshi_portfolio import (
         KalshiPortfolio,
+        NotDemoHostError,
         check_portfolio_available,
     )
 
@@ -552,7 +553,11 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
         return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
     try:
         portfolio = KalshiPortfolio()
-    except ValueError:
+        # The tab is labelled demo; never serve a live host's balances or
+        # positions under that label. The guard runs before any account
+        # read (build_report is unreachable unless it passes).
+        portfolio.assert_demo_host()
+    except (ValueError, NotDemoHostError):
         return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
     try:
         return kalshi_demo.build_report(

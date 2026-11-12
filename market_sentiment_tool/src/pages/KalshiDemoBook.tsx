@@ -15,8 +15,8 @@ import type {
 /** The demo runner trades on a 5-minute cadence; the tab re-reads on this one. */
 export const REFRESH_MS = 30_000;
 
-const money = (v: number | null | undefined) => fmtUsd(v, { whole: true });
-const signed = (v: number | null | undefined) => fmtUsd(v, { signed: true, whole: true });
+const money = (v: number | null | undefined) => fmtUsd(v);
+const signed = (v: number | null | undefined) => fmtUsd(v, { signed: true });
 const price = (v: number | null | undefined) => fmtUsd(v);
 const pct = (v: number | null | undefined) =>
   v == null || !Number.isFinite(v) ? "—" : `${Math.round(v * 100)}%`;
@@ -169,6 +169,12 @@ export default function KalshiDemoBook() {
         <p className="text-sm text-slate-400">{data.note}</p>
       </div>
 
+      {error ? (
+        <p className="mt-3 text-sm text-rose-300">
+          Refresh failed: {error} — showing the last report, as of {ctDateTime(data.as_of)}.
+        </p>
+      ) : null}
+
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
           <div className="text-xs text-slate-400">Demo balance</div>
@@ -184,15 +190,18 @@ export default function KalshiDemoBook() {
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
           <div className="text-xs text-slate-400">Open positions</div>
-          <div className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-white">{data.positions.length}</div>
+          <div className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-white">{data.positions_unavailable ? "—" : data.positions.length}</div>
         </div>
       </div>
 
       <div className="mt-4">
         <Panel title="Positions">
-          {data.positions.length === 0 ? (
+          {data.positions_unavailable ? (
+            <p className="text-sm text-slate-400">Positions unavailable — the account read failed, so this is not proof the book is flat.</p>
+          ) : data.positions.length === 0 ? (
             <p className="text-sm text-slate-400">No open positions. Demo orders live inside one 15-minute window and settle at its close.</p>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-xs tabular-nums">
               <thead><tr className="text-left text-slate-500">
                 <th scope="col" className="pb-1 pr-2 font-medium">Market</th>
@@ -219,6 +228,7 @@ export default function KalshiDemoBook() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Panel>
       </div>

@@ -436,7 +436,9 @@ def _contracts_of(pos: dict) -> int:
 
 def _avg_price_of(pos: dict, contracts: int, db_row: dict | None) -> float | None:
     """Entry price for a live position: our own order row first (the fill,
-    else the limit we placed), the position's traded total as fallback.
+    else the limit we placed), the position's remaining cost basis as
+    fallback (market_exposure -- what the still-held contracts cost, NOT
+    total_traded, which counts every historical trade incl. exits).
     A figure outside (0, 1) is not a price for these contracts -- None."""
     if db_row is not None:
         for key in ("fill_price", "limit_price"):
@@ -444,11 +446,11 @@ def _avg_price_of(pos: dict, contracts: int, db_row: dict | None) -> float | Non
             if value is not None and 0 < float(value) < 1:
                 return float(value)
     if contracts > 0:
-        total = pos.get("total_traded_dollars")
-        if total is None and pos.get("total_traded") is not None:
-            total = float(pos["total_traded"]) / 100.0
-        if total:
-            avg = float(total) / contracts
+        basis = pos.get("market_exposure_dollars")
+        if basis is None and pos.get("market_exposure") is not None:
+            basis = float(pos["market_exposure"]) / 100.0
+        if basis:
+            avg = float(basis) / contracts
             if 0 < avg < 1:
                 return avg
     return None
@@ -470,10 +472,15 @@ def _live_summary(portfolio, rows_by_ticker: dict[str, dict]) -> dict:
             portfolio_value = float(data["portfolio_value"]) / 100.0
 
     positions = []
+    positions_unavailable = False
     try:
+        # Strict read: a failed request must not read as an empty book.
+        raw_positions = portfolio.get_positions_strict()
+    except AttributeError:
         raw_positions = portfolio.get_positions() or []
     except Exception:  # noqa: BLE001
         raw_positions = []
+        positions_unavailable = True
     for pos in raw_positions:
         contracts = _contracts_of(pos)
         ticker = pos.get("ticker")
@@ -514,7 +521,8 @@ def _live_summary(portfolio, rows_by_ticker: dict[str, dict]) -> dict:
                           or (db_row or {}).get("window_close"),
         })
     return {"balance": balance, "portfolio_value": portfolio_value,
-            "positions": positions}
+            "positions": positions,
+            "positions_unavailable": positions_unavailable}
 
 
 def live_summary(portfolio, rows_by_ticker: dict[str, dict],
@@ -526,7 +534,10 @@ def live_summary(portfolio, rows_by_ticker: dict[str, dict],
     if _summary_cache is not None and clock() - _summary_cache[0] < SUMMARY_TTL_SECONDS:
         return _summary_cache[1]
     summary = _live_summary(portfolio, rows_by_ticker)
-    _summary_cache = (clock(), summary)
+    # A failed positions read is never cached: the next request retries
+    # instead of serving the false empty book for the rest of the TTL.
+    if not summary.get("positions_unavailable"):
+        _summary_cache = (clock(), summary)
     return summary
 
 
@@ -584,6 +595,7 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
         "pnl_since_start": pnl_since_start,
         "pnl_today": round(pnl_today, 2),
         "positions": live["positions"],
+        "positions_unavailable": bool(live.get("positions_unavailable")),
         "performance": {
             "demo_curve": demo_curve,
             "shadow_curve": shadow_curve,

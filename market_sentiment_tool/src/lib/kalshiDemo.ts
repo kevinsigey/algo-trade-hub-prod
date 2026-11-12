@@ -50,16 +50,27 @@ export interface KalshiOrder {
   settlement_pnl: number | null;
 }
 
-export interface KalshiDemoPayload {
-  state: string;
+export interface KalshiDemoNotConnected {
+  state: "not_connected";
   demo: boolean;
-  as_of?: string;
+  note: string;
+}
+
+export interface KalshiDemoLive {
+  state: "live";
+  demo: boolean;
+  as_of: string;
   balance: number | null;
   starting_balance: number;
   pnl_since_start: number | null;
   pnl_today: number | null;
   positions: KalshiPosition[];
+  /** True when the positions read failed: positions is [] but the book
+   * is NOT known to be flat. */
+  positions_unavailable: boolean;
   performance: KalshiPerformance;
   orders: KalshiOrder[];
   note: string;
 }
+
+export type KalshiDemoPayload = KalshiDemoNotConnected | KalshiDemoLive;

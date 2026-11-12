@@ -33,6 +33,9 @@ class FakePortfolio:
     def __init__(self):
         self.balance_calls = 0
 
+    def assert_demo_host(self):
+        return None  # the fake is a demo client by construction
+
     def get_balance(self):
         self.balance_calls += 1
         return {"balance": 50500, "portfolio_value": 250}  # $505.00 + $2.50
@@ -40,6 +43,9 @@ class FakePortfolio:
     def get_positions(self):
         return [{"ticker": TICKER, "position": 12,
                  "total_traded": 492, "market_exposure": 540}]
+
+    def get_positions_strict(self):
+        return self.get_positions()
 
     def get_market_data(self, ticker):
         return {"market": {
@@ -106,7 +112,10 @@ def seeded_db():
                   skip_reason="placement_interrupted"),
     ]
     db.db[kd.DECISIONS] = [
-        decision(),  # TARGET: shadow pnl +0.55/contract
+        # TARGET: shadow pnl +0.50/contract -- deliberately NOT the demo
+        # settlement's +0.55/contract, so a build_report that copied the
+        # demo curve into the shadow curve would fail the assertions.
+        decision(pnl=0.50),
         decision(target=TARGET2, ticker=TICKER2, pnl=-0.43, outcome=0,
                  close_time=(NOW - timedelta(hours=2)).isoformat()),
     ]
@@ -134,8 +143,8 @@ def test_report_shape_and_stats():
 
     perf = report["performance"]
     assert [p["pnl"] for p in perf["demo_curve"]] == [-4.30, 2.30]
-    assert [p["pnl"] for p in perf["shadow_curve"]] == [-4.30, 2.30]
-    assert [p["pnl"] for p in perf["shadow_curve_per_contract"]] == [-0.43, 0.12]
+    assert [p["pnl"] for p in perf["shadow_curve"]] == [-4.30, 1.70]
+    assert [p["pnl"] for p in perf["shadow_curve_per_contract"]] == [-0.43, 0.07]
     assert perf["fill_rate"] == round(2 / 3, 4)  # 2 of 3 placed orders filled
     assert perf["avg_slippage_cents"] == 0.5     # (+1.0 and 0.0) / 2
     assert perf["win_rate"] == 0.5
@@ -177,3 +186,55 @@ def test_endpoint_live(monkeypatch):
     assert out["state"] == "live"
     assert out["balance"] == 505.0
     assert len(out["positions"]) == 1
+
+
+class PositionsDownPortfolio(FakePortfolio):
+    def get_positions_strict(self):
+        raise RuntimeError("positions read failed")
+
+
+def test_positions_read_failure_is_flagged_and_not_cached():
+    clock_now = [1000.0]
+    clock = lambda: clock_now[0]  # noqa: E731
+    report = kd.build_report(seeded_db(), PositionsDownPortfolio(), NOW,
+                             clock=clock)
+    # A failed read is NOT a flat book: flagged, and the position count
+    # must not be served as a successful empty read.
+    assert report["positions"] == []
+    assert report["positions_unavailable"] is True
+    # ...and it is not cached: the very next read at the same clock with a
+    # healthy client returns the real position.
+    report = kd.build_report(seeded_db(), FakePortfolio(), NOW, clock=clock)
+    assert report["positions_unavailable"] is False
+    assert len(report["positions"]) == 1
+
+
+def test_avg_price_fallback_uses_remaining_cost_basis():
+    # market_exposure_dollars: the still-held contracts' cost basis.
+    pos = {"market_exposure_dollars": "4.9200"}
+    assert kd._avg_price_of(pos, 12, None) == 0.41
+    # The cents twin field works too.
+    assert kd._avg_price_of({"market_exposure": 492}, 12, None) == 0.41
+    # Historical traded totals are NOT a fallback: they count exits too.
+    assert kd._avg_price_of({"total_traded_dollars": "9.8400"}, 12,
+                            None) is None
+    assert kd._avg_price_of({"total_traded": 984}, 12, None) is None
+
+
+def test_endpoint_refuses_a_non_demo_host(monkeypatch):
+    from tradehub.core.kalshi_portfolio import NotDemoHostError
+
+    class LiveHostPortfolio(FakePortfolio):
+        def assert_demo_host(self):
+            raise NotDemoHostError("resolved host is the live host")
+
+    instance = LiveHostPortfolio()
+    monkeypatch.setattr(
+        "tradehub.core.kalshi_portfolio.check_portfolio_available",
+        lambda: True)
+    monkeypatch.setattr(
+        "tradehub.core.kalshi_portfolio.KalshiPortfolio", lambda: instance)
+    out = main.get_kalshi_demo(supabase=seeded_db())
+    assert out["state"] == "not_connected"
+    # The guard fired before any account read reached the live host.
+    assert instance.balance_calls == 0
