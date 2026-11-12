@@ -12,16 +12,19 @@ they're already in progress on Claude's branches.**
 
 | Owner | Work |
 |---|---|
-| **Claude** | The #500 runner fix (the demo runner can't trade; spec in the #500 comment of Nov 12, 20:08 UTC). Branch `claude/kalshi-runner-fix` |
-| **Claude** | Step 5, the volatility-regime challenger `v3-volregime-shadow`. Branch `claude/volregime-challenger` |
-| **Claude** | Step 8, the Overview landing page (product item 1). Branch `claude/overview-landing` |
-| **Muse** | Step 6, Portfolio redesign PR 3 (Trade tab), plus the three #506 fixes (broker `last_equity` for Today, weekend label, after-hours cache) and a review of #509's findings once Claude posts them |
-| **Muse** | Steps 9–20 in order, except anything listed above |
+| **Claude** | ✅ The runner fix (#511), the volatility-regime challenger (#513) and the Overview page (#512), all merged Nov 12. Claude reviews everything else |
+| **Muse** | 1. Finish #514 (Portfolio PR 3); its QQQ ledger row is 86 |
+| **Muse** | 2. The 15-minute rule work in `docs/plan-2026-11-12-fifteen-rule-v4.md`: **A0** history backfill, then **A** the "where do the models work" study (with event, order-book, cross-market and gas-weather features). Stop for Kevin and Claude to read it. Then **B** (candidates, preregistered, plus the demo candidate lane), then **C** (15-minute crypto) |
+| **Muse** | 3. Steps 9–20 below, in order, after step 2 |
 
 The merge rule still holds for everyone: **no PR merges until Claude posts a ready-to-merge review.** Muse merged #509
 two minutes after opening it; don't repeat that.
 
-## Status, Nov 12 20:45 UTC
+## Status, Nov 12 22:30 UTC
+- Merged: #499–#513, including the runner fix #511, Overview #512, and the challenger #513 (tables applied; it records from 2026-11-14 00:00 UTC). Open: #514 (Muse). Kevin approved #514's QQQ column.
+- Next: the 15-minute rule plan above (Kevin, Nov 12: backfill first, so candidates can go to the Kalshi demo account soon).
+
+## Status, Nov 12 20:45 UTC (superseded)
 - Merged: steps 1–4 (#499, #500, #501, #505), 6 (#502), the page-load fix #504, and step 5 part 1 (#506). #500, #504, #505 and #506 merged without Claude's review.
 - **Blocking: #500's runner can never trade** (gas decisions are written only after their window closes). Fix spec: the #500 comment of Nov 12, 20:08 UTC. Do this first. Then step 5, the volatility-regime challenger (moved up by Kevin on Nov 12, because the live 15-minute rules are fading: gas fell from +17.4¢ per trade on Nov 6–9 to +2.5¢ on Nov 10–12, and oil and metals now lose). Then the rest of the Portfolio redesign (step 6).
 
@@ -107,5 +110,7 @@ Agent debates; and whether Screening becomes a tracked idea.
 | Portfolio redesign: header, SPY and QQQ, warnings strip, Book / Performance / Trade tabs, live metrics | Step 6 (PR 1 merged, #506) |
 | Auto-trader off until further notice | Done, #498 |
 | Debate grading on a schedule | Done, #488; deploy crontab at 05:07 UTC |
-| Self-improving 15-minute models: volatility-regime challenger | Step 5 |
+| Self-improving 15-minute models: volatility-regime challenger | Step 5, done (#513) |
+| Better 15-minute rules: history backfill, entry timing, trend context, event, order-book and cross-market features, a demo candidate lane | `plan-2026-11-12-fifteen-rule-v4.md` (Muse, next after #514) |
+| Kalshi 15-minute crypto markets, built like the commodity models | `plan-2026-11-12-fifteen-rule-v4.md` Step C |
 | Everything in the Nov 9–11 reviews | Steps 7–20 (detail in `review-backlog-2026-11-12.md`) |
