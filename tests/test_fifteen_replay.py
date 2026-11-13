@@ -135,7 +135,7 @@ def test_golden_side_agreement_counts_the_side_not_the_cost():
     assert out["edge_compared"] == 1 and out["edge_share"] == 1.0
 
 
-def test_golden_gate_c_fails_on_quote_divergence():
+def test_golden_gate_c_reports_quote_divergence_without_failing():
     replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.60,
                "side": "yes", "side_cost": 0.60, "edge_net": 0.12,
                "yes_bid": 0.58, "yes_ask": 0.60}]
@@ -144,8 +144,42 @@ def test_golden_gate_c_fails_on_quote_divergence():
     out = golden_compare(replay, stored)
     assert out["side_share"] == 1.0  # same side, honestly counted
     assert abs(out["quote_median_abs_diff"] - 0.20) < 1e-9
-    assert out["gate"]["c_quotes_sides"]["pass"] is False
-    assert out["gate"]["pass"] is False
+    # 2026-11-13 ruling: the quote gap is a stated limit, side is the gate.
+    assert out["gate"]["c_quotes_sides"]["quote_edge_within_limits"] is False
+    assert out["gate"]["c_quotes_sides"]["pass"] is True
+    assert out["gate"]["pass"] is True
+
+
+def test_haircut_fills_at_ask_plus_a_cent_and_drops_thin_edges():
+    from tradehub.backtest.fifteen_replay import REPLAY_HAIRCUT, haircut_quote
+    from tradehub import oil_fifteen_rule as rule
+    assert REPLAY_HAIRCUT == 0.01
+    assert haircut_quote(0.60, 0.63, 0.01) == (0.59, 0.64)
+    assert haircut_quote(None, 0.63, 0.01) == (None, 0.63)
+    raw = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                        close_time=CLOSE, outcome=1, tape=tape(), candles=candles())
+    cut = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                        close_time=CLOSE, outcome=1, tape=tape(), candles=candles(),
+                        haircut=0.01)
+    for r, c in zip(raw, cut):
+        assert (c["yes_bid"], c["yes_ask"]) == (r["yes_bid"], r["yes_ask"])  # raw quote kept
+        assert c["haircut"] == 0.01 and r["haircut"] == 0.0
+        if c["side"] == "yes":
+            assert c["side_cost"] == 0.64 and c["pnl"] == rule.pnl("yes", 0.64, 1)
+            assert c["edge_net"] >= rule.MIN_EDGE - 1e-9
+        if r["side"] is None:
+            assert c["side"] is None  # the haircut never adds a trade
+    # An edge that clears the bar raw (ask 0.89 vs prob ~1: +10.3 points
+    # after the fee) but not after the cent is dropped.
+    thin = [Candle(end_ts=OPEN + timedelta(minutes=m), yes_bid=0.87, yes_ask=0.89,
+                   volume=5.0) for m in range(0, 17)]
+    raw5 = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                         close_time=CLOSE, outcome=1, tape=tape(), candles=thin)[4]
+    cut5 = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                         close_time=CLOSE, outcome=1, tape=tape(), candles=thin,
+                         haircut=0.01)[4]
+    assert raw5["side"] == "yes" and raw5["edge_net"] < rule.MIN_EDGE + 0.01
+    assert cut5["side"] is None and cut5["pnl"] is None
 
 
 def test_golden_gate_passes_when_all_three_parts_pass():

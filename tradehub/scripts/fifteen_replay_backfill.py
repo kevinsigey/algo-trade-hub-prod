@@ -100,7 +100,7 @@ def write_tapes(tapes: dict[str, list], tape_out: Path) -> list[str]:
 
 def run(out_dir: Path, start: datetime, end: datetime, *,
         series: list[str], sleep_s: float = 0.05,
-        tape_out: Path | None = None) -> dict:
+        tape_out: Path | None = None, haircut: float = 0.0) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path = out_dir / "fifteen_replay_offsets.jsonl"
     done_path = out_dir / ".done"
@@ -144,7 +144,8 @@ def run(out_dir: Path, start: datetime, end: datetime, *,
                     period_minutes=1, series_ticker=s)
                 rows = replay_window(
                     series=s, target=f"kalshi:{ticker}", ticker=ticker,
-                    close_time=close_time, outcome=outcome, tape=tape, candles=candles)
+                    close_time=close_time, outcome=outcome, tape=tape, candles=candles,
+                    haircut=haircut)
                 for r in rows:
                     rows_f.write(json.dumps(r) + "\n")
                 stats["rows"] += len(rows)
@@ -168,10 +169,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--series", action="append", choices=SERIES)
     ap.add_argument("--golden", help="path to exported fifteen_window_offsets rows (JSON)")
     ap.add_argument("--tape-out", help="also dump the underlyings' 1-minute tapes, one JSON file per coin per day")
+    ap.add_argument("--haircut", type=float, default=0.0,
+                    help="price replay trades at the candle ask + this many dollars "
+                         "(Step A's replay haircut rule uses 0.01; leave 0 for --golden)")
     args = ap.parse_args(argv)
     start, end = _parse_day(args.start), _parse_day(args.end) + timedelta(days=1)
     stats = run(Path(args.out), start, end, series=args.series or SERIES,
-                tape_out=Path(args.tape_out) if args.tape_out else None)
+                tape_out=Path(args.tape_out) if args.tape_out else None,
+                haircut=args.haircut)
     print(json.dumps({"backfill": stats}))
     if args.golden:
         replay_rows = [json.loads(line) for line in

@@ -76,6 +76,14 @@ Goal: months of history instead of six days, so the question "which minute and w
 Build `tradehub/research/fifteen_where.py`, a script, and a table on the Strategies page's 15-minute section.
 Run it on **replay + forward** together, with a column showing each source on its own.
 
+**Replay haircut rule (Claude's ruling on #517, Nov 13).** The A0 replay takes trades the live book never offered:
+earliest trade per window, the replay shows −2.43¢ on 1,109 trades while the forward record shows +6.67¢ on 1,326.
+So replay results are never used alone to rank or pick a rule:
+1. A replay trade fills at the **candle ask + 1¢** and counts only if its edge clears the bar after that haircut
+   (`fifteen_replay.REPLAY_HAIRCUT`, `replay_window(haircut=...)`).
+2. Replay and forward are **always reported side by side**, for every cell.
+3. A candidate is valid only if the replay and forward **agree in direction**, with **forward deciding the size**.
+
 1. **Unit:** one row per (series, window, entry minute), settled only.
 2. **Features**, all computed from data available at the entry minute (no look-ahead):
    - entry minute (1–14) and edge bucket (10–15, 15–20, 20+ points after the fee);
