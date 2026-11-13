@@ -30,8 +30,18 @@ export interface JournalScore {
   bss: number | null;
   /** Paired Brier gap vs baseline on the same contracts: negative = better than baseline. */
   gap?: number | null;
-  /** Standard error of the paired gap, computed server-side from per-contract squared-error differences. */
+  /** Standard error of the paired gap, computed server-side from per-contract squared-error
+   * differences clustered by frozen day (step 9: days, not rows). Null when the settled record
+   * spans a single day -- no honest interval exists. */
   gap_se?: number | null;
+  /** Earned weight (step 9): the fifteen blend's slope of the model against its baseline on
+   * contested rows only -- the share of the model in the best mix with the baseline. The raw
+   * slope (it can exceed 1); the halves split the settled set in freeze order. Null on cards
+   * scored before the column existed, and weight is null when nothing contested settled. */
+  earned_weight?: { weight: number | null; n: number; first_half: number | null; second_half: number | null } | null;
+  /** True when the registry retired this (forecaster, version). Absent when the server could
+   * not say -- an absent label is unknown, never a claim that nothing is retired. */
+  retired?: boolean;
   reliability: ReliabilityBucket[];
   murphy: { reliability?: number; resolution?: number; uncertainty?: number };
   /** Simulated one-contract taker P&L after Kalshi's fee and the spread; {} unless graded vs a market. */

@@ -372,3 +372,25 @@ def test_journal_counts_retired_models_once_each_and_fails_soft_to_unknown(monke
     monkeypatch.setattr(builtins, "__import__", broken)
     res = _client(db).get("/api/journal")
     assert res.status_code == 200 and res.json()["retired_models"] is None  # unknown, never 0
+
+
+def test_journal_labels_retired_scorecards_from_the_registry():
+    """Step 9: a scorecard whose (forecaster, version) is on the
+    registry's RETIRED list is served with retired=true; a live one
+    with retired=false. The records stay -- only the label is new."""
+    from tradehub.journal.registry import RETIRED
+
+    retired = RETIRED[0]
+    db = FakeJournalDB(lambda: T0)
+    db.tables["journal_scores"] += [
+        {"forecaster": retired.name, "forecaster_version": str(retired.version),
+         "gate_status": "SHADOW", "n_settled": 12, "n_targets": 12,
+         "calibration_ready": False},
+        {"forecaster": "cpi", "forecaster_version": "v1",
+         "gate_status": "PROMOTED", "n_settled": 60, "n_targets": 30,
+         "calibration_ready": True},
+    ]
+    body = _client(db).get("/api/journal").json()
+    by_name = {r["forecaster"]: r for r in body["forecasters"]}
+    assert by_name[retired.name]["retired"] is True
+    assert by_name["cpi"]["retired"] is False

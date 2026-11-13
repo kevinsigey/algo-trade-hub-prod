@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { axisSpan, beatingCount, byGroup, edgeOf, edgeText, groupOf, league, statusOf } from "@/lib/league";
+import { axisSpan, beatingCount, byGroup, earnedWeightText, edgeOf, edgeText, groupOf, league, scoreboardRows, statusOf } from "@/lib/league";
 import { viewRows } from "@/lib/journalView";
 import type { JournalScore } from "@/lib/journal";
 
@@ -79,5 +79,36 @@ describe("league: grouping and variants", () => {
   });
   it("sizes one axis for every interval", () => {
     expect(axisSpan(league(viewRows([score({ gap: -0.071, gap_se: 0.01 })])))).toBe(0.1);
+  });
+});
+
+describe("league: step 9 scoreboard rules", () => {
+  it("hides predictors with zero settled forecasts from the scoreboard table only", () => {
+    const rows = league(viewRows([
+      score({}),
+      score({ forecaster: "weather_rain", n_settled: 0, gap: null, gap_se: null }),
+    ]));
+    expect(rows).toHaveLength(2); // league() itself keeps the waiting row (cards + Waiting tab use it)
+    const shown = scoreboardRows(rows);
+    expect(shown).toHaveLength(1);
+    expect(shown[0].primary.forecaster).toBe("sports_nfl");
+  });
+  it("carries the earned weight with its halves, and the retired label, from the primary score", () => {
+    const rows = league(viewRows([
+      score({ earned_weight: { weight: 0.88, n: 40, first_half: 0.91, second_half: 0.84 }, retired: true }),
+      score({ forecaster: "sports_cfb" }),
+    ]));
+    const mine = rows.find((r) => r.primary.forecaster === "sports_nfl");
+    expect(mine?.earnedWeight).toBe("0.88 (halves 0.91 / 0.84)");
+    expect(mine?.retired).toBe(true);
+    const other = rows.find((r) => r.primary.forecaster === "sports_cfb");
+    expect(other?.earnedWeight).toBeNull();
+    expect(other?.retired).toBe(false);
+  });
+  it("prints an em dash for an unmeasured half, and nothing when there is no weight", () => {
+    expect(earnedWeightText({ weight: 0.5, n: 9, first_half: null, second_half: 0.4 })).toBe("0.50 (halves — / 0.40)");
+    expect(earnedWeightText({ weight: null, n: 0, first_half: null, second_half: null })).toBeNull();
+    expect(earnedWeightText(null)).toBeNull();
+    expect(earnedWeightText(undefined)).toBeNull();
   });
 });
