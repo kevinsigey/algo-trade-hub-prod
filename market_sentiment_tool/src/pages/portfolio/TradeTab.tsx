@@ -224,7 +224,17 @@ function ManualActions({ book }: { book: string }) {
         .then(start)
         .catch((err) => {
           if (cancelled) return;
-          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) return;
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            // Signed out -- including a session that lapsed after
+            // transient failures already started the retry poller:
+            // stop polling and clear the failed-read state, so a
+            // visitor neither polls a 401 every 30 s nor keeps the
+            // warning box (CodeRabbit, on merged #514).
+            stopCheck?.();
+            stopCheck = undefined;
+            setCheckFailed(false);
+            return;
+          }
           setCheckFailed(true);
           attempts += 1;
           if (attempts <= 2) {
