@@ -20,8 +20,9 @@ Kalshi pulls, not a deeper study.
 
 --golden <stored.json> additionally compares the replay for the pulled
 range against exported fifteen_window_offsets rows and prints the
-golden-check verdict (probability fidelity gated; quote agreement
-reported).
+golden-check verdict (the three-part gate of plan Step A0 item 4b:
+tape probability fidelity per entry minute, tick material agreement,
+quotes and sides).
 """
 
 from __future__ import annotations

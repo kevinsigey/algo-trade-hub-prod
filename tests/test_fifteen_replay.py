@@ -74,9 +74,11 @@ def test_replay_pnl_follows_the_rule_for_a_winning_yes():
 
 def test_golden_compare_separates_prob_fidelity_from_quotes():
     replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.5000005,
-               "side": "yes", "side_cost": 0.60, "edge_net": 0.12},
+               "side": "yes", "side_cost": 0.60, "edge_net": 0.12,
+               "yes_bid": 0.58, "yes_ask": 0.60},
               {"series": "S", "target": "T", "offset_min": 6, "prob_up": 0.40,
-               "side": None, "side_cost": None, "edge_net": 0.05}]
+               "side": None, "side_cost": None, "edge_net": 0.05,
+               "yes_bid": None, "yes_ask": None}]
     stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.50,
                "prob_source": "tick", "side": "no", "side_cost": 0.41, "edge_net": 0.11},
               {"series": "S", "target": "T", "offset_min": 6, "prob_up": 0.400004,
@@ -85,13 +87,17 @@ def test_golden_compare_separates_prob_fidelity_from_quotes():
     assert out["matched"] == 2 and out["prob_compared"] == 2
     assert out["prob_within_tolerance"] == 2  # both within the 5dp rounding bound
     assert out["prob_within_1e-6"] == 1
-    assert out["side_compared"] == 1 and out["side_agree"] == 0  # quotes differ; reported, not gated
+    assert out["side_compared"] == 1 and out["side_agree"] == 0
     assert out["by_source"]["tape"]["prob_within_tolerance"] == 1
     assert out["prob_within_material"] == 2
     assert out["by_source"]["tick"]["prob_within_material"] == 1
-    assert out["gate"]["tape_within_tolerance_share"] == 1.0
-    assert out["gate"]["tick_within_material_share"] == 1.0
-    assert out["gate"]["pass"] is True
+    # (a) and (b) pass on these rows; (c) fails on the side disagreement.
+    assert out["gate"]["a_tape"]["pass"] is True
+    assert out["gate"]["b_tick"]["pass"] is True
+    assert out["gate"]["b_tick"]["within_material_share"] == 1.0
+    assert out["gate"]["c_quotes_sides"]["side_share"] == 0.0
+    assert out["gate"]["c_quotes_sides"]["pass"] is False
+    assert out["gate"]["pass"] is False
 
 
 def test_golden_gate_fails_when_tape_rows_do_not_reproduce():
@@ -100,8 +106,8 @@ def test_golden_gate_fails_when_tape_rows_do_not_reproduce():
     stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.50,
                "prob_source": "tape", "side": None, "side_cost": None, "edge_net": None}]
     out = golden_compare(replay, stored)
-    assert out["gate"]["tape_within_tolerance_share"] == 0.0
-    assert out["gate"]["tape_pass"] is False and out["gate"]["pass"] is False
+    assert out["tape_by_offset"][5]["share"] == 0.0
+    assert out["gate"]["a_tape"]["pass"] is False and out["gate"]["pass"] is False
 
 
 def test_golden_gate_fails_when_tick_rows_disagree_materially():
@@ -110,5 +116,62 @@ def test_golden_gate_fails_when_tick_rows_disagree_materially():
     stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.50,
                "prob_source": "tick", "side": None, "side_cost": None, "edge_net": None}]
     out = golden_compare(replay, stored)
-    assert out["gate"]["tick_within_material_share"] == 0.0
-    assert out["gate"]["tick_pass"] is False and out["gate"]["pass"] is False
+    assert out["gate"]["b_tick"]["within_material_share"] == 0.0
+    assert out["gate"]["b_tick"]["pass"] is False and out["gate"]["pass"] is False
+
+
+def test_golden_side_agreement_counts_the_side_not_the_cost():
+    # Regression: the first comparator required the trade cost to match
+    # exactly as well, and reported 18.6% "side agreement" on the real
+    # Nov 6-12 run when sides alone agreed 99.2% of the time.
+    replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.60,
+               "side": "yes", "side_cost": 0.44, "edge_net": 0.12,
+               "yes_bid": 0.42, "yes_ask": 0.44}]
+    stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.600001,
+               "prob_source": "tick", "side": "yes", "side_cost": 0.40, "edge_net": 0.13}]
+    out = golden_compare(replay, stored)
+    assert out["side_compared"] == 1 and out["side_agree"] == 1
+    assert out["side_share"] == 1.0
+    assert out["edge_compared"] == 1 and out["edge_share"] == 1.0
+
+
+def test_golden_gate_c_fails_on_quote_divergence():
+    replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.60,
+               "side": "yes", "side_cost": 0.60, "edge_net": 0.12,
+               "yes_bid": 0.58, "yes_ask": 0.60}]
+    stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.600001,
+               "prob_source": "tick", "side": "yes", "side_cost": 0.40, "edge_net": 0.12}]
+    out = golden_compare(replay, stored)
+    assert out["side_share"] == 1.0  # same side, honestly counted
+    assert abs(out["quote_median_abs_diff"] - 0.20) < 1e-9
+    assert out["gate"]["c_quotes_sides"]["pass"] is False
+    assert out["gate"]["pass"] is False
+
+
+def test_golden_gate_passes_when_all_three_parts_pass():
+    replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.500001,
+               "side": None, "side_cost": None, "edge_net": None,
+               "yes_bid": None, "yes_ask": None},
+              {"series": "S", "target": "T", "offset_min": 6, "prob_up": 0.60,
+               "side": "yes", "side_cost": 0.605, "edge_net": 0.12,
+               "yes_bid": 0.585, "yes_ask": 0.605}]
+    stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.50,
+               "prob_source": "tape", "side": None, "side_cost": None, "edge_net": None},
+              {"series": "S", "target": "T", "offset_min": 6, "prob_up": 0.6005,
+               "prob_source": "tick", "side": "yes", "side_cost": 0.60, "edge_net": 0.11}]
+    out = golden_compare(replay, stored)
+    assert out["gate"]["a_tape"]["pass"] is True
+    assert out["gate"]["b_tick"]["pass"] is True
+    assert out["gate"]["c_quotes_sides"]["pass"] is True
+    assert out["gate"]["pass"] is True
+
+
+def test_golden_uncomparable_rows_are_counted_not_dropped():
+    replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": None,
+               "side": None, "side_cost": None, "edge_net": None,
+               "yes_bid": None, "yes_ask": None}]
+    stored = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.50,
+               "prob_source": "tick", "side": "yes", "side_cost": 0.40, "edge_net": 0.12}]
+    out = golden_compare(replay, stored)
+    assert out["matched"] == 1 and out["prob_compared"] == 0
+    assert out["uncomparable"] == {"prob": 1, "quote": 1}
