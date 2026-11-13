@@ -112,7 +112,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 87 | `20261113000002_journal_scores_earned_weight.sql` (applied 2026-11-13 by Claude through the Supabase connector as `journal_scores_earned_weight`, connector version 20261113021745, on Kevin's go for action-plan step 9; read back: `earned_weight` jsonb, nullable, present on journal_scores. Its companion lane-key migration (the 20261113000001 file) was applied just before it (connector version 20261113021744) and is recorded with the demo-lane PR that carries its file) |
 | 88 | `20261113000001_kalshi_demo_orders_lane_key.sql` (applied 2026-11-13 by Claude through the Supabase connector as `kalshi_demo_orders_lane_key`, connector version 20261113021744, on Kevin's go for action plan Step B.3; read back: `gate_version` NOT NULL (1 live row, 0 nulls), the old (series, target) key dropped, `kalshi_demo_orders_series_target_gate_key` UNIQUE (series, target, gate_version) present. Row 88 though its filename sorts before row 87's: it was applied first, and row 87's PR shipped first -- the watermark stays at `20261113000002`, the newest filename) |
 
-**Watermark: `20261113000002_journal_scores_earned_weight.sql`**
+| 89 | `20261113000003_kalshi_demo_orders_last_error.sql` (NOT APPLIED -- written ahead with the Kalshi demo placement-reliability PR (branch `rev/kalshi-placement-reliability`), awaiting Kevin's go through Claude. Adds nullable `last_error` text to `kalshi_demo_orders`; the runner writes it best-effort (a refused write no-ops) and is correct without it, with the watcher_alerts outbox carrying placement errors until it lands. The watermark advances to this filename because the ledger test tracks the newest file on disk, not applied state) |
+
+**Watermark: `20261113000003_kalshi_demo_orders_last_error.sql`**
 
 ## How to record a new one
 
