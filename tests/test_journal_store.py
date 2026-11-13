@@ -370,6 +370,54 @@ def test_upsert_score_still_writes_when_gap_columns_are_not_deployed_yet(monkeyp
     assert rows[-1]["gap"] == -0.05 and rows[-1]["gap_se"] == 0.01
 
 
+def test_upsert_score_still_writes_when_earned_weight_is_not_deployed_yet(monkeypatch):
+    """The same deploy-order hazard, now for the earned_weight column added
+    by migration 20261113000002 (step 9). A card carrying `earned_weight`
+    names a column that does not exist until that migration is applied, so
+    PostgREST rejects the whole upsert; without earned_weight in the
+    fallback set, every scorecard would silently freeze at its last
+    written value -- the failure shape this whole branch exists to avoid.
+    """
+    from tradehub.journal import store
+
+    deployed = {"value": False}
+    rows: list[dict] = []
+
+    class Q:
+        def upsert(self, row, **_kw):
+            if "earned_weight" in row and not deployed["value"]:
+                raise RuntimeError(
+                    '{"code":"PGRST204","message":"Could not find the earned_weight'
+                    ' column of journal_scores in the schema cache"}')
+            rows.append({k: v for k, v in row.items()
+                         if deployed["value"] or k != "earned_weight"})
+            return self
+
+        def execute(self):
+            return type("R", (), {"data": rows})()
+
+    class S:
+        def table(self, _n):
+            return Q()
+
+    monkeypatch.setattr(store, "_PAIRED_BRIER_DEPLOYED", None)
+    ew = {"weight": 0.42, "n": 120, "first_half": 0.5, "second_half": 0.31,
+          "first_half_n": 60, "second_half_n": 60}
+    card = {"n_settled": 100, "brier": 0.2, "earned_weight": ew,
+            "gate_status": "SHADOW"}
+    now = datetime(2026, 10, 4, tzinfo=UTC)
+
+    store.upsert_score(S(), "f", "v1", card, now)
+    assert len(rows) == 1, "the scorecard was lost because a new column was not deployed yet"
+    assert "earned_weight" not in rows[0]
+
+    assert store._PAIRED_BRIER_DEPLOYED is False
+    deployed["value"] = True
+    store._PAIRED_BRIER_DEPLOYED = None
+    store.upsert_score(S(), "f", "v1", card, now)
+    assert rows[-1]["earned_weight"] == ew
+
+
 def test_an_unrelated_schema_error_is_not_cached_as_the_paired_columns_being_absent(monkeypatch):
     """The guard on the guard, matching the one added for `_missing_horizon_column`.
 
