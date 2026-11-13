@@ -36,6 +36,26 @@ the candidate's promotion bar. Caps and tallies are per lane -- each
 lane's day is counted from its own rows only.
 - The live rule, the blend's frozen rows, shadow scoring and the Alpaca
   paper-order path are untouched: this module only reads them.
+
+Placement reliability (2026-11-13): every gated buy a lane selects
+leaves a durable outcome in the same pass -- placed, skipped with its
+reason, or `failed` with its reason (claim insert refused) -- with one
+deliberate exception: a dead balance read writes no terminal row while
+the signal is still fresh (an alert fires instead and the next pass
+retries); the terminal `failed` row lands only on the decision's last
+fresh pass, so a one-pass blip cannot kill a live signal through the
+never-twice skip. A placement the exchange refuses records the refusal on
+the claim row itself (`last_error`, migration 20261113000003, written
+best-effort until it is applied), so at the cutoff the row closes as
+`placement_failed`, never under the generic `placement_interrupted`
+that means "no error recorded and nothing found on the exchange"
+(2026-11-12's 00:52Z claim was refused HTTP 410 twice -- the retired V1
+endpoint -- and written off as interrupted, the real error only in the
+log). Drops and write-offs also go to the watcher_alerts outbox
+(kind `kalshi_demo`, deduplicated per target + event), the delivery
+channel Kevin already watches. Adoption by client_order_id sweeps the
+resting, executed and canceled order lists, so an order that filled or
+expired before the adopting pass is still found.
 """
 
 from __future__ import annotations
@@ -59,7 +79,10 @@ GAS_SERIES = tuple(s for s in rule.SERIES if s[0] == "natgas_15m")
 ORDERS = "kalshi_demo_orders"
 DECISIONS = rule.DECISIONS_TABLE
 TICKS = fifteen_tracking.TICKS_TABLE
+ALERTS_TABLE = "watcher_alerts"
+ALERT_KIND = "kalshi_demo"
 
+PASS_INTERVAL = timedelta(minutes=5)    # the runner's cron cadence (2-57/5)
 CANCEL_BUFFER = timedelta(seconds=60)   # orders die one minute before the window closes
 FRESHNESS = timedelta(minutes=20)       # a decision older than this is stale, never chased
 ET = ZoneInfo("America/New_York")
@@ -188,7 +211,8 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "gate_version": None, "candidates": 0, "other_gate_versions": 0,
         "placed": 0, "adopted": 0, "skipped_cap": 0, "skipped_no_depth": 0,
-        "cancelled": 0, "settled": 0, "decision_mismatch": 0, "errors": [],
+        "failed": 0, "cancelled": 0, "settled": 0, "decision_mismatch": 0,
+        "errors": [],
     }
     try:
         portfolio.assert_demo_host()
@@ -235,7 +259,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                           if d.get("edge_net") is not None
                           and float(d["edge_net"]) >= lane["min_edge"]]
         lane_summary = {"candidates": len(lane_fresh), "placed": 0,
-                        "skipped_cap": 0, "skipped_no_depth": 0}
+                        "skipped_cap": 0, "skipped_no_depth": 0, "failed": 0}
         summary["lanes"][lane["gate_version"]] = lane_summary
         _trade_lane(supa, portfolio, now, lane, lane_fresh, rows, by_key,
                     day_start, summary, lane_summary)
@@ -267,6 +291,7 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             price = r.get("fill_price") or r["limit_price"]
             loss_used += filled * float(price)
 
+    balance_dead = False
     for d in fresh:
         target = d["target"]
         existing = by_key.get((target, version))
@@ -280,11 +305,6 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             loss_used += int(existing["contracts"]) * float(existing["limit_price"])
             continue
         cost = float(d["cost"])
-        balance = _balance_usd(portfolio)
-        if balance is None:
-            summary["errors"].append("balance unavailable; placements paused this pass")
-            break
-        contracts = size_contracts(balance, cost, pct)
         base_row = {
             "series": SERIES, "target": target,
             "ticker": d.get("ticker") or ticker_of(target),
@@ -293,6 +313,24 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             "window_close": _iso(_dt(d["close_time"])),
             "client_order_id": f"{lane['client_prefix']}{d.get('ticker') or ticker_of(target)}",
         }
+        # Every decision this lane selected leaves a durable outcome in
+        # this same pass. A dead balance read used to abandon the rest
+        # of the lane with nothing but a log line; now it alerts (and,
+        # on the decision's last fresh pass, records the terminal
+        # `failed` row) -- see _balance_failure. When a claim is already
+        # pending, the error is noted on that claim instead: the claim
+        # itself is its durable record and is never overwritten by a
+        # terminal state.
+        if balance_dead:
+            _balance_failure(supa, existing, base_row, summary, lane_summary, now)
+            continue
+        balance = _balance_usd(portfolio)
+        if balance is None:
+            balance_dead = True
+            summary["errors"].append("balance unavailable; placements paused this pass")
+            _balance_failure(supa, existing, base_row, summary, lane_summary, now)
+            continue
+        contracts = size_contracts(balance, cost, pct)
         depth = ask_size_at(supa, SERIES, d["close_time"], d["side"], now)
         if depth is not None and depth < 1:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
@@ -322,7 +360,29 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                  "expires_at": _iso(expires), "status": "pending"}
         row = existing or _insert(supa, claim, summary)
         if row is None:
-            continue  # insert failed (unique backstop) -- already traded elsewhere
+            # The claim insert itself was refused. A bare `continue`
+            # here was a silent drop: the decision existed only in this
+            # pass's log line. Record the failure durably and alert --
+            # unless the refusal is the unique key saying the row
+            # already exists: a racing pass claimed it between this
+            # pass's read and its insert. That is not a dropped signal,
+            # so it earns no `failed` record and no alert; the row is
+            # picked up and the next pass treats it as its own.
+            detail = summary.pop("_claim_error", "claim insert refused")
+            if _is_unique_violation(detail):
+                summary["errors"] = [
+                    e for e in summary["errors"]
+                    if e != f"claim {target}: {detail}"]
+                found = _find_row(supa, target, version)
+                if found is not None:
+                    by_key[(target, version)] = found
+                    continue
+            failed_row = _record_failure(
+                supa, base_row, reason="claim_failed", detail=detail,
+                summary=summary, lane_summary=lane_summary)
+            if failed_row is not None:
+                by_key[(target, version)] = failed_row
+            continue
         by_key[(target, version)] = row
         try:
             order = portfolio.create_order(
@@ -332,6 +392,22 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                 expiration_ts=int(expires.timestamp()))
         except Exception as exc:  # noqa: BLE001 -- leave pending; reconcile owns it
             summary["errors"].append(f"place {target}: {exc}")
+            # The refusal is recorded on the claim itself and alerted
+            # now, not reconstructed (wrongly) at the cutoff: a refused
+            # placement must stay distinguishable from a lost response.
+            _note_error(supa, row, f"place: {exc}")
+            _alert_drop(
+                supa, target=target, version=version, event="placement_failed",
+                title=f"Kalshi demo placement failed: {base_row['ticker']}",
+                body=(f"The demo runner's order for {base_row['ticker']} "
+                      f"({d['side']} x{contracts} @ {cost}) was refused by "
+                      f"the exchange: {exc}. The claim stays pending and "
+                      "is retried while the window is open; if it never "
+                      "lands it closes as placement_failed at the cutoff, "
+                      "not as a fill. Demo account; nothing was placed."),
+                evidence={"ticker": base_row["ticker"], "side": d["side"],
+                          "contracts": contracts, "limit_price": cost,
+                          "error": str(exc)[:300]})
             continue
         _update(supa, row, {"kalshi_order_id": order.get("order_id"),
                             "status": "resting", "contracts": contracts,
@@ -343,18 +419,138 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
         lane_summary["placed"] += 1
 
 
+def _note_error(supa, row: dict, message: str) -> None:
+    """Best-effort: persist WHY a placement failed on the order row
+    itself (the `last_error` column, migration 20261113000003). Until
+    that migration is applied the write is refused by PostgREST and
+    silently no-ops -- the journal store's missing-column hazard in
+    reverse: recording must never break the pass it records. The alert
+    outbox carries the same error from day one; this column puts it on
+    the row the demo tab displays."""
+    try:
+        _update(supa, row, {"last_error": str(message)[:500]})
+    except Exception:  # noqa: BLE001 -- column not deployed yet, or DB hiccup
+        pass
+
+
+def _alert_drop(supa, *, target: str, version: str | None, event: str,
+                title: str, body: str,
+                evidence: dict[str, Any] | None = None) -> bool:
+    """One pending watcher_alerts row for a dropped or written-off demo
+    placement, deduplicated on (target, gate_version, event) across all
+    rows ever written -- modeled on gate_alerts.write_gate_alert (same
+    outbox, same poller delivery), with its own kind: a drop is
+    announced once, however many passes observe it. Fail-soft: a missed
+    alert must never break the pass."""
+    try:
+        rows = (supa.table(ALERTS_TABLE).select("id,evidence")
+                .eq("kind", ALERT_KIND).execute().data) or []
+        for r in rows:
+            ev = r.get("evidence") or {}
+            if (ev.get("target") == target and ev.get("gate_version") == version
+                    and ev.get("event") == event):
+                return False
+        ev = dict(evidence or {})
+        ev.update({"target": target, "gate_version": version, "event": event})
+        supa.table(ALERTS_TABLE).insert({
+            "kind": ALERT_KIND, "watch_id": None, "family": "kalshi_demo",
+            "title": title, "body": body, "evidence": ev, "status": "pending",
+        }).execute()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _record_failure(supa, base_row: dict, *, reason: str, detail: str,
+                    summary: dict, lane_summary: dict) -> dict | None:
+    """The durable outcome for a decision a lane selected but could not
+    even claim (balance read down, claim insert refused): a terminal
+    `failed` row under the same never-twice key, carrying its reason,
+    plus the outbox alert -- so the signal is on the record instead of
+    existing only in the run's log. Returns the row when it landed."""
+    row = None
+    try:
+        data = supa.table(ORDERS).insert(
+            {**base_row, "contracts": 0, "status": "failed",
+             "skip_reason": reason}).execute().data
+        row = (data or [None])[0]
+    except Exception:  # noqa: BLE001 -- even the failure record can be refused;
+        row = None  # the alert below is the second channel
+    if row is not None and detail:
+        _note_error(supa, row, detail)
+    _alert_drop(
+        supa, target=base_row["target"], version=base_row["gate_version"],
+        event=reason,
+        title=f"Kalshi demo dropped a signal: {base_row['ticker']}",
+        body=(f"The demo runner selected this gated buy "
+              f"({base_row['side']} @ {base_row['limit_price']}) but could "
+              f"not place it: {reason} -- {detail}. It is recorded as "
+              "failed on the demo order record. Demo account; nothing "
+              "was placed."),
+        evidence={"ticker": base_row["ticker"], "side": base_row["side"],
+                  "limit_price": base_row["limit_price"], "detail": detail})
+    summary["failed"] += 1
+    lane_summary["failed"] += 1
+    return row
+
+
+def _balance_failure(supa, existing: dict | None, base_row: dict,
+                     summary: dict, lane_summary: dict,
+                     now: datetime) -> None:
+    """The balance-unavailable outcome for one selected decision. A
+    pending claim is already the durable record -- note the error on it
+    and leave its state alone (it may still place next pass). With no
+    claim yet, a terminal `failed` row would end the decision for good
+    (the never-twice skip checks for exactly that row), so a one-pass
+    balance blip must not write one while the signal is still fresh:
+    alert only and let the next pass retry. The terminal record lands
+    on the decision's last fresh pass -- when its cutoff falls within
+    one more runner interval, no later pass will select it again."""
+    if existing is not None:
+        _note_error(supa, existing, "balance unavailable")
+        return
+    last_chance = (_dt(base_row["window_close"]) - CANCEL_BUFFER
+                   <= now + PASS_INTERVAL)
+    if not last_chance:
+        _alert_drop(
+            supa, target=base_row["target"],
+            version=base_row["gate_version"], event="balance_unavailable",
+            title=f"Kalshi demo balance read down: {base_row['ticker']}",
+            body=(f"The demo runner selected this gated buy "
+                  f"({base_row['side']} @ {base_row['limit_price']}) but "
+                  "the balance read failed, so sizing is impossible and "
+                  "nothing was placed this pass. No terminal record is "
+                  "written while the signal is fresh -- the next pass "
+                  "retries it. Demo account; nothing was placed."),
+            evidence={"ticker": base_row["ticker"], "side": base_row["side"],
+                      "limit_price": base_row["limit_price"],
+                      "detail": "balance read failed; placement deferred "
+                                "to the next pass"})
+        return
+    _record_failure(supa, base_row, reason="balance_unavailable",
+                    detail="balance read failed; sizing is impossible "
+                           "without it, so nothing was placed",
+                    summary=summary, lane_summary=lane_summary)
+
+
 def _find_by_client_order_id(portfolio, client_order_id: str) -> dict | None:
-    """The exchange's own record of an order we may already have placed."""
+    """The exchange's own record of an order we may already have placed.
+
+    Sweeps the default read, then the executed and canceled lists: an
+    order that filled, expired or was canceled before the adopting pass
+    may not appear in the default (resting) view, and missing it would
+    write a real order off as never placed."""
     get_orders = getattr(portfolio, "get_orders", None)
     if get_orders is None:
         return None
-    try:
-        orders = get_orders()
-    except Exception:  # noqa: BLE001 -- unreadable is not absent; the caller falls through
-        return None
-    for order in orders or []:
-        if order.get("client_order_id") == client_order_id:
-            return order
+    for status in (None, "executed", "canceled"):
+        try:
+            orders = get_orders(status=status) if status else get_orders()
+        except Exception:  # noqa: BLE001 -- unreadable is not absent; try the next view
+            continue
+        for order in orders or []:
+            if order.get("client_order_id") == client_order_id:
+                return order
     return None
 
 
@@ -382,11 +578,29 @@ def _balance_usd(portfolio) -> float | None:
     return float(data["balance"]) / 100.0
 
 
+def _is_unique_violation(detail: str) -> bool:
+    """True when a refused insert is the (series, target, gate_version)
+    unique key answering -- the row already exists -- rather than a
+    refusal of the write itself. PostgREST surfaces the Postgres
+    wording and the 23505 code; either marks it."""
+    return "duplicate key" in detail or "23505" in detail
+
+
+def _find_row(supa, target: str, version: str) -> dict | None:
+    """The order row for one (target, gate_version) key, re-read after
+    a racing pass may have claimed it mid-pass."""
+    for r in _select(supa, ORDERS, {"target": target}, limit=50):
+        if r.get("gate_version") == version:
+            return r
+    return None
+
+
 def _insert(supa, row: dict, summary: dict) -> dict | None:
     try:
         data = supa.table(ORDERS).insert(row).execute().data
     except Exception as exc:  # noqa: BLE001 -- unique (series, target) backstop
         summary["errors"].append(f"claim {row['target']}: {exc}")
+        summary["_claim_error"] = str(exc)  # popped by the failure recorder
         return None
     return (data or [row])[0]
 
@@ -486,9 +700,32 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
             # it fall through to the fill/cancel handling below, rather than
             # writing a live order off as placement_interrupted.
             if not _adopt_if_accepted(supa, portfolio, row, summary):
+                # Truthful terminal label: a claim carrying a recorded
+                # refusal was REFUSED (placement_failed); only a claim
+                # with no recorded error and nothing on the exchange is
+                # an interruption -- a lost response or a killed pass.
+                # Either way the write-off is alerted: a dropped claim
+                # must not sit silently in the table.
+                reason = ("placement_failed" if row.get("last_error")
+                          else "placement_interrupted")
                 _update(supa, row, {"status": "cancelled",
-                                    "skip_reason": "placement_interrupted"})
+                                    "skip_reason": reason})
                 summary["cancelled"] += 1
+                _alert_drop(
+                    supa, target=row["target"],
+                    version=row.get("gate_version"), event="written_off",
+                    title=f"Kalshi demo claim written off: {row['ticker']}",
+                    body=(f"A pending demo claim for {row['ticker']} "
+                          f"reached its cutoff with no order on the "
+                          f"exchange and was closed as {reason}."
+                          + (f" Recorded error: {row['last_error']}"
+                             if row.get("last_error") else
+                             " No placement error was recorded; the "
+                             "placement response was lost or the pass was "
+                             "interrupted.")
+                          + " Demo account; nothing was placed."),
+                    evidence={"ticker": row["ticker"], "skip_reason": reason,
+                              "last_error": row.get("last_error")})
                 continue
         oid = row.get("kalshi_order_id")
         fill = fills.get(oid or "", {})
@@ -751,8 +988,16 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
                 "caps": sum(1 for r in rows if r["status"] == "skipped_cap"),
                 "no_depth": sum(1 for r in rows
                                 if r["status"] == "skipped_no_depth"),
-                "missed": sum(1 for r in rows if r["status"] == "cancelled"
-                              and r.get("skip_reason") == "placement_interrupted"),
+                # Missed = selected placements that never reached the
+                # exchange: interrupted claims, refused placements
+                # written off at the cutoff, and `failed` rows (balance
+                # read down, claim insert refused).
+                "missed": sum(1 for r in rows
+                              if r["status"] == "failed"
+                              or (r["status"] == "cancelled"
+                                  and r.get("skip_reason") in
+                                  ("placement_interrupted",
+                                   "placement_failed"))),
             },
         },
         "orders": [{
@@ -764,6 +1009,7 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
             "limit_price": r["limit_price"], "frozen_quote": r["frozen_quote"],
             "ask_size": r.get("ask_size"), "status": r["status"],
             "skip_reason": r.get("skip_reason"),
+            "last_error": r.get("last_error"),
             "fill_price": r.get("fill_price"), "filled_at": r.get("filled_at"),
             "window_close": r["window_close"], "outcome": r.get("outcome"),
             "settlement_pnl": r.get("settlement_pnl"),

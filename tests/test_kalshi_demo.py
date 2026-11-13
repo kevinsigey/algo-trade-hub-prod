@@ -687,3 +687,277 @@ def test_report_splits_the_lanes():
     assert lanes[kd.LANE_VERSION]["pnl"] == -1.20
     assert lanes[kd.LANE_VERSION]["win_rate"] == 0.0
     assert report["lanes"][-1]["gate_version"] == kd.LANE_VERSION
+
+
+# -- placement reliability (2026-11-13: the silent drops) ----------------------
+# On 2026-11-12 a gated buy at 21:05Z left no trace at all (the pre-#511
+# read path -- not this layer), and the 00:52Z claim whose creates were
+# refused HTTP 410 (retired V1 endpoint) was written off at cutoff as
+# "placement_interrupted" with the real error only in the runner's log.
+# These tests pin the runner-side half: every selected decision leaves a
+# durable outcome, a refused placement is recorded as refused, and an
+# interrupted claim is reconciled against the exchange before anything
+# else happens to it.
+
+TICKER_B = "KXNATGAS15M-26NOV121230-30"
+TARGET_B = f"kalshi:{TICKER_B}"
+TICKER_C = "KXNATGAS15M-26NOV121245-45"
+TARGET_C = f"kalshi:{TICKER_C}"
+
+
+class EndpointGonePortfolio(FakePortfolio):
+    """Every create is refused by the exchange (the retired-endpoint 410
+    of 2026-11-13); no order ever exists to adopt."""
+
+    def __init__(self):
+        super().__init__()
+        self.create_calls = 0
+
+    def create_order(self, **kw):
+        self.create_calls += 1
+        raise RuntimeError(
+            'Kalshi write failed: HTTP 410 -- {"error":'
+            '{"code":"deprecated_v1_order_endpoint"}}')
+
+
+class ExecutedOnlyPortfolio(FakePortfolio):
+    """The create lands and fills, its response is lost, and the order is
+    visible only under the executed status filter -- the default orders
+    read never shows it."""
+
+    def __init__(self):
+        super().__init__()
+        self.create_calls = 0
+        self.accepted = []
+
+    def create_order(self, **kw):
+        self.create_calls += 1
+        self.accepted.append({"order_id": "ord-exec", "status": "executed",
+                               "client_order_id": kw["client_order_id"]})
+        raise TimeoutError("response lost after acceptance")
+
+    def get_orders(self, status=None):
+        if status == "executed":
+            return list(self.accepted)
+        return []
+
+
+class NoBalancePortfolio(FakePortfolio):
+    def get_balance(self):
+        raise ConnectionError("balance read failed")
+
+
+class ClaimRefusingDB(DB):
+    """The claim insert (a `pending` row) is refused once; every other
+    write lands. Stands in for a transient DB refusal at claim time."""
+
+    def __init__(self):
+        super().__init__()
+        self.refused = 0
+
+    def table(self, name):
+        q = super().table(name)
+        if name != kd.ORDERS:
+            return q
+        orig = q.execute
+
+        def execute():
+            if (q.row is not None and not isinstance(q.row, list)
+                    and q.row.get("status") == "pending" and self.refused == 0):
+                self.refused += 1
+                raise RuntimeError("claim insert refused (simulated)")
+            return orig()
+
+        q.execute = execute
+        return q
+
+
+def _alerts(db):
+    return db.db.get("watcher_alerts", [])
+
+
+def _alert_events(db):
+    return sorted((a.get("evidence") or {}).get("event")
+                  for a in _alerts(db))
+
+
+def test_placement_refusal_is_recorded_on_the_row_and_closes_as_failed():
+    db = seed(DB(), open_=[decision()])
+    pf = EndpointGonePortfolio()
+
+    first = kd.run_once(db, pf, NOW)
+    assert first["placed"] == 0 and pf.create_calls == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "pending"
+    assert "410" in (row.get("last_error") or "")
+    assert "placement_failed" in _alert_events(db)
+
+    second = kd.run_once(db, pf, NOW + timedelta(minutes=5))
+    assert second["placed"] == 0 and pf.create_calls == 2  # retried while fresh
+    assert db.db[kd.ORDERS][0]["status"] == "pending"
+
+    db.db["_open"] = []
+    third = kd.run_once(db, pf, NOW + timedelta(minutes=11))
+    row = db.db[kd.ORDERS][0]
+    assert len(db.db[kd.ORDERS]) == 1
+    assert row["status"] == "cancelled"
+    # The exchange REFUSED this placement, twice, for a recorded reason:
+    # the row must not be written off as a generic interruption.
+    assert row["skip_reason"] == "placement_failed"
+    assert row.get("kalshi_order_id") is None
+    assert pf.create_calls == 2  # never re-placed after the cutoff
+    assert third["cancelled"] == 1
+    assert "written_off" in _alert_events(db)
+
+
+def test_executed_order_is_adopted_by_client_order_id():
+    db = seed(DB(), open_=[decision()])
+    pf = ExecutedOnlyPortfolio()
+    assert kd.run_once(db, pf, NOW)["placed"] == 0
+    assert db.db[kd.ORDERS][0]["status"] == "pending"
+
+    second = kd.run_once(db, pf, NOW + timedelta(minutes=1))
+    row = db.db[kd.ORDERS][0]
+    assert second["adopted"] == 1 and pf.create_calls == 1
+    assert row["status"] == "resting" and row["kalshi_order_id"] == "ord-exec"
+
+
+class ClaimRacedDB(DB):
+    """A racing pass claims the row between this pass's read and its
+    claim insert: the row lands, and the insert is answered with the
+    unique key's refusal."""
+
+    def __init__(self):
+        super().__init__()
+        self.raced = 0
+
+    def table(self, name):
+        q = super().table(name)
+        if name != kd.ORDERS:
+            return q
+        orig = q.execute
+
+        def execute():
+            if (q.row is not None and not isinstance(q.row, list)
+                    and q.row.get("status") == "pending" and self.raced == 0):
+                self.raced += 1
+                self.db.setdefault(name, []).append(dict(q.row))
+                raise RuntimeError(
+                    "duplicate key value violates unique constraint "
+                    "\"kalshi_demo_orders_series_target_gate_version_key\"")
+            return orig()
+
+        q.execute = execute
+        return q
+
+
+def test_claim_race_is_not_a_dropped_signal():
+    # The unique key refusing the claim because a racing pass already
+    # wrote the row is not a failure: no `failed` record, no alert, and
+    # this pass places nothing (the row's owner places it).
+    db = seed(ClaimRacedDB(), open_=[decision()])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["failed"] == 0
+    assert pf.placed == []
+    rows = db.db[kd.ORDERS]
+    assert len(rows) == 1 and rows[0]["status"] == "pending"
+    assert "claim_failed" not in _alert_events(db)
+
+
+def test_the_two_lanes_client_order_ids_differ():
+    db = seed(DB(), open_=[decision(edge_net=0.25)])
+    kd.run_once(db, FakePortfolio(), NOW)
+    ids = {r["gate_version"]: r["client_order_id"]
+           for r in db.db[kd.ORDERS]}
+    assert ids["v1"] != ids["v4-edge20-shadow"]
+
+
+def test_claim_refusal_still_leaves_a_durable_outcome():
+    db = seed(ClaimRefusingDB(), open_=[decision()])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == []
+    assert out["failed"] == 1
+    rows = db.db[kd.ORDERS]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["skip_reason"] == "claim_failed"
+    assert "claim_failed" in _alert_events(db)
+
+
+def test_balance_outage_alerts_and_retries_without_a_terminal_row():
+    # A dead balance read while the signals are still fresh must not
+    # write the terminal `failed` row: the never-twice skip keys on it,
+    # so one blip would kill both signals for good. Alert only; the
+    # next pass retries them.
+    db = seed(DB(), open_=[decision(),
+                           decision(ticker=TICKER_B, target=TARGET_B)])
+    out = kd.run_once(db, NoBalancePortfolio(), NOW)
+    assert out["failed"] == 0
+    assert db.db[kd.ORDERS] == []
+    assert _alert_events(db) == ["balance_unavailable", "balance_unavailable"]
+
+    placed = kd.run_once(db, FakePortfolio(), NOW + timedelta(minutes=5))
+    assert placed["placed"] == 2
+    assert {r["target"] for r in db.db[kd.ORDERS]} == {TARGET, TARGET_B}
+    assert all(r["status"] == "resting" for r in db.db[kd.ORDERS])
+
+
+def test_balance_outage_on_the_last_fresh_pass_goes_terminal():
+    # When a decision's cutoff falls within one more runner interval,
+    # no later pass will select it again: the terminal record lands.
+    last = (NOW + timedelta(minutes=5)).isoformat()
+    db = seed(DB(), open_=[decision(close_time=last),
+                           decision(ticker=TICKER_B, target=TARGET_B,
+                                    close_time=last)])
+    out = kd.run_once(db, NoBalancePortfolio(), NOW)
+    assert out["failed"] == 2
+    rows = db.db[kd.ORDERS]
+    assert len(rows) == 2
+    assert all(r["status"] == "failed" for r in rows)
+    assert all(r["skip_reason"] == "balance_unavailable" for r in rows)
+    assert {r["target"] for r in rows} == {TARGET, TARGET_B}
+    assert _alert_events(db) == ["balance_unavailable", "balance_unavailable"]
+
+
+def test_outcome_records_for_placed_skipped_and_failed_alike():
+    class MixedPortfolio(FakePortfolio):
+        def create_order(self, **kw):
+            if kw["ticker"] == TICKER_B:
+                raise RuntimeError("Kalshi write failed: HTTP 410")
+            return super().create_order(**kw)
+
+    dec_b = decision(ticker=TICKER_B, target=TARGET_B,
+                     close_time=(NOW + timedelta(minutes=25)).isoformat())
+    dec_c = decision(ticker=TICKER_C, target=TARGET_C,
+                     close_time=(NOW + timedelta(minutes=40)).isoformat())
+    db = seed(DB(),
+              open_=[decision(), dec_b, dec_c],
+              ticks=[{"series": kd.SERIES, "close_time": dec_c["close_time"],
+                      "at": NOW.isoformat(), "yes_ask_size": 0,
+                      "no_ask_size": 0}])
+    out = kd.run_once(db, MixedPortfolio(), NOW)
+    by_target = {r["target"]: r for r in db.db[kd.ORDERS]}
+    assert len(by_target) == 3
+    assert by_target[TARGET]["status"] == "resting"
+    assert by_target[TARGET_B]["status"] == "pending"
+    assert "410" in (by_target[TARGET_B].get("last_error") or "")
+    assert by_target[TARGET_C]["status"] == "skipped_no_depth"
+    assert out["placed"] == 1 and out["skipped_no_depth"] == 1
+    assert out["errors"] != []
+
+
+def test_interrupted_writeoff_alerts():
+    # The pre-existing truthful case (a claim whose process died, nothing
+    # recorded, nothing on the exchange) still closes as
+    # placement_interrupted -- but now it also reaches the alert outbox.
+    db = seed(DB(), orders=[order_row(
+        status="pending", kalshi_order_id=None,
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "cancelled"
+    assert row["skip_reason"] == "placement_interrupted"
+    assert out["cancelled"] == 1
+    assert "written_off" in _alert_events(db)
