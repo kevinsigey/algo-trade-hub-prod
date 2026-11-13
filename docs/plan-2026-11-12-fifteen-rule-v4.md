@@ -42,6 +42,30 @@ Goal: months of history instead of six days, so the question "which minute and w
      and spread. This **needs Kevin's go through Claude**: put the SQL in the PR and don't apply it.
    - Until the table exists, write the replay to a parquet or JSON file under `/cache/research/` so the study can
      run on it straight away.
+4b. **Golden check, re-specified (Claude's ruling, Nov 12, after Muse's first run).** The original "every probability
+   within 1e-6" check couldn't pass by construction. 82% of stored rows were computed from the live tick price at the
+   decision second, and the replay only has 1-minute candles. The first run showed the probability machinery is right:
+   tape-sourced rows match 95–100% at every offset (median diff 1.7e-6), and 99.75% of all rows are within 0.01.
+   **The new gate has three parts. All must pass before A0 ships:**
+   - **(a) Tape rows:** at every entry minute, ≥ 95% within 1e-5. Copper at minutes 13–14 is reported separately, not
+     waived.
+   - **(b) Tick rows:** ≥ 99% within 0.01, with the share within 1e-5 reported.
+   - **(c) Quotes and sides. This is the part that matters for choosing rules.**
+     - Compare the replay's yes bid and ask at each entry minute with the stored row's. The median absolute difference
+       must be ≤ 1¢, and ≥ 90% must be within 2¢.
+     - Where both the replay and the stored row trade, they must pick the **same side ≥ 90%** of the time, with the
+       edge within 3 points ≥ 90% of the time.
+     - The first run's side agreement was **18.6%**. Two sides at random would agree about 50% of the time, so 18.6% is
+       far below chance. That points to a systematic inversion, not candle noise. Check in this order:
+       1. yes and no swapped (the no-side cost should be 1 − yes_bid);
+       2. bid and ask swapped;
+       3. cents versus dollars;
+       4. **candle timing**: the minute-M candle covers [M, M+1), so its close comes *after* the decision. Use the
+          previous candle's close, or the minute-M open.
+       5. the strike direction for "above/below" markets.
+     - Fix it, rerun, and report (a), (b) and (c).
+   - A row that can't be compared (a missing quote on either side) is counted and reported, never dropped quietly.
+   Entry-timing results mean nothing if the replay prices the wrong side, so **(c) is a hard gate.**
 5. **Known limits**, to be stated on every output:
    - Candles have no order-book depth, so fills can't be proven. Treat the candle's ask as the price, and flag minutes
      where candle volume is 0 as **unfillable**.
