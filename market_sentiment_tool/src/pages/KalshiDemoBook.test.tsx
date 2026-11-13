@@ -38,6 +38,9 @@ const LIVE = {
     fill_rate: 0.6667, avg_slippage_cents: 0.5, win_rate: 0.5, pnl_per_contract: 0.1045,
     decisions_not_traded: { caps: 1, no_depth: 1, missed: 1 },
   },
+  lanes: [
+    { gate_version: "v1", orders: 1, settled: 1, win_rate: 1, pnl: 6.6, pnl_per_contract: 0.55 },
+  ],
   orders: [{
     id: 1, created_at: "2026-11-12T15:50:00Z", target: "kalshi:KXNATGAS15M-26NOV121200-00",
     ticker: "KXNATGAS15M-26NOV121200-00", side: "yes", gate_version: "v1",
@@ -197,5 +200,23 @@ describe("Kalshi (demo) Portfolio tab", () => {
     expect(await screen.findByText("$505.00")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Positions" })).getByText("—")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Open positions" })).getByText("—")).toBeInTheDocument();
+  });
+});
+
+describe("Kalshi demo lanes", () => {
+  it("shows each lane's own record in the Orders card when two lanes have traded", async () => {
+    serveKalshi({
+      ...LIVE,
+      lanes: [
+        { gate_version: "v1", orders: 4, settled: 3, win_rate: 0.6667, pnl: 6.6, pnl_per_contract: 0.55 },
+        { gate_version: "v4-edge20-shadow", orders: 2, settled: 1, win_rate: 0, pnl: -2.4, pnl_per_contract: -0.4 },
+      ],
+    });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "Orders" });
+    expect(within(card).getByText("v4-edge20-shadow")).toBeInTheDocument();
+    expect(within(card).getByText(/1 settled/)).toBeInTheDocument();
+    expect(within(card).getByText(/3 settled/)).toBeInTheDocument();
   });
 });

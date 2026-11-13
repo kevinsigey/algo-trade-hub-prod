@@ -50,6 +50,17 @@ export interface KalshiOrder {
   settlement_pnl: number | null;
 }
 
+/** One demo lane's own record: the live gate's lane and the candidate
+ * lane (v4-edge20-shadow) are never pooled. */
+export interface KalshiLane {
+  gate_version: string;
+  orders: number;
+  settled: number;
+  win_rate: number | null;
+  pnl: number;
+  pnl_per_contract: number | null;
+}
+
 export interface KalshiDemoNotConnected {
   state: "not_connected";
   demo: boolean;
@@ -69,6 +80,7 @@ export interface KalshiDemoLive {
    * is NOT known to be flat. */
   positions_unavailable: boolean;
   performance: KalshiPerformance;
+  lanes: KalshiLane[];
   orders: KalshiOrder[];
   note: string;
 }
