@@ -211,26 +211,30 @@ class KalshiPortfolio:
     def create_order(self, *, ticker: str, side: str, count: int,
                      limit_price_cents: int, client_order_id: str,
                      expiration_ts: int) -> dict:
-        """Place ONE buy limit order on the demo host.
+        """Place ONE buy limit order on the demo host (Create Order V2).
 
-        Price field follows the side: a yes buy carries yes_price, a no
-        buy carries no_price (Kalshi prices the bought side).
+        V2 prices only the YES leg: side is bid (buy YES) or ask (sell
+        YES), price is a fixed-point dollar string, count a 2-decimal
+        string. Buying NO at c cents is therefore an ask on YES at
+        (100 - c) cents. Expiry is good_till_canceled + expiration_time.
+        Response is flat: {order_id, client_order_id, fill_count,
+        remaining_count, ts_ms}.
         """
+        yes_cents = int(limit_price_cents) if side == "yes" else 100 - int(limit_price_cents)
         body = {
             "ticker": ticker,
             "client_order_id": client_order_id,
-            "side": side,
-            "action": "buy",
-            "type": "limit",
-            "count": int(count),
-            "expiration_ts": int(expiration_ts),
+            "side": "bid" if side == "yes" else "ask",
+            "count": f"{int(count)}.00",
+            "price": f"{yes_cents / 100:.4f}",
+            "time_in_force": "good_till_canceled",
+            "expiration_time": int(expiration_ts),
+            "self_trade_prevention_type": "taker_at_cross",
         }
-        body["yes_price" if side == "yes" else "no_price"] = int(limit_price_cents)
-        data = self._post("/portfolio/orders", body)
-        return data.get("order", data)
+        return self._post("/portfolio/events/orders", body)
 
     def cancel_order(self, order_id: str) -> dict:
-        return self._delete(f"/portfolio/orders/{order_id}")
+        return self._delete(f"/portfolio/events/orders/{order_id}")  # V2 cancel
 
     def get_order(self, order_id: str) -> dict | None:
         data = self._get(f"/portfolio/orders/{order_id}")
@@ -239,6 +243,8 @@ class KalshiPortfolio:
         return None
 
     def get_orders(self, status: str | None = None) -> list:
+        # Get Orders has no client_order_id filter; callers match client-side.
+        # status: resting | canceled | executed.
         params = {"status": status} if status else None
         data = self._get("/portfolio/orders", params=params)
         if data:
