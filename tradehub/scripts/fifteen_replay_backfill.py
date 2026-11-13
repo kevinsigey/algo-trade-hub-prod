@@ -12,6 +12,10 @@ Resumable: a `<out>/.done` file lists finished tickers; a re-run skips
 them. The replay goes to a file because the fifteen_replay_offsets table
 needs Kevin's go through Claude (the SQL is in the PR, unapplied).
 
+--binance-cache <dir> swaps the tape for the Binance Vision perp klines
+(A0b; the cross-venue outcome gate qualifies gold, silver, WTI and Brent
+only), which reach back through the whole Kalshi era.
+
 Coverage limit: Hyperliquid serves only the last ~3.5 days of 1-minute
 candles, so markets older than the tape's first candle replay with
 prob_up None (quotes and outcomes only). The run prints a tape_coverage
@@ -33,6 +37,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from tradehub.backtest import history_tapes
 from tradehub.backtest.fifteen_replay import golden_compare, replay_window
 from tradehub.backtest.kalshi_history import KalshiHistoryClient
 from tradehub.data.hyperliquid import hyperliquid_candles
@@ -100,7 +105,8 @@ def write_tapes(tapes: dict[str, list], tape_out: Path) -> list[str]:
 
 def run(out_dir: Path, start: datetime, end: datetime, *,
         series: list[str], sleep_s: float = 0.05,
-        tape_out: Path | None = None, haircut: float = 0.0) -> dict:
+        tape_out: Path | None = None, haircut: float = 0.0,
+        binance_cache: Path | None = None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path = out_dir / "fifteen_replay_offsets.jsonl"
     done_path = out_dir / ".done"
@@ -116,7 +122,11 @@ def run(out_dir: Path, start: datetime, end: datetime, *,
             markets.sort(key=lambda m: _market_close(m) or start)
             coin = SERIES_COINS[s]
             if coin not in tapes:
-                tapes[coin] = _tape(coin, start - TAPE_PAD_BEFORE, end + TAPE_PAD_AFTER)
+                tapes[coin] = (
+                    history_tapes.binance_tape(history_tapes.BINANCE_SYMBOLS[s], start - TAPE_PAD_BEFORE,
+                                               end + TAPE_PAD_AFTER, binance_cache)
+                    if binance_cache else
+                    _tape(coin, start - TAPE_PAD_BEFORE, end + TAPE_PAD_AFTER))
                 span = tapes[coin]
                 print(json.dumps({"tape_coverage": {
                     "coin": coin,
@@ -172,11 +182,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--haircut", type=float, default=0.0,
                     help="price replay trades at the candle ask + this many dollars "
                          "(Step A's replay haircut rule uses 0.01; leave 0 for --golden)")
+    ap.add_argument("--binance-cache", help="use the Binance Vision perp tape (A0b) instead of "
+                                           "Hyperliquid; downloaded files are cached here")
     args = ap.parse_args(argv)
     start, end = _parse_day(args.start), _parse_day(args.end) + timedelta(days=1)
     stats = run(Path(args.out), start, end, series=args.series or SERIES,
                 tape_out=Path(args.tape_out) if args.tape_out else None,
-                haircut=args.haircut)
+                haircut=args.haircut,
+                binance_cache=Path(args.binance_cache) if args.binance_cache else None)
     print(json.dumps({"backfill": stats}))
     if args.golden:
         replay_rows = [json.loads(line) for line in
