@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import KalshiDemoBook from "@/pages/KalshiDemoBook";
@@ -151,5 +151,51 @@ describe("Kalshi (demo) Portfolio tab", () => {
     // The retained report is still on screen, marked with its as_of time.
     expect(screen.getByText("$505.00")).toBeInTheDocument();
     expect(screen.getByText(/showing the last report, as of/)).toBeInTheDocument();
+  });
+
+  it("gives the demo book the card treatment: every card renders and opens to its detail", async () => {
+    serveKalshi(LIVE);
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
+    for (const name of ["Demo balance", "P&L today", "Open positions", "Demo vs shadow", "Positions", "Orders"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    // The performance card opens to every stat and the curve.
+    const opener = screen.getByRole("button", { name: "Open Demo vs shadow" });
+    opener.focus();
+    fireEvent.click(opener);
+    const full = within(screen.getByRole("dialog"));
+    expect(full.getByText("Avg slippage vs frozen quote")).toBeInTheDocument();
+    expect(full.getByText(/caps 1 · no depth 1 · missed 1/)).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    // Positions and orders open to their full tables.
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
+    expect(within(screen.getByRole("dialog")).getByText("$0.45 / $0.47")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Open Orders" }));
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /Fill/ })).toBeInTheDocument();
+  });
+
+  it("shows at most 5 orders on the page and every order in the open view", async () => {
+    const orders = Array.from({ length: 8 }, (_, i) => ({
+      ...LIVE.orders[0], id: i + 1, ticker: `KXNATGAS15M-T${i}`, created_at: `2026-11-12T15:0${i}:00Z`,
+    }));
+    serveKalshi({ ...LIVE, orders });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "Orders" });
+    expect(card.querySelectorAll("[data-peek] li")).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "Open Orders" }));
+    expect(within(screen.getByRole("dialog")).getAllByRole("row")).toHaveLength(1 + 8);
+  });
+
+  it("shows unavailable positions as a dash, not 0", async () => {
+    serveKalshi({ ...LIVE, positions: [], positions_unavailable: true });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Positions" })).getByText("—")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Open positions" })).getByText("—")).toBeInTheDocument();
   });
 });

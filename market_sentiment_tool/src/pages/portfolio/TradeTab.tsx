@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
 
-import { adminJson, ApiError } from "@/lib/workshop";
+import { ApiError } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
@@ -11,29 +11,33 @@ import {
   fmtUsd,
   orderDetailLabel,
   orderLabel,
+  tone,
   type ActivityOrder,
   type ActivityPayload,
   type ClosedPayload,
   type ManualAction,
 } from "@/lib/paperPortfolio";
-import { Box, pollWhileVisible, price, REFRESH_MS } from "./shared";
+import { adminCall, DashCard, FilterBox, MiniBars, PEEK, PeekRows, pollWhileVisible, price, REFRESH_MS, Segments } from "./shared";
 
-/** Tab 3: Trade (2026-11-12 redesign). Manual actions at the top, the
- * order ticket open on the page (Single and Combo tabs inside it), then
- * staged orders, recent orders and closed trades as full lists --
- * nothing opens in a pop-up. */
+/** Tab 3: Trade as a dashboard (Kevin, 2026-11-13). The order ticket sits
+ * open across the top (signed-in only); the hand-offs, staged orders,
+ * recent orders and closed trades are cards with a count and the top rows,
+ * each opening to its full sortable, filterable list. */
 
 export default function TradeTab({ book }: { book: string }) {
   return (
-    <div className="space-y-2">
-      <ManualActions book={book} />
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
       <OrderForm book={book} />
+      <ManualActions book={book} />
       <StagedOrders book={book} />
       <OrdersBox book={book} />
       <ClosedTradesBox book={book} />
     </div>
   );
 }
+
+const shortTime = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" }) : "—";
 
 /** Sortable table headers for the Trade lists, the BookTab pattern
  * (Claude's #514 review): click to sort, click again to reverse; unknown
@@ -89,68 +93,83 @@ const CLOSED_READERS: Record<ClosedSortKey, (t: ClosedPayload["trades"][number])
 
 function ClosedTradesBox({ book }: { book: string }) {
   const { data, error, loading, stale } = useApi<ClosedPayload>(`/api/portfolio/closed?book=${book}`, REFRESH_MS);
-  const [sort, setSort] = useState<SortState<ClosedSortKey> | null>({ key: "exited_at", desc: true });
-  const trades = useMemo(
-    () => sortRows(Array.isArray(data?.trades) ? data.trades : [], sort, (t, k) => CLOSED_READERS[k](t)),
-    [data, sort]);
-  const total = trades.reduce((a, t) => a + t.pnl, 0);
-  const head = (key: ClosedSortKey, label: string, align: "left" | "right" = "left") => (
-    <SortHead label={label} sortKey={key} sort={sort} align={align}
-              onSort={(k) => setSort((s) => nextSort(s, k))} />
-  );
+  const raw = useMemo(() => (Array.isArray(data?.trades) ? data.trades : []), [data]);
+  const newest = useMemo(() => sortRows(raw, { key: "exited_at", desc: true }, (t, k: ClosedSortKey) => CLOSED_READERS[k](t)), [raw]);
+  const total = raw.length ? raw.reduce((a, t) => a + t.pnl, 0) : null;
+  const byExit = useMemo(() => [...newest].reverse(), [newest]);
   // A failed first read is "unavailable", never an empty list under a
   // 0 count; a failed refresh keeps the last good rows, marked stale
   // (CodeRabbit, PR #514).
   const unreadable = data == null && error != null;
   return (
-    <Box title={unreadable ? "Closed trades" : `Closed trades · ${trades.length}`}
-         right={trades.length > 0
-           ? <span className="text-xs tabular-nums text-slate-400">Total {fmtUsd(total, { signed: true })}</span>
-           : undefined}>
-      {stale && data != null ? (
-        <p className="mb-2 text-xs text-amber-300/80">Showing the last good read — the latest refresh failed.</p>
-      ) : null}
-      {loading && trades.length === 0 ? (
-        <p className="text-sm text-slate-400">Reading closed trades…</p>
+    <DashCard title="Closed trades" value={unreadable || (loading && raw.length === 0) ? "—" : raw.length}
+              meta={raw.length > 0 ? <span className={tone(total)}>{fmtUsd(total, { signed: true })}</span> : undefined}
+              detail={raw.length > 0 ? <ClosedTable trades={raw} /> : undefined} detailTitle={`Closed trades · ${raw.length}`}>
+      {stale && data != null ? <p className="mb-1 text-xs text-amber-300/80">Last good read — refresh failed</p> : null}
+      {loading && raw.length === 0 ? (
+        <p className="text-xs text-slate-500">Reading…</p>
       ) : unreadable ? (
-        <p className="text-sm text-slate-400">Couldn&apos;t read closed trades — it retries on the refresh cycle.</p>
-      ) : trades.length === 0 ? (
-        <p className="text-sm text-slate-400">No closed trades yet.</p>
+        <p className="text-xs text-slate-400">Couldn&apos;t read closed trades — retrying.</p>
+      ) : raw.length === 0 ? (
+        <p className="text-xs text-slate-500">No closed trades yet.</p>
       ) : (
-        <div className="-mx-4 overflow-x-auto px-4">
-          <table className="w-full min-w-[42rem] text-left text-xs tabular-nums">
-            <thead className="text-slate-400">
-              <tr>
-                {head("exited_at", "Exit")}
-                {head("symbol", "Symbol")}
-                {head("idea", "Idea")}
-                {head("qty", "Qty", "right")}
-                {head("entry", "Entry", "right")}
-                {head("exit", "Exit price", "right")}
-                {head("return", "Return", "right")}
-                {head("pnl", "P&L", "right")}
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((t, i) => (
-                <tr key={`${t.symbol}-${t.exited_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
-                  <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{ctDateTime(t.exited_at)}</td>
-                  <td className="py-1.5 pr-3 font-semibold text-white">{t.symbol}</td>
-                  <td className="max-w-[14rem] truncate py-1.5 pr-3 text-slate-400">{t.idea ?? "—"}</td>
-                  <td className="py-1.5 pr-3 text-right">{t.qty}</td>
-                  <td className="py-1.5 pr-3 text-right">{price(t.entry_price)}</td>
-                  <td className="py-1.5 pr-3 text-right">{price(t.exit_price)}</td>
-                  <td className="py-1.5 pr-3 text-right">{fmtPct(t.return_pct)}</td>
-                  <td className={`py-1.5 text-right font-medium ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                    {fmtUsd(t.pnl, { signed: true })}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <MiniBars data={byExit} valueKey="pnl" height={32} />
+          <PeekRows rows={newest.slice(0, PEEK).map((t, i) => ({
+            key: `${t.symbol}-${t.exited_at}-${i}`, label: t.symbol, aside: shortTime(t.exited_at),
+            value: fmtUsd(t.pnl, { signed: true }), valueClass: tone(t.pnl),
+          }))} />
+        </>
       )}
-    </Box>
+    </DashCard>
+  );
+}
+
+function ClosedTable({ trades: all }: { trades: ClosedPayload["trades"] }) {
+  const [sort, setSort] = useState<SortState<ClosedSortKey> | null>({ key: "exited_at", desc: true });
+  const [q, setQ] = useState("");
+  const trades = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const rows = all.filter((t) => !needle || `${t.symbol} ${t.idea ?? ""}`.toLowerCase().includes(needle));
+    return sortRows(rows, sort, (t, k) => CLOSED_READERS[k](t));
+  }, [all, sort, q]);
+  const total = all.reduce((a, t) => a + t.pnl, 0);
+  const head = (key: ClosedSortKey, label: string, align: "left" | "right" = "left") => (
+    <SortHead label={label} sortKey={key} sort={sort} align={align}
+              onSort={(k) => setSort((s) => nextSort(s, k))} />
+  );
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <FilterBox value={q} onChange={setQ} label="Filter closed trades" />
+        <span className="text-xs tabular-nums text-slate-400">Total <span className={tone(total)}>{fmtUsd(total, { signed: true })}</span></span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[42rem] text-left text-xs tabular-nums">
+          <thead className="text-slate-400">
+            <tr>
+              {head("exited_at", "Exit")}{head("symbol", "Symbol")}{head("idea", "Idea")}
+              {head("qty", "Qty", "right")}{head("entry", "Entry", "right")}{head("exit", "Exit price", "right")}
+              {head("return", "Return", "right")}{head("pnl", "P&L", "right")}
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((t, i) => (
+              <tr key={`${t.symbol}-${t.exited_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
+                <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{ctDateTime(t.exited_at)}</td>
+                <td className="py-1.5 pr-3 font-semibold text-white">{t.symbol}</td>
+                <td className="max-w-[14rem] truncate py-1.5 pr-3 text-slate-400">{t.idea ?? "—"}</td>
+                <td className="py-1.5 pr-3 text-right">{t.qty}</td>
+                <td className="py-1.5 pr-3 text-right">{price(t.entry_price)}</td>
+                <td className="py-1.5 pr-3 text-right">{price(t.exit_price)}</td>
+                <td className="py-1.5 pr-3 text-right">{fmtPct(t.return_pct)}</td>
+                <td className={`py-1.5 text-right font-medium ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{fmtUsd(t.pnl, { signed: true })}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -170,7 +189,7 @@ function ManualActions({ book }: { book: string }) {
     let stopCheck: (() => void) | undefined;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
-      adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
+      adminCall<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
         .then((body) => {
           if (!cancelled) {
             setActions(Array.isArray(body.actions) ? body.actions : []);
@@ -201,7 +220,7 @@ function ManualActions({ book }: { book: string }) {
     // the queue dark until a remount (CodeRabbit, PR #514).
     let attempts = 0;
     const check = () => {
-      adminJson<{ email: string }>("/api/admin/me")
+      adminCall<{ email: string }>("/api/admin/me")
         .then(start)
         .catch((err) => {
           if (cancelled) return;
@@ -226,52 +245,51 @@ function ManualActions({ book }: { book: string }) {
 
   if (actions === null) {
     return failed || checkFailed ? (
-      <Box title="Needs your hand" className="border-amber-500/40">
-        <p className="text-xs text-slate-400">Couldn&apos;t read the hand-off list — it retries on the refresh cycle.</p>
-      </Box>
+      <DashCard title="Needs your hand" className="border-amber-500/40">
+        <p className="text-xs text-slate-400">Couldn&apos;t read the hand-off list — retrying.</p>
+      </DashCard>
     ) : null;
   }
   if (actions.length === 0) return null;
 
   async function resolve(id: number, state: "done" | "dismissed") {
     try {
-      await adminJson(`/api/portfolio/manual-actions/${id}/resolve`, {
+      await adminCall(`/api/portfolio/manual-actions/${id}/resolve`, {
         method: "POST", body: JSON.stringify({ state }),
       });
       setActions((prev) => (prev ?? []).filter((a) => a.id !== id));
     } catch { /* the row stays; Kevin can retry */ }
   }
 
+  const item = (a: ManualAction, full: boolean) => (
+    <li key={a.id} className={full ? "rounded-lg border border-slate-800 p-3" : "py-1"}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate text-xs font-medium text-white">
+          {a.idea_title ?? (a.idea_id ? `Idea ${a.idea_id}` : "Auto-trader")}
+          {a.symbol ? <span className="ml-2 text-slate-400">{a.symbol}</span> : null}
+        </span>
+        <span className="shrink-0 text-[11px] text-slate-500">{a.created_at.slice(0, 10)}</span>
+      </div>
+      <p className={`mt-0.5 text-xs text-slate-300 ${full ? "" : "line-clamp-1"}`} title={a.detail}>{a.detail}</p>
+      <div className="relative z-10 mt-1 flex gap-2">
+        <button type="button" onClick={() => resolve(a.id, "done")}
+          className="rounded-md border border-emerald-500/40 px-2 py-0.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/10">
+          Done
+        </button>
+        <button type="button" onClick={() => resolve(a.id, "dismissed")}
+          className="rounded-md border border-slate-700 px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-900">
+          Dismiss
+        </button>
+      </div>
+    </li>
+  );
+
   return (
-    <Box title="Needs your hand" className="border-amber-500/40">
-      <p className="text-xs text-slate-400">
-        The auto-trader stopped on these instead of guessing. Each one names the contract and the reason.
-      </p>
-      <ul className="mt-3 space-y-3">
-        {actions.map((a) => (
-          <li key={a.id} className="rounded-lg border border-slate-800 p-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <span className="text-sm font-medium text-white">
-                {a.idea_title ?? (a.idea_id ? `Idea ${a.idea_id}` : "Auto-trader")}
-                {a.symbol ? <span className="ml-2 text-xs text-slate-400">{a.symbol}</span> : null}
-              </span>
-              <span className="text-[11px] text-slate-500">{a.created_at.slice(0, 10)}</span>
-            </div>
-            <p className="mt-1 text-xs text-slate-300">{a.detail}</p>
-            <div className="mt-2 flex gap-2">
-              <button type="button" onClick={() => resolve(a.id, "done")}
-                className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/10">
-                Done
-              </button>
-              <button type="button" onClick={() => resolve(a.id, "dismissed")}
-                className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-900">
-                Dismiss
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </Box>
+    <DashCard title="Needs your hand" className="border-amber-500/40" value={actions.length} valueClass="text-amber-300"
+              hint="The auto-trader stopped on these instead of guessing"
+              detail={<ul className="space-y-3">{actions.map((a) => item(a, true))}</ul>}>
+      <ul className="divide-y divide-slate-800/70">{actions.slice(0, 3).map((a) => item(a, false))}</ul>
+    </DashCard>
   );
 }
 
@@ -308,8 +326,8 @@ function StagedOrders({ book }: { book: string }) {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      adminJson<{ email: string }>("/api/admin/me")
-        .then(() => adminJson<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
+      adminCall<{ email: string }>("/api/admin/me")
+        .then(() => adminCall<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
         .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
         .catch(() => undefined); // a failed refresh keeps the last read
     };
@@ -325,38 +343,41 @@ function StagedOrders({ book }: { book: string }) {
               onSort={(k) => setSort((s) => nextSort(s, k))} />
   );
   const table = (
-        <div>
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="text-[11px] uppercase tracking-wide text-slate-500">
-                {head("symbol", "Symbol")}{head("side", "Side")}
-                {head("type", "Type")}{head("qty", "Qty")}
-                {head("price", "Price")}{head("tif", "TIF")}
-                {head("status", "Status")}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedOrders.map((o) => (
-                <tr key={o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${o.submitted_at}`} className="border-t border-slate-800 text-slate-200">
-                  <td className="py-1.5 pr-3 font-medium text-white">{o.symbol}</td>
-                  <td className="py-1.5 pr-3">{o.side}</td>
-                  <td className="py-1.5 pr-3">{o.type}</td>
-                  <td className="py-1.5 pr-3 tabular-nums">{o.filled_qty ? `${o.filled_qty}/` : ""}{o.qty}</td>
-                  <td className="py-1.5 pr-3 tabular-nums">{price(o) != null ? `$${price(o)!.toFixed(2)}` : "—"}</td>
-                  <td className="py-1.5 pr-3">{o.time_in_force}</td>
-                  <td className="py-1.5">{o.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[32rem] text-left text-xs">
+        <thead>
+          <tr className="text-[11px] text-slate-500">
+            {head("symbol", "Symbol")}{head("side", "Side")}
+            {head("type", "Type")}{head("qty", "Qty")}
+            {head("price", "Price")}{head("tif", "TIF")}
+            {head("status", "Status")}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedOrders.map((o) => (
+            <tr key={o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${o.submitted_at}`} className="border-t border-slate-800 text-slate-200">
+              <td className="py-1.5 pr-3 font-medium text-white">{o.symbol}</td>
+              <td className="py-1.5 pr-3">{o.side}</td>
+              <td className="py-1.5 pr-3">{o.type}</td>
+              <td className="py-1.5 pr-3 tabular-nums">{o.filled_qty ? `${o.filled_qty}/` : ""}{o.qty}</td>
+              <td className="py-1.5 pr-3 tabular-nums">{price(o) != null ? `$${price(o)!.toFixed(2)}` : "—"}</td>
+              <td className="py-1.5 pr-3">{o.time_in_force}</td>
+              <td className="py-1.5">{o.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
   return (
-    <Box title={`Staged orders · ${orders.length}`}>
-      {orders.length === 0 ? (
-        <p className="text-xs text-slate-500">Nothing resting right now.</p>
-      ) : table}
-    </Box>
+    <DashCard title="Staged orders" value={orders.length} hint="Resting on the broker now: staged entries, protective stops, app orders"
+              detail={orders.length ? table : undefined} detailTitle={`Staged orders · ${orders.length}`}>
+      <PeekRows empty="Nothing resting" rows={orders.slice(0, PEEK).map((o, i) => ({
+        key: o.alpaca_order_id ?? o.client_order_id ?? `${o.symbol}-${i}`,
+        label: o.symbol ?? "—", aside: `${o.side ?? ""} ${o.type ?? ""} ${o.qty ?? "—"} · ${o.time_in_force ?? ""}`,
+        value: price(o) != null ? fmtUsd(price(o)) : "—",
+      }))} />
+    </DashCard>
   );
 }
 
@@ -375,63 +396,92 @@ function OrdersBox({ book }: { book: string }) {
   // On a broker-read failure the endpoint answers 200 with state "stale"
   // and an empty list; that must not blank orders already on screen.
   const [lastGood, setLastGood] = useState<ActivityOrder[]>([]);
-  const [sort, setSort] = useState<SortState<RecentSortKey> | null>(null);
   useEffect(() => {
     if (data && data.state !== "stale" && Array.isArray(data.recent)) setLastGood(data.recent);
   }, [data]);
   const staleNow = data?.state === "stale";
   const raw: ActivityOrder[] = staleNow ? lastGood : (Array.isArray(data?.recent) ? data.recent : []);
-  const all = useMemo(() => sortRows(raw, sort, (o, k) => RECENT_READERS[k](o)), [raw, sort]);
+  const newestFirst = useMemo(() => sortRows(raw, { key: "sent", desc: true }, (o, k: RecentSortKey) => RECENT_READERS[k](o)), [raw]);
+  return (
+    <DashCard title="Recent orders" className="md:col-span-2" value={loading && raw.length === 0 ? "—" : raw.length}
+              meta={raw.length > 0 ? (
+                <span>
+                  {staleNow && <span className="mr-2 text-amber-300">stale</span>}
+                  <span className="text-emerald-400">{raw.filter((o) => o.status === "filled").length} filled</span>
+                  {" · "}{raw.filter((o) => o.status !== "filled").length} other
+                </span>
+              ) : undefined}
+              detail={raw.length > 0 ? <OrdersTable orders={raw} book={book} stale={staleNow} /> : undefined}
+              detailTitle={`Recent orders · ${raw.length}`}>
+      {loading && raw.length === 0 ? (
+        <p className="text-xs text-slate-500">Reading…</p>
+      ) : raw.length === 0 ? (
+        <p className="text-xs text-slate-500">{staleNow ? "Orders unavailable — broker read failed." : "No orders yet."}</p>
+      ) : (
+        <PeekRows rows={newestFirst.slice(0, PEEK).map((o, i) => ({
+          key: `${o.symbol}-${o.submitted_at}-${i}`,
+          label: o.legs && o.legs.length > 0 ? orderDetailLabel(o) : `${o.side} ${orderLabel(o)}`,
+          aside: shortTime(o.submitted_at), value: o.status, valueClass: STATUS_TONE[o.status] ?? "text-amber-300",
+        }))} />
+      )}
+    </DashCard>
+  );
+}
+
+const ORDER_FILTERS = ["all", "filled", "open", "expired", "canceled", "rejected"] as const;
+type OrderFilter = (typeof ORDER_FILTERS)[number];
+const DONE_STATES = new Set(["filled", "expired", "canceled", "rejected"]);
+
+function OrdersTable({ orders, book, stale }: { orders: ActivityOrder[]; book: string; stale: boolean }) {
+  const [sort, setSort] = useState<SortState<RecentSortKey> | null>({ key: "sent", desc: true });
+  const [filter, setFilter] = useState<OrderFilter>("all");
+  const [q, setQ] = useState("");
+  const list = useMemo(() => {
+    const needle = q.trim().toUpperCase();
+    const rows = orders.filter((o) => (filter === "all" || (filter === "open" ? !DONE_STATES.has(o.status) : o.status === filter))
+      && (!needle || orderDetailLabel(o).toUpperCase().includes(needle) || (o.symbol ?? "").toUpperCase().includes(needle)));
+    return sortRows(rows, sort, (o, k) => RECENT_READERS[k](o));
+  }, [orders, sort, filter, q]);
   const head = (key: RecentSortKey, label: string, align: "left" | "right" = "left") => (
     <SortHead label={label} sortKey={key} sort={sort} align={align}
               onSort={(k) => setSort((s) => nextSort(s, k))} />
   );
-  const table = (list: ActivityOrder[]) => (
-        <div className="-mx-4 overflow-x-auto px-4">
-          <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">
-            <thead className="text-slate-400">
-              <tr>
-                {head("sent", "Sent")}
-                {head("order", "Order")}
-                {head("filled", "Filled", "right")}
-                {head("avg", "Avg price", "right")}
-                {head("status", "Status")}
-                {head("from", "From")}
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((o, i) => (
-                <tr key={`${o.symbol}-${o.submitted_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
-                  <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</td>
-                  <td className="whitespace-nowrap py-1.5 pr-3">{o.legs && o.legs.length > 0
-                    ? <span className="font-semibold text-white">{orderDetailLabel(o)}</span>
-                    : <>{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span></>} <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
-                  <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? "—"}/{o.qty ?? "—"}</td>
-                  <td className="py-1.5 pr-3 text-right">{price(o.filled_avg_price)}</td>
-                  <td className={`py-1.5 pr-3 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</td>
-                  <td className="max-w-[12rem] truncate py-1.5 text-slate-400" title={o.source}>{o.source}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-  );
   return (
-    <Box title="Recent orders"
-         right={(
-           <span className="inline-flex items-center gap-2">
-             {staleNow && all.length > 0 && <span className="text-xs text-amber-300">stale — broker read failed</span>}
-             <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
-               All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-             </Link>
-           </span>
-         )}>
-      {loading && all.length === 0 ? (
-        <p className="text-sm text-slate-400">Reading orders…</p>
-      ) : all.length === 0 ? (
-        <p className="text-sm text-slate-400">{staleNow ? "Orders unavailable — the broker read failed." : "No orders yet."}</p>
-      ) : table(all)}
-    </Box>
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <FilterBox value={q} onChange={setQ} label="Filter orders" />
+        <Segments<OrderFilter> label="Order status" options={ORDER_FILTERS} value={filter} onChange={setFilter}
+                  render={(f) => f[0].toUpperCase() + f.slice(1)} />
+        {stale && <span className="text-xs text-amber-300">stale — broker read failed</span>}
+        <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+          All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </Link>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">
+          <thead className="text-slate-400">
+            <tr>
+              {head("sent", "Sent")}{head("order", "Order")}{head("filled", "Filled", "right")}
+              {head("avg", "Avg price", "right")}{head("status", "Status")}{head("from", "From")}
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((o, i) => (
+              <tr key={`${o.symbol}-${o.submitted_at}-${i}`} className="border-t border-slate-800/80 text-slate-200">
+                <td className="whitespace-nowrap py-1.5 pr-3 text-slate-400">{o.submitted_at ? ctDateTime(o.submitted_at) : "—"}</td>
+                <td className="whitespace-nowrap py-1.5 pr-3">{o.legs && o.legs.length > 0
+                  ? <span className="font-semibold text-white">{orderDetailLabel(o)}</span>
+                  : <>{o.side} <span className="font-semibold text-white">{orderLabel(o)}</span></>} <span className="text-slate-400">{o.type} · {o.time_in_force}</span></td>
+                <td className="py-1.5 pr-3 text-right">{o.filled_qty ?? "—"}/{o.qty ?? "—"}</td>
+                <td className="py-1.5 pr-3 text-right">{price(o.filled_avg_price)}</td>
+                <td className={`py-1.5 pr-3 ${STATUS_TONE[o.status] ?? "text-amber-300"}`}>{o.status}</td>
+                <td className="max-w-[12rem] truncate py-1.5 text-slate-400" title={o.source}>{o.source}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -479,11 +529,11 @@ function OrderForm({ book }: { book: string }) {
   useEffect(() => {
     let cancelled = false;
     // Signed-in only: /api/admin/me 401s for a visitor, and the form simply never appears.
-    adminJson<{ email: string }>("/api/admin/me")
+    adminCall<{ email: string }>("/api/admin/me")
       .then(() => {
         if (cancelled) return;
         setSignedIn(true);
-        adminJson<{ id: number; title: string }[]>("/api/workshop/ideas")
+        adminCall<{ id: number; title: string }[]>("/api/workshop/ideas")
           .then((rows) => { if (!cancelled) setIdeas(Array.isArray(rows) ? rows : []); })
           .catch(() => undefined);
       })
@@ -540,7 +590,7 @@ function OrderForm({ book }: { book: string }) {
       }
       if (ideaId) body.idea_id = Number(ideaId);
       body.book = book;
-      const placed = await adminJson<{ client_order_id: string }>("/api/portfolio/orders", {
+      const placed = await adminCall<{ client_order_id: string }>("/api/portfolio/orders", {
         method: "POST", body: JSON.stringify(body),
       });
       setNote(`Order sent: ${summary} (${placed.client_order_id})`);
@@ -552,18 +602,14 @@ function OrderForm({ book }: { book: string }) {
   }
 
   return (
-    <Box title="Place an order by hand">
-      <p className="text-xs text-slate-400">
-        Paper account, market or limit. Tag it with an idea and it lands in that idea&apos;s order log.
-        Options trade too: paste an OCC contract (e.g. SPY261113P00570000) for a single leg, or build a
-        combo. Every short leg must be covered -- the same defined-risk rule the machine API enforces.
-      </p>
-      <div className="mt-3 flex gap-2" role="group" aria-label="Order kind">
+    <DashCard title="Place an order by hand" className="md:col-span-2 xl:col-span-4"
+              meta={<span title="Paper account. Tag an idea and the order lands in its log. Paste an OCC contract (e.g. SPY261113P00570000) for an option; every short leg must be covered.">Paper · market or limit · options by OCC</span>}>
+      <div className="flex gap-2" role="group" aria-label="Order kind">
         <button type="button" onClick={() => setKind("single")} className={kindBtnCls(kind === "single")}>Single</button>
         <button type="button" onClick={() => setKind("combo")} className={kindBtnCls(kind === "combo")}>Combo (spread)</button>
       </div>
       {kind === "single" ? (
-      <div className="mt-3 flex flex-wrap items-end gap-3">
+      <div className="mt-2 flex flex-wrap items-end gap-3">
         <label className={labelCls}>Symbol
           <input aria-label="Symbol" className={inputCls} value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="XLE" />
         </label>
@@ -590,7 +636,7 @@ function OrderForm({ book }: { book: string }) {
         <label className={labelCls}>Time in force
           <select aria-label="Time in force" className={inputCls} value={isOcc ? "day" : tif} onChange={(e) => setTif(e.target.value)}>
             <option value="day">Day</option>
-            {!isOcc && <option value="opg">At the open (expires if it misses)</option>}
+            {!isOcc && <option value="opg">At the open</option>}
             {!isOcc && <option value="cls">At the close</option>}
           </select>
         </label>
@@ -614,7 +660,7 @@ function OrderForm({ book }: { book: string }) {
         </button>
       </div>
       ) : (
-      <div className="mt-3 flex flex-col gap-2">
+      <div className="mt-2 flex flex-col gap-2">
         {comboLegs.map((leg, i) => (
           <div key={i} className="flex flex-wrap items-end gap-3">
             <label className={labelCls}>Leg {i + 1} contract
@@ -655,7 +701,7 @@ function OrderForm({ book }: { book: string }) {
               Add leg
             </button>
           )}
-          <label className={labelCls}>Net limit price (debit + / credit −)
+          <label className={labelCls}>Net limit (debit + / credit −)
             <input aria-label="Net limit price" className={`${inputCls} w-28`} type="number" step="0.01" value={netLimit}
               onChange={(e) => setNetLimit(e.target.value)} />
           </label>
@@ -670,15 +716,12 @@ function OrderForm({ book }: { book: string }) {
             {busy ? "Sending…" : "Place order"}
           </button>
         </div>
-        <p className="text-xs text-slate-400">
-          One order, one net price for the whole package, day only. Quantities are absolute:
-          buy 6 / sell 3 places a 3-lot at ratios 2/1.
-        </p>
+        <p className="text-xs text-slate-500" title="Quantities are absolute: buy 6 / sell 3 places a 3-lot at ratios 2/1.">One net price, day only. Absolute quantities.</p>
       </div>
       )}
       {contractText && kind === "single" && <p className="mt-2 text-xs text-slate-300">{contractText}</p>}
       {note && <p className="mt-3 text-sm text-emerald-300">{note}</p>}
       {error && <p className="mt-3 text-sm text-rose-300">{error}</p>}
-    </Box>
+    </DashCard>
   );
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -40,19 +40,21 @@ describe("Trade tab closed-trades read states", () => {
   it("marks the last good read stale after a failed refresh", () => {
     closed.current = { data: { trades: [TRADE] }, error: null, loading: false, stale: true };
     render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
-    expect(screen.getByText(/last good read/)).toBeInTheDocument();
+    expect(screen.getByText(/Last good read/)).toBeInTheDocument();
     expect(screen.getByText("NVDA")).toBeInTheDocument();
-    // Entry and exit prices keep their cents: the whole-dollar
-    // formatter showed both of these as $0.
-    expect(screen.getByText("$0.45")).toBeInTheDocument();
-    expect(screen.getByText("$0.49")).toBeInTheDocument();
+    // Entry and exit prices keep their cents (the whole-dollar formatter
+    // showed both as $0); they live in the card's full table.
+    fireEvent.click(screen.getByRole("button", { name: "Open Closed trades" }));
+    const full = within(screen.getByRole("dialog"));
+    expect(full.getByText("$0.45")).toBeInTheDocument();
+    expect(full.getByText("$0.49")).toBeInTheDocument();
   });
 
   it("shows a successful empty read as empty, not stale or unreadable", () => {
     closed.current = { data: { trades: [] }, error: null, loading: false, stale: false };
     render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
-    expect(screen.queryByText(/last good read/)).toBeNull();
+    expect(screen.queryByText(/Last good read/)).toBeNull();
     expect(screen.queryByText(/Couldn't read closed trades/)).toBeNull();
   });
 
@@ -61,6 +63,9 @@ describe("Trade tab closed-trades read states", () => {
     render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
     expect(screen.getByText(/Couldn't read closed trades/)).toBeInTheDocument();
     expect(screen.queryByText("No closed trades yet.")).toBeNull();
-    expect(screen.queryByText(/Closed trades · 0/)).toBeNull();
+    // The count is unknown, so it reads as a dash, not 0.
+    const card = within(screen.getByRole("region", { name: "Closed trades" }));
+    expect(card.queryByText("0")).toBeNull();
+    expect(card.getByText("—")).toBeInTheDocument();
   });
 });

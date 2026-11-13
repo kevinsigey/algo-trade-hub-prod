@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, TriangleAlert } from "lucide-react";
+import { Maximize2, TriangleAlert } from "lucide-react";
+
+import { FullView } from "@/components/Panel";
 
 import { ctDateTime } from "@/lib/format";
 import {
@@ -13,13 +15,40 @@ import {
   type PortfolioCheckState,
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
-import { adminJson, ApiError } from "@/lib/workshop";
-import { money, pollWhileVisible, signed } from "./shared";
+import { ApiError } from "@/lib/workshop";
+import { adminCall, money, pollWhileVisible, signed } from "./shared";
 
-/** The fixed header (2026-11-12 redesign): net liquidation value, today
- * split at the 4:00 PM ET close, SPY beside both, and how fresh the page
- * is. The account rail's figures ride underneath as a compact strip --
- * the same numbers, one row instead of a column. */
+/** The account's figures (cash, buying power, exposure, P&L, margin,
+ * breaker) -- the Book tab's Account card shows them; the header stays one row. */
+export function accountFigures(data: PortfolioPayload): { label: string; value: string; className?: string }[] {
+  const a = data.account;
+  const cashRow = data.positions.find((p) => p.symbol === "Cash");
+  const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
+  const rows = data.positions.filter((p) => p.symbol !== "Cash");
+  // A total only when every holding's figure is known -- a partial sum
+  // presented as the total would invent a number.
+  const unrealized = rows.length > 0 && rows.every((p) => p.unrealized_pl != null)
+    ? rows.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0) : null;
+  return [
+    { label: "Cash", value: money(a?.cash ?? cashRow?.market_value) },
+    { label: "Buying power", value: money(a?.buying_power) },
+    { label: "Invested", value: investedPct == null ? "—" : `${investedPct.toFixed(0)}%` },
+    { label: "Long value", value: money(a?.long_value) },
+    { label: "Short value", value: money(a?.short_value) },
+    { label: "Unrealized P&L", value: signed(unrealized), className: tone(unrealized) },
+    { label: "Realized P&L", value: signed(a?.realized_pl), className: tone(a?.realized_pl) },
+    { label: "Maintenance margin", value: money(a?.maintenance_margin) },
+    { label: "Positions", value: String(data.positions_aggregate?.length ?? rows.length) },
+    ...(data.breaker ? [{
+      label: "Circuit breaker", value: breakerLabel(data.breaker),
+      className: data.breaker.tripped ? "text-rose-400" : "text-slate-100",
+    }] : []),
+  ];
+}
+
+/** The header, one tight row (Kevin, 2026-11-13): net liquidation value,
+ * today split at the 4:00 PM ET close with SPY/QQQ beside it, since start
+ * against both, and how fresh the page is. */
 export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
   data: PortfolioPayload;
   lastUpdatedAt: number | null;
@@ -35,101 +64,52 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
   }, []);
   const ago = lastUpdatedAt == null ? null : Math.max(0, Math.round((nowMs - lastUpdatedAt) / 1000));
 
-  const cashRow = data.positions.find((p) => p.symbol === "Cash");
-  const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
-  const rows = data.positions.filter((p) => p.symbol !== "Cash");
-  // A total only when every holding's figure is known -- a partial sum
-  // presented as the total would invent a number.
-  const unrealized = rows.length > 0 && rows.every((p) => p.unrealized_pl != null)
-    ? rows.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0) : null;
-  const figures: { label: string; value: string; className?: string }[] = [
-    { label: "Cash", value: money(a?.cash ?? cashRow?.market_value) },
-    { label: "Buying power", value: money(a?.buying_power) },
-    { label: "Invested", value: investedPct == null ? "—" : `${investedPct.toFixed(0)}%` },
-    { label: "Long value", value: money(a?.long_value) },
-    { label: "Short value", value: money(a?.short_value) },
-    { label: "Unrealized P&L", value: signed(unrealized), className: tone(unrealized) },
-    { label: "Realized P&L", value: signed(a?.realized_pl), className: tone(a?.realized_pl) },
-    { label: "Maintenance margin", value: money(a?.maintenance_margin) },
-    { label: "Positions", value: String(data.positions_aggregate?.length ?? rows.length) },
-    ...(data.breaker ? [{
-      label: "Circuit breaker", value: breakerLabel(data.breaker),
-      className: data.breaker.tripped ? "text-rose-400" : "text-slate-100",
-    }] : []),
-  ];
-
   return (
-    <header className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-        <div>
-          <div className="text-xs text-slate-400">Net liquidation value</div>
-          <div className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight text-white">
-            {money(s.equity)}
-          </div>
-          {t && t.state !== "no_prior" && t.regular_pl != null ? (
-            <div className="mt-1 text-sm tabular-nums text-slate-200">
-              <span className={tone(t.regular_pl)}>
-                {t.is_today === false ? (t.day_label ?? "Today") : "Today"} {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
-              </span>
-              {t.spy_regular_pct != null && (
-                <span className="text-slate-400"> · SPY {fmtPct(t.spy_regular_pct)}</span>
-              )}
-              {t.qqq_regular_pct != null && (
-                <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_regular_pct)}</span>
-              )}
-              {t.state === "after_hours" && t.after_hours_pl != null && (
-                <>
-                  <span className={tone(t.after_hours_pl)}>
-                    {" "}· After hours {signed(t.after_hours_pl)} since 4:00 PM
-                  </span>
-                  {t.spy_after_hours_pct != null && (
-                    <span className="text-slate-400"> · SPY {fmtPct(t.spy_after_hours_pct)}</span>
-                  )}
-                  {t.qqq_after_hours_pct != null && (
-                    <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_after_hours_pct)}</span>
-                  )}
-                  <span className="ml-2 rounded border border-sky-500/40 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
-                    After hours
-                  </span>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className={`mt-1 text-sm font-medium tabular-nums ${tone(a?.day_pl)}`}>
-              {a?.day_pl == null ? "Day P&L unknown" : `${signed(a.day_pl)} (${fmtPct(a.day_pl_pct)}) today`}
-            </div>
-          )}
-          <div className="mt-0.5 text-xs tabular-nums text-slate-400">
-            Since start <span className={tone(s.return_pct)}>{fmtPct(s.return_pct)}</span>
-            {" "}· SPY {fmtPct(s.spy_return_pct)}
-            {" "}· Ahead of SPY <span className={tone(s.ahead_pts)}>{fmtPts(s.ahead_pts)}</span>
-            {s.qqq_return_pct != null && (
-              <>
-                {" "}· QQQ {fmtPct(s.qqq_return_pct)}
-                {" "}· Ahead of QQQ <span className={tone(s.ahead_qqq_pts)}>{fmtPts(s.ahead_qqq_pts)}</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="text-right">
-          <p className={`text-[11px] ${data.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>
-            {stateLabel(data.state, data.as_of)}
-          </p>
-          {ago != null && (
-            <p className={`mt-0.5 text-[11px] ${stale ? "text-amber-300" : "text-slate-500"}`}>
-              Updated {ago} s ago{stale ? " · stale" : ""}
-            </p>
-          )}
-        </div>
+    <header className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs text-slate-400">Net liquidation value</span>
+        <span className="font-display text-2xl font-semibold tabular-nums tracking-tight text-white">{money(s.equity)}</span>
       </div>
-      <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-800 pt-2">
-        {figures.map((f) => (
-          <div key={f.label} className="flex items-baseline gap-1.5 text-xs">
-            <dt className="text-slate-400">{f.label}</dt>
-            <dd className={`tabular-nums font-medium ${f.className ?? "text-slate-100"}`}>{f.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {t && t.state !== "no_prior" && t.regular_pl != null ? (
+        <div className="text-sm tabular-nums text-slate-200">
+          <span className={tone(t.regular_pl)}>
+            {t.is_today === false ? (t.day_label ?? "Today") : "Today"} {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
+          </span>
+          {t.spy_regular_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_regular_pct)}</span>}
+          {t.qqq_regular_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_regular_pct)}</span>}
+          {t.state === "after_hours" && t.after_hours_pl != null && (
+            <>
+              <span className={tone(t.after_hours_pl)}>{" "}· After hours {signed(t.after_hours_pl)} since 4:00 PM</span>
+              {t.spy_after_hours_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_after_hours_pct)}</span>}
+              {t.qqq_after_hours_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_after_hours_pct)}</span>}
+              <span className="ml-2 rounded border border-sky-500/40 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                After hours
+              </span>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className={`text-sm font-medium tabular-nums ${tone(a?.day_pl)}`}>
+          {a?.day_pl == null ? "Today —" : `${signed(a.day_pl)} (${fmtPct(a.day_pl_pct)}) today`}
+        </div>
+      )}
+      <div className="text-xs tabular-nums text-slate-400">
+        Since start <span className={tone(s.return_pct)}>{fmtPct(s.return_pct)}</span>
+        {" "}· SPY {fmtPct(s.spy_return_pct)}
+        {" "}· vs SPY <span className={tone(s.ahead_pts)}>{fmtPts(s.ahead_pts)}</span>
+        {s.qqq_return_pct != null && (
+          <>
+            {" "}· QQQ {fmtPct(s.qqq_return_pct)}
+            {" "}· vs QQQ <span className={tone(s.ahead_qqq_pts)}>{fmtPts(s.ahead_qqq_pts)}</span>
+          </>
+        )}
+      </div>
+      <div className="ml-auto flex items-baseline gap-3 text-[11px]">
+        <span className={data.state === "live" ? "text-emerald-300" : "text-amber-300"}>{stateLabel(data.state, data.as_of)}</span>
+        {ago != null && (
+          <span className={stale ? "text-amber-300" : "text-slate-500"}>Updated {ago} s ago{stale ? " · stale" : ""}</span>
+        )}
+      </div>
     </header>
   );
 }
@@ -208,7 +188,7 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      adminJson<PortfolioCheckState>(`/api/portfolio/portfolio-check?book=${book}`)
+      adminCall<PortfolioCheckState>(`/api/portfolio/portfolio-check?book=${book}`)
         .then((body) => {
           if (!cancelled && body && Array.isArray(body.sleeves) && Array.isArray(body.recent_checks)) {
             setState(body);
@@ -236,27 +216,27 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
   const last = state?.recent_checks[0];
 
   return (
-    <div className="mt-2 space-y-2" role="region" aria-label="Warnings">
+    <div className="mt-2 space-y-1.5" role="region" aria-label="Warnings">
       {data.breaker?.tripped && (
         <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-1.5 text-sm text-rose-200">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          Circuit breaker tripped: {data.breaker.reasons.join("; ")}. New opening orders are refused; closing and protective orders still pass.
+          <span title="New opening orders are refused; closing and protective orders still pass">Circuit breaker tripped: {data.breaker.reasons.join("; ")}. Opening orders refused.</span>
         </p>
       )}
       {heavy.map((h) => (
         <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-200">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          {h.sector} is {h.pct.toFixed(0)}% of what&apos;s invested. These positions tend to move together.
+          <span title="Positions in one sector tend to move together">{h.sector} {h.pct.toFixed(0)}% of invested</span>
         </p>
       ))}
       {!state && failed && (
         <p className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
-          Portfolio check unavailable — the read failed; it retries on the refresh cycle.
+          Portfolio check unavailable — retrying.
         </p>
       )}
       {state && (
         <div className="rounded-lg border border-slate-800 bg-slate-900/60">
-          <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+          <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)}
                   className="flex w-full flex-wrap items-center gap-1.5 px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
             {chips.length === 0 ? (
               <span className="text-xs text-slate-300">
@@ -278,10 +258,10 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
             )}
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-slate-500">
               Portfolio check
-              {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />}
+              <Maximize2 className="h-3 w-3" aria-hidden="true" />
             </span>
           </button>
-          {open && <CheckDetail state={state} />}
+          {open && <FullView title="Portfolio check" onClose={() => setOpen(false)}><CheckDetail state={state} /></FullView>}
         </div>
       )}
     </div>
@@ -327,7 +307,7 @@ function CheckDetail({ state }: { state: PortfolioCheckState }) {
     );
 
   return (
-    <div className="border-t border-slate-800 px-3 py-2">
+    <div>
       <div className="space-y-1">
         {bars.map((b) => (
           <div key={b.key} className="flex items-center gap-2 text-xs">

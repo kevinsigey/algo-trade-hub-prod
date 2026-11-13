@@ -17,13 +17,13 @@ import {
   type PortfolioPayload,
   type PositionRow,
 } from "@/lib/paperPortfolio";
-import { Box, money, price, REFRESH_MS, signed } from "./shared";
+import { accountFigures } from "./Header";
+import { DashCard, Fig, FilterBox, money, PEEK, PeekRows, price, REFRESH_MS, Segments, signed } from "./shared";
 
-/** Tab 1: Book (2026-11-12 redesign). Composition first, readable without
- * scrolling; then the positions the broker holds, one row per ticker with
- * no idea information at all; then By idea, where the idea information
- * lives, as expandable rows. Today's movers come from tickers, not
- * slices. */
+/** Tab 1: Book as a dashboard (Kevin, 2026-11-13). Composition, the
+ * account, today's movers, positions and by-idea as cards: each card shows
+ * a number and the top rows, and opens to the full sortable list. Positions
+ * carry no idea information; By idea is where it lives. */
 export default function BookTab({ data, liveIdeas, book }: {
   data: PortfolioPayload;
   liveIdeas: { id: number; title: string; size_pct: number | null }[];
@@ -35,80 +35,169 @@ export default function BookTab({ data, liveIdeas, book }: {
     : rows;
   const cashRow = data.positions.find((p) => p.symbol === "Cash");
   return (
-    <div className="space-y-2">
-      <CompositionSection data={data} aggRows={aggRows} cashRow={cashRow} />
-      <PositionsSection rows={aggRows} cashRow={cashRow} />
-      <ByIdea rows={rows} equity={data.scoreboard.equity} liveIdeas={liveIdeas} book={book} />
-      <MoversBox rows={aggRows} />
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <CompositionCard data={data} aggRows={aggRows} cashRow={cashRow} />
+      <AccountCard data={data} />
+      <MoversCard rows={aggRows} />
+      <PositionsCard rows={aggRows} cashRow={cashRow} />
+      <ByIdeaCard rows={rows} equity={data.scoreboard.equity} liveIdeas={liveIdeas} book={book} />
     </div>
   );
 }
 
-/** One full-width stacked bar of sectors, labelled inside, with the
- * ticker treemap under it. The bar is the legend. A toggle reads the
- * same bar by idea instead. */
-function CompositionSection({ data, aggRows, cashRow }: {
-  data: PortfolioPayload;
-  aggRows: PositionRow[];
-  cashRow: PositionRow | undefined;
-}) {
-  const [grouping, setGrouping] = useState<"sector" | "idea">("sector");
-  const segments = useMemo(() => {
+type Segment = { label: string; pct: number; color: string };
+
+function useSegments(data: PortfolioPayload, aggRows: PositionRow[], cashRow: PositionRow | undefined,
+                     grouping: "sector" | "idea"): Segment[] {
+  return useMemo(() => {
+    let out: Segment[];
     if (grouping === "idea") {
-      const out = data.composition
+      out = data.composition
         .filter((c) => (c.pct_of_book ?? 0) > 0)
         .map((c, i) => ({
           label: c.idea, pct: c.pct_of_book ?? 0,
           color: ["#34d399", "#38bdf8", "#a78bfa", "#f472b6", "#fb923c", "#2dd4bf"][i % 6],
         }));
-      // The bar is the whole book in both groupings: cash rides along
-      // (the composition read itself groups holdings by idea only).
-      if (cashRow?.pct_of_book) out.push({ label: "Cash", pct: cashRow.pct_of_book, color: sectorColor("Cash") });
-      return out.sort((a, b) => b.pct - a.pct);
+    } else {
+      const bySector = new Map<string, number>();
+      for (const r of aggRows) {
+        const sector = r.sector ?? "Other";
+        bySector.set(sector, (bySector.get(sector) ?? 0) + (r.pct_of_book ?? 0));
+      }
+      out = [...bySector.entries()].map(([label, pct]) => ({ label, pct, color: sectorColor(label) }));
     }
-    const bySector = new Map<string, number>();
-    for (const r of aggRows) {
-      const sector = r.sector ?? "Other";
-      bySector.set(sector, (bySector.get(sector) ?? 0) + (r.pct_of_book ?? 0));
-    }
-    const out = [...bySector.entries()].map(([label, pct]) => ({
-      label, pct, color: sectorColor(label),
-    }));
+    // The bar is the whole book in both groupings: cash rides along.
     if (cashRow?.pct_of_book) out.push({ label: "Cash", pct: cashRow.pct_of_book, color: sectorColor("Cash") });
     return out.sort((a, b) => b.pct - a.pct);
   }, [grouping, data.composition, aggRows, cashRow]);
+}
+
+function SegmentBar({ segments, tall }: { segments: Segment[]; tall?: boolean }) {
   const total = segments.reduce((sum, s) => sum + s.pct, 0) || 1;
   return (
-    <section aria-label="Composition" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-white">Composition</h2>
-        <div role="group" aria-label="Composition grouping" className="flex gap-1">
-          {(["sector", "idea"] as const).map((g) => (
-            <button key={g} type="button" aria-pressed={g === grouping} onClick={() => setGrouping(g)}
-                    className={`rounded px-2 py-0.5 text-xs capitalize focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${g === grouping ? "bg-slate-700 font-semibold text-white" : "text-slate-400 hover:text-white"}`}>
-              {g === "sector" ? "Sectors" : "Ideas"}
-            </button>
-          ))}
+    <div className={`flex w-full overflow-hidden rounded ${tall ? "h-8" : "h-6"}`} role="img"
+         aria-label={segments.map((s) => `${s.label} ${s.pct.toFixed(0)}%`).join(", ")}>
+      {segments.map((s) => (
+        <div key={s.label} className="flex min-w-0 items-center overflow-hidden px-1.5"
+             style={{ width: `${(s.pct / total) * 100}%`, background: s.color }} title={`${s.label} ${s.pct.toFixed(1)}%`}>
+          {s.pct / total >= 0.08 && (
+            <span className="truncate text-[11px] font-medium text-slate-950">{s.label} {s.pct.toFixed(0)}</span>
+          )}
         </div>
-      </div>
-      <div className="mt-2 flex h-7 w-full overflow-hidden rounded" role="img"
-           aria-label={segments.map((s) => `${s.label} ${s.pct.toFixed(0)}%`).join(", ")}>
-        {segments.map((s) => (
-          <div key={s.label} className="flex min-w-0 items-center overflow-hidden px-1.5"
-               style={{ width: `${(s.pct / total) * 100}%`, background: s.color }} title={`${s.label} ${s.pct.toFixed(1)}%`}>
-            {s.pct / total >= 0.06 && (
-              <span className="truncate text-[11px] font-medium text-slate-950">
-                {s.label} {s.pct.toFixed(0)}
-              </span>
-            )}
-          </div>
+      ))}
+    </div>
+  );
+}
+
+/** Composition: the whole book as one bar, its top slices under it; opens
+ * to the sector/idea toggle and the ticker treemap. */
+function CompositionCard({ data, aggRows, cashRow }: {
+  data: PortfolioPayload; aggRows: PositionRow[]; cashRow: PositionRow | undefined;
+}) {
+  const sectors = useSegments(data, aggRows, cashRow, "sector");
+  const invested = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
+  return (
+    <DashCard title="Composition" className="md:col-span-2"
+              value={invested == null ? "—" : `${invested.toFixed(0)}%`} sub="invested"
+              meta={`${sectors.filter((s) => s.label !== "Cash").length} sectors`}
+              detail={<CompositionDetail data={data} aggRows={aggRows} cashRow={cashRow} />}>
+      <SegmentBar segments={sectors} />
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-slate-300">
+        {sectors.slice(0, 6).map((s) => (
+          <li key={s.label} className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-sm" style={{ background: s.color }} aria-hidden="true" />
+            {s.label} <span className="text-slate-500">{s.pct.toFixed(0)}%</span>
+          </li>
         ))}
+      </ul>
+    </DashCard>
+  );
+}
+
+function CompositionDetail({ data, aggRows, cashRow }: {
+  data: PortfolioPayload; aggRows: PositionRow[]; cashRow: PositionRow | undefined;
+}) {
+  const [grouping, setGrouping] = useState<"sector" | "idea">("sector");
+  const segments = useSegments(data, aggRows, cashRow, grouping);
+  return (
+    <div>
+      <div className="mb-2 flex justify-end">
+        <Segments<"sector" | "idea"> label="Composition grouping" options={["sector", "idea"] as const} value={grouping}
+                  onChange={setGrouping} render={(g) => (g === "sector" ? "Sectors" : "Ideas")} />
       </div>
-      <div className="mt-2">
+      <SegmentBar segments={segments} tall />
+      <div className="mt-3">
         <CompositionBox positions={data.positions} composition={data.composition}
                         aggregate={cashRow ? [...aggRows, cashRow] : aggRows} />
       </div>
-    </section>
+    </div>
+  );
+}
+
+const ACCOUNT_PEEK = ["Cash", "Buying power", "Unrealized P&L", "Realized P&L", "Short value", "Circuit breaker"];
+
+function AccountCard({ data }: { data: PortfolioPayload }) {
+  const figures = accountFigures(data);
+  const shown = figures.filter((f) => ACCOUNT_PEEK.includes(f.label));
+  return (
+    <DashCard title="Account" detail={(
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {figures.map((f) => <Fig key={f.label} label={f.label} value={f.value} className={f.className ?? "text-white"} />)}
+      </dl>
+    )} detailTitle="Account figures">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+        {shown.map((f) => (
+          <div key={f.label} className={f.label === "Circuit breaker" ? "col-span-2" : ""}>
+            <Fig label={f.label} value={f.value} className={f.className ?? "text-white"} />
+          </div>
+        ))}
+      </dl>
+    </DashCard>
+  );
+}
+
+/** Today's biggest dollar moves, so a bad day reads as "which names", not just a total. */
+function MoversCard({ rows }: { rows: PositionRow[] }) {
+  const { up, down, known } = useMemo(() => dayMovers(rows), [rows]);
+  const all = useMemo(() => dayMovers(rows, rows.length), [rows]);
+  const total = known && rows.every((r) => r.day_pl != null) ? rows.reduce((a, r) => a + (r.day_pl ?? 0), 0) : null;
+  const line = (r: PositionRow) => ({
+    key: r.symbol, label: r.symbol, aside: fmtPct(r.change_pct), value: signed(r.day_pl), valueClass: tone(r.day_pl),
+  });
+  const byDay = [...all.up, ...all.down.slice().reverse()];
+  const maxAbs = Math.max(1, ...byDay.map((r) => Math.abs(r.day_pl ?? 0)));
+  return (
+    <DashCard title="Today's movers" meta={<span className={tone(total)}>{signed(total)}</span>}
+              detail={byDay.length ? (
+                <ul className="space-y-1 text-xs tabular-nums">
+                  {byDay.map((r) => {
+                    const v = r.day_pl ?? 0;
+                    return (
+                      <li key={r.symbol} className="grid grid-cols-[5rem_4rem_1fr_5.5rem] items-center gap-2">
+                        <span className="font-semibold text-white">{r.symbol}</span>
+                        <span className="text-slate-400">{fmtPct(r.change_pct)}</span>
+                        <span className="relative h-2 rounded bg-slate-800">
+                          <span className={`absolute inset-y-0 rounded ${v >= 0 ? "left-1/2 bg-emerald-400" : "right-1/2 bg-rose-400"}`}
+                                style={{ width: `${(Math.abs(v) / maxAbs) * 50}%` }} />
+                        </span>
+                        <span className={`text-right ${tone(v)}`}>{signed(r.day_pl)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : <p className="text-sm text-slate-400">No moves yet today.</p>}
+              detailTitle="Today's moves, every position">
+      {!known && rows.length > 0 ? (
+        <p className="text-xs text-slate-500">Day P&amp;L —</p>
+      ) : up.length + down.length === 0 ? (
+        <p className="text-xs text-slate-500">No moves yet</p>
+      ) : (
+        <div className="space-y-1">
+          <PeekRows rows={up.map(line)} empty="No gainers" />
+          <PeekRows rows={down.map(line)} empty="No losers" />
+        </div>
+      )}
+    </DashCard>
   );
 }
 
@@ -128,26 +217,43 @@ const COLUMNS: { key: SortKey; label: string; read: (r: PositionRow) => number |
   { key: "unrealized", label: "Unrealized", read: (r) => r.unrealized_pl },
 ];
 
-/** The account as the broker holds it: one row per ticker, no idea
- * information at all. Every column sorts; the Heatmap switch turns the
- * table into tiles sized by weight and coloured by today's move. */
-function PositionsSection({ rows, cashRow }: {
-  rows: PositionRow[];
-  cashRow: PositionRow | undefined;
-}) {
+/** Positions: the count, open P&L and the five largest holdings; opens to
+ * the account as the broker holds it -- one row per ticker, every column
+ * sortable, a filter and a heatmap view. */
+function PositionsCard({ rows, cashRow }: { rows: PositionRow[]; cashRow: PositionRow | undefined }) {
+  const unrealized = rows.length && rows.every((r) => r.unrealized_pl != null)
+    ? rows.reduce((a, r) => a + (r.unrealized_pl ?? 0), 0) : null;
+  const top = useMemo(() => [...rows].sort((a, b) => Math.abs(b.market_value) - Math.abs(a.market_value)).slice(0, PEEK), [rows]);
+  return (
+    <DashCard title="Positions" className="md:col-span-2" value={rows.length}
+              meta={<>Open <span className={tone(unrealized)}>{signed(unrealized)}</span></>}
+              detail={<PositionsTable rows={rows} cashRow={cashRow} />} detailTitle={`Positions · ${rows.length}`}>
+      <PeekRows empty="No open positions. Cash only." rows={top.map((r) => ({
+        key: `${r.symbol}-${r.idea ?? ""}`, label: contractLabel(r.symbol) ?? r.symbol,
+        aside: `${money(r.market_value)} · ${r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}`,
+        value: signed(r.unrealized_pl), valueClass: tone(r.unrealized_pl),
+      }))} />
+    </DashCard>
+  );
+}
+
+function PositionsTable({ rows, cashRow }: { rows: PositionRow[]; cashRow: PositionRow | undefined }) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "value", desc: true });
   const [heatmap, setHeatmap] = useState(false);
+  const [q, setQ] = useState("");
   const ordered = useMemo(() => {
     const read = sort.key === "symbol" ? (r: PositionRow) => r.symbol : COLUMNS.find((c) => c.key === sort.key)!.read;
-    const sorted = [...rows].sort((a, b) => {
-      const x = read(a), y = read(b);
-      if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
-      const order = typeof x === "string" ? x.localeCompare(String(y))
-        : SIGNED_SORT.has(sort.key) ? x - Number(y) : Math.abs(x) - Math.abs(Number(y));
-      return sort.desc ? -order : order;
-    });
+    const needle = q.trim().toUpperCase();
+    const sorted = rows.filter((r) => !needle || r.symbol.toUpperCase().includes(needle) || (r.sector ?? "").toUpperCase().includes(needle))
+      .sort((a, b) => {
+        const x = read(a), y = read(b);
+        if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+        const order = typeof x === "string" ? x.localeCompare(String(y))
+          : SIGNED_SORT.has(sort.key) ? x - Number(y) : Math.abs(x) - Math.abs(Number(y));
+        return sort.desc ? -order : order;
+      });
     return withOptionsUnderStock(sorted);
-  }, [rows, sort]);
+  }, [rows, sort, q]);
   const maxPl = Math.max(1, ...rows.map((r) => Math.abs(r.unrealized_pl ?? 0)));
   const head = (key: SortKey, label: string, align = "text-right") => (
     <th key={key} scope="col" aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
@@ -159,21 +265,18 @@ function PositionsSection({ rows, cashRow }: {
       </button>
     </th>
   );
+  if (rows.length === 0) return <p className="text-sm text-slate-400">No open positions. Cash only.</p>;
   return (
-    <section aria-label="Positions" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-      <div className="flex items-center justify-between gap-3 px-1">
-        <h2 className="text-sm font-semibold text-white">Positions · {rows.length}</h2>
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <FilterBox value={q} onChange={setQ} label="Filter positions" />
         <label className="flex items-center gap-1.5 text-xs text-slate-400">
-          <input type="checkbox" checked={heatmap} onChange={(e) => setHeatmap(e.target.checked)}
-                 className="h-3.5 w-3.5 accent-emerald-400" />
+          <input type="checkbox" checked={heatmap} onChange={(e) => setHeatmap(e.target.checked)} className="h-3.5 w-3.5 accent-emerald-400" />
           Heatmap
         </label>
       </div>
-      {rows.length === 0 ? (
-        <p className="px-1 pt-2 text-sm text-slate-400">No open positions. Cash only.</p>
-      ) : heatmap ? (
-        <div className="flex flex-wrap gap-1 pt-2" role="img"
-             aria-label={rows.map((r) => `${r.symbol} ${fmtPct(r.change_pct)}`).join(", ")}>
+      {heatmap ? (
+        <div className="flex flex-wrap gap-1" role="img" aria-label={ordered.map((r) => `${r.symbol} ${fmtPct(r.change_pct)}`).join(", ")}>
           {ordered.map((r) => {
             const chg = r.change_pct ?? 0;
             const intensity = Math.min(1, Math.abs(chg) / 5) * 0.5 + 0.07;
@@ -183,52 +286,40 @@ function PositionsSection({ rows, cashRow }: {
               <div key={`${r.symbol}-${r.idea ?? ""}`} className="flex h-16 min-w-[5.5rem] flex-col justify-between rounded p-1.5"
                    style={{ background: bg, flexGrow: Math.max(1, Math.abs(r.market_value) / 1000) }}>
                 <span className="text-xs font-semibold text-white">{r.symbol}</span>
-                <span className="text-[11px] tabular-nums text-slate-100">
-                  {fmtPct(r.change_pct)} · {fmtUsd(r.day_pl, { signed: true, whole: true })}
-                </span>
+                <span className="text-[11px] tabular-nums text-slate-100">{fmtPct(r.change_pct)} · {fmtUsd(r.day_pl, { signed: true, whole: true })}</span>
               </div>
             );
           })}
         </div>
       ) : (
-        <div className="-mx-3 overflow-x-auto px-3 pt-1">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[60rem] text-[13px] tabular-nums">
             <thead className="text-left text-xs text-slate-400">
-              <tr>
-                {head("symbol", "Instrument", "text-left")}
-                {COLUMNS.map((c) => head(c.key, c.label))}
-              </tr>
+              <tr>{head("symbol", "Instrument", "text-left")}{COLUMNS.map((c) => head(c.key, c.label))}</tr>
             </thead>
             <tbody>
               {ordered.map((r) => {
                 const pl = r.unrealized_pl ?? 0;
                 return (
                   <tr key={`${r.symbol}-${r.idea ?? ""}`} className="border-t border-slate-800/80 text-slate-200">
-                    <td className="whitespace-nowrap px-2 py-1.5">
-                      <span className="font-semibold text-white">
-                        {contractLabel(r.symbol) ?? r.symbol}
-                      </span>
-                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5"><span className="font-semibold text-white">{contractLabel(r.symbol) ?? r.symbol}</span></td>
                     <td className="px-2 py-1.5 text-right">{r.qty == null ? "—" : r.qty}</td>
                     <td className="px-2 py-1.5 text-right">{price(r.avg_price)}</td>
                     <td className="px-2 py-1.5 text-right">{price(r.last_price)}</td>
                     <td className={`px-2 py-1.5 text-right ${tone(r.change_pct)}`}>{fmtPct(r.change_pct)}</td>
                     <td className={`px-2 py-1.5 text-right ${tone(r.day_pl)}`}>{signed(r.day_pl)}</td>
-                    <td className={`px-2 py-1.5 text-right ${tone(r.ah_change_pct)}`}>
-                      {r.ah_change_pct == null ? "—" : fmtPct(r.ah_change_pct)}
-                    </td>
+                    <td className={`px-2 py-1.5 text-right ${tone(r.ah_change_pct)}`}>{r.ah_change_pct == null ? "—" : fmtPct(r.ah_change_pct)}</td>
                     <td className="px-2 py-1.5 text-right">{money(r.cost_basis)}</td>
                     <td className="px-2 py-1.5 text-right">{money(r.market_value)}</td>
                     <td className="px-2 py-1.5 text-right">
                       {r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}
-                      <span className="mt-0.5 block h-1 w-16 ml-auto rounded bg-slate-800">
-                        <span className="block h-full rounded bg-slate-400"
-                              style={{ width: `${Math.min(100, r.pct_of_book ?? 0)}%` }} />
+                      <span className="ml-auto mt-0.5 block h-1 w-16 rounded bg-slate-800">
+                        <span className="block h-full rounded bg-slate-400" style={{ width: `${Math.min(100, r.pct_of_book ?? 0)}%` }} />
                       </span>
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       <span className={tone(r.unrealized_pl)}>{signed(r.unrealized_pl)}</span>
-                      <span className="relative mt-0.5 block h-1 w-16 ml-auto rounded bg-slate-800">
+                      <span className="relative ml-auto mt-0.5 block h-1 w-16 rounded bg-slate-800">
                         <span className="absolute inset-y-0 left-1/2 w-px bg-slate-600" />
                         <span className={`absolute inset-y-0 rounded ${pl >= 0 ? "bg-emerald-400" : "bg-rose-400"}`}
                               style={pl >= 0
@@ -243,8 +334,8 @@ function PositionsSection({ rows, cashRow }: {
           </table>
         </div>
       )}
-      {cashRow && <p className="px-1 pt-1 text-[11px] text-slate-500">Cash {money(cashRow.market_value)} sits outside the table.</p>}
-    </section>
+      {cashRow && <p className="pt-2 text-[11px] text-slate-500">Cash {money(cashRow.market_value)}, outside the table.</p>}
+    </div>
   );
 }
 
@@ -257,20 +348,23 @@ const MANUAL_IDEA = "No idea yet (manual)";
 export const cardKeyFor = (idea: string | null | undefined, symbol: string): string =>
   idea && idea !== MANUAL_IDEA ? idea : `${symbol} (manual)`;
 
-/** By idea: where the idea information lives. One expandable row per
- * idea -- value, weight against its set size, today, open and realized
- * P&L, return -- expanding to the idea's own slice of each ticker, so
- * the slices add up to the Positions row. Tested ideas and discretionary
- * trades are totalled separately at the foot. */
-function ByIdea({ rows, equity, liveIdeas, book }: {
+type Card = ReturnType<typeof ideaScorecard>[number];
+
+const IdeaName = ({ c, raised }: { c: Card; raised?: boolean }) => (c.id != null ? (
+  <Link to={`/workshop/${c.id}`} className={`line-clamp-1 hover:text-white hover:underline underline-offset-2 ${raised ? "relative z-10" : ""}`}>{c.idea}</Link>
+) : <span className="line-clamp-1">{c.idea}</span>);
+
+/** By idea: the count, tested-vs-discretionary realized and the five
+ * largest ideas; opens to one expandable row per idea -- value, weight
+ * against its set size, today, open and realized P&L, return -- each
+ * expanding to the idea's own slice of each ticker. */
+function ByIdeaCard({ rows, equity, liveIdeas, book }: {
   rows: PositionRow[];
   equity: number | null;
   liveIdeas: { id: number; title: string; size_pct: number | null }[];
   book: string;
 }) {
   const { data: closed } = useApi<ClosedPayload>(`/api/portfolio/closed?book=${book}`, REFRESH_MS);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ key: IdeaSort; desc: boolean }>({ key: "value", desc: true });
   const cards = useMemo(() => ideaScorecard(rows, equity, liveIdeas), [rows, equity, liveIdeas]);
   const realizedByIdea = useMemo(() => {
     const out = new Map<string, number>();
@@ -280,7 +374,32 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
     }
     return out;
   }, [closed]);
-  const read = (c: (typeof cards)[number]): number | null => {
+  const split = closed?.results_split;
+  return (
+    <DashCard title="By idea" className="md:col-span-2" value={cards.length}
+              meta={split ? <>Tested <span className={tone(split.tested.pnl)}>{signed(split.tested.pnl)}</span> · Discretionary <span className={tone(split.discretionary.pnl)}>{signed(split.discretionary.pnl)}</span></> : undefined}
+              detail={<ByIdeaTable cards={cards} rows={rows} realizedByIdea={realizedByIdea} closed={closed} />}
+              detailTitle={`By idea · ${cards.length} ideas`}>
+      <ul className="divide-y divide-slate-800/70 text-xs tabular-nums" data-peek="">
+        {cards.slice(0, PEEK).map((c) => (
+          <li key={c.idea} className={`flex items-baseline gap-2 py-1 ${c.id == null && c.idea.endsWith("(manual)") ? "text-slate-400" : "text-slate-200"}`}>
+            <span className="min-w-0 font-medium"><IdeaName c={c} raised /></span>
+            <span className="shrink-0 text-slate-500">{c.pct != null ? `${c.pct.toFixed(1)}%` : "—"}</span>
+            <span className={`ml-auto shrink-0 ${tone(c.unrealized)}`}>{c.positions && c.unrealized != null ? signed(c.unrealized) : "—"}</span>
+          </li>
+        ))}
+        {cards.length === 0 && <li className="py-1 text-slate-500">No ideas holding anything</li>}
+      </ul>
+    </DashCard>
+  );
+}
+
+function ByIdeaTable({ cards, rows, realizedByIdea, closed }: {
+  cards: Card[]; rows: PositionRow[]; realizedByIdea: Map<string, number>; closed: ClosedPayload | null;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: IdeaSort; desc: boolean }>({ key: "value", desc: true });
+  const read = (c: Card): number | null => {
     switch (sort.key) {
       case "value": return c.value;
       case "today": return c.day_pl;
@@ -304,10 +423,10 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
     </button>
   );
   return (
-    <Box title={`By idea · ${cards.length} ideas`}
-         right={<span className="text-xs text-slate-500">{known ? "bar: held · tick: set size" : "bar: % of book"}</span>}>
+    <div>
+      <p className="mb-2 text-xs text-slate-500">{known ? "Bar: held · tick: set size" : "Bar: % of book"}</p>
       <div className="overflow-x-auto">
-        <table className="w-full text-xs tabular-nums">
+        <table className="w-full min-w-[40rem] text-xs tabular-nums">
           <thead>
             <tr className="text-left text-xs text-slate-500">
               <th className="pb-1 pr-3 font-medium">Idea</th>
@@ -334,11 +453,7 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
                               className="rounded hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
                         {isOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
                       </button>
-                      {c.id != null ? (
-                        <Link to={`/workshop/${c.id}`} className="line-clamp-1 hover:text-white hover:underline underline-offset-2">{c.idea}</Link>
-                      ) : (
-                        <span className="line-clamp-1">{c.idea}</span>
-                      )}
+                      <IdeaName c={c} />
                     </span>
                     <div className="text-[11px] text-slate-500">
                       {c.positions === 0 ? "nothing held yet" : `${c.positions} position${c.positions === 1 ? "" : "s"}`}
@@ -361,14 +476,12 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
                     </div>
                   </td>
                   <td className="py-1 pr-3 text-right">{fmtUsd(c.value, { whole: true })}</td>
-                  <td className={`py-1 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? fmtUsd(c.day_pl, { signed: true, whole: true }) : "—"}</td>
+                  <td className={`py-1 pr-3 text-right ${tone(c.day_pl)}`}>{c.positions && c.day_pl != null ? signed(c.day_pl) : "—"}</td>
                   <td className={`py-1 pr-3 text-right ${tone(c.unrealized)}`}>
-                    {c.positions && c.unrealized != null ? fmtUsd(c.unrealized, { signed: true, whole: true }) : "—"}
+                    {c.positions && c.unrealized != null ? signed(c.unrealized) : "—"}
                     {c.return_pct != null && <div className="text-[11px]">{fmtPct(c.return_pct)}</div>}
                   </td>
-                  <td className={`py-1 text-right ${tone(realized)}`}>
-                    {realized != null ? fmtUsd(realized, { signed: true, whole: true }) : "—"}
-                  </td>
+                  <td className={`py-1 text-right ${tone(realized)}`}>{realized != null ? signed(realized) : "—"}</td>
                 </tr>,
                 ...(isOpen ? [
                   <tr key={`${c.idea}-slices`} className="bg-slate-900/40 text-slate-400">
@@ -397,32 +510,6 @@ function ByIdea({ rows, equity, liveIdeas, book }: {
           {" · "}Discretionary <span className={tone(closed.results_split.discretionary.pnl)}>{fmtUsd(closed.results_split.discretionary.pnl, { signed: true })}</span>
         </p>
       )}
-    </Box>
-  );
-}
-
-/** Today's biggest dollar moves, so a bad day reads as "which names", not just a total. */
-function MoversBox({ rows }: { rows: PositionRow[] }) {
-  const { up, down, known } = useMemo(() => dayMovers(rows), [rows]);
-  const line = (r: PositionRow) => (
-    <li key={r.symbol} className="flex items-baseline justify-between gap-2 py-1">
-      <span className="font-medium text-slate-200">{r.symbol}</span>
-      <span className="text-xs text-slate-500">{fmtPct(r.change_pct)}</span>
-      <span className={`ml-auto tabular-nums ${tone(r.day_pl)}`}>{fmtUsd(r.day_pl, { signed: true, whole: true })}</span>
-    </li>
-  );
-  return (
-    <Box title="Today's movers">
-      {!known && rows.length > 0 ? (
-        <p className="text-sm text-slate-400">Today's P&amp;L isn't available right now.</p>
-      ) : up.length + down.length === 0 ? (
-        <p className="text-sm text-slate-400">No moves yet today.</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div><div className="text-xs text-slate-500">Gaining</div><ul>{up.map(line)}</ul>{!up.length && <p className="py-1 text-slate-500">None</p>}</div>
-          <div><div className="text-xs text-slate-500">Losing</div><ul>{down.map(line)}</ul>{!down.length && <p className="py-1 text-slate-500">None</p>}</div>
-        </div>
-      )}
-    </Box>
+    </div>
   );
 }
