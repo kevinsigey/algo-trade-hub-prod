@@ -396,11 +396,17 @@ def test_production_shaped_trades_the_open_window(monkeypatch):
     pf = FakePortfolio()
     out = kd.run_once(db, pf, NOW)
     assert out["gate_version"] == "v1"
-    assert out["candidates"] == 1 and out["placed"] == 1
-    assert [p["ticker"] for p in pf.placed] == [TICKER]
-    assert pf.placed[0]["side"] == "yes" and pf.placed[0]["limit_price_cents"] == 40
+    # The frozen read (p=0.70 against a 0.40 ask) clears the candidate
+    # lane's 20c bar too, so both lanes place: the live lane at the 1%
+    # size, the edge20 lane at half size under its own client id.
+    assert out["candidates"] == 1 and out["placed"] == 2
+    assert [p["ticker"] for p in pf.placed] == [TICKER, TICKER]
+    live_order, lane_order = pf.placed
+    assert live_order["side"] == "yes" and live_order["limit_price_cents"] == 40
+    assert live_order["count"] == 12 and live_order["client_order_id"] == f"kd-{TICKER}"
+    assert lane_order["count"] == 6 and lane_order["client_order_id"] == f"kd-edge20-{TICKER}"
     assert kd.run_once(db, pf, NOW + timedelta(minutes=5))["placed"] == 0
-    assert len(pf.placed) == 1  # never twice
+    assert len(pf.placed) == 2  # never twice, in either lane
 
 
 def test_decision_mismatch_counted_against_the_tracking_row():
@@ -576,3 +582,108 @@ def test_lost_response_on_last_pass_is_adopted_at_cutoff():
     assert row["kalshi_order_id"] == "ord-lost" and row.get("skip_reason") is None
     assert row["status"] == "filled" and row["contracts_filled"] == 12
     assert pf.create_calls == 1
+
+
+# -- the candidate lane (Step B.3: v4-edge20-shadow at half caps) ----------------
+
+def test_lane_bar_comes_from_the_preregistered_dial():
+    from tradehub import fifteen_candidates
+    dial = fifteen_candidates.CANDIDATES[kd.LANE_VERSION].dial_for(kd.SERIES)
+    assert dial is not None and kd._lane_min_edge() == dial.min_edge == 0.20
+    lanes = kd._lanes("v1")
+    assert [lane["gate_version"] for lane in lanes] == ["v1", kd.LANE_VERSION]
+    live, cand = lanes
+    assert cand["pct"] == live["pct"] / 2
+    assert cand["cap_contracts"] == live["cap_contracts"] // 2
+    assert cand["cap_loss"] == live["cap_loss"] / 2
+
+
+def test_lane_trades_edge20_decisions_at_half_size():
+    db = seed(DB(), open_=[decision(edge_net=0.25)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 2
+    assert out["lanes"]["v1"]["placed"] == 1
+    assert out["lanes"][kd.LANE_VERSION]["candidates"] == 1
+    assert out["lanes"][kd.LANE_VERSION]["placed"] == 1
+    by_id = {p["client_order_id"]: p for p in pf.placed}
+    assert by_id[f"kd-{TICKER}"]["count"] == 12          # live: $500 x 1% / $0.40
+    lane_order = by_id[f"kd-edge20-{TICKER}"]
+    assert lane_order["count"] == 6                      # lane: half the pct
+    rows = {r["gate_version"]: r for r in db.db[kd.ORDERS]}
+    assert rows[kd.LANE_VERSION]["status"] == "resting"
+    assert rows[kd.LANE_VERSION]["budget_pct"] == 0.005
+    assert rows["v1"]["budget_pct"] == 0.01
+
+
+def test_lane_skips_decisions_under_the_20c_bar():
+    db = seed(DB(), open_=[decision(edge_net=0.15)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1  # the live lane only
+    assert out["lanes"][kd.LANE_VERSION]["candidates"] == 0
+    assert [r["gate_version"] for r in db.db[kd.ORDERS]] == ["v1"]
+
+
+def test_lane_needs_a_measured_edge():
+    # A decision row without edge_net cannot be shown to clear the bar.
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    assert out["lanes"][kd.LANE_VERSION]["candidates"] == 0
+
+
+def test_both_lanes_hold_the_same_target_and_neither_repeats():
+    # The (target, gate_version) keying regression: with the old
+    # target-only lookup the lane would have found the live lane's row
+    # and never traded; with no keying at all a second pass would
+    # double-place. One row per lane, stable across passes.
+    db = seed(DB(), open_=[decision(edge_net=0.30)])
+    pf = FakePortfolio()
+    kd.run_once(db, pf, NOW)
+    kd.run_once(db, pf, NOW + timedelta(minutes=1))
+    assert len(pf.placed) == 2
+    keys = {(r["target"], r["gate_version"]) for r in db.db[kd.ORDERS]}
+    assert keys == {(TARGET, "v1"), (TARGET, kd.LANE_VERSION)}
+
+
+def test_lane_caps_are_its_own(monkeypatch):
+    monkeypatch.setenv("KALSHI_DEMO_MAX_CONTRACTS_PER_DAY", "12")
+    earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
+    db = seed(DB(), open_=[decision(edge_net=0.25)],
+              orders=[order_row(id=7, target=earlier,
+                                ticker="KXNATGAS15M-26NOV120900-00",
+                                gate_version=kd.LANE_VERSION,
+                                kalshi_order_id="ord-8", contracts=6,
+                                status="settled", settlement_pnl=1.0)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    # The lane's half cap is 6 and its own rows already used it; the
+    # live lane's tally is separate, so the live lane still places.
+    assert out["lanes"][kd.LANE_VERSION]["skipped_cap"] == 1
+    assert out["lanes"]["v1"]["placed"] == 1
+    skip = [r for r in db.db[kd.ORDERS] if r["status"] == "skipped_cap"]
+    assert skip and skip[0]["gate_version"] == kd.LANE_VERSION
+    assert skip[0]["skip_reason"] == "daily_contract_cap"
+
+
+def test_report_splits_the_lanes():
+    earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
+    db = seed(DB(), orders=[
+        order_row(status="settled", settlement_pnl=2.40, contracts_filled=12),
+        order_row(id=2, target=earlier, ticker="KXNATGAS15M-26NOV120900-00",
+                  gate_version=kd.LANE_VERSION, contracts=6,
+                  contracts_filled=6, status="settled", settlement_pnl=-1.20),
+    ])
+    kd._summary_cache = None
+    pf = FakePortfolio()
+    pf.get_positions = lambda: []
+    report = kd.build_report(db, pf, NOW)
+    kd._summary_cache = None
+    lanes = {lane["gate_version"]: lane for lane in report["lanes"]}
+    assert lanes["v1"]["settled"] == 1 and lanes["v1"]["pnl"] == 2.40
+    assert lanes[kd.LANE_VERSION]["settled"] == 1
+    assert lanes[kd.LANE_VERSION]["pnl"] == -1.20
+    assert lanes[kd.LANE_VERSION]["win_rate"] == 0.0
+    assert report["lanes"][-1]["gate_version"] == kd.LANE_VERSION

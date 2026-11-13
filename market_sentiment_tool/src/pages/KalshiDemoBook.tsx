@@ -45,7 +45,7 @@ function mergeCurves(demo: KalshiCurvePoint[], shadow: KalshiCurvePoint[]) {
   });
 }
 
-type SortKey = "created_at" | "ticker" | "contracts" | "limit_price" | "fill_price" | "status" | "settlement_pnl";
+type SortKey = "created_at" | "ticker" | "gate_version" | "contracts" | "limit_price" | "fill_price" | "status" | "settlement_pnl";
 
 function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
   const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "created_at", asc: false });
@@ -79,6 +79,7 @@ function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
         <thead><tr className="text-left text-slate-500">
           {head("Placed", "created_at")}
           {head("Market", "ticker")}
+          {head("Lane", "gate_version")}
           <th scope="col" className="pb-1 pr-2 font-medium">Side</th>
           {head("Contracts", "contracts", true)}
           {head("Limit", "limit_price", true)}
@@ -92,6 +93,7 @@ function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
             <tr key={o.id} className="border-t border-slate-800/70">
               <td className="py-1 pr-2 text-slate-400">{ctDateTime(o.created_at)}</td>
               <td className="py-1 pr-2 font-semibold text-white">{o.ticker}</td>
+              <td className="py-1 pr-2 text-slate-400">{o.gate_version ?? "—"}</td>
               <td className="py-1 pr-2 text-slate-200">{o.side.toUpperCase()}</td>
               <td className="py-1 pr-2 text-right text-slate-200">{o.contracts_filled}/{o.contracts}</td>
               <td className="py-1 pr-2 text-right text-slate-200">{price(o.limit_price)}</td>
@@ -259,6 +261,18 @@ export default function KalshiDemoBook() {
             key: String(o.id), label: o.ticker, aside: o.status,
             value: signed(o.settlement_pnl), valueClass: tone(o.settlement_pnl),
           }))} />
+          {data.lanes && data.lanes.length > 1 ? (
+            <dl className="mt-2 space-y-1 border-t border-slate-800/70 pt-2">
+              {data.lanes.map((lane) => (
+                <div key={lane.gate_version} className="flex items-baseline justify-between gap-2 text-xs">
+                  <dt className="truncate text-slate-400">{lane.gate_version}</dt>
+                  <dd className={`tabular-nums ${tone(lane.pnl)}`}>
+                    {lane.settled} settled · {signed(lane.pnl)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
         </DashCard>
       </div>
     </div>

@@ -21,8 +21,19 @@ Hard rules:
 - Only `KXNATGAS15M` buys stamped with the version fifteen_tracking
   ._live_gate() returns are traded -- never the blend shadow's rows,
   never another series, never a skip.
-- One row per decision in `kalshi_demo_orders`; the (series, target)
-  unique constraint is the never-order-twice guarantee.
+- One row per decision per lane in `kalshi_demo_orders`; the
+  (series, target, gate_version) unique constraint is the
+  never-order-twice guarantee.
+
+The candidate lane (Step B.3, Claude's ruling 2026-11-13): beside the
+live gate's lane, a second lane trades the same freeze-time decisions
+when they also clear the preregistered v4-edge20-shadow dial (the edge
+bar read from tradehub/fifteen_candidates, never restated here), at
+half the live lane's caps and half its budget pct, each order tagged
+gate_version = the candidate's name. It is a demo trial only: the
+shadow record stays the measure, and lane trades never count toward
+the candidate's promotion bar. Caps and tallies are per lane -- each
+lane's day is counted from its own rows only.
 - The live rule, the blend's frozen rows, shadow scoring and the Alpaca
   paper-order path are untouched: this module only reads them.
 """
@@ -37,7 +48,7 @@ from zoneinfo import ZoneInfo
 
 import time
 
-from tradehub import fifteen_tracking
+from tradehub import fifteen_candidates, fifteen_tracking
 from tradehub import oil_fifteen_rule as rule
 from tradehub.core.kalshi_portfolio import NotDemoHostError
 from tradehub.journal.kalshi_linked import ticker_of
@@ -89,6 +100,45 @@ def size_contracts(balance_usd: float, price: float, pct: float) -> int:
     if price <= 0 or balance_usd <= 0:
         return 0
     return max(1, math.floor(balance_usd * pct / price))
+
+
+# -- lanes ----------------------------------------------------------------------
+# The live gate's lane plus the Step B.3 candidate lane. A lane is a
+# gate_version stamp, an optional extra edge bar over the gate's own
+# decision, its own budget pct and daily caps, and its own
+# client_order_id prefix (the live lane keeps the original `kd-` prefix
+# so orders placed before the lane existed still adopt by id).
+
+LANE_VERSION = "v4-edge20-shadow"
+
+
+def _lane_min_edge() -> float | None:
+    """The candidate lane's edge bar, read from the preregistered dial
+    itself (fifteen_candidates) so the lane can never drift from the
+    shadow it trials. None when the candidate has no gas dial."""
+    candidate = fifteen_candidates.CANDIDATES.get(LANE_VERSION)
+    if candidate is None:
+        return None
+    dial = candidate.dial_for(SERIES)
+    return None if dial is None else dial.min_edge
+
+
+def _lanes(live_version: str) -> list[dict]:
+    lanes = [{
+        "gate_version": live_version, "min_edge": None,
+        "pct": budget_pct(), "cap_contracts": max_contracts_per_day(),
+        "cap_loss": max_loss_per_day_usd(), "client_prefix": "kd-",
+    }]
+    min_edge = _lane_min_edge()
+    if min_edge is not None:
+        lanes.append({
+            "gate_version": LANE_VERSION, "min_edge": min_edge,
+            "pct": budget_pct() / 2,
+            "cap_contracts": max(1, max_contracts_per_day() // 2),
+            "cap_loss": max_loss_per_day_usd() / 2,
+            "client_prefix": "kd-edge20-",
+        })
+    return lanes
 
 
 # -- reads --------------------------------------------------------------------
@@ -150,7 +200,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     summary["gate_version"] = version
 
     rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=500)
-    by_target = {r["target"]: r for r in rows}
+    by_key = {(r["target"], r.get("gate_version")): r for r in rows}
 
     tracked = _tracked_decisions(supa)
     summary["decision_mismatch"] = len(decision_mismatches(rows, tracked))
@@ -172,11 +222,42 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         fresh.append(d)
     summary["candidates"] = len(fresh)
 
-    # Daily-cap state for the ET day, tracked in memory as this pass places.
+    # Each lane trades its own slice of the same fresh decisions under
+    # its own caps and tallies; the candidate lane's slice is the subset
+    # that also clears its preregistered edge bar (an unmeasured edge is
+    # not a cleared bar).
     day_start = _day_start_et(now)
-    todays = [r for r in rows if _dt(r["created_at"]) >= day_start]
+    summary["lanes"] = {}
+    for lane in _lanes(version):
+        lane_fresh = fresh
+        if lane["min_edge"] is not None:
+            lane_fresh = [d for d in fresh
+                          if d.get("edge_net") is not None
+                          and float(d["edge_net"]) >= lane["min_edge"]]
+        lane_summary = {"candidates": len(lane_fresh), "placed": 0,
+                        "skipped_cap": 0, "skipped_no_depth": 0}
+        summary["lanes"][lane["gate_version"]] = lane_summary
+        _trade_lane(supa, portfolio, now, lane, lane_fresh, rows, by_key,
+                    day_start, summary, lane_summary)
+    return summary
+
+
+def _trade_lane(supa, portfolio, now: datetime, lane: dict,
+                fresh: list[dict], rows: list[dict], by_key: dict,
+                day_start: datetime, summary: dict,
+                lane_summary: dict) -> None:
+    """One lane's placements for this pass. Daily-cap state is the
+    lane's own: only rows stamped with the lane's gate_version count
+    toward its caps, tracked in memory as this pass places."""
+    version = lane["gate_version"]
+    pct = lane["pct"]
+    cap_contracts = lane["cap_contracts"]
+    cap_loss = lane["cap_loss"]
+
+    todays = [r for r in rows if r.get("gate_version") == version
+              and _dt(r["created_at"]) >= day_start]
     contracts_today = sum(int(r["contracts"]) for r in todays
-                           if r["status"] not in SKIP_STATUSES)
+                          if r["status"] not in SKIP_STATUSES)
     loss_used = 0.0
     for r in todays:
         if r["status"] == "settled" and (r.get("settlement_pnl") or 0) < 0:
@@ -186,13 +267,9 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
             price = r.get("fill_price") or r["limit_price"]
             loss_used += filled * float(price)
 
-    pct = budget_pct()
-    cap_contracts = max_contracts_per_day()
-    cap_loss = max_loss_per_day_usd()
-
     for d in fresh:
         target = d["target"]
-        existing = by_target.get(target)
+        existing = by_key.get((target, version))
         if existing is not None and existing["status"] != "pending":
             continue  # already traded or terminally skipped -- never twice
         if existing is not None and _adopt_if_accepted(supa, portfolio, existing, summary):
@@ -214,19 +291,21 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
             "side": d["side"], "gate_version": version,
             "limit_price": cost, "frozen_quote": cost,
             "window_close": _iso(_dt(d["close_time"])),
-            "client_order_id": f"kd-{d.get('ticker') or ticker_of(target)}",
+            "client_order_id": f"{lane['client_prefix']}{d.get('ticker') or ticker_of(target)}",
         }
         depth = ask_size_at(supa, SERIES, d["close_time"], d["side"], now)
         if depth is not None and depth < 1:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
                                    "status": "skipped_no_depth"})
             summary["skipped_no_depth"] += 1
+            lane_summary["skipped_no_depth"] += 1
             continue
         if contracts_today >= cap_contracts:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
                                    "status": "skipped_cap",
                                    "skip_reason": "daily_contract_cap"})
             summary["skipped_cap"] += 1
+            lane_summary["skipped_cap"] += 1
             continue
         contracts = min(contracts, cap_contracts - contracts_today)
         if loss_used + contracts * cost > cap_loss:
@@ -234,6 +313,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                                    "status": "skipped_cap",
                                    "skip_reason": "daily_loss_cap"})
             summary["skipped_cap"] += 1
+            lane_summary["skipped_cap"] += 1
             continue
 
         expires = _dt(d["close_time"]) - CANCEL_BUFFER
@@ -243,6 +323,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         row = existing or _insert(supa, claim, summary)
         if row is None:
             continue  # insert failed (unique backstop) -- already traded elsewhere
+        by_key[(target, version)] = row
         try:
             order = portfolio.create_order(
                 ticker=base_row["ticker"], side=d["side"], count=contracts,
@@ -259,7 +340,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         contracts_today += contracts
         loss_used += contracts * cost
         summary["placed"] += 1
-    return summary
+        lane_summary["placed"] += 1
 
 
 def _find_by_client_order_id(portfolio, client_order_id: str) -> dict | None:
@@ -574,6 +655,32 @@ def live_summary(portfolio, rows_by_ticker: dict[str, dict],
     return summary
 
 
+def _lane_summaries(rows: list[dict]) -> list[dict]:
+    """Per-lane record for the demo tab: each gate_version's orders on
+    their own line, so the candidate lane's trial never pools into the
+    live lane's figures. The candidate lane sorts last."""
+    by_version: dict[str, list[dict]] = {}
+    for r in rows:
+        by_version.setdefault(r.get("gate_version") or "unstamped", []).append(r)
+    out = []
+    for version, lane_rows in by_version.items():
+        settled = [r for r in lane_rows if r["status"] == "settled"]
+        filled = sum(int(r.get("contracts_filled") or 0) for r in settled)
+        pnl = round(sum(float(r.get("settlement_pnl") or 0) for r in settled), 2)
+        wins = sum(1 for r in settled if float(r.get("settlement_pnl") or 0) > 0)
+        out.append({
+            "gate_version": version,
+            "orders": len(lane_rows),
+            "settled": len(settled),
+            "win_rate": round(wins / len(settled), 4) if settled else None,
+            "pnl": pnl,
+            "pnl_per_contract": (round(pnl / filled, 4) if filled else None),
+        })
+    out.sort(key=lambda lane: (lane["gate_version"] == LANE_VERSION,
+                               lane["gate_version"]))
+    return out
+
+
 def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
     rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=500)
     rows_by_ticker = {r["ticker"]: r for r in rows
@@ -625,6 +732,7 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
         "pnl_today": round(pnl_today, 2),
         "positions": live["positions"],
         "positions_unavailable": bool(live.get("positions_unavailable")),
+        "lanes": _lane_summaries(rows),
         "performance": {
             "demo_curve": demo_curve,
             "shadow_curve": shadow_curve,
