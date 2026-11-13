@@ -1,7 +1,8 @@
 # 15-minute model v2: scoping (Claude, Nov 13; docs only)
 
 Kevin (Nov 13): use long 1-minute history to train a better 15-minute model. This is the scope. It writes no code.
-**The data source is pending Kevin's choice** (see "Data"), and nothing gets fetched until he picks one.
+**Sources (Kevin, Nov 13): Binance Vision for the Kalshi era, HistData for long history. No Dukascopy.**
+The bars are built in PR 2 (A0b).
 
 ## Facts this rests on (checked Nov 13)
 | Series | First settled market (Kalshi public API) | Settled to Nov 13 |
@@ -18,12 +19,12 @@ Kevin (Nov 13): use long 1-minute history to train a better 15-minute model. Thi
     market.
 - **Edge history therefore starts Jul 31, Aug 27 or Oct 21, 2026.** Anything older can only measure model accuracy, not edge.
 
-## Data (pending Kevin)
+## Data (Kevin chose Binance Vision + HistData)
 | Source | Covers | 1-minute depth | Terms |
 |---|---|---|---|
-| Dukascopy bi5 | all 6 (CFDs) | 2003–2013 onward | Website ToU §3–4: automated access needs prior express written consent; no database building; personal and non-commercial use only. **Blocked until Kevin has written consent.** |
-| Binance Vision USD-M perps | XAUUSDT (from 2025-12-11), XAGUSDT (2026-01-07), CLUSDT, BZUSDT, NATGASUSDT (2026-04-01), COPPERUSDT (2026-03-06); klines and aggTrades; daily files lag about 1 day | covers the whole Kalshi era for all 6 | CC BY-NC-SA 4.0 plus the Vision Dataset Terms (Aug 26, 2026). §4.1 allows backtesting only "for purely personal non-production research"; §4.2 bars use for "live proprietary trading execution". **Kevin decides whether this use fits.** |
-| HistData.com | gold, silver, WTI, Brent (no gas, no copper) | about 2009 onward | No terms-of-use page; the FAQ says "no warranty… use the data at your own will and risk". Free downloads go through a web form; automated updates are a paid subscription. Timestamps are EST with no DST. |
+| Dukascopy bi5 | all 6 (CFDs) | 2003–2013 onward | Website ToU §3–4: automated access needs prior express written consent; no database building; personal and non-commercial use only. **Not used** (Kevin, Nov 13). |
+| Binance Vision USD-M perps | XAUUSDT (from 2025-12-11), XAGUSDT (2026-01-07), CLUSDT, BZUSDT, NATGASUSDT (2026-04-01), COPPERUSDT (2026-03-06); klines and aggTrades; daily files lag about 1 day | covers the whole Kalshi era for all 6 | CC BY-NC-SA 4.0 plus the Vision Dataset Terms (Aug 26, 2026). §4.1 allows backtesting only "for purely personal non-production research"; §4.2 bars use for "live proprietary trading execution". **Chosen** for the Kalshi era (Kevin, Nov 13). |
+| HistData.com | gold, silver, WTI, Brent (no gas, no copper) | about 2009 onward | No terms-of-use page; the FAQ says "no warranty… use the data at your own will and risk". Free downloads go through a web form; automated updates are a paid subscription. Timestamps are EST with no DST. **Chosen** for long, model-only history on its four series. |
 | Hyperliquid archive (#517) | all 6 (the live anchor tape) | from Nov 9, accruing | already in use |
 
 ## 1. Target
@@ -87,7 +88,8 @@ Every feature uses only data at or before the entry minute.
 ## 6. Compute and storage
 - **Size:** about 23 hours a day × 4 windows × 252 days ≈ 23k windows per series-year.
   - About 13 years × 6 series ≈ 1.8M windows, or about 25M (window, minute) rows over 14 entry minutes.
-  - The four HistData series alone come to about 1.2M windows.
+  - HistData covers 4 series from about 2009, so about 1.2M windows. Gas and copper get long history only if a
+    licensed source turns up later.
 - **Where it runs:** locally. Isotonic and logistic fits take minutes; LightGBM takes under an hour on a laptop
   CPU. The VPS only loads the frozen artifact.
 - **Artifacts:** `/cache/research/models/fifteen_min_v2/<version>/` holds the model, the feature list, the training
@@ -103,7 +105,7 @@ Every feature uses only data at or before the entry minute.
 | CFD or perp basis against Pyth | the ≥ 97% outcome-agreement gate per series |
 | Survivorship and rolls | CFDs and perps don't roll, but their basis shifts at CME rolls; flag roll weeks as a feature and report them separately |
 | Fee changes | the fee is a parameter in `oil_fifteen_rule.fee`; rerun Part 2 if Kalshi changes it |
-| Data licence | no fetch until Kevin picks a source whose terms fit |
+| Data licence | Kevin chose the sources with their terms quoted (Binance's §4.1–4.2 non-production clauses included) |
 
 **Kill this line of work if any of these happen:**
 - (a) recalibration shows no Part 2 paired low95 > 0 against v1 on the forward record, using the Kalshi-era data to
