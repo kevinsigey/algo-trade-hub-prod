@@ -2,7 +2,6 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { adminJson } from "@/lib/workshop";
 import KalshiDemoBook from "@/pages/KalshiDemoBook";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
@@ -12,7 +11,7 @@ import {
   type BooksPayload,
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
-import { money, REFRESH_MS } from "@/pages/portfolio/shared";
+import { adminCall, money, REFRESH_MS } from "@/pages/portfolio/shared";
 import { PortfolioHeader, WarningsStrip } from "@/pages/portfolio/Header";
 import BookTab from "@/pages/portfolio/BookTab";
 import PerformanceTab from "@/pages/portfolio/PerformanceTab";
@@ -106,7 +105,7 @@ function AlpacaBook({ book }: { book: string }) {
   useEffect(() => {
     let cancelled = false;
     // Admin only: a signed-out visitor gets a 401 and simply sees no list.
-    adminJson<IdeaRow[]>("/api/workshop/ideas")
+    adminCall<IdeaRow[]>("/api/workshop/ideas")
       .then((rows) => { if (!cancelled) setIdeaRows(Array.isArray(rows) ? rows : []); })
       .catch(() => undefined);
     return () => {
