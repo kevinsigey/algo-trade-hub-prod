@@ -159,3 +159,46 @@ def tape_compare(a: list, b: list) -> dict:
     corr = statistics.correlation(ra, rb) if len(ra) > 2 else None
     return {"common_minutes": len(common), "return_pairs": len(ra), "return_corr": corr,
             "median_gap_bps": statistics.median(gaps) if gaps else None}
+
+
+def synthetic_windows(tape: list) -> dict[datetime, int]:
+    """{window close: outcome} for every :00/:15/:30/:45 window whose open
+    and settle minutes are both on the tape, by the contract's rule: YES iff
+    the close of the minute ending at the window's end is at least the
+    close of the minute ending at its open (ties are YES)."""
+    d = dict(tape)
+    out = {}
+    for t in d:
+        if t.minute % 15 == 14:  # the settle minute of the window closing at t + 1m
+            close = t + timedelta(minutes=1)
+            opened = d.get(close - timedelta(minutes=16))
+            if opened is not None:
+                out[close] = int(d[t] >= opened)
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Pull HistData's long model-only history for the four series it
+    carries and print synthetic-window counts per pair and year."""
+    import argparse
+    import json
+    ap = argparse.ArgumentParser(description=main.__doc__)
+    ap.add_argument("--cache", default="/cache/research/history")
+    ap.add_argument("--first-year", type=int, default=2009)
+    ap.add_argument("--last-month", default="2026-10", help="last monthly file of the current year")
+    args = ap.parse_args(argv)
+    last_year, last_month = (int(x) for x in args.last_month.split("-"))
+    cache = Path(args.cache)
+    for pair in HISTDATA_SYMBOLS.values():
+        counts = {}
+        for y in range(args.first_year, last_year + 1):
+            months = [None] if y < last_year else range(1, last_month + 1)
+            tape = [r for m in months for r in histdata_tape(pair, y, m, cache)]
+            if tape:
+                counts[y] = len(synthetic_windows(tape))
+        print(json.dumps({pair: counts, "total": sum(counts.values())}), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

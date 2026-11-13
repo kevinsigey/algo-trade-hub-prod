@@ -72,6 +72,38 @@ def test_golden_identical_tapes_pass_and_outcomes_follow_the_rule():
     tape = [(t0 + timedelta(minutes=m), 100 * (1.0005 ** m)) for m in range(300)]
     close = t0 + timedelta(minutes=240)
     out = series_golden(tape, list(tape), {close: 1, close - timedelta(minutes=15): 0})
-    assert out["a_within_1e5"] == 1.0 and out["b_within_0_01"] == 1.0
+    assert out["median_prob_diff"] == 0.0 and out["prob_within_0_10"] == 1.0
     # A rising tape settles YES: the first window agrees, the second (said NO) does not.
     assert out["outcome_agree"] == {"binance": 0.5, "hl": 0.5}
+    assert out["outcome_pass"] is False  # 50% < the 95% bar
+
+
+def test_outcome_gate_needs_95_and_no_worse_than_hl_minus_a_point():
+    from tradehub.scripts.history_golden import series_golden
+    t0 = datetime(2026, 11, 10, tzinfo=UTC)
+    up = [(t0 + timedelta(minutes=m), 100 * (1.0005 ** m)) for m in range(2000)]
+    closes = [t0 + timedelta(minutes=240 + 15 * i) for i in range(100)]
+    all_yes = {c: 1 for c in closes}
+    assert series_golden(up, list(up), all_yes)["outcome_pass"] is True  # 100% vs 100%
+    # Binance flat over the last window, so it reads 99 of 100 (YES on ties, but
+    # a down tick makes one NO); HL reads 100: 99 >= 95 and >= 100 - 1, passes.
+    dip = dict(up)
+    last = closes[-1]
+    dip[last - timedelta(minutes=1)] = dip[last - timedelta(minutes=16)] * 0.99
+    out = series_golden(sorted(dip.items()), list(up), all_yes)
+    assert out["outcome_agree"]["binance"] == 0.99 and out["outcome_pass"] is True
+    # Two misses (98) against HL's 100 fails the HL-minus-1 test despite >= 95.
+    dip[closes[-3] - timedelta(minutes=1)] = dip[closes[-3] - timedelta(minutes=16)] * 0.99
+    out = series_golden(sorted(dip.items()), list(up), all_yes)
+    assert out["outcome_agree"]["binance"] == 0.98 and out["outcome_pass"] is False
+
+
+def test_synthetic_windows_follow_the_contract_rule():
+    t0 = datetime(2026, 11, 10, tzinfo=UTC)
+    prices = {14: 100.0, 29: 100.0, 44: 99.0, 59: 99.5}  # settle minutes only
+    tape = [(t0 + timedelta(minutes=m), p) for m, p in prices.items()]
+    out = ht.synthetic_windows(tape)
+    # 00:15-00:30 tie -> YES; 00:30-00:45 down -> NO; 00:45-01:00 up -> YES;
+    # the 00:00-00:15 window has no open minute (23:59) and is left out.
+    assert out == {t0 + timedelta(minutes=30): 1, t0 + timedelta(minutes=45): 0,
+                   t0 + timedelta(minutes=60): 1}

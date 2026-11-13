@@ -3,12 +3,16 @@
     python -m tradehub.scripts.history_golden --cache /cache/research/history \
         --from 2026-11-09T16:00 --to 2026-11-12
 
-Per series: 1-minute return correlation and median level gap (bps); the
-replay probability (read_window, offsets 1-14) on each tape, compared
-with the A0 (a) within-1e-5 and (b) within-0.01 bars (the Hyperliquid
-replay stands in for the forward record, which A0 matched at 97.9% /
-99.75%); and the share of windows whose synthetic outcome on each tape
-equals Kalshi's settled result. Read-only; writes only under --cache.
+Per series: 1-minute return correlation and median level gap (bps), and
+the cross-venue gate (Claude's ruling on #526, Nov 13; A0's (a)/(b)
+test tape identity, which another venue cannot pass by construction):
+- outcome gate: the synthetic outcome on the Binance tape equals
+  Kalshi's settled result on >= 95% of windows, and is no worse than
+  Hyperliquid's own agreement minus 1 point;
+- informational: the replay probability (read_window, offsets 1-14) on
+  the Binance tape vs the Hyperliquid replay (A0's accepted proxy for the
+  forward record): median |dp| and the share within 0.10.
+Read-only; writes only under --cache.
 """
 
 from __future__ import annotations
@@ -23,6 +27,10 @@ from tradehub.backtest.kalshi_history import KalshiHistoryClient
 from tradehub.engines.fifteen_min import SERIES_COINS
 from tradehub.journal.forecasters.fifteen_min import read_window
 from tradehub.scripts.fifteen_replay_backfill import _market_close, _outcome, _tape
+
+
+OUTCOME_MIN = 0.95
+OUTCOME_VS_HL = 0.01
 
 
 def series_golden(binance: list, hl: list, results: dict) -> dict:
@@ -43,11 +51,13 @@ def series_golden(binance: list, hl: list, results: dict) -> dict:
             if rb and rh:
                 diffs.append(abs(rb["prob_up"] - rh["prob_up"]))
     n = len(diffs)
+    oa = {k: (v[0] / v[1] if v[1] else None) for k, v in agree.items()}
+    passed = (oa["binance"] is not None and oa["binance"] >= OUTCOME_MIN
+              and (oa["hl"] is None or oa["binance"] >= oa["hl"] - OUTCOME_VS_HL))
     return {**ht.tape_compare(binance, hl), "windows": len(results), "prob_rows": n,
-            "a_within_1e5": sum(d <= 1e-5 for d in diffs) / n if n else None,
-            "b_within_0_01": sum(d <= 0.01 for d in diffs) / n if n else None,
             "median_prob_diff": sorted(diffs)[n // 2] if n else None,
-            "outcome_agree": {k: (v[0] / v[1] if v[1] else None) for k, v in agree.items()}}
+            "prob_within_0_10": sum(d <= 0.10 for d in diffs) / n if n else None,
+            "outcome_agree": oa, "outcome_pass": passed}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,9 +77,7 @@ def main(argv: list[str] | None = None) -> int:
                    if (c := _market_close(m)) and start <= c < end and _outcome(m) is not None}
         out[series] = series_golden(binance, hl, results)
         print(series, json.dumps(out[series]), flush=True)
-    passed = all(r["a_within_1e5"] and r["a_within_1e5"] >= 0.95 and r["b_within_0_01"] >= 0.99
-                 for r in out.values())
-    print(json.dumps({"golden_pass": passed}))
+    print(json.dumps({"qualified": [s for s, r in out.items() if r["outcome_pass"]]}))
     return 0
 
 
