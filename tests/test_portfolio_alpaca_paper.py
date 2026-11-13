@@ -1,9 +1,16 @@
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from tradehub.portfolio.alpaca_paper import AccountNotConnected, latest_spy_price, paper_get
+from tradehub.portfolio.alpaca_paper import (
+    AccountNotConnected,
+    latest_snapshots,
+    latest_spy_price,
+    paper_get,
+)
 
 
 class FakeResponse:
@@ -63,6 +70,34 @@ def test_latest_spy_price_reads_the_data_host(keys):
     fake = FakeSession(FakeResponse(200, {"symbol": "SPY", "trade": {"p": 512.34}}))
     assert latest_spy_price(session=fake) == 512.34
     assert fake.calls[0]["url"] == "https://data.alpaca.markets/v2/stocks/SPY/trades/latest"
+
+
+def _snap_payload(today, bar_day, bar_close, prev_day, prev_close):
+    return {"SPY": {
+        "latestTrade": {"p": 605.0, "t": f"{today}T14:00:00Z"},
+        "dailyBar": {"t": f"{bar_day}T13:30:00Z", "c": bar_close},
+        "prevDailyBar": {"t": f"{prev_day}T13:30:00Z", "c": prev_close},
+    }}
+
+
+def test_prev_close_comes_from_prev_daily_bar_once_todays_bar_exists(keys):
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    payload = _snap_payload(today, today, 604.0, today - timedelta(days=1), 600.0)
+    out = latest_snapshots(["SPY"], session=FakeSession(FakeResponse(200, payload)))
+    assert out["SPY"]["prev_close"] == 600.0
+    assert out["SPY"]["day_close"] == 604.0
+
+
+def test_prev_close_is_the_daily_bar_before_todays_bar_starts(keys):
+    # Pre-market (CodeRabbit, PR #514): dailyBar is the last completed
+    # session and prevDailyBar is one older still, so reading
+    # prevDailyBar unconditionally prices today against a two-day-old
+    # close.
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    payload = _snap_payload(today, today - timedelta(days=1), 600.0,
+                            today - timedelta(days=2), 595.0)
+    out = latest_snapshots(["SPY"], session=FakeSession(FakeResponse(200, payload)))
+    assert out["SPY"]["prev_close"] == 600.0
 
 
 def test_no_live_trading_host_anywhere_in_tradehub():

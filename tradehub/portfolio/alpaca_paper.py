@@ -7,7 +7,9 @@ issues GETs (tests/test_portfolio_alpaca_paper.py fails if either changes). No o
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -83,13 +85,20 @@ def latest_snapshots(symbols: list[str], *, session=requests,
         return {}
     data = _get(DATA_BASE + "/v2/stocks/snapshots",
                 {"symbols": ",".join(symbols), "feed": "iex"}, session, book)
+    session_day = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     out: dict[str, dict] = {}
     for symbol, snap in (data or {}).items():
         trade = (snap or {}).get("latestTrade") or {}
         bar = (snap or {}).get("dailyBar") or {}
         prev_bar = (snap or {}).get("prevDailyBar") or {}
+        # The prior close is the last COMPLETED session's close. Before
+        # today's bar starts, dailyBar IS that session and prevDailyBar
+        # is one session older still; once today's bar exists,
+        # prevDailyBar is the prior session (CodeRabbit, PR #514).
+        bar_day = str(bar.get("t", ""))[:10]
+        prior_bar = bar if bar_day and bar_day < session_day else prev_bar
         try:
-            prev_close = float(prev_bar["c"])
+            prev_close = float(prior_bar["c"])
         except (KeyError, TypeError, ValueError):
             prev_close = None
         try:

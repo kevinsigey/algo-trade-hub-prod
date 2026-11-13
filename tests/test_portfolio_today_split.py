@@ -132,6 +132,19 @@ def test_qqq_split_after_hours():
     assert out["qqq_after_hours_pct"] == pytest.approx(-1.0)
 
 
+def test_qqq_failed_live_read_stays_unknown_after_hours():
+    # CodeRabbit, PR #514: an explicit qqq_price=None is a live read
+    # that failed -- the split must not substitute the close snapshot's
+    # stored price and print a 0% after-hours move as if current. The
+    # regular figure still comes from the close snapshot itself.
+    now = datetime(2026, 11, 12, 23, 30, tzinfo=UTC)  # 18:30 ET
+    snaps = QPRIOR + [qsnap("2026-11-12T21:05:00+00:00", 990.0, 594.0, 396.0)]  # 16:05 ET close
+    out = book.today_split(snaps, now, equity=985.0, spy_price=591.0, qqq_price=None)
+    assert out["state"] == "after_hours"
+    assert out["qqq_regular_pct"] == pytest.approx(-1.0)
+    assert out["qqq_after_hours_pct"] is None
+
+
 def test_qqq_unknown_when_snapshots_predate_the_column():
     now = datetime(2026, 11, 12, 20, 30, tzinfo=UTC)
     out = book.today_split(PRIOR + [snap("2026-11-12T15:00:00+00:00", 1010.0, 603.0)], now,

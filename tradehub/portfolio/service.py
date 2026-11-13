@@ -49,6 +49,28 @@ def _latest_snapshots_cached(symbols: list[str], now: datetime) -> dict:
     return snaps
 
 
+# The direct QQQ read is the benchmark cache's fallback; cache it per
+# book on the same TTL, failures included, so a QQQ-shaped hole in the
+# batched read does not cost a data-API call on every 30 s poll
+# (CodeRabbit, PR #514).
+_QQQ_FALLBACK_CACHE: dict[str, tuple[float, float | None]] = {}
+
+
+def _latest_qqq_price_cached(now: datetime) -> float | None:
+    from tradehub.portfolio.books import resolve
+
+    key = resolve()
+    hit = _QQQ_FALLBACK_CACHE.get(key)
+    if hit and now.timestamp() - hit[0] < _SNAPSHOT_CACHE_SECONDS:
+        return hit[1]
+    try:
+        value = latest_qqq_price()
+    except Exception:  # noqa: BLE001 -- no QQQ price: its curve line just ends earlier
+        value = None
+    _QQQ_FALLBACK_CACHE[key] = (now.timestamp(), value)
+    return value
+
+
 def _with_book(fn):
     """Run a payload builder inside its book's context: the Alpaca reads below resolve
     the book from the context variable (tradehub.portfolio.books), so the two accounts'
@@ -200,14 +222,12 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         bench = {}
     spy_now: float | None = None
     # QQQ's current print comes from the cached benchmark read (Claude's
-    # #514 review: latest_qqq_price was uncached), the direct read is the
-    # fallback; either failing leaves QQQ unknown, never an error.
+    # #514 review: latest_qqq_price was uncached); the direct read is the
+    # fallback, itself cached per book. Either failing leaves QQQ
+    # unknown, never an error.
     qqq_now: float | None = (bench.get("QQQ") or {}).get("price")
     if qqq_now is None:
-        try:
-            qqq_now = latest_qqq_price()
-        except Exception:  # noqa: BLE001 -- no QQQ price: its curve line just ends earlier
-            qqq_now = None
+        qqq_now = _latest_qqq_price_cached(now)
     try:
         spy_now = latest_spy_price()
         snaps = snaps + [{"taken_at": now.isoformat(), "account_number": number,

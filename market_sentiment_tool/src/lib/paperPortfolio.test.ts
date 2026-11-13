@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateToRow, betaToSpy, curveRange, curveTradingDays, dailyReturns, dayMovers, drawdownSeries, fmtPct, fmtPts, fmtUsd, ideaScorecard, isTestedTrade, MANUAL_IDEA, maxDrawdown, orderDetailLabel, orderLabel, pnlByIdea, pnlBySector, realizedByWeek, splitOverTime, stateLabel, tradeStats, tradesInRange, volatilityPct, type ClosedTrade, type PositionRow, type TodaySplit } from "@/lib/paperPortfolio";
+import { aggregateToRow, aheadOfQqqPts, betaToSpy, curveRange, curveTradingDays, dailyReturns, dayMovers, drawdownSeries, fmtPct, fmtPts, fmtUsd, ideaScorecard, isTestedTrade, MANUAL_IDEA, maxDrawdown, orderDetailLabel, orderLabel, pnlByIdea, pnlBySector, realizedByWeek, splitOverTime, stateLabel, tradeStats, tradesInRange, volatilityPct, type ClosedTrade, type PositionRow, type TodaySplit } from "@/lib/paperPortfolio";
 
 describe("paper portfolio formatting", () => {
   it("shows unknown as a dash, never zero", () => {
@@ -203,6 +203,34 @@ describe("performance derivations (2026-11-12 redesign PR 2)", () => {
     expect(last.portfolio_pct).toBe(1.5);
     expect(last.spy_pct).toBe(0.7);
     expect(last.provisional).toBe(true);
+  });
+
+  it("clears today's QQQ return when the split's regular figure is unknown", () => {
+    const withQqq = [
+      { ...pt("2026-11-11T20:00:00Z", 2.02, 1.0), qqq_pct: 1.0 },
+      { ...pt("2026-11-12T15:00:00Z", 2.5, 1.2), qqq_pct: 3.0 },
+      { ...pt("2026-11-12T21:30:00Z", 3.03, 1.7), qqq_pct: 4.2 }, // live point, after hours
+    ];
+    const split: TodaySplit = {
+      state: "after_hours", prior_close_at: null, close_at: "2026-11-12T21:05:00Z",
+      regular_pl: 150, regular_pct: 1.5, after_hours_pl: 30, after_hours_pct: 0.3,
+      spy_regular_pct: 0.7, spy_after_hours_pct: 0.1,
+      qqq_regular_pct: null, qqq_after_hours_pct: null,
+    };
+    const daily = dailyReturns(withQqq, split, new Date("2026-11-12T21:30:00Z"));
+    const last = daily[daily.length - 1];
+    expect(last.date).toBe("2026-11-12");
+    // The split's word wins for the portfolio and SPY...
+    expect(last.portfolio_pct).toBe(1.5);
+    expect(last.spy_pct).toBe(0.7);
+    // ...and for QQQ its word is "unknown": the curve-derived value
+    // (about +3.2 from the live point) must not pose as the regular day.
+    expect(last.qqq_pct).toBeNull();
+  });
+
+  it("nets the portfolio against QQQ in points", () => {
+    expect(aheadOfQqqPts(5, 3)).toBe(2);
+    expect(aheadOfQqqPts(-1, 2)).toBe(-3);
   });
 
   it("builds the drawdown series and finds its bottom", () => {

@@ -74,3 +74,77 @@ def test_read_unfilled_pages_past_the_postgrest_cap():
             for i in range(2500)]
     got = read_unfilled(_Client(rows))
     assert len(got) == 2500
+
+
+class _MainQuery:
+    """The backfill main()'s read + write surface over a fixed row set."""
+
+    def __init__(self, client):
+        self._client = client
+        self._range = None
+
+    def select(self, *_a):
+        return self
+
+    def is_(self, *_a):
+        return self
+
+    def order(self, *_a):
+        return self
+
+    def range(self, lo, hi):
+        self._range = (lo, hi)
+        return self
+
+    def update(self, row):
+        self._client.pending_update = row
+        return self
+
+    def eq(self, key, value):
+        self._client.update_filters[key] = value
+        return self
+
+    def execute(self):
+        client = self._client
+        if client.pending_update is not None:
+            client.updates.append((dict(client.update_filters), client.pending_update))
+            client.pending_update = None
+            client.update_filters = {}
+            return SimpleNamespace(data=[])
+        if self._range is None:
+            return SimpleNamespace(data=client.rows[:1000])
+        lo, hi = self._range
+        return SimpleNamespace(data=client.rows[lo:hi + 1])
+
+
+class _MainClient:
+    def __init__(self, rows):
+        self.rows = rows
+        self.updates = []
+        self.pending_update = None
+        self.update_filters = {}
+
+    def table(self, _name):
+        return _MainQuery(self)
+
+
+def test_backfill_reaches_fridays_bar_for_a_monday_snapshot(monkeypatch):
+    # CodeRabbit, PR #514: a Monday 09:05 ET snapshot's last fully
+    # closed bar is Friday's. The fetch window must reach back across
+    # the weekend, or the row stays NULL on every re-run.
+    from tradehub.scripts import portfolio_qqq_backfill as backfill
+
+    friday_bars = [{"t": "2026-11-06T19:00:00Z", "c": 310.0},
+                   {"t": "2026-11-06T20:00:00Z", "c": 312.0}]
+
+    def fake_bars(symbol, timeframe, start, end):
+        # The real API returns only bars inside [start, end].
+        return [b for b in friday_bars if start <= b["t"] <= end]
+
+    monkeypatch.setattr(backfill, "stock_bars", fake_bars)
+    client = _MainClient([{"account_number": "PA1",
+                            "taken_at": "2026-11-09T14:05:00+00:00"}])
+    assert backfill.main(client) == 0
+    assert client.updates == [({"account_number": "PA1",
+                                "taken_at": "2026-11-09T14:05:00+00:00"},
+                               {"qqq_price": 312.0})]

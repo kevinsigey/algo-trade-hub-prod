@@ -7,6 +7,7 @@ import {
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
+  aheadOfQqqPts,
   betaToSpy,
   bestWorstDay,
   CURVE_RANGES,
@@ -100,7 +101,7 @@ function Performance({ data, range, setRange, daily }: {
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
     ...(lastQqq?.qqq_pct != null ? [
       { label: `QQQ, ${range}`, value: fmtPct(lastQqq.qqq_pct) },
-      { label: "Ahead of QQQ", value: fmtPts(lastQqq.portfolio_pct - lastQqq.qqq_pct), className: tone(lastQqq.portfolio_pct - lastQqq.qqq_pct) },
+      { label: "Ahead of QQQ", value: fmtPts(aheadOfQqqPts(lastQqq.portfolio_pct, lastQqq.qqq_pct)), className: tone(aheadOfQqqPts(lastQqq.portfolio_pct, lastQqq.qqq_pct)) },
     ] : []),
     { label: "Volatility (annualized)", value: fmtPct(volatilityPct(daily)) },
     {

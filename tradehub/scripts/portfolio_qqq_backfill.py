@@ -67,7 +67,11 @@ def main(supa=None) -> int:
     if not rows:
         print(json.dumps({"backfill": "noop", "reason": "no NULL rows"}))
         return 0
-    start = (_ts(rows[0]["taken_at"]) - timedelta(days=2)).astimezone(UTC).isoformat()
+    # Ten days back, not two: the last bar fully closed before the
+    # earliest snapshot can sit across a weekend or a holiday stretch
+    # (a Monday-morning snapshot's bar is Friday's), and a window that
+    # starts after it leaves the row NULL on every re-run (CodeRabbit).
+    start = (_ts(rows[0]["taken_at"]) - timedelta(days=10)).astimezone(UTC).isoformat()
     end = (_ts(rows[-1]["taken_at"]) + timedelta(days=1)).astimezone(UTC).isoformat()
     bars = stock_bars("QQQ", "1Hour", start, end)
     assigned = assign_qqq_prices(rows, bars)

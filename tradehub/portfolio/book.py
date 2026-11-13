@@ -272,8 +272,16 @@ def curve(snapshots: list[dict]) -> list[dict]:
             for s in snapshots]
 
 
+# today_split's qqq_price default: "not passed" (a stale/offline read --
+# the stored snapshots are all there is) is not the same as an explicit
+# None (a live read that failed). Only the first may fall back to the
+# last stored price (CodeRabbit, PR #514).
+_QQQ_PRICE_OMITTED = object()
+
+
 def today_split(snapshots: list[dict], now: datetime, equity: float | None = None,
-                spy_price: float | None = None, qqq_price: float | None = None,
+                spy_price: float | None = None,
+                qqq_price: float | None | object = _QQQ_PRICE_OMITTED,
                 last_equity: float | None = None, spy_prev_close: float | None = None,
                 qqq_prev_close: float | None = None) -> dict:
     """Today, split at the 4:00 PM ET close (Portfolio header, 2026-11-12).
@@ -354,7 +362,10 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
     last = snapshots[-1]
     current_eq = float(equity) if equity is not None else float(last["equity"])
     current_spy = float(spy_price) if spy_price is not None else last.get("spy_price")
-    current_qqq = float(qqq_price) if qqq_price is not None else last.get("qqq_price")
+    # An omitted qqq_price falls back to the last stored price; an
+    # explicit None stays unknown -- passing the stored close off as the
+    # current print printed a 0% "after-hours" QQQ move after the bell.
+    current_qqq = last.get("qqq_price") if qqq_price is _QQQ_PRICE_OMITTED else qqq_price
     # The broker's last_equity IS the prior close; the prior snapshot is
     # the fallback for reads that have no account (the stale path).
     prior_eq = float(last_equity) if last_equity else float(prior["equity"])

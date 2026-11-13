@@ -373,6 +373,12 @@ export interface DailyReturn {
   provisional: boolean;
 }
 
+/** Portfolio minus QQQ over the same span, in points (the Performance
+ * stat cards; computed here, not in the TSX, per the page's path rules). */
+export function aheadOfQqqPts(portfolioPct: number, qqqPct: number): number {
+  return portfolioPct - qqqPct;
+}
+
 /** One return per ET trading day from the curve: the day's last point is its
  * close, differenced against the previous trading day's close. Weekends are
  * skipped (a weekend live point is not a trading day — the curveTradingDays
@@ -408,7 +414,11 @@ export function dailyReturns(curve: CurvePoint[], today?: TodaySplit | null, now
     if (today?.state === "after_hours") {
       if (today.regular_pct != null) last.portfolio_pct = today.regular_pct;
       if (today.spy_regular_pct != null) last.spy_pct = today.spy_regular_pct;
-      if (today.qqq_regular_pct != null) last.qqq_pct = today.qqq_regular_pct;
+      // A null QQQ regular figure means unknown, not "keep the curve
+      // value": the curve's live point can carry after-hours moves, so
+      // the day must not show them as its regular-session return
+      // (CodeRabbit, PR #514).
+      last.qqq_pct = today.qqq_regular_pct ?? null;
     }
   }
   return out;

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import requests
@@ -471,7 +471,11 @@ def test_portfolio_today_uses_the_brokers_last_equity(monkeypatch):
     monkeypatch.setattr(service, "paper_get", alpaca(account=account))
     monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
     monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    # The empty benchmark read falls back to the direct QQQ read; stub
+    # it too, or the test reaches for the real data API (CodeRabbit).
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
     service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
     snaps = [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
              snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
     out = service.portfolio(FakeSupabase(snaps),
@@ -487,7 +491,9 @@ def test_portfolio_logs_a_missing_last_equity(monkeypatch, caplog):
     monkeypatch.setattr(service, "paper_get", alpaca())  # ACCOUNT has no last_equity
     monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
     monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
     service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
     snaps = [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
              snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
     with caplog.at_level(logging.WARNING, logger="tradehub.portfolio.service"):
@@ -496,6 +502,55 @@ def test_portfolio_logs_a_missing_last_equity(monkeypatch, caplog):
     assert "last_equity" in caplog.text
     # ...and the split still falls back to the snapshot prior.
     assert out["today"]["regular_pl"] == 4820.0
+
+
+def _qqq_fallback_world(monkeypatch, qqq):
+    account = {"account_number": "PA2", "equity": "101000", "cash": "41200",
+               "last_equity": "100500"}
+    monkeypatch.setenv("PORTFOLIO_ACCOUNT_NUMBER", "PA2")
+    monkeypatch.setattr(service, "paper_get", alpaca(account=account))
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    monkeypatch.setattr(service, "latest_qqq_price", qqq)
+    service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
+    return [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
+            snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
+
+
+def test_portfolio_caches_the_direct_qqq_fallback(monkeypatch):
+    # CodeRabbit, PR #514: when the batched benchmark read omits QQQ,
+    # the direct read is cached per book on the snapshots TTL, so a
+    # QQQ-shaped hole does not cost a data-API call on every poll.
+    calls = {"n": 0}
+
+    def counting_qqq():
+        calls["n"] += 1
+        return 612.25
+
+    snaps = _qqq_fallback_world(monkeypatch, counting_qqq)
+    now = datetime(2026, 11, 12, 17, 0, tzinfo=UTC)
+    service.portfolio(FakeSupabase(snaps), now=now)
+    service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=30))
+    assert calls["n"] == 1
+    service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=120))
+    assert calls["n"] == 2
+
+
+def test_portfolio_caches_a_failed_qqq_fallback(monkeypatch):
+    # The failure is cached too, and QQQ simply reads unknown.
+    calls = {"n": 0}
+
+    def failing_qqq():
+        calls["n"] += 1
+        raise RuntimeError("data API down")
+
+    snaps = _qqq_fallback_world(monkeypatch, failing_qqq)
+    now = datetime(2026, 11, 12, 17, 0, tzinfo=UTC)
+    service.portfolio(FakeSupabase(snaps), now=now)
+    out = service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=30))
+    assert calls["n"] == 1
+    assert out["today"]["qqq_regular_pct"] is None
 
 
 class _RejectingQuery(FakeQuery):

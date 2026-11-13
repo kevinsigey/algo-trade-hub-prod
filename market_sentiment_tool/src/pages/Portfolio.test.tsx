@@ -190,6 +190,65 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(symbolsInOrder()).toEqual(["AAPL", "NVDA"]);
   });
 
+  it("shows closed trades as unreadable, not empty, when the read fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/Couldn't read closed trades/)).toBeInTheDocument();
+    expect(screen.queryByText("No closed trades yet.")).toBeNull();
+    expect(screen.queryByText(/^Closed trades · 0/)).toBeNull();
+  });
+
+  it("retries a transient admin-check failure and then loads the hand-off queue", async () => {
+    const urls: string[] = [];
+    const startedAt = Date.now();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) {
+        // Every component's first check fails (500); checks after the
+        // first second succeed, so only a retrying component gets in.
+        return Date.now() - startedAt < 1000
+          ? new Response(JSON.stringify({ detail: "boom" }), { status: 500 })
+          : new Response(JSON.stringify({ email: "k@example.com" }), { status: 200 });
+      }
+      if (url.includes("/api/portfolio/manual-actions")) {
+        return new Response(JSON.stringify({ book: "main", actions: [] }), { status: 200 });
+      }
+      if (url.includes("/api/workshop/ideas")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    // The failed check shows as a failed read, not a silent dark queue.
+    expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
+    // The retry succeeds, the queue loads, and the failure box clears.
+    await waitFor(() => expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(true), { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByText(/Couldn't read the hand-off list/)).toBeNull(), { timeout: 5000 });
+  });
+
+  it("keeps the hand-off failure visible while the admin check keeps failing", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
+    // Past the two quick retries, the queue endpoint is still untouched
+    // and the failure is still on screen.
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(false);
+    expect(screen.getByText(/Couldn't read the hand-off list/)).toBeInTheDocument();
+  });
+
   it("never polls the manual-actions endpoint for a signed-out visitor", async () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

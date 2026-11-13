@@ -16,7 +16,7 @@ import {
   type ClosedPayload,
   type ManualAction,
 } from "@/lib/paperPortfolio";
-import { Box, money, pollWhileVisible, price, REFRESH_MS } from "./shared";
+import { Box, pollWhileVisible, price, REFRESH_MS } from "./shared";
 
 /** Tab 3: Trade (2026-11-12 redesign). Manual actions at the top, the
  * order ticket open on the page (Single and Combo tabs inside it), then
@@ -88,7 +88,7 @@ const CLOSED_READERS: Record<ClosedSortKey, (t: ClosedPayload["trades"][number])
 };
 
 function ClosedTradesBox({ book }: { book: string }) {
-  const { data, loading } = useApi<ClosedPayload>(`/api/portfolio/closed?book=${book}`, REFRESH_MS);
+  const { data, error, loading, stale } = useApi<ClosedPayload>(`/api/portfolio/closed?book=${book}`, REFRESH_MS);
   const [sort, setSort] = useState<SortState<ClosedSortKey> | null>({ key: "exited_at", desc: true });
   const trades = useMemo(
     () => sortRows(Array.isArray(data?.trades) ? data.trades : [], sort, (t, k) => CLOSED_READERS[k](t)),
@@ -98,13 +98,22 @@ function ClosedTradesBox({ book }: { book: string }) {
     <SortHead label={label} sortKey={key} sort={sort} align={align}
               onSort={(k) => setSort((s) => nextSort(s, k))} />
   );
+  // A failed first read is "unavailable", never an empty list under a
+  // 0 count; a failed refresh keeps the last good rows, marked stale
+  // (CodeRabbit, PR #514).
+  const unreadable = data == null && error != null;
   return (
-    <Box title={`Closed trades · ${trades.length}`}
+    <Box title={unreadable ? "Closed trades" : `Closed trades · ${trades.length}`}
          right={trades.length > 0
            ? <span className="text-xs tabular-nums text-slate-400">Total {fmtUsd(total, { signed: true })}</span>
            : undefined}>
+      {stale && data != null ? (
+        <p className="mb-2 text-xs text-amber-300/80">Showing the last good read — the latest refresh failed.</p>
+      ) : null}
       {loading && trades.length === 0 ? (
         <p className="text-sm text-slate-400">Reading closed trades…</p>
+      ) : unreadable ? (
+        <p className="text-sm text-slate-400">Couldn&apos;t read closed trades — it retries on the refresh cycle.</p>
       ) : trades.length === 0 ? (
         <p className="text-sm text-slate-400">No closed trades yet.</p>
       ) : (
@@ -129,8 +138,8 @@ function ClosedTradesBox({ book }: { book: string }) {
                   <td className="py-1.5 pr-3 font-semibold text-white">{t.symbol}</td>
                   <td className="max-w-[14rem] truncate py-1.5 pr-3 text-slate-400">{t.idea ?? "—"}</td>
                   <td className="py-1.5 pr-3 text-right">{t.qty}</td>
-                  <td className="py-1.5 pr-3 text-right">{money(t.entry_price)}</td>
-                  <td className="py-1.5 pr-3 text-right">{money(t.exit_price)}</td>
+                  <td className="py-1.5 pr-3 text-right">{price(t.entry_price)}</td>
+                  <td className="py-1.5 pr-3 text-right">{price(t.exit_price)}</td>
                   <td className="py-1.5 pr-3 text-right">{fmtPct(t.return_pct)}</td>
                   <td className={`py-1.5 text-right font-medium ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                     {fmtUsd(t.pnl, { signed: true })}
@@ -152,10 +161,14 @@ function ClosedTradesBox({ book }: { book: string }) {
 function ManualActions({ book }: { book: string }) {
   const [actions, setActions] = useState<ManualAction[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [checkFailed, setCheckFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    let stop: (() => void) | undefined;
+    let started = false;
+    let stopLoad: (() => void) | undefined;
+    let stopCheck: (() => void) | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
       adminJson<{ actions: ManualAction[] }>(`/api/portfolio/manual-actions?book=${book}`)
         .then((body) => {
@@ -171,21 +184,48 @@ function ManualActions({ book }: { book: string }) {
           }
         });
     };
+    const start = () => {
+      if (cancelled || started) return;
+      started = true;
+      setCheckFailed(false);
+      stopCheck?.();
+      stopCheck = undefined;
+      load();
+      stopLoad = pollWhileVisible(load);
+    };
     // Signed-in only, gated on /api/admin/me like the order form: a
     // visitor must not poll the admin endpoint into a 401 every 30 s
-    // (Claude's #514 review).
-    adminJson<{ email: string }>("/api/admin/me")
-      .then(() => {
-        if (cancelled) return;
-        load();
-        stop = pollWhileVisible(load);
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; stop?.(); };
+    // (Claude's #514 review). A 401/403 ends it there. A transient
+    // failure (network, 5xx) shows as a failed read and retries --
+    // twice quickly, then on the refresh cycle -- instead of leaving
+    // the queue dark until a remount (CodeRabbit, PR #514).
+    let attempts = 0;
+    const check = () => {
+      adminJson<{ email: string }>("/api/admin/me")
+        .then(start)
+        .catch((err) => {
+          if (cancelled) return;
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) return;
+          setCheckFailed(true);
+          attempts += 1;
+          if (attempts <= 2) {
+            retryTimer = setTimeout(check, 1000);
+          } else if (!stopCheck) {
+            stopCheck = pollWhileVisible(check);
+          }
+        });
+    };
+    check();
+    return () => {
+      cancelled = true;
+      stopLoad?.();
+      stopCheck?.();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [book]);
 
   if (actions === null) {
-    return failed ? (
+    return failed || checkFailed ? (
       <Box title="Needs your hand" className="border-amber-500/40">
         <p className="text-xs text-slate-400">Couldn&apos;t read the hand-off list — it retries on the refresh cycle.</p>
       </Box>
