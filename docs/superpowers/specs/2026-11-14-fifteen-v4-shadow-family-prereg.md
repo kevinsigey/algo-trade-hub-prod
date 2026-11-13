@@ -3,7 +3,7 @@
 Frozen 2026-11-12 (Kevin's directive); **revised 2026-11-13, before
 any counted data exists**, on Claude's forward-data analysis of the
 original family and Kevin's per-commodity call (both on PR #518).
-**PREREG_AT = 2026-11-15T00:00:00Z** (unchanged). Only settled windows
+**PREREG_AT = 2026-11-14T00:00:00Z** (moved one day earlier on Kevin's Nov 13 call, before any row existed and before merge). Only settled windows
 with `window_open >= PREREG_AT` count, for every candidate and every
 leg of every criterion — the blend shadow's fresh-window convention.
 Nothing in this file may be edited after PREREG_AT; a changed rule is

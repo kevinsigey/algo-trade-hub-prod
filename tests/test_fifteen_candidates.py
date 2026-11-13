@@ -13,8 +13,8 @@ import pytest
 
 from tradehub import fifteen_candidates as fc
 
-AFTER = "2026-11-16T15:00:00Z"  # window opens after PREREG_AT (2026-11-15)
-BEFORE = "2026-11-14T15:00:00Z"
+AFTER = "2026-11-15T15:00:00Z"  # window opens after PREREG_AT (2026-11-14)
+BEFORE = "2026-11-13T15:00:00Z"
 
 
 def row(target="KXNATGAS15M-1", *, series="KXNATGAS15M", close=AFTER,
@@ -86,12 +86,12 @@ def test_no_gold_is_the_live_minute_without_gold():
 def test_fresh_means_window_open_at_prereg():
     # Closes 10 minutes after PREREG_AT but opens 5 minutes before it:
     # not fresh under the blend's convention.
-    edge = "2026-11-15T00:10:00Z"
+    edge = "2026-11-14T00:10:00Z"
     rows = [row("W-edge", close=edge, offset=5, edge=0.25, pnl=0.50)]
     result = fc.evaluate(rows, "v4-edge20-shadow",
                          now=datetime(2026, 11, 20, tzinfo=UTC))
     assert result["windows"] == 0 and result["trades"] == 0
-    exact = "2026-11-15T00:15:00Z"  # opens exactly at PREREG_AT: fresh
+    exact = "2026-11-14T00:15:00Z"  # opens exactly at PREREG_AT: fresh
     rows = [row("W-exact", close=exact, offset=5, edge=0.25, pnl=0.50)]
     result = fc.evaluate(rows, "v4-edge20-shadow",
                          now=datetime(2026, 11, 20, tzinfo=UTC))

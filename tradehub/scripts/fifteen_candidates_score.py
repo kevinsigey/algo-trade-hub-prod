@@ -37,7 +37,7 @@ def _announce(client, result: dict) -> None:
         write_gate_alert(
             client, family=FAMILY, version=version, event="eligible",
             title=f"{version} is promotion-eligible",
-            body=(f"{result['trades']} fresh trades since 2026-11-15: net "
+            body=(f"{result['trades']} fresh trades since 2026-11-14: net "
                   f"{result['net_per_contract']} per contract, low95 "
                   f"{result['low95']}, paired low95 vs the live gate "
                   f"{result['paired_low95']}. Promotion still needs Kevin's "

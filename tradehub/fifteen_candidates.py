@@ -1,6 +1,6 @@
 """The fifteen-minute v4 shadow family (preregistered 2026-11-12,
 revised 2026-11-13 before PREREG_AT on Claude's forward-data analysis
-and Kevin's per-commodity call; PREREG_AT 2026-11-15T00:00:00Z -- see
+and Kevin's per-commodity call; PREREG_AT 2026-11-14T00:00:00Z -- see
 docs/superpowers/specs/2026-11-14-fifteen-v4-shadow-family-prereg.md).
 
 Four candidates, each a fixed set of per-series dials (entry minutes x
@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 from tradehub.engines.fifteen_min import WINDOW_MINUTES
 from tradehub.fifteen_volregime import clustered_low95
 
-PREREG_AT = datetime(2026, 11, 15, tzinfo=UTC)
+PREREG_AT = datetime(2026, 11, 14, tzinfo=UTC)
 PROMOTION_MIN_TRADES = 100
 STOP_DAYS = 60
 STOP_TRADES = 300
