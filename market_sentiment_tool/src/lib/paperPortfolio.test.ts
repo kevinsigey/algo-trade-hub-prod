@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateToRow, betaToSpy, curveTradingDays, dailyReturns, dayMovers, drawdownSeries, fmtPct, fmtPts, fmtUsd, ideaScorecard, isTestedTrade, MANUAL_IDEA, maxDrawdown, orderDetailLabel, orderLabel, pnlByIdea, pnlBySector, realizedByWeek, splitOverTime, stateLabel, tradeStats, tradesInRange, volatilityPct, type ClosedTrade, type PositionRow, type TodaySplit } from "@/lib/paperPortfolio";
+import { aggregateToRow, aheadOfQqqPts, betaToSpy, curveRange, curveTradingDays, dailyReturns, dayMovers, drawdownSeries, fmtPct, fmtPts, fmtUsd, ideaScorecard, isTestedTrade, MANUAL_IDEA, maxDrawdown, orderDetailLabel, orderLabel, pnlByIdea, pnlBySector, realizedByWeek, splitOverTime, stateLabel, tradeStats, tradesInRange, volatilityPct, type ClosedTrade, type PositionRow, type TodaySplit } from "@/lib/paperPortfolio";
 
 describe("paper portfolio formatting", () => {
   it("shows unknown as a dash, never zero", () => {
@@ -205,21 +205,64 @@ describe("performance derivations (2026-11-12 redesign PR 2)", () => {
     expect(last.provisional).toBe(true);
   });
 
+  it("clears today's QQQ return when the split's regular figure is unknown", () => {
+    const withQqq = [
+      { ...pt("2026-11-11T20:00:00Z", 2.02, 1.0), qqq_pct: 1.0 },
+      { ...pt("2026-11-12T15:00:00Z", 2.5, 1.2), qqq_pct: 3.0 },
+      { ...pt("2026-11-12T21:30:00Z", 3.03, 1.7), qqq_pct: 4.2 }, // live point, after hours
+    ];
+    const split: TodaySplit = {
+      state: "after_hours", prior_close_at: null, close_at: "2026-11-12T21:05:00Z",
+      regular_pl: 150, regular_pct: 1.5, after_hours_pl: 30, after_hours_pct: 0.3,
+      spy_regular_pct: 0.7, spy_after_hours_pct: 0.1,
+      qqq_regular_pct: null, qqq_after_hours_pct: null,
+    };
+    const daily = dailyReturns(withQqq, split, new Date("2026-11-12T21:30:00Z"));
+    const last = daily[daily.length - 1];
+    expect(last.date).toBe("2026-11-12");
+    // The split's word wins for the portfolio and SPY...
+    expect(last.portfolio_pct).toBe(1.5);
+    expect(last.spy_pct).toBe(0.7);
+    // ...and for QQQ its word is "unknown": the curve-derived value
+    // (about +3.2 from the live point) must not pose as the regular day.
+    expect(last.qqq_pct).toBeNull();
+  });
+
+  it("nets the portfolio against QQQ in points", () => {
+    expect(aheadOfQqqPts(5, 3)).toBe(2);
+    expect(aheadOfQqqPts(-1, 2)).toBe(-3);
+  });
+
   it("builds the drawdown series and finds its bottom", () => {
     const points = [0, 2, 1, 3, -1].map((v, i) => pt(`2026-11-0${i + 1}T20:00:00Z`, v, 0));
-    expect(drawdownSeries(points).map((d) => d.dd_pct)).toEqual([0, 0, -1, 0, -4]);
-    expect(maxDrawdown(points)).toEqual({ pct: -4, at: "2026-11-05T20:00:00Z" });
+    const dd = drawdownSeries(points).map((d) => d.dd_pct);
+    // Peak-relative: 1 against a peak of 2 is (1.01/1.02)-1, not -1 point.
+    expect(dd[0]).toBe(0);
+    expect(dd[1]).toBe(0);
+    expect(dd[2]).toBeCloseTo(-0.9804, 3);
+    expect(dd[3]).toBe(0);
+    expect(dd[4]).toBeCloseTo(-3.8835, 3);
+    const mdd = maxDrawdown(points);
+    expect(mdd.pct).toBeCloseTo(-3.8835, 3);
+    expect(mdd.at).toBe("2026-11-05T20:00:00Z");
     expect(maxDrawdown([])).toEqual({ pct: null, at: null });
+  });
+
+  it("measures drawdown from the peak, not in percentage points (Claude's #509 case)", () => {
+    const points = [pt("2026-11-09T20:00:00Z", 10, 0), pt("2026-11-10T20:00:00Z", -5, 0)];
+    // +10% down to -5%: (0.95 / 1.10) - 1 = -13.6%, not -15.0 points.
+    expect(drawdownSeries(points)[1].dd_pct).toBeCloseTo(-13.6364, 3);
+    expect(maxDrawdown(points).pct).toBeCloseTo(-13.6364, 3);
   });
 
   it("computes volatility and beta from daily returns", () => {
     const daily = [1, -1, 1, -1].map((p, i) => ({
-      date: `2026-11-0${i + 1}`, portfolio_pct: p, spy_pct: p / 2, provisional: false,
+      date: `2026-11-0${i + 1}`, portfolio_pct: p, spy_pct: p / 2, qqq_pct: null, provisional: false,
     }));
     expect(betaToSpy(daily)).toBeCloseTo(2.0, 6); // the portfolio moves exactly twice SPY
     expect(volatilityPct(daily)).toBeCloseTo(18.33, 1);
     expect(volatilityPct(daily.slice(0, 1))).toBeNull();
-    expect(betaToSpy([{ date: "2026-11-01", portfolio_pct: 1, spy_pct: null, provisional: false }])).toBeNull();
+    expect(betaToSpy([{ date: "2026-11-01", portfolio_pct: 1, spy_pct: null, qqq_pct: null, provisional: false }])).toBeNull();
   });
 
   const trade = (over: Partial<ClosedTrade>): ClosedTrade => ({
@@ -287,5 +330,48 @@ describe("performance derivations (2026-11-12 redesign PR 2)", () => {
       { week: "2026-11-09", pnl: 50, trades: 2 },
       { week: "2026-11-16", pnl: 250, trades: 2 },
     ]);
+  });
+});
+
+describe("QQQ benchmark derivations (2026-11-12)", () => {
+  const qt = (t: string, portfolio_pct: number, spy_pct: number, qqq_pct: number | null) =>
+    ({ t, portfolio_pct, spy_pct, qqq_pct });
+  const curve = [
+    qt("2026-11-09T20:00:00Z", 1.0, 0.5, 0.8),
+    qt("2026-11-10T20:00:00Z", 0.0, 0.0, -0.4),
+    qt("2026-11-11T20:00:00Z", 2.02, 1.0, 1.6),
+  ];
+
+  it("differences QQQ daily returns beside SPY's", () => {
+    const daily = dailyReturns(curve, null, new Date("2026-11-12T15:00:00Z"));
+    expect(daily[0].qqq_pct).toBeCloseTo(-1.1905, 3);
+    expect(daily[1].qqq_pct).toBeCloseTo(2.008, 3);
+  });
+
+  it("nulls a day whose QQQ price is missing instead of inventing one", () => {
+    const gapped = [curve[0], qt("2026-11-10T20:00:00Z", 0.0, 0.0, null), curve[2]];
+    const daily = dailyReturns(gapped, null, new Date("2026-11-12T15:00:00Z"));
+    expect(daily.every((d) => d.qqq_pct === null)).toBe(true);
+  });
+
+  it("after the close, today's QQQ figure is the split's regular-session one", () => {
+    const withToday = [...curve, qt("2026-11-12T20:30:00Z", 3.03, 1.7, 2.9)];
+    const split: TodaySplit = {
+      state: "after_hours", prior_close_at: null, close_at: "2026-11-12T21:05:00Z",
+      regular_pl: 150, regular_pct: 1.5, after_hours_pl: 30, after_hours_pct: 0.3,
+      spy_regular_pct: 0.7, spy_after_hours_pct: 0.1,
+      qqq_regular_pct: 1.1, qqq_after_hours_pct: 0.2,
+    };
+    const daily = dailyReturns(withToday, split, new Date("2026-11-12T20:30:00Z"));
+    expect(daily[daily.length - 1].qqq_pct).toBe(1.1);
+  });
+
+  it("rebases QQQ in a ranged cut and keeps gaps null", () => {
+    const ranged = curveRange(curve, "1W", new Date("2026-11-11T21:00:00Z"));
+    expect(ranged[0].qqq_pct).toBe(0);
+    expect(ranged[1].qqq_pct).toBeCloseTo(-1.1905, 3);
+    const gapped = curveRange([curve[0], qt("2026-11-10T20:00:00Z", 0, 0, null)], "1W",
+      new Date("2026-11-11T21:00:00Z"));
+    expect(gapped[1].qqq_pct).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import {
 import { ctDateTime } from "@/lib/format";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
+  aheadOfQqqPts,
   betaToSpy,
   bestWorstDay,
   CURVE_RANGES,
@@ -82,6 +83,15 @@ function Performance({ data, range, setRange, daily }: {
     return view.map((p, i) => ({ ...p, dd_pct: dd[i]?.dd_pct ?? 0 }));
   }, [view]);
   const last = view[view.length - 1];
+  // QQQ's last point can be null when its live print failed; the stat
+  // cards then use the last point that has one instead of disappearing
+  // (Claude's #514 review).
+  const lastQqq = useMemo(() => {
+    for (let i = view.length - 1; i >= 0; i--) {
+      if (view[i].qqq_pct != null) return view[i];
+    }
+    return undefined;
+  }, [view]);
   const tradingDays = curveTradingDays(data.curve);
   const mdd = useMemo(() => maxDrawdown(data.curve), [data.curve]);
   const beta = betaToSpy(daily);
@@ -89,6 +99,10 @@ function Performance({ data, range, setRange, daily }: {
     { label: `Portfolio, ${range}`, value: fmtPct(last?.portfolio_pct), className: tone(last?.portfolio_pct) },
     { label: `SPY, ${range}`, value: fmtPct(last?.spy_pct) },
     { label: "Ahead of SPY", value: fmtPts(last ? last.portfolio_pct - last.spy_pct : null), className: tone(last ? last.portfolio_pct - last.spy_pct : null) },
+    ...(lastQqq?.qqq_pct != null ? [
+      { label: `QQQ, ${range}`, value: fmtPct(lastQqq.qqq_pct) },
+      { label: "Ahead of QQQ", value: fmtPts(aheadOfQqqPts(lastQqq.portfolio_pct, lastQqq.qqq_pct)), className: tone(aheadOfQqqPts(lastQqq.portfolio_pct, lastQqq.qqq_pct)) },
+    ] : []),
     { label: "Volatility (annualized)", value: fmtPct(volatilityPct(daily)) },
     {
       label: mdd.at ? `Max drawdown · ${dayLabel(mdd.at.slice(0, 10))}` : "Max drawdown",
@@ -102,7 +116,7 @@ function Performance({ data, range, setRange, daily }: {
     { label: "Closed-trade wins", value: s.win_rate == null ? "—" : `${s.win_rate.toFixed(0)}%` },
   ];
   return (
-    <Box title="Performance vs SPY"
+    <Box title="Performance vs SPY & QQQ"
          right={(
            <div role="group" aria-label="Chart range" className="flex gap-1">
              {CURVE_RANGES.map((r) => (
@@ -115,18 +129,19 @@ function Performance({ data, range, setRange, daily }: {
          )}>
       {view.length > 1 ? (
         <>
-          <div className="h-32" aria-label={`Portfolio vs SPY, ${range}`}>
+          <div className="h-32" aria-label={`Portfolio vs SPY and QQQ, ${range}`}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <XAxis dataKey="t" hide />
                 <YAxis tickFormatter={(v: number) => `${v.toFixed(1)}%`} stroke="#64748b" fontSize={11} width={46} domain={["auto", "auto"]} />
                 <Tooltip
                   contentStyle={tooltipStyle}
-                  formatter={(v: number, name: string) => [fmtPct(v), name === "portfolio_pct" ? "Portfolio" : "SPY"]}
+                  formatter={(v: number, name: string) => [fmtPct(v), name === "portfolio_pct" ? "Portfolio" : name === "qqq_pct" ? "QQQ" : "SPY"]}
                   labelFormatter={(t: string) => ctDateTime(t)}
                 />
                 <Line type="monotone" dataKey="portfolio_pct" stroke="#34d399" strokeWidth={2.5} dot={false} isAnimationActive={false} />
                 <Line type="monotone" dataKey="spy_pct" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="qqq_pct" stroke="#38bdf8" strokeWidth={2} strokeDasharray="2 2" dot={false} isAnimationActive={false} connectNulls={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -180,14 +195,14 @@ function DailyReturns({ daily }: { daily: DailyReturn[] }) {
              {" · "}Worst <span className={tone(worst?.portfolio_pct)}>{note(worst)}</span>
            </span>
          )}>
-      <div className="h-28" aria-label="Daily returns against SPY">
+      <div className="h-28" aria-label="Daily returns against SPY and QQQ">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={daily} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
             <XAxis dataKey="date" tickFormatter={dayLabel} stroke="#64748b" fontSize={11} tick={{ fill: "#94a3b8" }} minTickGap={24} />
             <YAxis tickFormatter={(v: number) => `${v.toFixed(1)}%`} stroke="#64748b" fontSize={11} width={46} domain={["auto", "auto"]} />
             <Tooltip
               contentStyle={tooltipStyle}
-              formatter={(v: number, name: string) => [fmtPct(v), name === "portfolio_pct" ? "Portfolio" : "SPY"]}
+              formatter={(v: number, name: string) => [fmtPct(v), name === "portfolio_pct" ? "Portfolio" : name === "qqq_pct" ? "QQQ" : "SPY"]}
               labelFormatter={(d: string) => dayLabel(d)}
             />
             <Bar dataKey="portfolio_pct" isAnimationActive={false}>
@@ -196,6 +211,7 @@ function DailyReturns({ daily }: { daily: DailyReturn[] }) {
               ))}
             </Bar>
             <Line type="monotone" dataKey="spy_pct" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="qqq_pct" stroke="#38bdf8" strokeWidth={1.5} strokeDasharray="2 2" dot={false} isAnimationActive={false} connectNulls={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

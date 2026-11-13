@@ -52,8 +52,33 @@ def test_sharpe_needs_five_days_and_uses_daily_closes():
 
 def test_curve_rebased_to_zero():
     c = curve([snap("t0", 100, 500), snap("t1", 110, 505)])
-    assert c == [{"t": "t0", "portfolio_pct": 0.0, "spy_pct": 0.0},
-                 {"t": "t1", "portfolio_pct": pytest.approx(10.0), "spy_pct": pytest.approx(1.0)}]
+    assert c == [{"t": "t0", "portfolio_pct": 0.0, "spy_pct": 0.0, "qqq_pct": None},
+                 {"t": "t1", "portfolio_pct": pytest.approx(10.0), "spy_pct": pytest.approx(1.0), "qqq_pct": None}]
+
+
+def qsnap(t, equity, spy, qqq):
+    return {**snap(t, equity, spy), "qqq_price": qqq}
+
+
+def test_scoreboard_vs_qqq():
+    s = scoreboard([qsnap("2026-11-02T15:00:00+00:00", 100_000, 500, 400),
+                    qsnap("2026-11-03T15:00:00+00:00", 104_820, 510.5, 420)])
+    assert s["qqq_return_pct"] == pytest.approx(5.0)
+    assert s["ahead_qqq_pts"] == pytest.approx(-0.18)
+
+
+def test_scoreboard_qqq_unknown_without_qqq_prices():
+    s = scoreboard([snap("2026-11-02T15:00:00+00:00", 100_000, 500),
+                    snap("2026-11-03T15:00:00+00:00", 104_820, 510.5)])
+    assert s["qqq_return_pct"] is None and s["ahead_qqq_pts"] is None
+
+
+def test_curve_carries_qqq_pct_and_nulls_gaps():
+    c = curve([qsnap("t0", 100, 500, 400), qsnap("t1", 110, 505, 404),
+               {**snap("t2", 121, 510), "qqq_price": None}])
+    assert c[0]["qqq_pct"] == 0.0
+    assert c[1]["qqq_pct"] == pytest.approx(1.0)
+    assert c[2]["qqq_pct"] is None
 
 
 def test_short_position_pct_uses_abs_value():

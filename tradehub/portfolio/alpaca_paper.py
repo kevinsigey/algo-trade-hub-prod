@@ -7,7 +7,9 @@ issues GETs (tests/test_portfolio_alpaca_paper.py fails if either changes). No o
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -52,6 +54,27 @@ def latest_spy_price(*, session=requests, book: str | None = None) -> float:
     return latest_price("SPY", session=session, book=book)
 
 
+def latest_qqq_price(*, session=requests, book: str | None = None) -> float:
+    return latest_price("QQQ", session=session, book=book)
+
+
+def stock_bars(symbol: str, timeframe: str, start: str, end: str, *, session=requests,
+               book: str | None = None) -> list[dict]:
+    """Historical bars for one symbol over [start, end] (ISO timestamps),
+    oldest first, following the data API's pagination. IEX feed, matching
+    the snapshots read. Used by the QQQ snapshot backfill."""
+    out: list[dict] = []
+    params: dict = {"timeframe": timeframe, "start": start, "end": end,
+                    "feed": "iex", "adjustment": "raw", "sort": "asc", "limit": 10000}
+    while True:
+        data = _get(DATA_BASE + f"/v2/stocks/{symbol}/bars", params, session, book)
+        out.extend((data or {}).get("bars") or [])
+        token = (data or {}).get("next_page_token")
+        if not token:
+            return out
+        params = {**params, "page_token": token}
+
+
 def latest_snapshots(symbols: list[str], *, session=requests,
                      book: str | None = None) -> dict[str, dict]:
     """Batched stock snapshots: the latest trade price and today's daily
@@ -62,16 +85,29 @@ def latest_snapshots(symbols: list[str], *, session=requests,
         return {}
     data = _get(DATA_BASE + "/v2/stocks/snapshots",
                 {"symbols": ",".join(symbols), "feed": "iex"}, session, book)
+    session_day = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     out: dict[str, dict] = {}
     for symbol, snap in (data or {}).items():
         trade = (snap or {}).get("latestTrade") or {}
         bar = (snap or {}).get("dailyBar") or {}
+        prev_bar = (snap or {}).get("prevDailyBar") or {}
+        # The prior close is the last COMPLETED session's close. Before
+        # today's bar starts, dailyBar IS that session and prevDailyBar
+        # is one session older still; once today's bar exists,
+        # prevDailyBar is the prior session (CodeRabbit, PR #514).
+        bar_day = str(bar.get("t", ""))[:10]
+        prior_bar = bar if bar_day and bar_day < session_day else prev_bar
+        try:
+            prev_close = float(prior_bar["c"])
+        except (KeyError, TypeError, ValueError):
+            prev_close = None
         try:
             out[symbol] = {
                 "price": float(trade["p"]),
                 "trade_at": str(trade.get("t", "")),
                 "day_close": float(bar["c"]),
                 "day": str(bar.get("t", ""))[:10],
+                "prev_close": prev_close,
             }
         except (KeyError, TypeError, ValueError):
             continue

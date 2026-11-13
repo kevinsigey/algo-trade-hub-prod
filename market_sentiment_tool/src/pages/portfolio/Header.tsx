@@ -69,10 +69,13 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
           {t && t.state !== "no_prior" && t.regular_pl != null ? (
             <div className="mt-1 text-sm tabular-nums text-slate-200">
               <span className={tone(t.regular_pl)}>
-                Today {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
+                {t.is_today === false ? (t.day_label ?? "Today") : "Today"} {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
               </span>
               {t.spy_regular_pct != null && (
                 <span className="text-slate-400"> · SPY {fmtPct(t.spy_regular_pct)}</span>
+              )}
+              {t.qqq_regular_pct != null && (
+                <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_regular_pct)}</span>
               )}
               {t.state === "after_hours" && t.after_hours_pl != null && (
                 <>
@@ -81,6 +84,9 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
                   </span>
                   {t.spy_after_hours_pct != null && (
                     <span className="text-slate-400"> · SPY {fmtPct(t.spy_after_hours_pct)}</span>
+                  )}
+                  {t.qqq_after_hours_pct != null && (
+                    <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_after_hours_pct)}</span>
                   )}
                   <span className="ml-2 rounded border border-sky-500/40 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
                     After hours
@@ -97,6 +103,12 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
             Since start <span className={tone(s.return_pct)}>{fmtPct(s.return_pct)}</span>
             {" "}· SPY {fmtPct(s.spy_return_pct)}
             {" "}· Ahead of SPY <span className={tone(s.ahead_pts)}>{fmtPts(s.ahead_pts)}</span>
+            {s.qqq_return_pct != null && (
+              <>
+                {" "}· QQQ {fmtPct(s.qqq_return_pct)}
+                {" "}· Ahead of QQQ <span className={tone(s.ahead_qqq_pts)}>{fmtPts(s.ahead_qqq_pts)}</span>
+              </>
+            )}
           </div>
         </div>
         <div className="text-right">
