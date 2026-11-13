@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import json as json_mod
 import pytest
 
 from tradehub import kalshi_demo as kd
@@ -158,16 +159,16 @@ def test_create_order_never_fires_without_demo(monkeypatch, live_client):
     assert called == []
 
 
-def test_create_order_body_and_path(monkeypatch, live_client):
-    monkeypatch.setenv("KALSHI_ENV", "demo")
+def _capture(monkeypatch, status=201, payload=None):
     seen = {}
+    payload = payload if payload is not None else {}
 
     class Resp:
-        status_code = 201
-        text = '{"order": {"order_id": "abc"}}'
+        status_code = status
+        text = json_mod.dumps(payload)
 
         def json(self):
-            return {"order": {"order_id": "abc"}}
+            return payload
 
     def fake_request(method, url, headers=None, json=None, timeout=None):
         seen.update(method=method, url=url, body=json)
@@ -175,15 +176,85 @@ def test_create_order_body_and_path(monkeypatch, live_client):
 
     monkeypatch.setattr("tradehub.core.kalshi_portfolio.requests.request",
                         fake_request)
+    return seen
+
+
+def test_create_order_v2_no_side(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    seen = _capture(monkeypatch, payload={"order_id": "abc", "client_order_id": "kd-x"})
     out = live_client.create_order(
         ticker=TICKER, side="no", count=12, limit_price_cents=40,
         client_order_id="kd-x", expiration_ts=1794500000)
-    assert out == {"order_id": "abc"}
+    assert out["order_id"] == "abc"
     assert seen["method"] == "POST"
     assert seen["url"] == ("https://demo-api.kalshi.co/trade-api/v2"
-                           "/portfolio/orders")
-    assert seen["body"]["no_price"] == 40 and "yes_price" not in seen["body"]
-    assert seen["body"]["count"] == 12 and seen["body"]["action"] == "buy"
+                           "/portfolio/events/orders")
+    # buy NO @40c == ask YES @60c
+    assert seen["body"] == {
+        "ticker": TICKER, "client_order_id": "kd-x", "side": "ask",
+        "count": "12.00", "price": "0.6000",
+        "time_in_force": "good_till_canceled", "expiration_time": 1794500000,
+        "self_trade_prevention_type": "taker_at_cross"}
+
+
+def test_create_order_v2_yes_side(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    seen = _capture(monkeypatch, payload={"order_id": "abc"})
+    live_client.create_order(ticker=TICKER, side="yes", count=3,
+                             limit_price_cents=7, client_order_id="c",
+                             expiration_ts=1)
+    assert seen["body"]["side"] == "bid" and seen["body"]["price"] == "0.0700"
+    assert seen["body"]["count"] == "3.00"
+
+
+def test_cancel_order_v2_path_and_guard(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    seen = _capture(monkeypatch, status=200,
+                    payload={"order_id": "abc", "reduced_by": "12.00", "ts_ms": 1})
+    assert live_client.cancel_order("abc")["reduced_by"] == "12.00"
+    assert seen["method"] == "DELETE"
+    assert seen["url"].endswith("/trade-api/v2/portfolio/events/orders/abc")
+    monkeypatch.setenv("KALSHI_ENV", "live")
+    with pytest.raises(NotDemoHostError):
+        live_client.cancel_order("abc")
+
+
+def test_live_host_still_refused_for_create(monkeypatch):
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "k")
+    monkeypatch.setenv("KALSHI_API_KEY", _rsa_pem())
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    called = []
+    monkeypatch.setattr("tradehub.core.kalshi_portfolio.requests.request",
+                        lambda *a, **k: called.append(a))
+    live = KalshiPortfolio(api_base="https://api.elections.kalshi.com")
+    with pytest.raises(NotDemoHostError):
+        live.create_order(ticker=TICKER, side="yes", count=1,
+                          limit_price_cents=40, client_order_id="x",
+                          expiration_ts=1)
+    assert called == []
+
+
+def test_fills_v2_dollar_fields():
+    pf = FakePortfolio()
+    pf.fills = [
+        {"order_id": "o1", "outcome_side": "no", "no_price_dollars": "0.4000",
+         "yes_price_dollars": "0.6000", "count_fp": "5.00",
+         "created_time": "2026-11-12T17:00:00Z"},
+        {"order_id": "o1", "outcome_side": "no", "no_price_dollars": "0.4200",
+         "yes_price_dollars": "0.5800", "count_fp": "5.00",
+         "created_time": "2026-11-12T16:59:00Z"}]
+    agg = kd._fills_by_order(pf)["o1"]
+    assert agg["count"] == 10 and agg["avg_price"] == pytest.approx(0.41)
+    assert agg["first_ts"] == "2026-11-12T16:59:00Z"
+
+
+def test_find_by_client_order_id_v2_shape():
+    pf = FakePortfolio()
+    pf.get_orders = lambda status=None: [
+        {"order_id": "a", "client_order_id": "x", "status": "resting"},
+        {"order_id": "b", "client_order_id": "y", "status": "executed"}]
+    assert kd._find_by_client_order_id(pf, "y")["order_id"] == "b"
+    assert kd._find_by_client_order_id(pf, "z") is None
 
 
 def test_write_error_raises(monkeypatch, live_client):
@@ -222,7 +293,7 @@ def test_guard_only_kalshi_portfolio_writes_orders():
     # different string and a different service entirely.)
     root = Path("tradehub")
     offenders = [str(p) for p in root.rglob("*.py")
-                 if '"/portfolio/orders' in p.read_text(errors="ignore")
+                 if '"/portfolio/events/orders' in p.read_text(errors="ignore")
                  and p != root / "core" / "kalshi_portfolio.py"]
     assert offenders == []
     for mod in ("tradehub/kalshi_demo.py", "tradehub/scripts/kalshi_demo_run.py"):

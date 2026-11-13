@@ -243,7 +243,8 @@ def _max_drawdown(snapshots: list[dict]) -> float:
 
 def scoreboard(snapshots: list[dict]) -> dict:
     out = {"start_at": None, "equity": None, "return_pct": None, "spy_return_pct": None,
-           "ahead_pts": None, "max_drawdown_pct": None, "sharpe": None}
+           "ahead_pts": None, "qqq_return_pct": None, "ahead_qqq_pts": None,
+           "max_drawdown_pct": None, "sharpe": None}
     if not snapshots:
         return out
     first, last = snapshots[0], snapshots[-1]
@@ -253,6 +254,9 @@ def scoreboard(snapshots: list[dict]) -> dict:
     out["return_pct"] = _pct(last["equity"], first["equity"])
     out["spy_return_pct"] = _pct(last["spy_price"], first["spy_price"])
     out["ahead_pts"] = out["return_pct"] - out["spy_return_pct"]
+    if first.get("qqq_price") and last.get("qqq_price"):
+        out["qqq_return_pct"] = _pct(last["qqq_price"], first["qqq_price"])
+        out["ahead_qqq_pts"] = out["return_pct"] - out["qqq_return_pct"]
     out["max_drawdown_pct"] = _max_drawdown(snapshots)
     out["sharpe"] = _sharpe(snapshots)
     return out
@@ -262,41 +266,109 @@ def curve(snapshots: list[dict]) -> list[dict]:
     if not snapshots:
         return []
     e0, s0 = snapshots[0]["equity"], snapshots[0]["spy_price"]
-    return [{"t": s["taken_at"], "portfolio_pct": _pct(s["equity"], e0), "spy_pct": _pct(s["spy_price"], s0)}
+    q0 = snapshots[0].get("qqq_price")
+    return [{"t": s["taken_at"], "portfolio_pct": _pct(s["equity"], e0), "spy_pct": _pct(s["spy_price"], s0),
+             "qqq_pct": _pct(s["qqq_price"], q0) if q0 and s.get("qqq_price") else None}
             for s in snapshots]
 
 
+# today_split's qqq_price default: "not passed" (a stale/offline read --
+# the stored snapshots are all there is) is not the same as an explicit
+# None (a live read that failed). Only the first may fall back to the
+# last stored price (CodeRabbit, PR #514).
+_QQQ_PRICE_OMITTED = object()
+
+
 def today_split(snapshots: list[dict], now: datetime, equity: float | None = None,
-                spy_price: float | None = None) -> dict:
+                spy_price: float | None = None,
+                qqq_price: float | None | object = _QQQ_PRICE_OMITTED,
+                last_equity: float | None = None, spy_prev_close: float | None = None,
+                qqq_prev_close: float | None = None) -> dict:
     """Today, split at the 4:00 PM ET close (Portfolio header, 2026-11-12).
 
-    The regular-session figure is the equity at the day's close snapshot
-    minus the prior ET day's last snapshot; the after-hours figure is the
-    live equity minus that close snapshot. Snapshots are stored hourly, so
-    the close snapshot is the first stored one at or after 16:00 ET on the
-    day -- before it exists, the whole day is the regular figure. The same
-    split is computed for SPY off the snapshots' own spy_price. Unknown is
-    None: a book on its first day has no prior close and no split."""
+    The regular-session figure is measured against the PRIOR CLOSE: the
+    broker's `last_equity` when the caller has it (the snapshot series runs
+    09:05-16:05 ET, so yesterday's last snapshot is not quite the close --
+    Claude's #506 review), else the prior ET day's last snapshot. The
+    after-hours figure is the live equity minus the day's close snapshot
+    (the first stored snapshot at or after 16:00 ET; before it exists, the
+    whole day is the regular figure). SPY and QQQ ride the same split:
+    their prior is the previous daily bar's close when given, else the
+    prior snapshot's price.
+
+    When no snapshot exists for today at all (a weekend or holiday), the
+    figures describe the last snapshot's day instead: state "closed_day",
+    that day's regular figures only, no after-hours segment, and the day
+    named in `day_label` so the header can label it ("Fri"), not "Today".
+    Unknown is None: a book on its first day has no prior close."""
     out: dict = {"state": "no_prior", "prior_close_at": None, "close_at": None,
                  "regular_pl": None, "regular_pct": None,
                  "after_hours_pl": None, "after_hours_pct": None,
-                 "spy_regular_pct": None, "spy_after_hours_pct": None}
+                 "spy_regular_pct": None, "spy_after_hours_pct": None,
+                 "qqq_regular_pct": None, "qqq_after_hours_pct": None,
+                 "for_date": None, "day_label": None, "is_today": True}
     if not snapshots:
         return out
     today = now.astimezone(_ET).date()
+    dated = [(_day(s["taken_at"]).astimezone(_ET), s) for s in snapshots]
+    et_now = now.astimezone(_ET)
+    # The closed-day reading applies only when today genuinely has no
+    # session: a weekend, or a weekday past the first snapshot hour (a
+    # holiday). A weekday pre-market is not a closed day (Claude's #514
+    # review) -- it falls through and reads as a regular day so far.
+    closed_day = et_now.weekday() >= 5 or et_now.time() >= time(10, 5)
+    if closed_day and all(et.date() != today for et, _ in dated):
+        # Closed day: report the last snapshot's own day, in full.
+        for_date = dated[-1][0].date()
+        if for_date < today:
+            prior = None
+            day_snaps: list[dict] = []
+            close = None
+            for et, s in dated:  # sorted by taken_at: the last prior-day write wins
+                if et.date() < for_date:
+                    prior = s
+                elif et.date() == for_date:
+                    day_snaps.append(s)
+                    if close is None and et.time() >= time(16, 0):
+                        close = s
+            out["for_date"] = for_date.isoformat()
+            out["day_label"] = for_date.strftime("%a")
+            out["is_today"] = False
+            if prior is None or not day_snaps:
+                return out
+            close = close or day_snaps[-1]
+            prior_eq = float(prior["equity"])
+            close_eq = float(close["equity"])
+            out["state"] = "closed_day"
+            out["prior_close_at"] = prior["taken_at"]
+            out["close_at"] = close["taken_at"]
+            out["regular_pl"] = round(close_eq - prior_eq, 2)
+            out["regular_pct"] = _pct(close_eq, prior_eq) if prior_eq else None
+            if prior.get("spy_price") and close.get("spy_price"):
+                out["spy_regular_pct"] = _pct(float(close["spy_price"]), float(prior["spy_price"]))
+            if prior.get("qqq_price") and close.get("qqq_price"):
+                out["qqq_regular_pct"] = _pct(float(close["qqq_price"]), float(prior["qqq_price"]))
+            return out
     prior = close = None
-    for s in snapshots:  # sorted by taken_at: the last prior-day write wins
-        et = _day(s["taken_at"]).astimezone(_ET)
+    for et, s in dated:  # sorted by taken_at: the last prior-day write wins
         if et.date() < today:
             prior = s
         elif et.date() == today and close is None and et.time() >= time(16, 0):
             close = s
     if prior is None:
         return out
+    out["for_date"] = today.isoformat()
+    out["day_label"] = today.strftime("%a")
     last = snapshots[-1]
     current_eq = float(equity) if equity is not None else float(last["equity"])
     current_spy = float(spy_price) if spy_price is not None else last.get("spy_price")
-    prior_eq = float(prior["equity"])
+    # An omitted qqq_price falls back to the last stored price; an
+    # explicit None stays unknown -- passing the stored close off as the
+    # current print printed a 0% "after-hours" QQQ move after the bell.
+    current_qqq = last.get("qqq_price") if qqq_price is _QQQ_PRICE_OMITTED else qqq_price
+    # The broker's last_equity IS the prior close; the prior snapshot is
+    # the fallback for reads that have no account (the stale path).
+    prior_eq = float(last_equity) if last_equity else float(prior["equity"])
     out["prior_close_at"] = prior["taken_at"]
     if close is not None:
         close_eq = float(close["equity"])
@@ -306,18 +378,32 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
         out["regular_pct"] = _pct(close_eq, prior_eq) if prior_eq else None
         out["after_hours_pl"] = round(current_eq - close_eq, 2)
         out["after_hours_pct"] = _pct(current_eq, close_eq) if close_eq else None
-        if prior.get("spy_price") and close.get("spy_price"):
-            # The regular SPY figure needs only the two snapshots; the
-            # after-hours figure additionally needs a current price.
+        if spy_prev_close:
+            out["spy_regular_pct"] = _pct(float(close["spy_price"]), float(spy_prev_close)) \
+                if close.get("spy_price") else None
+        elif prior.get("spy_price") and close.get("spy_price"):
             out["spy_regular_pct"] = _pct(float(close["spy_price"]), float(prior["spy_price"]))
-            if current_spy is not None:
-                out["spy_after_hours_pct"] = _pct(float(current_spy), float(close["spy_price"]))
+        if current_spy is not None and close.get("spy_price"):
+            out["spy_after_hours_pct"] = _pct(float(current_spy), float(close["spy_price"]))
+        if qqq_prev_close:
+            out["qqq_regular_pct"] = _pct(float(close["qqq_price"]), float(qqq_prev_close)) \
+                if close.get("qqq_price") else None
+        elif prior.get("qqq_price") and close.get("qqq_price"):
+            out["qqq_regular_pct"] = _pct(float(close["qqq_price"]), float(prior["qqq_price"]))
+        if current_qqq is not None and close.get("qqq_price"):
+            out["qqq_after_hours_pct"] = _pct(float(current_qqq), float(close["qqq_price"]))
     else:
         out["state"] = "regular"
         out["regular_pl"] = round(current_eq - prior_eq, 2)
         out["regular_pct"] = _pct(current_eq, prior_eq) if prior_eq else None
-        if current_spy is not None and prior.get("spy_price"):
+        if spy_prev_close and current_spy is not None:
+            out["spy_regular_pct"] = _pct(float(current_spy), float(spy_prev_close))
+        elif current_spy is not None and prior.get("spy_price"):
             out["spy_regular_pct"] = _pct(float(current_spy), float(prior["spy_price"]))
+        if qqq_prev_close and current_qqq is not None:
+            out["qqq_regular_pct"] = _pct(float(current_qqq), float(qqq_prev_close))
+        elif current_qqq is not None and prior.get("qqq_price"):
+            out["qqq_regular_pct"] = _pct(float(current_qqq), float(prior["qqq_price"]))
     return out
 
 

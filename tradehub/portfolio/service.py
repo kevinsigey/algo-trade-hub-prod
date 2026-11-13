@@ -10,13 +10,17 @@ States, in the order a reader needs them:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import UTC, date, datetime
 
+_log = logging.getLogger(__name__)
+
 from tradehub.portfolio import book, breakers
 from tradehub.portfolio.alpaca_paper import (
     AccountNotConnected,
+    latest_qqq_price,
     latest_snapshots,
     latest_spy_price,
     paper_get,
@@ -24,6 +28,47 @@ from tradehub.portfolio.alpaca_paper import (
 from tradehub.workshop import store as workshop_store
 
 SNAPSHOTS = "portfolio_snapshots"
+
+# The after-hours fold and the benchmark prev-close read share one batched
+# Alpaca snapshots call per (book, symbol set), cached ~60 s: /api/portfolio
+# is polled every 30 s per open tab, and the underlying prints do not move
+# faster than that (Claude's #506 review, item 3).
+_SNAPSHOT_CACHE: dict[tuple, tuple[float, dict]] = {}
+_SNAPSHOT_CACHE_SECONDS = 60.0
+
+
+def _latest_snapshots_cached(symbols: list[str], now: datetime) -> dict:
+    from tradehub.portfolio.books import resolve
+
+    key = (resolve(), tuple(sorted(set(symbols))))
+    hit = _SNAPSHOT_CACHE.get(key)
+    if hit and now.timestamp() - hit[0] < _SNAPSHOT_CACHE_SECONDS:
+        return hit[1]
+    snaps = latest_snapshots(list(key[1]))
+    _SNAPSHOT_CACHE[key] = (now.timestamp(), snaps)
+    return snaps
+
+
+# The direct QQQ read is the benchmark cache's fallback; cache it per
+# book on the same TTL, failures included, so a QQQ-shaped hole in the
+# batched read does not cost a data-API call on every 30 s poll
+# (CodeRabbit, PR #514).
+_QQQ_FALLBACK_CACHE: dict[str, tuple[float, float | None]] = {}
+
+
+def _latest_qqq_price_cached(now: datetime) -> float | None:
+    from tradehub.portfolio.books import resolve
+
+    key = resolve()
+    hit = _QQQ_FALLBACK_CACHE.get(key)
+    if hit and now.timestamp() - hit[0] < _SNAPSHOT_CACHE_SECONDS:
+        return hit[1]
+    try:
+        value = latest_qqq_price()
+    except Exception:  # noqa: BLE001 -- no QQQ price: its curve line just ends earlier
+        value = None
+    _QQQ_FALLBACK_CACHE[key] = (now.timestamp(), value)
+    return value
 
 
 def _with_book(fn):
@@ -167,12 +212,27 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
     number = account.get("account_number")
     snaps = read_snapshots(supa, number)
     stored_snaps = snaps  # the split reads stored snapshots; the live point is separate
+    # One cached benchmark read: the benchmarks' current prints and their
+    # previous daily-bar closes (the today split's priors). Fail-soft --
+    # every consumer falls back to direct reads or snapshot priors.
+    bench: dict = {}
+    try:
+        bench = _latest_snapshots_cached(["SPY", "QQQ"], now)
+    except Exception:  # noqa: BLE001 -- benchmarks simply stay unknown
+        bench = {}
     spy_now: float | None = None
+    # QQQ's current print comes from the cached benchmark read (Claude's
+    # #514 review: latest_qqq_price was uncached); the direct read is the
+    # fallback, itself cached per book. Either failing leaves QQQ
+    # unknown, never an error.
+    qqq_now: float | None = (bench.get("QQQ") or {}).get("price")
+    if qqq_now is None:
+        qqq_now = _latest_qqq_price_cached(now)
     try:
         spy_now = latest_spy_price()
         snaps = snaps + [{"taken_at": now.isoformat(), "account_number": number,
                           "equity": float(account["equity"]), "cash": float(account["cash"]),
-                          "spy_price": spy_now}]
+                          "spy_price": spy_now, "qqq_price": qqq_now}]
     except Exception:  # noqa: BLE001 -- no SPY price: the curve ends at the last snapshot
         pass
     try:
@@ -186,6 +246,18 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
     score["equity"] = float(account["equity"])
     aggregate = book.positions_aggregate(rows, float(account["equity"]))
     _fold_after_hours(aggregate, now)
+    # Today's figures are based on the broker's prior close (last_equity,
+    # and the benchmarks' previous daily-bar closes), not on yesterday's
+    # last hourly snapshot (Claude's #506 review, item 1). A missing
+    # last_equity is logged, not silently fallen back (Claude's #514 review).
+    try:
+        last_equity = float(account["last_equity"])
+    except (KeyError, TypeError, ValueError):
+        _log.warning("portfolio %s: account has no usable last_equity; "
+                     "Today falls back to the snapshot prior", name)
+        last_equity = None
+    spy_prev_close = (bench.get("SPY") or {}).get("prev_close")
+    qqq_prev_close = (bench.get("QQQ") or {}).get("prev_close")
     record = _record_account(name)
     return {
         "book": name,
@@ -198,7 +270,10 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
         "positions": rows,
         "positions_aggregate": aggregate,
         "today": book.today_split(stored_snaps, now,
-                                  equity=float(account["equity"]), spy_price=spy_now),
+                                  equity=float(account["equity"]), spy_price=spy_now,
+                                  qqq_price=qqq_now, last_equity=last_equity,
+                                  spy_prev_close=spy_prev_close,
+                                  qqq_prev_close=qqq_prev_close),
         "account": book.account_view(account, trades),
         "breaker": breakers.check(supa, name, read_account=lambda: account, read_snapshots=lambda *_: snaps),
     }
@@ -224,7 +299,7 @@ def _fold_after_hours(aggregate: list[dict], now: datetime) -> None:
     if not symbols:
         return
     try:
-        snaps = latest_snapshots(symbols)
+        snaps = _latest_snapshots_cached(symbols, now)
     except Exception:  # noqa: BLE001 -- the column just stays unknown
         return
     today = et_now.date().isoformat()
@@ -348,8 +423,23 @@ def take_snapshot(supa, now: datetime | None = None, book_name: str | None = Non
         account = paper_get("/v2/account")
     except AccountNotConnected:
         return None
+    try:
+        qqq_price = latest_qqq_price()
+    except Exception:  # noqa: BLE001 -- a missing QQQ print never blocks the snapshot
+        qqq_price = None
     row = {"taken_at": (now or datetime.now(UTC)).isoformat(), "account_number": account["account_number"],
            "equity": float(account["equity"]), "cash": float(account["cash"]),
-           "spy_price": latest_spy_price()}
-    supa.table(SNAPSHOTS).insert(row).execute()
+           "spy_price": latest_spy_price(), "qqq_price": qqq_price}
+    try:
+        supa.table(SNAPSHOTS).insert(row).execute()
+    except Exception as exc:
+        # A database without the qqq_price column yet (a restored or fresh
+        # one) must never lose the equity snapshot itself (Claude's #514
+        # review): retry once without the QQQ field.
+        if "qqq_price" not in str(exc):
+            raise
+        _log.warning("portfolio snapshot: qqq_price column rejected (%s); "
+                     "retrying without it", exc)
+        row = {k: v for k, v in row.items() if k != "qqq_price"}
+        supa.table(SNAPSHOTS).insert(row).execute()
     return row

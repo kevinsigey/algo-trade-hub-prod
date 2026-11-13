@@ -13,12 +13,19 @@ they're already in progress on Claude's branches.**
 | Owner | Work |
 |---|---|
 | **Claude** | ✅ The runner fix (#511), the volatility-regime challenger (#513) and the Overview page (#512), all merged Nov 12. Claude reviews everything else |
-| **Muse** | 1. Finish #514 (Portfolio PR 3); its QQQ ledger row is 86 |
-| **Muse** | 2. The 15-minute rule work in `docs/plan-2026-11-12-fifteen-rule-v4.md`: **A0** history backfill, then **A** the "where do the models work" study (with event, order-book, cross-market and gas-weather features). Stop for Kevin and Claude to read it. Then **B** (candidates, preregistered, plus the demo candidate lane), then **C** (15-minute crypto) |
-| **Muse** | 3. Steps 9–20 below, in order, after step 2 |
+| **Claude** | **The backtest** (Kevin, Nov 13): finish #517 (A0 replay) and merge it, then **A0b** (Dukascopy 1-minute history, golden-checked on Nov 9–12), then **Step A** (the "where do the models work" study, with the replay haircut rule). Branches `claude/backtest-*`. |
+| **Claude** | The Portfolio page (#521 dashboard, merged) and every review |
+| **Muse** | 1. The daily cron lines for the #518 scorer and the #517 tape archive (the archive after #517 merges) |
+| **Muse** | 2. Step B part 3: the **demo candidate lane** in `kalshi_demo.py` (half caps, tagged by `gate_version`). Needs the `kalshi_demo_orders` unique-key migration, so get Kevin's go through Claude first |
+| **Muse** | 3. Steps 9–20 below, in order. Step C (crypto) waits until Claude's backtest pipeline is merged, because it reuses it |
+
+**Muse: don't touch the backtest files** (`tradehub/backtest/fifteen_replay*`, `tradehub/research/*`, the replay scripts) or the Portfolio pages.
 
 The merge rule still holds for everyone: **no PR merges until Claude posts a ready-to-merge review.** Muse merged #509
 two minutes after opening it; don't repeat that.
+
+## Status, Nov 13 02:20 UTC
+- Merged: #518 (the v4 shadow family; it counts from 2026-11-14 00:00 UTC along with the volatility challenger), #520 (Kalshi V2 orders), #521 (the Portfolio dashboard). #517 has been taken over by Claude.
 
 ## Status, Nov 12 22:30 UTC
 - Merged: #499–#513, including the runner fix #511, Overview #512, and the challenger #513 (tables applied; it records from 2026-11-14 00:00 UTC). Open: #514 (Muse). Kevin approved #514's QQQ column.

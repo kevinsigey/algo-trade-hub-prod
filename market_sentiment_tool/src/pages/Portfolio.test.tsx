@@ -8,11 +8,14 @@ import { concentration, curveRange } from "@/lib/paperPortfolio";
 import { checkChips } from "@/pages/portfolio/Header";
 import type { ActivityPayload, BooksPayload, PortfolioPayload, PositionRow } from "@/lib/paperPortfolio";
 
-// Portfolio lists live ideas through the signed admin fetch, which loads the Supabase client: stub it (no session).
+// Portfolio's admin reads go through the signed fetch, which loads the
+// Supabase client: stub it. No session by default (a visitor); a test that
+// plays Kevin sets a token first. Without a session no admin call is sent.
+const session = vi.hoisted(() => ({ token: null as string | null }));
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: null } }),
+      getSession: async () => ({ data: { session: session.token ? { access_token: session.token } : null } }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
   },
@@ -41,7 +44,16 @@ const pageAt = (url: string) => render(<MemoryRouter initialEntries={[url]}><Por
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  session.token = null;
 });
+
+/** Open a dashboard card and return its open view. */
+function openCard(name: string | RegExp) {
+  fireEvent.click(screen.getByRole("button", { name: typeof name === "string" ? `Open ${name}` : name }));
+  return within(screen.getByRole("dialog"));
+}
+
+const region = (name: string) => within(screen.getByRole("region", { name }));
 
 describe("Portfolio", () => {
   it("says the account is not connected and shows no dollar figure", async () => {
@@ -82,12 +94,13 @@ describe("Portfolio", () => {
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     // Manual shares read as their own row in the By-idea summary, one per symbol.
     expect(screen.getByText("GLD (manual)")).toBeInTheDocument();
-    expect(screen.getByText("Positions · 1")).toBeInTheDocument();
+    expect(region("Positions").getByText("1")).toBeInTheDocument();
   });
 });
 
 describe("Portfolio hand orders (signed-in only)", () => {
   function serveRoutes(adminOk: boolean, posted: Record<string, unknown>[]) {
+    if (adminOk) session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/portfolio/open-orders")) {
@@ -121,18 +134,155 @@ describe("Portfolio hand orders (signed-in only)", () => {
   it("shows the staged orders panel, signed in only", async () => {
     serveRoutes(true, []);
     pageAt("/portfolio?tab=trade");
-    expect(await screen.findByText(/^Staged orders/)).toBeInTheDocument();
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
     expect(await screen.findByText("XOM")).toBeInTheDocument();
-    // The full table carries the price and the time in force as their own cells.
-    expect(screen.getByText("$175.00")).toBeInTheDocument();
-    expect(screen.getByText("gtc")).toBeInTheDocument();
+    // The card shows the count and the top rows; the open view's full
+    // table carries the price and the time in force as their own cells.
+    expect(region("Staged orders").getByText("1")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    expect(full.getByText("$175.00")).toBeInTheDocument();
+    expect(full.getByText("gtc")).toBeInTheDocument();
   });
 
   it("hides the staged orders panel from a signed-out visitor", async () => {
     serveRoutes(false, []);
     pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("Recent orders")).toBeInTheDocument();
-    expect(screen.queryByText(/^Staged orders/)).toBeNull();
+    expect(screen.queryByText("Staged orders")).toBeNull();
+  });
+
+  it("lists closed trades in full on the Trade tab", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({
+          state: "live", as_of: "2026-11-12T20:00:00Z", book: "main",
+          trades: [{ symbol: "NVDA", sector: "Technology", qty: 10, entry_price: 100, exit_price: 110,
+                     entered_at: "2026-11-02T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+                     pnl: 100, return_pct: 10, held_days: 8, idea: "Idea One" }],
+          results_split: null,
+        }), { status: 200 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("NVDA")).toBeInTheDocument();
+    expect(region("Closed trades").getByText("1")).toBeInTheDocument();
+    // The idea column lives in the open view's full table.
+    expect(screen.queryByText("Idea One")).toBeNull();
+    expect(openCard("Closed trades").getByText("Idea One")).toBeInTheDocument();
+  });
+
+  it("sorts the Trade tab's closed trades by P&L when the header is clicked", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({
+          state: "live", as_of: "2026-11-12T20:00:00Z", book: "main",
+          trades: [
+            { symbol: "NVDA", sector: "Technology", qty: 10, entry_price: 100, exit_price: 110,
+              entered_at: "2026-11-02T15:00:00Z", exited_at: "2026-11-10T20:00:00Z",
+              pnl: 100, return_pct: 10, held_days: 8, idea: "Idea One" },
+            { symbol: "AAPL", sector: "Technology", qty: 5, entry_price: 200, exit_price: 190,
+              entered_at: "2026-11-03T15:00:00Z", exited_at: "2026-11-11T20:00:00Z",
+              pnl: -50, return_pct: -5, held_days: 8, idea: "Idea Two" },
+          ],
+          results_split: null,
+        }), { status: 200 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
+    openCard("Closed trades");
+    const symbolsInOrder = () => [...screen.getByRole("dialog").querySelectorAll("tbody tr")]
+      .map((tr) => tr.textContent ?? "").filter((t) => t.includes("NVDA") || t.includes("AAPL"))
+      .map((t) => (t.includes("NVDA") ? "NVDA" : "AAPL"));
+    // Default: newest exit first (AAPL, Nov 11).
+    expect(symbolsInOrder()).toEqual(["AAPL", "NVDA"]);
+    // First P&L click sorts descending (NVDA +100 first), second ascending.
+    fireEvent.click(screen.getByRole("button", { name: /^P&L/ }));
+    expect(symbolsInOrder()).toEqual(["NVDA", "AAPL"]);
+    fireEvent.click(screen.getByRole("button", { name: /^P&L/ }));
+    expect(symbolsInOrder()).toEqual(["AAPL", "NVDA"]);
+  });
+
+  it("shows closed trades as unreadable, not empty, when the read fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/portfolio/closed")) {
+        return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
+      }
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/Couldn't read closed trades/)).toBeInTheDocument();
+    expect(screen.queryByText("No closed trades yet.")).toBeNull();
+    // The count reads as unknown, never 0.
+    expect(region("Closed trades").queryByText("0")).toBeNull();
+    expect(region("Closed trades").getByText("—")).toBeInTheDocument();
+  });
+
+  it("retries a transient admin-check failure and then loads the hand-off queue", async () => {
+    session.token = "jwt";
+    const urls: string[] = [];
+    const startedAt = Date.now();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) {
+        // Every component's first check fails (500); checks after the
+        // first second succeed, so only a retrying component gets in.
+        return Date.now() - startedAt < 1000
+          ? new Response(JSON.stringify({ detail: "boom" }), { status: 500 })
+          : new Response(JSON.stringify({ email: "k@example.com" }), { status: 200 });
+      }
+      if (url.includes("/api/portfolio/manual-actions")) {
+        return new Response(JSON.stringify({ book: "main", actions: [] }), { status: 200 });
+      }
+      if (url.includes("/api/workshop/ideas")) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    // The failed check shows as a failed read, not a silent dark queue.
+    expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
+    // The retry succeeds, the queue loads, and the failure box clears.
+    await waitFor(() => expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(true), { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByText(/Couldn't read the hand-off list/)).toBeNull(), { timeout: 5000 });
+  });
+
+  it("keeps the hand-off failure visible while the admin check keeps failing", async () => {
+    session.token = "jwt";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
+    // Past the two quick retries, the queue endpoint is still untouched
+    // and the failure is still on screen.
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(false);
+    expect(screen.getByText(/Couldn't read the hand-off list/)).toBeInTheDocument();
+  });
+
+  it("never polls the manual-actions endpoint for a signed-out visitor", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      return new Response(JSON.stringify(payload({})), { status: 200 });
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Recent orders")).toBeInTheDocument();
+    expect(urls.some((u) => u.includes("/api/portfolio/manual-actions"))).toBe(false);
   });
 
   it("places a market order through the endpoint when signed in", async () => {
@@ -266,7 +416,8 @@ describe("Portfolio books (master view and the $1M book)", () => {
     expect(mainCard).toHaveAttribute("href", "/portfolio?book=main");
     expect(mainCard.textContent).toContain("$104,820");
     expect(mainCard).toHaveAttribute("aria-current", "page");
-    expect(await screen.findByText("Positions · 0")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Positions" })).toBeInTheDocument();
+    expect(region("Positions").getByText("0")).toBeInTheDocument();
   });
 
   it("scopes every read to the $1M book when ?book=big, with the switcher on top", async () => {
@@ -281,12 +432,12 @@ describe("Portfolio books (master view and the $1M book)", () => {
     // asserted on the Trade tab too, where they would render if their own
     // access checks failed.
     expect(screen.queryByText("Place an order by hand")).toBeNull();
-    expect(screen.queryByText(/^Staged orders/)).toBeNull();
+    expect(screen.queryByText("Staged orders")).toBeNull();
     cleanup();
     render(<MemoryRouter initialEntries={["/portfolio?book=big&tab=trade"]}><Portfolio /></MemoryRouter>);
     expect(await screen.findByText("Recent orders")).toBeInTheDocument();
     expect(screen.queryByText("Place an order by hand")).toBeNull();
-    expect(screen.queryByText(/^Staged orders/)).toBeNull();
+    expect(screen.queryByText("Staged orders")).toBeNull();
   });
 });
 
@@ -303,9 +454,10 @@ describe("Portfolio positions", () => {
       ],
     }));
     page(<Portfolio />);
-    await screen.findByText("Positions · 3");
-    // The full sortable table sits on the Book tab itself -- no pop-up.
-    const table = () => within(screen.getByRole("region", { name: "Positions" }));
+    await screen.findByRole("region", { name: "Positions" });
+    // The card peeks; the full sortable table is in its open view.
+    openCard("Positions");
+    const table = () => within(screen.getByRole("dialog"));
     const names = () => table().getAllByRole("row").slice(1, 4).map((r) => r.querySelector("td")!.textContent);
     expect(names()).toEqual(["MU", "NVDA", "NVDA Dec 4 2026 $200 call"]);
     expect(screen.getByText("$300.00")).toBeInTheDocument();
@@ -324,8 +476,9 @@ describe("Portfolio positions", () => {
       ],
     }));
     page(<Portfolio />);
-    await screen.findByText("Positions · 4");
-    const table = () => within(screen.getByRole("region", { name: "Positions" }));
+    await screen.findByRole("region", { name: "Positions" });
+    openCard("Positions");
+    const table = () => within(screen.getByRole("dialog"));
     const names = () => table().getAllByRole("row").slice(1, 5).map((r) => r.querySelector("td")!.textContent);
     // Highest to lowest means +5, +2, 0, -8: gainers on top, losers at the bottom.
     fireEvent.click(screen.getByRole("button", { name: "Chg %" }));
@@ -377,6 +530,40 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
   });
 
+  it("shows QQQ beside SPY in the header when the payload carries it", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 98839, return_pct: -3.5, spy_return_pct: -0.4, ahead_pts: -3.1,
+                    qqq_return_pct: 5.0, ahead_qqq_pts: -8.5 },
+      today: {
+        state: "regular", prior_close_at: "2026-11-10T21:30:00Z", close_at: null,
+        regular_pl: -1161, regular_pct: -1.16, after_hours_pl: null, after_hours_pct: null,
+        spy_regular_pct: -0.02, spy_after_hours_pct: null,
+        qqq_regular_pct: -0.5, qqq_after_hours_pct: null,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 98839, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/QQQ −0\.5%/)).toBeInTheDocument();
+    expect(screen.getByText(/QQQ \+5\.0%/)).toBeInTheDocument();
+    expect(screen.getByText("−8.5 pts")).toBeInTheDocument();
+  });
+
+  it("labels a closed day with its own day, not Today, and no after-hours tag", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100200, return_pct: 0.2, spy_return_pct: 0.1, ahead_pts: 0.1 },
+      today: {
+        state: "closed_day", prior_close_at: "2026-11-12T21:30:00Z", close_at: "2026-11-13T21:05:00Z",
+        regular_pl: 200, regular_pct: 0.2, after_hours_pl: null, after_hours_pct: null,
+        spy_regular_pct: 1.0, spy_after_hours_pct: null,
+        for_date: "2026-11-13", day_label: "Fri", is_today: false,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100200, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/Fri \+\$200/)).toBeInTheDocument();
+    expect(screen.queryByText("After hours", { selector: "span" })).toBeNull();
+  });
+
   it("keeps idea information out of the Positions table -- it lives in By idea", async () => {
     serve(payload({
       scoreboard: { ...EMPTY_SCORE, equity: 100000 },
@@ -402,6 +589,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     }));
     page(<Portfolio />);
     expect(await screen.findByText("GLD (manual)")).toBeInTheDocument();
+    openCard("By idea");
     fireEvent.click(screen.getByRole("button", { name: "Slices of GLD (manual)" }));
     // The card is keyed "GLD (manual)" while the row carries the backend's
     // manual label; the slice lookup must still find the holding.
@@ -410,6 +598,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
   });
 
   it("reads 'All within limits' on the warnings strip when nothing needs attention", async () => {
+    session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/portfolio/portfolio-check")) {
@@ -478,6 +667,7 @@ describe("Portfolio helpers", () => {
 
 describe("Manual actions box", () => {
   it("shows the hand-offs for the book in view and resolves them on click", async () => {
+    session.token = "jwt";
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -540,6 +730,7 @@ describe("Portfolio check card", () => {
   };
 
   it("renders sleeve weights against caps, clusters, cash and recent outcomes", async () => {
+    session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/portfolio/portfolio-check")) return new Response(JSON.stringify(CARD), { status: 200 });
@@ -613,15 +804,17 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       ],
     }));
     page(<Portfolio />);
-    // 3 slices, 2 tickers: the header counts tickers.
-    expect(await screen.findByText("Positions · 2")).toBeInTheDocument();
+    // 3 slices, 2 tickers: the Positions card counts tickers.
+    await screen.findByRole("region", { name: "Positions" });
+    expect(region("Positions").getByText("2")).toBeInTheDocument();
     // GLD appears once as a mover (its two lots' day P&L summed) and once in
     // the positions summary -- not once per idea that holds it.
     expect(screen.getAllByText("GLD")).toHaveLength(2);
     // The summed -$88 (two lots at -$44) is what both the mover and the
     // positions row carry. (The per-slice -$44 still shows inside the
     // By-idea cards, where per-idea attribution is the point.)
-    expect(screen.getAllByText(/\$88/).length).toBeGreaterThanOrEqual(2);
+    expect(region("Today's movers").getByText("−$88")).toBeInTheDocument();
+    expect(openCard("Positions").getByText("−$88")).toBeInTheDocument();
   });
 
   it("holds the Sharpe back until 20 trading days, however many snapshots", async () => {
@@ -635,7 +828,7 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
     }));
     pageAt("/portfolio?tab=performance");
     // Both day-count guards hold at 8 trading days: Sharpe and beta to SPY.
-    expect(await screen.findAllByText("after 1 month")).toHaveLength(2);
+    expect(await screen.findAllByText("after 1 mo")).toHaveLength(2);
     expect(screen.queryByText("-10.01")).toBeNull();
     expect(screen.getByText("58%")).toBeInTheDocument();
   });
@@ -656,8 +849,10 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
         ],
       }));
       page(<Portfolio />);
-      expect(await screen.findByText("Positions · 2")).toBeInTheDocument();
-      expect(within(screen.getByRole("region", { name: "Positions" })).getAllByText("GLD")).toHaveLength(2);
+      await screen.findByRole("region", { name: "Positions" });
+      expect(region("Positions").getByText("2")).toBeInTheDocument();
+      expect(region("Positions").getAllByText("GLD")).toHaveLength(2);
+      expect(openCard("Positions").getAllByText("GLD")).toHaveLength(2);
       const keyWarnings = errors.filter((a) => String(a[0]).includes("same key"));
       expect(keyWarnings).toEqual([]);
     } finally {
@@ -703,7 +898,9 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       ],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText("By idea · 2 ideas")).toBeInTheDocument();
+    await screen.findByRole("region", { name: "By idea" });
+    expect(region("By idea").getByText("2")).toBeInTheDocument();
+    expect(openCard("By idea").getAllByRole("button", { name: /^Slices of/ })).toHaveLength(2);
   });
 });
 
@@ -743,31 +940,56 @@ describe("Portfolio performance tab deepening (2026-11-12 redesign PR 2)", () =>
       JSON.stringify(String(url).includes("/api/portfolio/closed") ? closed : main), { status: 200 })));
   }
 
-  it("renders the deepened panels: daily returns, attribution, split, weeks and the closed list", async () => {
+  it("renders every Performance card: curve, risk, daily, attribution, split, weeks and closed trades", async () => {
     servePerf();
     pageAt("/portfolio?tab=performance");
-    expect(await screen.findByText("Daily returns")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Daily returns" })).toBeInTheDocument();
+    for (const name of ["Return, All", "Risk", "Daily returns", "Where the return came from",
+      "Tested vs discretionary", "Realized by week", "Closed trades, All"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
     // Best and worst day from the curve's closes: Nov 11 +2.0%, Nov 10 -1.0%.
-    expect(screen.getByText(/Best/)).toBeInTheDocument();
-    expect(screen.getByText(/Nov 11 \+2\.0%/)).toBeInTheDocument();
-    expect(screen.getByText(/Nov 10 −1\.0%/)).toBeInTheDocument();
-    expect(screen.getByText("Where the return came from")).toBeInTheDocument();
-    expect(screen.getByText("By idea")).toBeInTheDocument();
-    expect(screen.getByText("By sector")).toBeInTheDocument();
-    expect(screen.getByText("Tested ideas vs discretionary, cumulative realized")).toBeInTheDocument();
-    expect(screen.getByText("Realized P&L by week")).toBeInTheDocument();
-    expect(screen.getByText("Closed trades · All")).toBeInTheDocument();
-    // The trade-stats line over the closed list: 2 trades, one win of $100,
-    // one loss of $50, profit factor 2, average hold 3 days.
-    expect(screen.getByText(/2 closed/)).toBeInTheDocument();
-    expect(screen.getByText(/profit factor 2\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/avg hold 3\.0d/)).toBeInTheDocument();
+    expect(region("Daily returns").getByText(/Nov 11 \+2\.0%/)).toBeInTheDocument();
+    expect(region("Daily returns").getByText(/Nov 10 −1\.0%/)).toBeInTheDocument();
+    // Closed trades: count 2, net +$50, 50% wins, profit factor 2.
+    expect(region("Closed trades, All").getByText("2")).toBeInTheDocument();
+    expect(region("Closed trades, All").getByText("+$50")).toBeInTheDocument();
+    expect(region("Closed trades, All").getByText(/Wins 50% · PF 2\.00/)).toBeInTheDocument();
+    // No paragraphs on the page: the provisional-day note lives in the open view.
+    expect(screen.queryByText(/provisional/)).toBeNull();
+  });
+
+  it("opens each Performance card to its detail", async () => {
+    servePerf();
+    pageAt("/portfolio?tab=performance");
+    await screen.findByRole("region", { name: "Where the return came from" });
+    // Attribution opens to both waterfalls and their tables.
+    let full = openCard("Where the return came from");
+    expect(full.getByText("By idea")).toBeInTheDocument();
+    expect(full.getByText("By sector")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    // Stats open to every stat with its definition.
+    full = openCard("Risk");
+    expect(full.getByText("Volatility")).toBeInTheDocument();
+    expect(full.getByText(/Standard deviation of daily returns/)).toBeInTheDocument();
+    expect(full.getByText("Trading days")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    // The closed-trade list opens with its stats line.
+    full = openCard("Closed trades, All");
+    expect(full.getByText("Profit factor")).toBeInTheDocument();
+    expect(full.getByText("2.00")).toBeInTheDocument();
+    expect(full.getByText("3.0d")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    // Weeks open to a table, one row per week.
+    full = openCard("Realized by week");
+    expect(full.getByText("Week of")).toBeInTheDocument();
   });
 
   it("sorts the closed-trade list by the column clicked", async () => {
     servePerf();
     pageAt("/portfolio?tab=performance");
-    const table = await screen.findByRole("table");
+    await screen.findByRole("region", { name: "Closed trades, All" });
+    const table = openCard("Closed trades, All").getByRole("table");
     const dataRows = () => within(table).getAllByRole("row").slice(1);
     // Default: newest exit first, so the Nov 12 XLE loss leads.
     expect(dataRows()[0]).toHaveTextContent("XLE");
@@ -775,5 +997,180 @@ describe("Portfolio performance tab deepening (2026-11-12 redesign PR 2)", () =>
     fireEvent.click(within(table).getByRole("button", { name: /Sort closed trades by Symbol/ }));
     expect(dataRows()[0]).toHaveTextContent("NVDA");
     expect(dataRows()[1]).toHaveTextContent("XLE");
+  });
+});
+
+describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
+  const pos = (symbol: string, value: number, over: Partial<PositionRow> = {}): PositionRow => ({
+    symbol, qty: 10, side: "long", market_value: value, pct_of_book: 5, unrealized_pl: 10, day_pl: 5,
+    change_pct: 0.5, idea: "Chips", sector: "Technology", ...over,
+  });
+  const EIGHT = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG", "HHH"];
+  const trade = (symbol: string, i: number) => ({
+    symbol, sector: "Technology", qty: 10, entry_price: 100, exit_price: 101,
+    entered_at: "2026-11-02T15:00:00Z", exited_at: `2026-11-1${i % 3}T20:0${i}:00Z`,
+    pnl: 10 + i, return_pct: 1, held_days: 2, idea: "Chips",
+  });
+  const order = (symbol: string, i: number) => ({
+    symbol, side: "buy", qty: 1, filled_qty: 1, type: "market", time_in_force: "day", status: "filled",
+    limit_price: null, stop_price: null, filled_avg_price: 10, submitted_at: `2026-11-12T15:0${i}:00Z`,
+    filled_at: null, asset: "stock", source: "Machine order",
+  });
+  const staged = (symbol: string, i: number) => ({
+    alpaca_order_id: `a${i}`, client_order_id: `c${i}`, symbol, side: "sell", type: "stop", time_in_force: "gtc",
+    qty: 5, filled_qty: 0, limit_price: null, stop_price: 50 + i, status: "new", submitted_at: "2026-11-12T15:00:00Z",
+  });
+  const MAIN = payload({
+    scoreboard: { ...EMPTY_SCORE, equity: 100000, return_pct: 1, spy_return_pct: 0.5, ahead_pts: 0.5, max_drawdown_pct: -1, win_rate: 50 },
+    curve: [
+      { t: "2026-11-09T21:00:00Z", portfolio_pct: 0, spy_pct: 0 },
+      { t: "2026-11-10T21:00:00Z", portfolio_pct: 1, spy_pct: 0.5 },
+    ],
+    composition: [{ idea: "Chips", pct_of_book: 40, unrealized_pl: 80 }],
+    positions: [
+      ...EIGHT.map((s, i) => pos(s, 1000 * (i + 1))),
+      { symbol: "Cash", qty: null, side: null, market_value: 64000, pct_of_book: 64, unrealized_pl: null, idea: null },
+    ],
+  });
+  const ADMIN = /\/api\/(admin\/|workshop\/ideas|portfolio\/(portfolio-check|open-orders|manual-actions|orders))/;
+
+  function serveDash(urls: string[] = []) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      if (url.includes("/api/portfolio/open-orders")) return json({ orders: EIGHT.map(staged) });
+      if (url.includes("/api/portfolio/manual-actions")) {
+        return json({ book: "main", actions: [{ id: 1, idea_id: 5, idea_title: "Spread", kind: "option", state: "open",
+          symbol: "SPY", created_at: "2026-11-12T12:00:00Z", detail: "size it by hand" }] });
+      }
+      if (url.includes("/api/portfolio/portfolio-check")) return new Response("{}", { status: 404 });
+      if (url.includes("/api/portfolio/activity")) {
+        return json({ state: "live", as_of: "2026-11-12T20:00:00Z", book: "main", open: [], recent: EIGHT.map(order), trades: [] });
+      }
+      if (url.includes("/api/portfolio/closed")) {
+        return json({ state: "live", as_of: "2026-11-12T20:00:00Z", book: "main", trades: EIGHT.map(trade), results_split: null });
+      }
+      if (url.includes("/api/portfolio/books")) return json({ books: [] });
+      return json(MAIN);
+    }));
+    return urls;
+  }
+
+  /** Every card on the tab opens its view; Esc closes it and focus returns to the card. */
+  async function eachCardOpensAndCloses(expected: string[]) {
+    for (const name of expected) {
+      // Keyboard path: focus the card, then activate it.
+      const opener = screen.getByRole("button", { name: `Open ${name}` });
+      opener.focus();
+      fireEvent.click(opener);
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toBeInTheDocument();
+      expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    }
+  }
+
+  it("renders every Book card and opens each one", async () => {
+    serveDash();
+    pageAt("/portfolio?tab=book");
+    await screen.findByRole("region", { name: "Positions" });
+    const cards = ["Composition", "Account", "Today's movers", "Positions", "By idea"];
+    for (const name of cards) expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    await eachCardOpensAndCloses(cards);
+  });
+
+  it("renders every Trade card signed in, with the ticket open on the page, and opens each list", async () => {
+    session.token = "jwt";
+    serveDash();
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("size it by hand")).toBeInTheDocument();
+    await screen.findByText("Staged orders");
+    // The ticket is on the page, not behind a click.
+    expect(screen.getByLabelText("Symbol")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Place an order by hand" })).toBeNull();
+    await waitFor(() => expect(region("Recent orders").getByText("8")).toBeInTheDocument());
+    await eachCardOpensAndCloses(["Needs your hand", "Staged orders", "Recent orders", "Closed trades"]);
+  });
+
+  it("renders every Performance card and opens each one", async () => {
+    serveDash();
+    pageAt("/portfolio?tab=performance");
+    await screen.findByRole("region", { name: "Risk" });
+    await waitFor(() => expect(region("Closed trades, All").getByText("8")).toBeInTheDocument());
+    await eachCardOpensAndCloses(["Return, All", "Risk", "Daily returns", "Where the return came from",
+      "Tested vs discretionary", "Realized by week", "Closed trades, All"]);
+  });
+
+  it("shows at most 5 rows of a long list on the page and every row in the open view", async () => {
+    session.token = "jwt";
+    serveDash();
+    pageAt("/portfolio?tab=book");
+    await screen.findByRole("region", { name: "Positions" });
+    const peek = (name: string) => screen.getByRole("region", { name }).querySelectorAll("[data-peek] li");
+    expect(peek("Positions")).toHaveLength(5);
+    expect(openCard("Positions").getAllByRole("row")).toHaveLength(1 + 8);
+    fireEvent.keyDown(document, { key: "Escape" });
+    cleanup();
+    pageAt("/portfolio?tab=trade");
+    await screen.findByText("Staged orders");
+    await waitFor(() => expect(region("Recent orders").getByText("8")).toBeInTheDocument());
+    await waitFor(() => expect(region("Closed trades").getByText("8")).toBeInTheDocument());
+    for (const name of ["Staged orders", "Recent orders", "Closed trades"]) {
+      expect(peek(name)).toHaveLength(5);
+      expect(openCard(name).getAllByRole("row")).toHaveLength(1 + 8);
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+  });
+
+  it("filters the open view's list", async () => {
+    serveDash();
+    pageAt("/portfolio?tab=book");
+    await screen.findByRole("region", { name: "Positions" });
+    const full = openCard("Positions");
+    fireEvent.change(full.getByLabelText("Filter positions"), { target: { value: "ccc" } });
+    expect(full.getAllByRole("row")).toHaveLength(2);
+  });
+
+  it("sends no admin call on any tab for a signed-out visitor", async () => {
+    for (const tab of ["book", "performance", "trade"]) {
+      const urls = serveDash();
+      pageAt(`/portfolio?tab=${tab}`);
+      await screen.findByRole("region", { name: tab === "performance" ? "Risk" : tab === "trade" ? "Closed trades" : "Positions" });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(urls.filter((u) => ADMIN.test(u))).toEqual([]);
+      expect(screen.queryByText("Place an order by hand")).toBeNull();
+      expect(screen.queryByText("Staged orders")).toBeNull();
+      expect(screen.queryByText("Needs your hand")).toBeNull();
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows unknown values as a dash, never 0", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100000 },
+      positions: [pos("AAA", 1000, { unrealized_pl: null, day_pl: null, change_pct: null })],
+    }));
+    page(<Portfolio />);
+    await screen.findByRole("region", { name: "Account" });
+    // Buying power, short value and the open P&L are unknown on this payload.
+    expect(region("Account").getAllByText("—").length).toBeGreaterThanOrEqual(3);
+    expect(region("Positions").getByText(/Open/).textContent).toContain("—");
+    expect(region("Composition").getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("$0")).toBeNull();
+    expect(screen.queryByText("+$0")).toBeNull();
+    cleanup();
+    serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 } }));
+    pageAt("/portfolio?tab=performance");
+    await screen.findByRole("region", { name: "Risk" });
+    expect(region("Return, All").getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(region("Daily returns").getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(region("Where the return came from").getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("+0.0%")).toBeNull();
   });
 });

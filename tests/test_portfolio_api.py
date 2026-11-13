@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import requests
@@ -179,10 +179,12 @@ def test_snapshot_job_inserts_one_row(monkeypatch):
 
     monkeypatch.setattr(service, "paper_get", per_book)
     monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
     supa = FakeSupabase()
     assert portfolio_snapshot.main(MONDAY_10_CT, supa) == 0
     assert supa.store["portfolio_snapshots"] == [{"taken_at": MONDAY_10_CT.isoformat(), "account_number": "PA2",
-                                                  "equity": 104820.0, "cash": 41200.0, "spy_price": 510.5}]
+                                                  "equity": 104820.0, "cash": 41200.0, "spy_price": 510.5,
+                                                  "qqq_price": 612.25}]
 
 
 def test_snapshot_job_skips_when_not_connected_or_closed(monkeypatch):
@@ -457,3 +459,130 @@ def test_activity_multileg_order_carries_its_leg_symbols(client_with, monkeypatc
     assert [leg["symbol"] for leg in row["legs"]] == [
         "SPY261111P00750000", "SPY261111P00749000"]
     assert row["legs"][0]["filled_qty"] == 1 and row["asset"] == "option"
+
+
+def test_portfolio_today_uses_the_brokers_last_equity(monkeypatch):
+    # Claude's #514 item 2, at the portfolio() level: with last_equity on
+    # the account, Today's regular figure is equity - last_equity, not
+    # equity - yesterday's last snapshot (100,000 here).
+    account = {"account_number": "PA2", "equity": "101000", "cash": "41200",
+               "last_equity": "100500"}
+    monkeypatch.setenv("PORTFOLIO_ACCOUNT_NUMBER", "PA2")
+    monkeypatch.setattr(service, "paper_get", alpaca(account=account))
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    # The empty benchmark read falls back to the direct QQQ read; stub
+    # it too, or the test reaches for the real data API (CodeRabbit).
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
+    service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
+    snaps = [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
+             snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
+    out = service.portfolio(FakeSupabase(snaps),
+                            now=datetime(2026, 11, 12, 17, 0, tzinfo=UTC))
+    assert out["today"]["state"] == "regular"
+    assert out["today"]["regular_pl"] == 500.0
+
+
+def test_portfolio_logs_a_missing_last_equity(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("PORTFOLIO_ACCOUNT_NUMBER", "PA2")
+    monkeypatch.setattr(service, "paper_get", alpaca())  # ACCOUNT has no last_equity
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
+    service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
+    snaps = [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
+             snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
+    with caplog.at_level(logging.WARNING, logger="tradehub.portfolio.service"):
+        out = service.portfolio(FakeSupabase(snaps),
+                                now=datetime(2026, 11, 12, 17, 0, tzinfo=UTC))
+    assert "last_equity" in caplog.text
+    # ...and the split still falls back to the snapshot prior.
+    assert out["today"]["regular_pl"] == 4820.0
+
+
+def _qqq_fallback_world(monkeypatch, qqq):
+    account = {"account_number": "PA2", "equity": "101000", "cash": "41200",
+               "last_equity": "100500"}
+    monkeypatch.setenv("PORTFOLIO_ACCOUNT_NUMBER", "PA2")
+    monkeypatch.setattr(service, "paper_get", alpaca(account=account))
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_snapshots", lambda symbols, **k: {})
+    monkeypatch.setattr(service, "latest_qqq_price", qqq)
+    service._SNAPSHOT_CACHE.clear()
+    service._QQQ_FALLBACK_CACHE.clear()
+    return [snap("2026-11-11T21:05:00+00:00", "PA2", 100_000, 500.0),
+            snap("2026-11-12T15:00:00+00:00", "PA2", 100_800, 505.0)]
+
+
+def test_portfolio_caches_the_direct_qqq_fallback(monkeypatch):
+    # CodeRabbit, PR #514: when the batched benchmark read omits QQQ,
+    # the direct read is cached per book on the snapshots TTL, so a
+    # QQQ-shaped hole does not cost a data-API call on every poll.
+    calls = {"n": 0}
+
+    def counting_qqq():
+        calls["n"] += 1
+        return 612.25
+
+    snaps = _qqq_fallback_world(monkeypatch, counting_qqq)
+    now = datetime(2026, 11, 12, 17, 0, tzinfo=UTC)
+    service.portfolio(FakeSupabase(snaps), now=now)
+    service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=30))
+    assert calls["n"] == 1
+    service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=120))
+    assert calls["n"] == 2
+
+
+def test_portfolio_caches_a_failed_qqq_fallback(monkeypatch):
+    # The failure is cached too, and QQQ simply reads unknown.
+    calls = {"n": 0}
+
+    def failing_qqq():
+        calls["n"] += 1
+        raise RuntimeError("data API down")
+
+    snaps = _qqq_fallback_world(monkeypatch, failing_qqq)
+    now = datetime(2026, 11, 12, 17, 0, tzinfo=UTC)
+    service.portfolio(FakeSupabase(snaps), now=now)
+    out = service.portfolio(FakeSupabase(snaps), now=now + timedelta(seconds=30))
+    assert calls["n"] == 1
+    assert out["today"]["qqq_regular_pct"] is None
+
+
+class _RejectingQuery(FakeQuery):
+    def insert(self, row):
+        if "qqq_price" in row:
+            raise RuntimeError('column "qqq_price" of relation "portfolio_snapshots" does not exist')
+        return super().insert(row)
+
+
+class _RejectingSupabase(FakeSupabase):
+    def table(self, name):
+        return _RejectingQuery(self.store, name)
+
+
+def test_snapshot_job_retries_without_qqq_when_the_column_is_missing(monkeypatch):
+    # Claude's #514 item 3: a database without the qqq_price column (a
+    # restored or fresh one) must never lose the equity snapshot.
+    from tradehub.portfolio import books
+
+    main_fake = alpaca()
+
+    def per_book(path, params=None):
+        if books.resolve() == "big":
+            raise AccountNotConnected("no keys for the big book")
+        return main_fake(path, params)
+
+    monkeypatch.setattr(service, "paper_get", per_book)
+    monkeypatch.setattr(service, "latest_spy_price", lambda: 510.5)
+    monkeypatch.setattr(service, "latest_qqq_price", lambda: 612.25)
+    supa = _RejectingSupabase()
+    assert portfolio_snapshot.main(MONDAY_10_CT, supa) == 0
+    rows = supa.store["portfolio_snapshots"]
+    assert len(rows) == 1
+    assert "qqq_price" not in rows[0]
+    assert rows[0]["equity"] == 104820.0 and rows[0]["spy_price"] == 510.5

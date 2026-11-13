@@ -20,6 +20,7 @@ NOW = datetime(2026, 11, 12, 22, 30, tzinfo=UTC)  # 17:30 ET
 
 def _run(monkeypatch: pytest.MonkeyPatch, snap: dict) -> dict:
     row = {"symbol": "MU", "asset": "stock", "ah_change_pct": None}
+    service._SNAPSHOT_CACHE.clear()  # the fold caches snapshots for ~60 s
     monkeypatch.setattr(service, "latest_snapshots", lambda symbols: {"MU": snap})
     service._fold_after_hours([row], NOW)
     return row
@@ -48,3 +49,21 @@ def test_frozen_print_over_an_hour_old_stays_unknown(monkeypatch: pytest.MonkeyP
 def test_missing_trade_time_stays_unknown(monkeypatch: pytest.MonkeyPatch):
     row = _run(monkeypatch, _snap(""))
     assert row["ah_change_pct"] is None
+
+
+def test_snapshots_are_cached_across_polls(monkeypatch: pytest.MonkeyPatch):
+    # /api/portfolio is polled every 30 s per open tab; the fold must not
+    # call Alpaca on every poll (Claude's #506 review, item 3).
+    calls: list[int] = []
+
+    def stub(symbols: list[str]) -> dict:
+        calls.append(1)
+        return {"MU": _snap("2026-11-12T22:10:00+00:00")}
+
+    service._SNAPSHOT_CACHE.clear()
+    monkeypatch.setattr(service, "latest_snapshots", stub)
+    rows = [{"symbol": "MU", "asset": "stock", "ah_change_pct": None} for _ in range(2)]
+    service._fold_after_hours([rows[0]], NOW)
+    service._fold_after_hours([rows[1]], NOW)
+    assert len(calls) == 1
+    assert rows[1]["ah_change_pct"] == pytest.approx(1.0)

@@ -108,6 +108,7 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 83 | `20261112000001_leaps_trial_verdicts.sql` |
 | 84 | `20261112000002_kalshi_demo_orders.sql` |
 | 85 | `20261112000004_fifteen_volregime_shadow.sql` (applied 2026-11-12 by Claude through the Supabase connector as `fifteen_volregime_shadow` on Kevin's go; renumbered from 000003 after a filename collision with #514, with `low95_clustered` and `paired_low95_clustered` on the evals table; read back: decisions 25 columns, weights 9, evals 14, RLS on for all three, no anon/authenticated grants, unique keys present) |
+| 86 | `20261112000003_portfolio_snapshots_qqq_price.sql` (applied 2026-11-12 on Kevin's go for the QQQ benchmark in Portfolio step 6 PR 3, #514; read back: column present, 142 rows all NULL until the hourly-bar backfill that ships in the same PR. Row 86 though its filename sorts before row 85's: it was applied first, and #513 took row 85 while #514 was in review -- the watermark stays at `000004`, the newest filename) |
 
 **Watermark: `20261112000004_fifteen_volregime_shadow.sql`**
 
