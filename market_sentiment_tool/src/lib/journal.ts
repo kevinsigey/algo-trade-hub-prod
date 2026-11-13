@@ -38,7 +38,7 @@ export interface JournalScore {
    * contested rows only -- the share of the model in the best mix with the baseline. The raw
    * slope (it can exceed 1); the halves split the settled set in freeze order. Null on cards
    * scored before the column existed, and weight is null when nothing contested settled. */
-  earned_weight?: { weight: number | null; n: number; first_half: number | null; second_half: number | null } | null;
+  earned_weight?: { weight: number | null; n: number; first_half: number | null; second_half: number | null; first_half_n?: number; second_half_n?: number } | null;
   /** True when the registry retired this (forecaster, version). Absent when the server could
    * not say -- an absent label is unknown, never a claim that nothing is retired. */
   retired?: boolean;

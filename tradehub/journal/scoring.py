@@ -47,6 +47,27 @@ def _frozen_day(row: dict[str, Any]) -> str:
     return f"target:{row.get('target')}"
 
 
+_FROZEN_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _frozen_sort_key(row: dict[str, Any]) -> datetime:
+    """The moment a forecast was frozen, as a sort key. A row without a
+    parseable `frozen_at` sorts first (production rows always carry one);
+    the sort is stable, so rows frozen at the same moment keep the order
+    they were handed over in."""
+    raw = row.get("frozen_at")
+    if raw:
+        try:
+            dt = raw if isinstance(raw, datetime) else datetime.fromisoformat(
+                str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return _FROZEN_MIN
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    return _FROZEN_MIN
+
+
 def _clustered_gap_se(diffs: list[float], days: list[str]) -> float | None:
     """Cluster-robust standard error of the mean paired gap, clustered
     by frozen day -- the estimator fifteen_volregime.clustered_low95
@@ -159,6 +180,7 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
 
     ours_on_base, theirs, kinds = [], [], {"market": 0, "climatology": 0}
     triples: list[tuple[float, float, int]] = []
+    triple_keys: list[datetime] = []
     diff_days: list[str] = []
     for row in pairs:
         prob, kind = baseline_prob(row, calendar)
@@ -168,6 +190,7 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
         ours_on_base.append(_brier(float(row["probability"]), row["outcome"]))
         theirs.append(_brier(prob, row["outcome"]))
         triples.append((float(row["probability"]), prob, int(row["outcome"])))
+        triple_keys.append(_frozen_sort_key(row))
         diff_days.append(_frozen_day(row))
     brier_base = sum(theirs) / len(theirs) if theirs else None
     ours_b = sum(ours_on_base) / len(ours_on_base) if ours_on_base else None
@@ -216,17 +239,25 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
     # half, so a fading model shows in the halves before the pool moves.
     # One definition only: fifteen_blend.earned_weight, called, never
     # copied. The raw slope is stored, as the blend stores it (it can
-    # exceed 1); the halves split the triples in freeze order, the extra
-    # row of an odd count going to the first half.
-    weight, n_contested = _blend_earned_weight(triples)
-    mid = (len(triples) + 1) // 2
-    first_weight, _ = _blend_earned_weight(triples[:mid])
-    second_weight, _ = _blend_earned_weight(triples[mid:])
+    # exceed 1). The triples are sorted by frozen_at HERE, not trusted to
+    # arrive in freeze order -- the caller's row order is a database
+    # detail, and the halves must split the chronological set regardless
+    # (the whole-set slope is order-invariant; the halves are not). The
+    # extra row of an odd count goes to the first half, and each half
+    # reports its own contested count beside its slope, so a half built
+    # on three rows never reads like one built on three hundred.
+    ordered = [t for _, t in sorted(zip(triple_keys, triples), key=lambda kt: kt[0])]
+    weight, n_contested = _blend_earned_weight(ordered)
+    mid = (len(ordered) + 1) // 2
+    first_weight, first_n = _blend_earned_weight(ordered[:mid])
+    second_weight, second_n = _blend_earned_weight(ordered[mid:])
     earned = {
         "weight": round(weight, 4) if weight is not None else None,
         "n": n_contested,
         "first_half": round(first_weight, 4) if first_weight is not None else None,
         "second_half": round(second_weight, 4) if second_weight is not None else None,
+        "first_half_n": first_n,
+        "second_half_n": second_n,
     }
 
     return {

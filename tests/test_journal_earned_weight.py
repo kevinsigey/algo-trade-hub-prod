@@ -42,12 +42,27 @@ def test_earned_weight_is_the_blend_slope_on_contested_rows():
     assert abs(ew["weight"] - 5 / 3) < 1e-4
 
 
-def test_earned_weight_halves_split_the_contested_set_in_order():
+def test_earned_weight_halves_split_in_freeze_order():
     # Four contested triples: the first two slope 5/3 (see above); the
     # last two mirror them to slope -5/3 ((0.2,0.5,1): x=-0.3, y=0.5 ->
-    # -0.15; (0.8,0.5,0): x=0.3, y=-0.5 -> -0.15; den 0.18).
+    # -0.15; (0.8,0.5,0): x=0.3, y=-0.5 -> -0.15; den 0.18). Each half
+    # reports its own contested count beside its slope.
     rows = _rows([(0.8, 0.5, D1), (0.2, 0.5, D1),
                   (0.2, 0.5, D2), (0.8, 0.5, D2)])
+    card = score(rows, _settled(rows, [1, 0, 1, 0]), {}, "daily", "test_model")
+    ew = card["earned_weight"]
+    assert abs(ew["first_half"] - 5 / 3) < 1e-4
+    assert abs(ew["second_half"] + 5 / 3) < 1e-4
+    assert ew["first_half_n"] == 2 and ew["second_half_n"] == 2
+
+
+def test_earned_weight_halves_follow_freeze_order_not_input_order():
+    # The same four triples handed over latest-first: score() sorts by
+    # frozen_at itself, so the halves are still the chronological ones.
+    # (The runner's row order is a database detail; the scorecard cannot
+    # depend on it, or the halves swap whenever the query plan changes.)
+    rows = _rows([(0.2, 0.5, D2), (0.8, 0.5, D2),
+                  (0.8, 0.5, D1), (0.2, 0.5, D1)])
     card = score(rows, _settled(rows, [1, 0, 1, 0]), {}, "daily", "test_model")
     ew = card["earned_weight"]
     assert abs(ew["first_half"] - 5 / 3) < 1e-4
@@ -59,7 +74,8 @@ def test_earned_weight_absent_rather_than_zero_without_a_baseline():
             for i in range(3)]
     card = score(rows, _settled(rows, [1, 1, 0]), {}, "daily", "test_model")
     assert card["earned_weight"] == {"weight": None, "n": 0,
-                                     "first_half": None, "second_half": None}
+                                     "first_half": None, "second_half": None,
+                                     "first_half_n": 0, "second_half_n": 0}
 
 
 def test_gap_se_clusters_by_frozen_day_not_by_row():
