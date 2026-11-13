@@ -3236,6 +3236,7 @@ def get_journal(supabase=Depends(get_supabase)):
                           order=("forecaster", "forecaster_version"))
     except Exception as exc:  # noqa: BLE001 - classified by _table_fault
         raise _table_fault("journal_scores", exc) from exc
+    _annotate_retired(rows)
     # A missing or unapplied `journal_backtests` degrades standings to "not measured", the same rule
     # /api/journal/backtests follows: "no replay yet" is the true statement, and it is better than a
     # 500 that takes the front page down over a table the journal does not need to answer this.
@@ -3257,6 +3258,25 @@ def get_journal(supabase=Depends(get_supabase)):
         "standings": {**rows_out, "verdict": journal_verdict_sentence(rows_out)},
         "retired_models": _retired_models(),
     }
+
+
+def _annotate_retired(rows: list[dict]) -> None:
+    """Label each scorecard row `retired` from the registry's RETIRED
+    list (step 9: retired rows stay on the scoreboard, labeled, rather
+    than silently reading as live models). Exact (forecaster, version)
+    pairs, the same rows _retired_models counts. Fail-soft like it: if
+    the registry won't load, rows keep no label at all -- an absent
+    label is unknown, never a claim that nothing is retired."""
+    try:
+        from tradehub.journal.registry import RETIRED
+
+        pairs = {(f.name, str(getattr(f, "version", "") or "")) for f in RETIRED}
+    except Exception:  # noqa: BLE001
+        log.exception("api: journal registry unreadable for retired labels")
+        return
+    for r in rows:
+        r["retired"] = (r.get("forecaster"),
+                        str(r.get("forecaster_version") or "")) in pairs
 
 
 def _retired_models() -> int | None:

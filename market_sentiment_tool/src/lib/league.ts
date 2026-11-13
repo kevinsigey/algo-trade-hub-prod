@@ -80,6 +80,26 @@ export interface LeagueRow {
   against: string;
   status: LeagueStatus;
   promoted: boolean;
+  /** The primary's earned weight with its halves, pre-rendered ("0.88 (halves 0.91 / 0.84)"),
+   * or null when the server measured none. */
+  earnedWeight: string | null;
+  /** The server labelled the primary's (forecaster, version) retired. */
+  retired: boolean;
+}
+
+/** "0.88 (halves 0.91 / 0.84)": the earned weight with its two chronological halves.
+ * An unmeasured half prints as an em dash; no weight at all prints as nothing (null). */
+export function earnedWeightText(ew: JournalScore["earned_weight"]): string | null {
+  if (!ew || ew.weight === null || ew.weight === undefined) return null;
+  const f = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
+  return `${f(ew.weight)} (halves ${f(ew.first_half)} / ${f(ew.second_half)})`;
+}
+
+/** The league table's rows (step 9): a predictor with zero settled forecasts carries no
+ * measurement, and a table full of them reads as results. Hidden here only -- the cards
+ * view and the Waiting tab keep waiting predictors, so league() itself is unchanged. */
+export function scoreboardRows(rows: LeagueRow[]): LeagueRow[] {
+  return rows.filter((r) => r.scored > 0);
 }
 
 const isBaseline = (r: ViewRow) => r.forecaster.startsWith("baseline_") || isMarket(r.score);
@@ -119,6 +139,8 @@ export function league(rows: ViewRow[]): LeagueRow[] {
       against: baselineName(primary.baseline),
       status: statusOf(edge, se, primary.scored),
       promoted: sorted.some((v) => v.score.gate_status === "PROMOTED"),
+      earnedWeight: earnedWeightText(primary.score.earned_weight),
+      retired: primary.score.retired === true,
     });
   }
   const rank = (s: LeagueStatus) => ["beating", "level", "behind", "early", "waiting"].indexOf(s);

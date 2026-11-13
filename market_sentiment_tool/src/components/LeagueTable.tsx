@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 
 import { JournalDetail } from "@/components/JournalDetail";
 import { EARLY_N, type ViewRow } from "@/lib/journalView";
-import { axisSpan, byGroup, edgeText, NOT_YET, STATUS_LABEL, Z95, type LeagueRow, type LeagueStatus } from "@/lib/league";
+import { axisSpan, byGroup, edgeText, NOT_YET, scoreboardRows, STATUS_LABEL, Z95, type LeagueRow, type LeagueStatus } from "@/lib/league";
 import { tileNote } from "@/lib/forecasterLabels";
 
 /**
@@ -65,8 +65,11 @@ function Progress({ scored, needed }: { scored: number; needed: number }) {
 export function LeagueTable({ rows }: { rows: LeagueRow[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const [more, setMore] = useState<string | null>(null);
-  const span = axisSpan(rows);
-  const groups = byGroup(rows);
+  // Step 9: the table hides predictors with zero settled forecasts (they
+  // carry no measurement); the cards view and Waiting tab keep them.
+  const shown = scoreboardRows(rows);
+  const span = axisSpan(shown);
+  const groups = byGroup(shown);
 
   return (
     <div className="space-y-8">
@@ -98,8 +101,10 @@ export function LeagueTable({ rows }: { rows: LeagueRow[] }) {
                           {r.label}
                         </button>
                         {r.promoted && <span className="ml-2 border border-border px-1.5 py-0.5 text-xs uppercase tracking-wide text-foreground">Promoted</span>}
+                        {r.retired && <span className="ml-2 border border-border px-1.5 py-0.5 text-xs uppercase tracking-wide text-muted-foreground">Retired</span>}
                         {r.primary.experimental && <span className="ml-2 text-xs text-muted-foreground">Experimental</span>}
                         <div className="text-xs text-muted-foreground">vs {r.against}</div>
+                        {r.earnedWeight && <div className="text-xs tabular-nums text-muted-foreground">Earned weight {r.earnedWeight}</div>}
                         {tileNote(r.primary.forecaster) && <div className="text-xs text-muted-foreground" data-tile-note="">{tileNote(r.primary.forecaster)}</div>}
                         {r.variants.length > 0 && (
                           <button type="button" onClick={() => setMore(more === r.id ? null : r.id)} aria-expanded={more === r.id} className="mt-0.5 text-xs text-muted-foreground underline">

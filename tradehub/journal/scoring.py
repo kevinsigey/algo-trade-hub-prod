@@ -6,8 +6,11 @@ everything every run. Rebuilt rows are displayed elsewhere but never reach these
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from tradehub.fifteen_blend import earned_weight as _blend_earned_weight
 from tradehub.journal.costs import cost_summary
 from tradehub.journal.forecasters.baselines import BASELINE_PREFIX
 from tradehub.journal.forecasters.shrunk import SUFFIX as SHRINK_SUFFIX
@@ -20,6 +23,50 @@ MURPHY_BINS = 10
 
 def _brier(prob: float, outcome: int) -> float:
     return (prob - outcome) ** 2
+
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _frozen_day(row: dict[str, Any]) -> str:
+    """The ET day a forecast was frozen -- the cluster its error bar is
+    counted in. Production rows always carry `frozen_at`; a row without
+    one falls back to its target, so distinct events are never merged
+    into one day by the fallback."""
+    raw = row.get("frozen_at")
+    if raw:
+        try:
+            dt = raw if isinstance(raw, datetime) else datetime.fromisoformat(
+                str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            dt = None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(_ET).date().isoformat()
+    return f"target:{row.get('target')}"
+
+
+def _clustered_gap_se(diffs: list[float], days: list[str]) -> float | None:
+    """Cluster-robust standard error of the mean paired gap, clustered
+    by frozen day -- the estimator fifteen_volregime.clustered_low95
+    uses, at SE scale: sqrt(k/(k-1) * sum_c (T_c - mean * n_c)^2) / n
+    over k day-clusters with totals T_c of n_c diffs. Same-day forecasts
+    move together, so counting rows would print a bar narrower than the
+    evidence. None under two days: one day of evidence has no honest
+    interval, and a missing figure is None, never a too-narrow number."""
+    n = len(diffs)
+    totals: dict[str, list] = {}
+    for day, diff in zip(days, diffs):
+        slot = totals.setdefault(day, [0.0, 0])
+        slot[0] += diff
+        slot[1] += 1
+    k = len(totals)
+    if k < 2 or n == 0:
+        return None
+    mean = sum(diffs) / n
+    var = k / (k - 1) * sum((t - mean * c) ** 2 for t, c in totals.values())
+    return round((var ** 0.5) / n, 6)
 
 
 def settled_pairs(forecasts: list[dict[str, Any]], settlements: dict[str, int]) -> list[dict[str, Any]]:
@@ -111,6 +158,8 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
     brier = sum(_brier(float(r["probability"]), r["outcome"]) for r in pairs) / len(pairs) if pairs else None
 
     ours_on_base, theirs, kinds = [], [], {"market": 0, "climatology": 0}
+    triples: list[tuple[float, float, int]] = []
+    diff_days: list[str] = []
     for row in pairs:
         prob, kind = baseline_prob(row, calendar)
         if prob is None:
@@ -118,6 +167,8 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
         kinds[kind] += 1
         ours_on_base.append(_brier(float(row["probability"]), row["outcome"]))
         theirs.append(_brier(prob, row["outcome"]))
+        triples.append((float(row["probability"]), prob, int(row["outcome"])))
+        diff_days.append(_frozen_day(row))
     brier_base = sum(theirs) / len(theirs) if theirs else None
     ours_b = sum(ours_on_base) / len(ours_on_base) if ours_on_base else None
     bss = (1.0 - ours_b / brier_base) if (ours_b is not None and brier_base) else None
@@ -151,13 +202,32 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
         reasons.append(f"a calibration bucket has fewer than {MIN_BUCKET_TARGETS} settled targets")
     # Paired Brier gap vs baseline on the same contracts: negative = better than baseline.
     gap = (round(ours_b, 6) - round(brier_base, 6)) if (ours_b is not None and brier_base is not None) else None
-    # Standard error of the paired gap from per-contract squared-error differences.
+    # Standard error of the paired gap, counted in days, not rows: the
+    # per-contract squared-error differences clustered by frozen day.
     gap_se = None
     if ours_on_base and theirs and len(ours_on_base) == len(theirs) and len(ours_on_base) > 1:
         diffs = [o - t for o, t in zip(ours_on_base, theirs)]
-        mean_d = sum(diffs) / len(diffs)
-        var_d = sum((d - mean_d) ** 2 for d in diffs) / (len(diffs) - 1)
-        gap_se = round((var_d / len(diffs)) ** 0.5, 6)
+        gap_se = _clustered_gap_se(diffs, diff_days)
+
+    # Earned weight (step 9): the blend's own slope -- the share of the
+    # model you would mix with the baseline to get the best forecast --
+    # over contested rows only (the blend's function applies the 10-90%
+    # band itself), for the whole settled set and for each chronological
+    # half, so a fading model shows in the halves before the pool moves.
+    # One definition only: fifteen_blend.earned_weight, called, never
+    # copied. The raw slope is stored, as the blend stores it (it can
+    # exceed 1); the halves split the triples in freeze order, the extra
+    # row of an odd count going to the first half.
+    weight, n_contested = _blend_earned_weight(triples)
+    mid = (len(triples) + 1) // 2
+    first_weight, _ = _blend_earned_weight(triples[:mid])
+    second_weight, _ = _blend_earned_weight(triples[mid:])
+    earned = {
+        "weight": round(weight, 4) if weight is not None else None,
+        "n": n_contested,
+        "first_half": round(first_weight, 4) if first_weight is not None else None,
+        "second_half": round(second_weight, 4) if second_weight is not None else None,
+    }
 
     return {
         "cadence": cadence,
@@ -174,6 +244,7 @@ def score(forecasts: list[dict[str, Any]], settlements: dict[str, int],
         "n_baseline": len(ours_on_base),
         "gap": gap,
         "gap_se": gap_se,
+        "earned_weight": earned,
         "bss": round(bss, 6) if bss is not None else None,
         "reliability": buckets,
         "murphy": murphy(pairs) or {},
