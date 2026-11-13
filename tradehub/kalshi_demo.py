@@ -344,13 +344,19 @@ def _fills_by_order(portfolio) -> dict[str, dict]:
         count = float(f.get("count_fp") or f.get("count") or 0)
         if count <= 0:
             continue
-        cents = f.get("yes_price") if f.get("side") == "yes" else f.get("no_price")
-        if cents is None:
-            cents = f.get("yes_price", 0)
+        # V2 fills: outcome_side + *_price_dollars; legacy: side + cents.
+        yes_side = (f.get("outcome_side") or f.get("side")) == "yes"
+        dollars = f.get("yes_price_dollars" if yes_side else "no_price_dollars")
+        if dollars is not None:
+            cents = float(dollars) * 100.0
+        else:
+            cents = f.get("yes_price") if yes_side else f.get("no_price")
+            if cents is None:
+                cents = f.get("yes_price", 0)
         agg = out.setdefault(oid, {"count": 0.0, "cost": 0.0, "first_ts": None})
         agg["count"] += count
         agg["cost"] += float(cents) * count
-        ts = f.get("created_ts")
+        ts = f.get("created_time") or f.get("created_ts")
         if ts and (agg["first_ts"] is None or ts < agg["first_ts"]):
             agg["first_ts"] = ts
     for agg in out.values():
