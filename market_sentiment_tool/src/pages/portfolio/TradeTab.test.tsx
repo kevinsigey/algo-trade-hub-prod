@@ -1,11 +1,12 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 // The closed-trades box's read states (CodeRabbit, PR #514): useApi is
 // driven directly so a failed first read, a stale last-good read, and a
-// good empty read can be told apart. Everything admin-gated stays shut
-// (the fetch stub 401s /api/admin/me, like a signed-out visitor).
+// good empty read can be told apart. A session exists (so adminCall
+// reaches the network) but the fetch stub 401s /api/admin/me, so every
+// admin-gated box stays shut, like a signed-in non-admin visitor.
 const { closed, emptyApi } = vi.hoisted(() => ({
   closed: {
     current: { data: null, error: null, loading: false, stale: false } as {
@@ -23,7 +24,7 @@ vi.mock("@/hooks/usePaperPortfolio", () => ({
     : emptyApi),
 }));
 vi.mock("@/lib/supabase", () => ({
-  supabase: { auth: { getSession: async () => ({ data: { session: null } }) } },
+  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "test-token" } } }) } },
 }));
 vi.stubGlobal("fetch", vi.fn(async () =>
   new Response(JSON.stringify({ detail: "admin only" }), { status: 401 })));
@@ -67,5 +68,48 @@ describe("Trade tab closed-trades read states", () => {
     const card = within(screen.getByRole("region", { name: "Closed trades" }));
     expect(card.queryByText("0")).toBeNull();
     expect(card.getByText("—")).toBeInTheDocument();
+  });
+});
+
+describe("Manual-actions admin check", () => {
+  it("stops polling and hides the warning when a later check 401s", async () => {
+    closed.current = { data: { trades: [] }, error: null, loading: false, stale: false };
+    vi.useFakeTimers();
+    try {
+      let meCalls = 0;
+      let signedOut = false;
+      vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+        if (String(url).includes("/api/admin/me")) {
+          meCalls += 1;
+          // Transient failures first (the box's retry ladder runs,
+          // then its 30 s poller starts); then the session turns out
+          // to be gone. Other components check the same endpoint too,
+          // so the assertions count deltas, not totals.
+          if (!signedOut) throw new TypeError("network down");
+          return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+        }
+        return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+      }));
+      render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      // The box's checks failed transiently through its whole ladder:
+      // the warning is up and the 30 s check poller is running.
+      expect(screen.getByText(/Couldn't read the hand-off list/)).toBeInTheDocument();
+      // The next poll 401s: the box goes, and its poller stops.
+      signedOut = true;
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(screen.queryByText(/Couldn't read the hand-off list/)).toBeNull();
+      // Another component re-checks the same endpoint on its own 30 s
+      // cycle by design (3 ticks in the next 90 s); the box's poller
+      // must add none of its own, and the warning must stay gone.
+      const afterStop = meCalls;
+      await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+      expect(meCalls - afterStop).toBeLessThanOrEqual(3);
+      expect(screen.queryByText(/Couldn't read the hand-off list/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
