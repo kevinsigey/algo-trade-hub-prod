@@ -24,6 +24,21 @@ they're already in progress on Claude's branches.**
 The merge rule still holds for everyone: **no PR merges until Claude posts a ready-to-merge review.** Muse merged #509
 two minutes after opening it; don't repeat that.
 
+## Handover, Nov 13 02:45 UTC (Kevin: Muse takes everything tonight; Claude reviews only)
+- **Muse now owns the backtest too:** #526 (A0b history tapes), then the Kalshi-era haircut replay, then the Step A study, then the model-v2 work in `plan-2026-11-13-fifteen-model-v2.md`. #526's handover comment has the exact state and the next commands.
+- **Rulings that stand:**
+  - Cross-venue tapes pass on **outcome agreement with Kalshi ≥95% and no worse than Hyperliquid's minus 1 point**. Gold, silver, WTI and Brent qualify; gas and copper don't.
+  - Replay fills carry the 1¢ haircut, and replay and forward results must agree in direction.
+  - Pyth Benchmarks (the settlement source) is preferred if it serves 1-minute history.
+  - Binance §4.1–4.2 allow research only.
+- **Finding to act on:** the live Hyperliquid tape gets copper's outcome wrong in 17% of windows and gold's and gas's in about 7%. If Pyth works, build a *new* forecaster version on the Pyth tape, preregistered as a shadow. Never change v1 in place.
+- **Queue:**
+  1. Demo lane (v4-edge20, gas only).
+  2. Fixes from Claude's #527 review.
+  3. #526, then the replay, then Step A.
+  4. Steps 10–20.
+- Claude reviews every PR before it merges. Nothing merges without Claude's ready-to-merge review.
+
 ## Status, Nov 13 02:20 UTC
 - Merged: #518 (the v4 shadow family; it counts from 2026-11-14 00:00 UTC along with the volatility challenger), #520 (Kalshi V2 orders), #521 (the Portfolio dashboard). #517 has been taken over by Claude.
 
