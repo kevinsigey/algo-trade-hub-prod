@@ -140,6 +140,85 @@ function CurveSpark({ curve }: { curve: { portfolio_pct: number; spy_pct: number
   );
 }
 
+type WhereCell = { n: number; cents: number; low95: number | null } | null;
+type WherePayload = {
+  label?: string; generated_at?: string; sample_note?: string;
+  data_so_far?: { source: string; series: string; settled_windows: number; days: number; trades: number }[];
+  views?: { all?: {
+    features?: { minute?: { bucket: string; cells: Record<string, Record<string, WhereCell>> }[] };
+    paired_vs_5?: { minute: number; series: string; source: string; n_windows: number; cents: number; low95: number | null }[];
+  } };
+};
+
+/** Step A study block: where the 15-minute models work, forward and
+ * replay side by side (never pooled together). Renders nothing until
+ * the study runner has written its report. */
+function FifteenWhereBlock() {
+  const where = useJson<WherePayload>("/api/oil/fifteen-where");
+  const all = where?.views?.all;
+  if (!where || !all || !(where.data_so_far ?? []).length) return null;
+  const minutes = (all.features?.minute ?? []).map((r) => ({
+    bucket: r.bucket, forward: r.cells?.POOLED?.forward ?? null, replay: r.cells?.POOLED?.replay ?? null,
+  }));
+  const paired = (all.paired_vs_5 ?? []).filter((p) => p.series === "POOLED");
+  const cellText = (c: WhereCell) => (c ? `${c.cents.toFixed(1)}¢ (${c.n})` : "—");
+  return (
+    <SubDetails title="Where the models work — Step A study (in-sample)">
+      <p className="text-xs text-slate-400">
+        Net cents per trade after the fee, forward record and history replay side by side, cells under
+        30 trades blanked. {where.sample_note ?? ""}
+      </p>
+      <p className="mt-1 text-xs tabular-nums text-slate-500">
+        {(where.data_so_far ?? []).map((d) =>
+          `${d.source} ${d.series.replace("KX", "").replace("15M", "")}: ${d.settled_windows} windows / ${d.days} days / ${d.trades} trades`).join(" · ")}
+      </p>
+      {paired.length > 0 && (
+        <table aria-label="Paired entry minute versus minute 5" className="mt-3 w-full max-w-xl text-xs tabular-nums">
+          <thead><tr className="text-left text-slate-500">
+            <th className="pb-1 pr-3 font-medium">Minute vs 5</th>
+            <th className="pb-1 pr-3 font-medium text-right">Forward ¢/window</th>
+            <th className="pb-1 pr-3 font-medium text-right">low95</th>
+            <th className="pb-1 pr-3 font-medium text-right">Replay ¢/window</th>
+            <th className="pb-1 font-medium text-right">low95</th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-800/70 text-slate-300">
+            {paired.filter((p) => p.source === "forward").map((f) => {
+              const r = paired.find((p) => p.source === "replay" && p.minute === f.minute);
+              return (
+                <tr key={f.minute}>
+                  <td className="py-1 pr-3">{f.minute}</td>
+                  <td className="py-1 pr-3 text-right">{f.cents.toFixed(1)} ({f.n_windows})</td>
+                  <td className="py-1 pr-3 text-right">{f.low95 == null ? "—" : f.low95.toFixed(1)}</td>
+                  <td className="py-1 pr-3 text-right">{r ? `${r.cents.toFixed(1)} (${r.n_windows})` : "—"}</td>
+                  <td className="py-1 text-right">{r?.low95 == null ? "—" : r.low95.toFixed(1)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {minutes.length > 0 && (
+        <table aria-label="Per-minute record by source" className="mt-3 w-full max-w-xl text-xs tabular-nums">
+          <thead><tr className="text-left text-slate-500">
+            <th className="pb-1 pr-3 font-medium">Entry minute</th>
+            <th className="pb-1 pr-3 font-medium text-right">Forward ¢/trade (n)</th>
+            <th className="pb-1 font-medium text-right">Replay ¢/trade (n)</th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-800/70 text-slate-300">
+            {minutes.map((m) => (
+              <tr key={m.bucket}>
+                <td className="py-1 pr-3">{m.bucket}</td>
+                <td className="py-1 pr-3 text-right">{cellText(m.forward)}</td>
+                <td className="py-1 text-right">{cellText(m.replay)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </SubDetails>
+  );
+}
+
 /** One market's gated-vs-raw bars for a fifteen tile: gated leads (it is the live rule), raw is the control. */
 function SeriesBars({ labels, fifteen, lines }: {
   labels: string[]; fifteen: FifteenPayload | null;
@@ -566,6 +645,7 @@ export default function Strategies() {
               )}
             </SubDetails>
           )}
+          <FifteenWhereBlock />
           {fifteen?.decline && (
             <SubDetails title="Day by day — v1 rule, blend and vol-regime challenger">
               <FifteenDeclineMonitor rows={fifteen.decline} />
