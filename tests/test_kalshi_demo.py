@@ -994,6 +994,66 @@ def test_failed_fills_read_never_cancels_a_resting_row():
     assert row["status"] == "filled" and row["contracts_filled"] == 12
 
 
+class RealFillsDownPortfolio(KalshiPortfolio):
+    """The REAL KalshiPortfolio with only its transport stubbed: _get
+    returns None (every request failed). get_fills itself is inherited
+    untouched -- the fake above raises on its own, which let the old
+    swallow-None implementation pass the test while still cancelling
+    filled orders in production (Claude's #532 hold). Only unrelated
+    methods are scaffolded so run_once can proceed."""
+
+    def __init__(self):
+        self.cancelled: list[str] = []
+
+    def _get(self, endpoint, params=None):
+        return None
+
+    def assert_demo_host(self):
+        return None
+
+    def get_balance(self):
+        return {"balance": 50000}
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
+        return {}
+
+    def get_order(self, order_id):
+        return None
+
+    def get_orders(self, status=None):
+        return []
+
+    def get_positions_strict(self, limit=200):
+        return []
+
+    def get_positions(self, limit=200):
+        return []
+
+    def get_market_data(self, ticker):
+        return None
+
+
+def test_real_get_fills_raises_when_the_read_fails():
+    # _get returning None means the fills read never landed; the real
+    # get_fills must raise (like get_positions_strict), never read as
+    # an empty book.
+    with pytest.raises(RuntimeError):
+        RealFillsDownPortfolio().get_fills(limit=200)
+
+
+def test_real_failed_fills_read_never_cancels_a_resting_row():
+    # Same guarantee as the fake-based test, exercised through the real
+    # class: the cutoff sweep must leave the row open for recovery.
+    db = seed(DB(), orders=[order_row(
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    pf = RealFillsDownPortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.cancelled == ["ord-9"]
+    assert out["cancelled"] == 0
+    assert db.db[kd.ORDERS][0]["status"] == "resting"
+
+
 def test_balance_outage_does_not_overwrite_a_recorded_placement_error():
     # The cutoff write-off quotes the claim's recorded error; a later
     # balance blip must not replace the placement refusal already there.
