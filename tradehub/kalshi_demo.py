@@ -392,19 +392,24 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                 expiration_ts=int(expires.timestamp()))
         except Exception as exc:  # noqa: BLE001 -- leave pending; reconcile owns it
             summary["errors"].append(f"place {target}: {exc}")
-            # The refusal is recorded on the claim itself and alerted
-            # now, not reconstructed (wrongly) at the cutoff: a refused
-            # placement must stay distinguishable from a lost response.
+            # The error is recorded on the claim itself and alerted now,
+            # not reconstructed (wrongly) at the cutoff. The alert does
+            # not call it a refusal: a create that raises may be one, or
+            # a response lost after the exchange accepted the order --
+            # the two look identical from here, and adoption by
+            # client_order_id, not this alert, settles which it was.
             _note_error(supa, row, f"place: {exc}")
             _alert_drop(
                 supa, target=target, version=version, event="placement_failed",
-                title=f"Kalshi demo placement failed: {base_row['ticker']}",
-                body=(f"The demo runner's order for {base_row['ticker']} "
-                      f"({d['side']} x{contracts} @ {cost}) was refused by "
-                      f"the exchange: {exc}. The claim stays pending and "
-                      "is retried while the window is open; if it never "
-                      "lands it closes as placement_failed at the cutoff, "
-                      "not as a fill. Demo account; nothing was placed."),
+                title=f"Kalshi demo placement error: {base_row['ticker']}",
+                body=(f"The demo runner's create call for "
+                      f"{base_row['ticker']} ({d['side']} x{contracts} @ "
+                      f"{cost}) raised: {exc}. That is either an exchange "
+                      "refusal (nothing was placed) or a response lost "
+                      "after acceptance. The claim stays pending: the "
+                      "next pass adopts the order by client_order_id if "
+                      "the exchange holds it, and the placement is "
+                      "retried while the window is open. Demo account."),
                 evidence={"ticker": base_row["ticker"], "side": d["side"],
                           "contracts": contracts, "limit_price": cost,
                           "error": str(exc)[:300]})
@@ -478,15 +483,19 @@ def _record_failure(supa, base_row: dict, *, reason: str, detail: str,
         row = None  # the alert below is the second channel
     if row is not None and detail:
         _note_error(supa, row, detail)
+    record_line = (
+        "It is recorded as failed on the demo order record."
+        if row is not None else
+        "The failure row itself could not be written, so this alert "
+        "is the only record of the drop.")
     _alert_drop(
         supa, target=base_row["target"], version=base_row["gate_version"],
         event=reason,
         title=f"Kalshi demo dropped a signal: {base_row['ticker']}",
         body=(f"The demo runner selected this gated buy "
               f"({base_row['side']} @ {base_row['limit_price']}) but could "
-              f"not place it: {reason} -- {detail}. It is recorded as "
-              "failed on the demo order record. Demo account; nothing "
-              "was placed."),
+              f"not place it: {reason} -- {detail}. {record_line} "
+              "Demo account; nothing was placed."),
         evidence={"ticker": base_row["ticker"], "side": base_row["side"],
                   "limit_price": base_row["limit_price"], "detail": detail})
     summary["failed"] += 1
@@ -507,7 +516,12 @@ def _balance_failure(supa, existing: dict | None, base_row: dict,
     on the decision's last fresh pass -- when its cutoff falls within
     one more runner interval, no later pass will select it again."""
     if existing is not None:
-        _note_error(supa, existing, "balance unavailable")
+        # Note the outage only on a claim carrying no error yet: the
+        # recorded error is what the cutoff write-off quotes, and a
+        # placement refusal already on the claim (an HTTP 410, say)
+        # must not be replaced by a later, lesser balance failure.
+        if not existing.get("last_error"):
+            _note_error(supa, existing, "balance unavailable")
         return
     last_chance = (_dt(base_row["window_close"]) - CANCEL_BUFFER
                    <= now + PASS_INTERVAL)
@@ -625,13 +639,17 @@ def _update(supa, row: dict, patch: dict) -> None:
 
 # -- reconcile ----------------------------------------------------------------
 
-def _fills_by_order(portfolio) -> dict[str, dict]:
-    """order_id -> {count, avg_price (dollars, bought side), first_ts}."""
+def _fills_by_order(portfolio) -> dict[str, dict] | None:
+    """order_id -> {count, avg_price (dollars, bought side), first_ts}.
+
+    None when the fills read itself fails: a failed read is not an
+    empty book, and the caller must not draw zero-fill conclusions
+    (least of all terminal ones) from it."""
     out: dict[str, dict] = {}
     try:
         fills = portfolio.get_fills(limit=200)
     except Exception:  # noqa: BLE001
-        return out
+        return None
     for f in fills or []:
         oid = f.get("order_id")
         if not oid:
@@ -688,6 +706,8 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
     if not open_rows:
         return
     fills = _fills_by_order(portfolio)
+    fills_known = fills is not None
+    fills = fills or {}
     outcomes = {t: d.get("outcome") for t, d in tracked.items()}
 
     for row in open_rows:
@@ -755,7 +775,12 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                 portfolio.cancel_order(oid)
             except Exception as exc:  # noqa: BLE001 -- expiry also ends it
                 summary["errors"].append(f"cancel {row['target']}: {exc}")
-            if filled == 0 and row["status"] == "resting":
+            if fills_known and filled == 0 and row["status"] == "resting":
+                # Only a fills read that SUCCEEDED may close the row as
+                # cancelled: on a failed read an executed order would be
+                # written off with zero fills, and `cancelled` is not an
+                # open status, so no later pass would ever recover them.
+                # The row stays resting and the next pass rereads.
                 _update(supa, row, {"status": "cancelled"})
                 summary["cancelled"] += 1
 
