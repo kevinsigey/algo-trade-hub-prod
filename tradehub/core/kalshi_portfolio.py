@@ -210,13 +210,16 @@ class KalshiPortfolio:
 
     def create_order(self, *, ticker: str, side: str, count: int,
                      limit_price_cents: int, client_order_id: str,
-                     expiration_ts: int) -> dict:
+                     expiration_ts: int,
+                     time_in_force: str = "good_till_canceled") -> dict:
         """Place ONE buy limit order on the demo host (Create Order V2).
 
         V2 prices only the YES leg: side is bid (buy YES) or ask (sell
         YES), price is a fixed-point dollar string, count a 2-decimal
         string. Buying NO at c cents is therefore an ask on YES at
-        (100 - c) cents. Expiry is good_till_canceled + expiration_time.
+        (100 - c) cents. Expiry is good_till_canceled + expiration_time;
+        expiration_time is sent only for GTC (Kalshi honors it only
+        there), so an immediate_or_cancel cross carries none.
         Response is flat: {order_id, client_order_id, fill_count,
         remaining_count, ts_ms}.
         """
@@ -227,10 +230,11 @@ class KalshiPortfolio:
             "side": "bid" if side == "yes" else "ask",
             "count": f"{int(count)}.00",
             "price": f"{yes_cents / 100:.4f}",
-            "time_in_force": "good_till_canceled",
-            "expiration_time": int(expiration_ts),
+            "time_in_force": time_in_force,
             "self_trade_prevention_type": "taker_at_cross",
         }
+        if time_in_force == "good_till_canceled":
+            body["expiration_time"] = int(expiration_ts)
         return self._post("/portfolio/events/orders", body)
 
     def cancel_order(self, order_id: str) -> dict:
