@@ -34,6 +34,12 @@ class FakePortfolio:
         self.placed: list[dict] = []
         self.cancelled: list[str] = []
         self.fills: list[dict] = []
+        # The live book the cross-at-placement read sees: a consistent
+        # book around a 40c YES ask, matching the standard decision's
+        # frozen quote, so unmodified tests cross at the frozen price.
+        self.live_ask_cents = 40.0
+        self.live_market = True
+        self.ioc_counts: tuple[str, str] | None = None
 
     def assert_demo_host(self):
         if self.refuse:
@@ -42,9 +48,22 @@ class FakePortfolio:
     def get_balance(self):
         return {"balance": self.balance_cents}
 
+    def get_market_data(self, ticker):
+        if not self.live_market:
+            return None
+        ask = self.live_ask_cents
+        return {"market": {
+            "yes_ask_dollars": f"{ask / 100:.4f}",
+            "yes_bid_dollars": f"{(ask - 2) / 100:.4f}",
+            "no_ask_dollars": f"{(102 - ask) / 100:.4f}",
+            "no_bid_dollars": f"{(100 - ask) / 100:.4f}",
+        }}
+
     def create_order(self, **kw):
         self.placed.append(kw)
-        return {"order_id": f"ord-{len(self.placed)}"}
+        fill, remaining = self.ioc_counts or ("0.00", f"{kw['count']}.00")
+        return {"order_id": f"ord-{len(self.placed)}",
+                "fill_count": fill, "remaining_count": remaining}
 
     def cancel_order(self, order_id):
         self.cancelled.append(order_id)
@@ -65,6 +84,7 @@ def decision(**over):
     row = {
         "series": kd.SERIES, "target": TARGET, "ticker": TICKER,
         "action": "buy", "side": "yes", "cost": 0.40,
+        "model_prob": 0.55, "edge_net": 0.1332,
         "gate_version": "v1", "outcome": None, "pnl": None,
         "close_time": close.isoformat(),
         "frozen_at": (NOW - timedelta(minutes=2)).isoformat(),
@@ -207,6 +227,18 @@ def test_create_order_v2_yes_side(monkeypatch, live_client):
     assert seen["body"]["count"] == "3.00"
 
 
+def test_create_order_ioc_body_omits_expiration(monkeypatch, live_client):
+    monkeypatch.setenv("KALSHI_ENV", "demo")
+    seen = _capture(monkeypatch, payload={"order_id": "abc"})
+    live_client.create_order(
+        ticker=TICKER, side="yes", count=3, limit_price_cents=36,
+        client_order_id="c", expiration_ts=1794500000,
+        time_in_force="immediate_or_cancel")
+    assert seen["body"]["time_in_force"] == "immediate_or_cancel"
+    assert "expiration_time" not in seen["body"]  # Kalshi honors it only for GTC
+    assert seen["body"]["price"] == "0.3600"
+
+
 def test_cancel_order_v2_path_and_guard(monkeypatch, live_client):
     monkeypatch.setenv("KALSHI_ENV", "demo")
     seen = _capture(monkeypatch, status=200,
@@ -339,6 +371,71 @@ def test_places_only_gated_gas_buys():
     row = db.db[kd.ORDERS][0]
     assert row["status"] == "resting" and row["contracts"] == 12
     assert row["balance_at_sizing"] == 500.0 and row["budget_pct"] == 0.01
+
+
+# -- cross-at-placement (Kevin's call, 2026-11-14) ------------------------------
+# The runner used to rest a limit at the quote frozen ~9 minutes earlier:
+# the record showed every win a partial fill and every loss a full one
+# (stale-quote adverse selection). Placement now re-reads the live book,
+# re-validates the decision's edge at the live ask with the rule's own
+# net_edges, and crosses with an immediate-or-cancel order at that ask.
+
+def test_cross_places_at_the_live_ask_not_the_frozen_quote():
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 36.0  # the book improved since the freeze
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    placed = pf.placed[0]
+    assert placed["limit_price_cents"] == 36
+    assert placed["time_in_force"] == "immediate_or_cancel"
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "resting"
+    assert row["limit_price"] == 0.36 and row["frozen_quote"] == 0.40
+
+
+def test_cross_skips_when_the_live_ask_no_longer_clears_the_bar():
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 52.0  # edge at the live ask is ~1c, bar is 10c
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["placed"] == 0
+    assert out["skipped_no_depth"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "skipped_no_depth"
+    assert row["skip_reason"] == "edge_below_bar_at_live_ask"
+
+
+def test_cross_skips_when_the_live_book_is_unavailable():
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    pf.live_market = False
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["placed"] == 0
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "skipped_no_depth"
+    assert row["skip_reason"] == "live_ask_unavailable"
+
+
+def test_cross_sizes_on_the_live_ask():
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 25.0  # $500 x 1% / $0.25 = 20, not 12 at $0.40
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    assert pf.placed[0]["count"] == 20
+    assert db.db[kd.ORDERS][0]["contracts"] == 20
+
+
+def test_ioc_order_that_crosses_nothing_closes_at_placement():
+    db = seed(DB(), open_=[decision()])
+    pf = FakePortfolio()
+    pf.ioc_counts = ("0.00", "0.00")  # crossed, found nothing, expired
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "cancelled"
+    assert row["skip_reason"] == "ioc_unfilled"
 
 
 def test_blend_shadow_decisions_never_traded():
@@ -599,7 +696,7 @@ def test_lane_bar_comes_from_the_preregistered_dial():
 
 
 def test_lane_trades_edge20_decisions_at_half_size():
-    db = seed(DB(), open_=[decision(edge_net=0.25)])
+    db = seed(DB(), open_=[decision(edge_net=0.25, model_prob=0.67)])
     pf = FakePortfolio()
     out = kd.run_once(db, pf, NOW)
     assert out["placed"] == 2
@@ -639,7 +736,7 @@ def test_both_lanes_hold_the_same_target_and_neither_repeats():
     # target-only lookup the lane would have found the live lane's row
     # and never traded; with no keying at all a second pass would
     # double-place. One row per lane, stable across passes.
-    db = seed(DB(), open_=[decision(edge_net=0.30)])
+    db = seed(DB(), open_=[decision(edge_net=0.30, model_prob=0.72)])
     pf = FakePortfolio()
     kd.run_once(db, pf, NOW)
     kd.run_once(db, pf, NOW + timedelta(minutes=1))
@@ -651,7 +748,7 @@ def test_both_lanes_hold_the_same_target_and_neither_repeats():
 def test_lane_caps_are_its_own(monkeypatch):
     monkeypatch.setenv("KALSHI_DEMO_MAX_CONTRACTS_PER_DAY", "12")
     earlier = "kalshi:KXNATGAS15M-26NOV120900-00"
-    db = seed(DB(), open_=[decision(edge_net=0.25)],
+    db = seed(DB(), open_=[decision(edge_net=0.25, model_prob=0.67)],
               orders=[order_row(id=7, target=earlier,
                                 ticker="KXNATGAS15M-26NOV120900-00",
                                 gate_version=kd.LANE_VERSION,

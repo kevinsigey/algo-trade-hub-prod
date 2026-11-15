@@ -37,6 +37,18 @@ lane's day is counted from its own rows only.
 - The live rule, the blend's frozen rows, shadow scoring and the Alpaca
   paper-order path are untouched: this module only reads them.
 
+Execution (Kevin's call, 2026-11-14): orders cross at placement. The
+record to that date showed the stale-quote signature -- every win a
+partial fill, every loss a full fill -- from resting a limit at the
+quote frozen ~9 minutes earlier. Placement now re-reads the live book,
+re-validates the decision's edge at the live ask with the rule's own
+net_edges against the lane's bar, sizes on the live ask, and sends an
+immediate-or-cancel order at that ask (the row's limit_price is the
+crossed ask; frozen_quote keeps the freeze-time quote). An unreadable
+book, an unmeasured probability, or an edge that no longer clears the
+bar is a skip with its reason, never a fallback to the frozen quote.
+The shadow record and the decisions it scores are unchanged.
+
 Placement reliability (2026-11-13): every gated buy a lane selects
 leaves a durable outcome in the same pass -- placed, skipped with its
 reason, or `failed` with its reason (claim insert refused) -- with one
@@ -196,6 +208,51 @@ def ask_size_at(supa, series: str, close_time: Any, side: str,
     return None if size is None else int(size)
 
 
+def _live_cross(portfolio, ticker: str, side: str,
+                model_prob: Any) -> tuple[float, float] | None:
+    """(live ask, net edge there) for the chosen side, from the live
+    book, with the edge recomputed by the rule's own net_edges -- the
+    cross-at-placement re-validation. None when the book or the
+    probability cannot be read: placement never falls back to the
+    frozen quote (resting at a ~9-minute-old quote was the stale-quote
+    adverse selection this replaces: partial fills on every win, full
+    fills on every loss)."""
+    if model_prob is None:
+        return None
+    try:
+        got = portfolio.get_market_data(ticker)
+    except Exception:  # noqa: BLE001 -- an unread book is a skip, not a crash
+        return None
+    market = (got or {}).get("market") if got else None
+    if not market:
+        return None
+    quotes = quote_cents(market)
+
+    def dollars(key: str) -> float | None:
+        cents = quotes.get(key)
+        return None if cents is None else cents / 100.0
+
+    edges = rule.net_edges(float(model_prob), yes_ask=dollars("yes_ask"),
+                           yes_bid=dollars("yes_bid"))
+    if edges is None:
+        return None
+    if side == "yes":
+        return dollars("yes_ask"), edges[0]
+    no_ask = dollars("no_ask")
+    if no_ask is None:
+        return None
+    return no_ask, edges[1]
+
+
+def _order_count(order: dict, key: str) -> int | None:
+    """A V2 order count (fixed-point string or number), or None when
+    the response does not carry it."""
+    try:
+        return int(float(order.get(key)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _day_start_et(now: datetime) -> datetime:
     return now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -330,7 +387,32 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             summary["errors"].append("balance unavailable; placements paused this pass")
             _balance_failure(supa, existing, base_row, summary, lane_summary, now)
             continue
-        contracts = size_contracts(balance, cost, pct)
+        # Cross-at-placement (Kevin's call, 2026-11-14): never rest at
+        # the frozen quote. Re-read the live book, re-validate the
+        # decision's edge at the live ask against the lane's bar, and
+        # size on the live ask; the order crosses IOC at that ask.
+        cross = _live_cross(portfolio, base_row["ticker"], d["side"],
+                            d.get("model_prob"))
+        if cross is None:
+            _skip(supa, existing, {
+                **base_row, "contracts": 0, "ask_size": None,
+                "status": "skipped_no_depth",
+                "skip_reason": ("edge_unmeasured" if d.get("model_prob") is None
+                                else "live_ask_unavailable")})
+            summary["skipped_no_depth"] += 1
+            lane_summary["skipped_no_depth"] += 1
+            continue
+        price, edge_at_ask = cross
+        bar = lane["min_edge"] if lane["min_edge"] is not None else rule.MIN_EDGE
+        if edge_at_ask < bar - 1e-9:
+            _skip(supa, existing, {
+                **base_row, "contracts": 0, "ask_size": None,
+                "status": "skipped_no_depth",
+                "skip_reason": "edge_below_bar_at_live_ask"})
+            summary["skipped_no_depth"] += 1
+            lane_summary["skipped_no_depth"] += 1
+            continue
+        base_row["limit_price"] = price
         depth = ask_size_at(supa, SERIES, d["close_time"], d["side"], now)
         if depth is not None and depth < 1:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
@@ -338,6 +420,7 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             summary["skipped_no_depth"] += 1
             lane_summary["skipped_no_depth"] += 1
             continue
+        contracts = size_contracts(balance, price, pct)
         if contracts_today >= cap_contracts:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
                                    "status": "skipped_cap",
@@ -346,7 +429,7 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             lane_summary["skipped_cap"] += 1
             continue
         contracts = min(contracts, cap_contracts - contracts_today)
-        if loss_used + contracts * cost > cap_loss:
+        if loss_used + contracts * price > cap_loss:
             _skip(supa, existing, {**base_row, "contracts": 0, "ask_size": depth,
                                    "status": "skipped_cap",
                                    "skip_reason": "daily_loss_cap"})
@@ -387,9 +470,10 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
         try:
             order = portfolio.create_order(
                 ticker=base_row["ticker"], side=d["side"], count=contracts,
-                limit_price_cents=int(round(cost * 100)),
+                limit_price_cents=int(round(price * 100)),
                 client_order_id=base_row["client_order_id"],
-                expiration_ts=int(expires.timestamp()))
+                expiration_ts=int(expires.timestamp()),
+                time_in_force="immediate_or_cancel")
         except Exception as exc:  # noqa: BLE001 -- leave pending; reconcile owns it
             summary["errors"].append(f"place {target}: {exc}")
             # The error is recorded on the claim itself and alerted now,
@@ -404,22 +488,38 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                 title=f"Kalshi demo placement error: {base_row['ticker']}",
                 body=(f"The demo runner's create call for "
                       f"{base_row['ticker']} ({d['side']} x{contracts} @ "
-                      f"{cost}) raised: {exc}. That is either an exchange "
+                      f"{price}) raised: {exc}. That is either an exchange "
                       "refusal (nothing was placed) or a response lost "
                       "after acceptance. The claim stays pending: the "
                       "next pass adopts the order by client_order_id if "
                       "the exchange holds it, and the placement is "
                       "retried while the window is open. Demo account."),
                 evidence={"ticker": base_row["ticker"], "side": d["side"],
-                          "contracts": contracts, "limit_price": cost,
+                          "contracts": contracts, "limit_price": price,
                           "error": str(exc)[:300]})
             continue
-        _update(supa, row, {"kalshi_order_id": order.get("order_id"),
-                            "status": "resting", "contracts": contracts,
-                            "balance_at_sizing": balance, "budget_pct": pct,
-                            "ask_size": depth, "expires_at": _iso(expires)})
-        contracts_today += contracts
-        loss_used += contracts * cost
+        if _order_count(order, "fill_count") == 0 and \
+                _order_count(order, "remaining_count") == 0:
+            # The cross found nothing at the live ask and the IOC order
+            # is already gone from the book: the row closes now instead
+            # of resting as a phantom until the cutoff sweep. Nothing
+            # was ever at risk, so the loss tally does not move.
+            _update(supa, row, {"kalshi_order_id": order.get("order_id"),
+                                "status": "cancelled",
+                                "skip_reason": "ioc_unfilled",
+                                "contracts": contracts,
+                                "balance_at_sizing": balance,
+                                "budget_pct": pct, "ask_size": depth,
+                                "expires_at": _iso(expires)})
+            contracts_today += contracts
+        else:
+            _update(supa, row, {"kalshi_order_id": order.get("order_id"),
+                                "status": "resting", "contracts": contracts,
+                                "balance_at_sizing": balance,
+                                "budget_pct": pct, "ask_size": depth,
+                                "expires_at": _iso(expires)})
+            contracts_today += contracts
+            loss_used += contracts * price
         summary["placed"] += 1
         lane_summary["placed"] += 1
 
