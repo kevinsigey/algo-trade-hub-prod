@@ -25,6 +25,16 @@ excluded and the read is partial. If the speaking weight is under 6 of 11
 the read is insufficient: stress None, k = 1.0 -- the unknown-never-zero
 rule: absent evidence never widens sigma, and never narrows it either.
 
+Coverage (2026-11-14): the snapshot also stores the AIS coverage counts
+(vessels seen / typed / in the gate). When the gate zone is blind -- no
+vessel of any type observed inside the gate, or so few vessels typed
+that tanker counts cannot be trusted -- the gate-flow and anchoring
+signals are UNAVAILABLE, however live their rows look: a blind zero is
+not a calm zero, and counting it diluted the read exactly when the
+strait was dark (the free feed sees the Dubai coast, not the gate).
+Batches written before the coverage metrics existed carry no coverage
+rows; the read keeps its legacy behavior for them.
+
 k = 1 + 0.75 * stress, so a true compound extreme (flow stopped, jamming
 and military at 3x, tankers piling at anchor) reaches 1.75, above v2's
 top tier; ordinary bad days land 1.1-1.4, where v2 sat at 1.0-1.25.
@@ -49,6 +59,33 @@ SIGNALS = (
     ("terminal_fires", 1, (("firms", "frp_terminals"),), "exceed"),
 )
 TOTAL_WEIGHT = sum(w for _label, w, _keys, _kind in SIGNALS)
+
+# Coverage: (feed, metric) rows the snapshot stores beside the signals,
+# and the signals whose legs are tanker counts in or near the gate --
+# they are the ones a blind gate falsifies.
+COVERAGE_KEYS = (("ais", "vessels_in_region"), ("ais", "vessels_typed"),
+                 ("ais", "vessels_in_gate"))
+COVERAGE_SIGNALS = frozenset({"gate_flow", "anchoring"})
+
+
+def ais_coverage(current: list[dict]) -> dict | None:
+    """The AIS coverage verdict from the current batch, mirroring the
+    frontend's geoCoverage rule: gate_gap when no vessel is observed in
+    the gate or typing is too thin (< half) to trust tanker counts;
+    region_gap when nothing is seen at all or typing is too thin. None
+    when the batch carries no live coverage rows (pre-coverage batches)."""
+    by_key = {(r["feed"], r["metric"]): r for r in current}
+    values = []
+    for key in COVERAGE_KEYS:
+        row = by_key.get(key)
+        if row is None or row.get("health") != "live" or row.get("value") is None:
+            return None
+        values.append(float(row["value"]))
+    seen, typed, in_gate = values
+    thin = typed < seen / 2
+    return {"seen": seen, "typed": typed, "in_gate": in_gate,
+            "gate_gap": in_gate == 0 or thin,
+            "region_gap": seen == 0 or thin}
 
 
 def _clamp01(x: float) -> float:
@@ -108,10 +145,19 @@ def sensitive_stress(current: list[dict], history: list[dict]) -> tuple[float | 
         if r.get("value") is not None:
             past.setdefault((r["feed"], r["metric"]), []).append(float(r["value"]))
 
+    coverage = ais_coverage(current)
     contributions: dict[str, Any] = {}
+    if coverage is not None:
+        contributions["ais_coverage"] = coverage
     weighted, speaking = 0.0, 0
     partial = False
     for label, weight, keys, kind in SIGNALS:
+        if (coverage is not None and coverage["gate_gap"]
+                and label in COVERAGE_SIGNALS):
+            # Blind gate: the tanker counts are unobserved, not zero.
+            partial = True
+            contributions[label] = "unavailable"
+            continue
         legs = []
         for key in keys:
             row = now_by_key.get(key)

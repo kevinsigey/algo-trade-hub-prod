@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import ChokepointsMap from "@/components/ChokepointsMap";
 
@@ -98,6 +98,95 @@ describe("ChokepointsMap", () => {
     expect(screen.getByText(/Above normal\./)).toBeInTheDocument();
     expect(screen.getByText(/Oil's range widens/)).toBeInTheDocument();
     expect(screen.getByText("In the oil model's test")).toBeInTheDocument();
+  });
+
+  it("masks only the gate cards when the region is seen but the gate is blind", async () => {
+    // The Nov 14 2026 live picture: 18 vessels off Dubai, 10 typed, none of
+    // them tankers and none in the gate. Region counts are real observations
+    // and show; gate counts are unobserved and mask -- per zone, not global.
+    const vessels = Array.from({ length: 18 }, (_, i) => ({
+      mmsi: `${100 + i}`, name: null, ship_type: i < 10 ? 70 : null, tanker: false,
+      lat: 25.0 + i * 0.01, lon: 55.05, sog: 2, in_gate: false,
+      last_seen: "2026-11-14T21:29:00Z",
+    }));
+    const view = { ...VIEW, vessels, metrics: [
+      { feed: "ais", metric: "vessels_in_region", value: 18, health: "live", baseline: 17, delta_pct: 5.9, baseline_n: 28 },
+      { feed: "ais", metric: "tankers_in_region", value: 0, health: "live", baseline: 1, delta_pct: -100.0, baseline_n: 28 },
+      { feed: "ais", metric: "anchored_tankers", value: 0, health: "live", baseline: 2, delta_pct: -100.0, baseline_n: 28 },
+      { feed: "ais", metric: "tankers_in_gate", value: 0, health: "live", baseline: 1, delta_pct: -100.0, baseline_n: 28 },
+      { feed: "ais", metric: "tankers_gate_entries_1h", value: 0, health: "live", baseline: 1, delta_pct: -100.0, baseline_n: 28 },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(view), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText("Barrels moving")).toBeInTheDocument();
+    // Exactly the two gate cards mask; the two region cards show their
+    // zeros. Asserted per card, scoped with `within`: a bare count of "0"
+    // texts cannot say which cards masked.
+    const card = (label: string) => {
+      const el = screen.getByText(label).closest(".rounded-lg");
+      if (!el) throw new Error(`no card rendered for ${label}`);
+      return within(el as HTMLElement);
+    };
+    for (const label of ["Tankers in the gate", "Gate entries (1h)"]) {
+      expect(card(label).getByText("Not visible live")).toBeInTheDocument();
+      expect(card(label).queryByText("0")).not.toBeInTheDocument();
+    }
+    for (const label of ["Tankers in region", "Anchored tankers"]) {
+      expect(card(label).getByText("0")).toBeInTheDocument();
+      expect(card(label).queryByText("Not visible live")).not.toBeInTheDocument();
+    }
+    expect(screen.getByText(/Ship coverage is thin/)).toBeInTheDocument();
+  });
+
+  it("trusts the stored coverage metrics over the capped vessel list", async () => {
+    // The read API caps the vessel list (250, tankers first), so the list
+    // alone can look gate-visible when the strait is actually dark. Here
+    // the two listed vessels say covered (both typed, one in the gate),
+    // but the snapshot's exact counts say 300 seen and none in the gate:
+    // the gate is blind, its card masks, and the banner quotes the exact
+    // counts rather than the biased list's.
+    const view = { ...VIEW, metrics: [
+      { feed: "ais", metric: "vessels_in_region", value: 300, health: "live", baseline: 17, delta_pct: null, baseline_n: 28 },
+      { feed: "ais", metric: "vessels_typed", value: 290, health: "live", baseline: null, delta_pct: null, baseline_n: 28 },
+      { feed: "ais", metric: "vessels_in_gate", value: 0, health: "live", baseline: null, delta_pct: null, baseline_n: 28 },
+      { feed: "ais", metric: "tankers_in_gate", value: 7, health: "live", baseline: 10, delta_pct: -30.0, baseline_n: 28 },
+      { feed: "ais", metric: "tankers_in_region", value: 3, health: "live", baseline: 1, delta_pct: 200.0, baseline_n: 28 },
+    ] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(view), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText("Barrels moving")).toBeInTheDocument();
+    const gateCard = screen.getByText("Tankers in the gate").closest(".rounded-lg");
+    if (!gateCard) throw new Error("no gate card rendered");
+    expect(within(gateCard as HTMLElement).getByText("Not visible live")).toBeInTheDocument();
+    expect(within(gateCard as HTMLElement).queryByText("7")).not.toBeInTheDocument();
+    expect(screen.getByText(/300 ships seen, 0 in the transit gate, 290 with a known type/))
+      .toBeInTheDocument();
+  });
+
+  it("renders the UKMTO incidents panel with source and dates, newest first", async () => {
+    const withIncidents = { ...VIEW, incidents: {
+      source: "UKMTO", source_url: "https://www.ukmto.org/recent-incidents",
+      pulled_at: "2026-11-14T12:23:00+00:00", as_of: "2026-11-11", count: 2,
+      incidents: [
+        { ref: "UKMTO 204-26", date: "2026-11-11", occurred_at: "2026-11-11T18:00:00Z",
+          type: "Attack", place: "Arabian Gulf", lat: 25.9, lon: 55.9, vessel_type: "Tanker",
+          description: "A tanker was struck by an unknown projectile in the engine room.",
+          url: "https://www.ukmto.org/recent-incidents" },
+        { ref: "UKMTO 198-26", date: "2026-11-07", occurred_at: "2026-11-07T06:30:00Z",
+          type: "Advisory", place: "Gulf of Oman", lat: 24.6, lon: 58.6, vessel_type: "Bulk Carrier",
+          description: "An incident involving a vessel and military forces east of Khor Fakkan.",
+          url: "https://www.ukmto.org/recent-incidents" },
+      ],
+    } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(withIncidents), { status: 200 })));
+    render(<ChokepointsMap />);
+    expect(await screen.findByText(/Reported incidents · UKMTO/)).toBeInTheDocument();
+    expect(screen.getByText(/Latest 2026-11-11 · 2 in the region/)).toBeInTheDocument();
+    expect(screen.getByText(/UKMTO 204-26/)).toBeInTheDocument();
+    expect(screen.getByText(/struck by an unknown projectile/)).toBeInTheDocument();
+    expect(screen.getByText(/a floor, not a total/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /UKMTO Recent Incidents/ }))
+      .toHaveAttribute("href", "https://www.ukmto.org/recent-incidents");
   });
 
   it("shows collapsed traffic banner when year-ago delta <= -50", async () => {

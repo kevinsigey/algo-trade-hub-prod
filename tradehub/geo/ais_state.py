@@ -93,6 +93,14 @@ class AisState:
             "anchored_by_place": anchored,
             "tankers_in_region": len(tankers),
             "vessels_in_region": len(self.vessels),
+            # The coverage counts (2026-11-14): how much of the picture the
+            # feed actually sees -- vessels of any type inside the gate box,
+            # and vessels whose type is known. The stress engine and the
+            # frontend judge blind spots from these, never from a zero
+            # tanker count alone.
+            "vessels_in_gate": sum(1 for v in self.vessels.values() if v.get("in_gate")),
+            "vessels_typed": sum(1 for v in self.vessels.values()
+                                 if v.get("ship_type") is not None),
             "connected_s_this_hour": round(self.connected_s),
             "msgs_total": self.msgs,
             "last_msg_at": self.last_msg_at,

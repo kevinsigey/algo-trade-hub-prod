@@ -37,6 +37,17 @@ interface GeoFlow {
   recent: { date: string; n_tanker: number | null; n_total: number | null }[];
 }
 
+interface GeoIncident {
+  ref: string; date: string; occurred_at: string; type: string | null;
+  place: string | null; lat: number | null; lon: number | null;
+  vessel_type: string | null; description: string; url: string;
+}
+
+interface GeoIncidents {
+  source: string; source_url: string; pulled_at: string | null;
+  as_of: string; count: number; incidents: GeoIncident[];
+}
+
 interface GeoView {
   region: string; name: string; at: string | null;
   feeds: Record<string, string>;
@@ -46,6 +57,7 @@ interface GeoView {
   vessels_as_of?: string | null;
   aircraft?: GeoAircraft[];
   flow?: GeoFlow | null;
+  incidents?: GeoIncidents | null;
 }
 
 const FEED_LABEL: Record<string, string> = {
@@ -56,7 +68,8 @@ const FEED_LABEL: Record<string, string> = {
 const METRIC_LABEL: Record<string, string> = {
   tankers_in_gate: "Tankers in the gate", tankers_gate_entries_1h: "Gate entries (1h)",
   anchored_tankers: "Anchored tankers", tankers_in_region: "Tankers in region",
-  vessels_in_region: "Vessels tracked", mil_total: "Military aircraft",
+  vessels_in_region: "Vessels tracked", vessels_in_gate: "Vessels in the gate",
+  vessels_typed: "Vessels with a known type", mil_total: "Military aircraft",
   jamming_intraday: "Jamming share (live)", frp_region_other: "Fire power (other)",
   quakes_24h: "Quakes 24h", frp_terminals: "Fire power at terminals", jamming_daily: "Jamming share (daily)",
 };
@@ -68,6 +81,10 @@ const COUNTER_ORDER = [
   "tankers_gate_entries_1h", "mil_total", "quakes_24h", "jamming_intraday",
 ];
 const FOLDED = new Set(["mil_tanker", "mil_isr"]);
+
+// The flow cards that read the transit gate itself; the rest of the flow
+// group reads the wider region the feed demonstrably sees.
+const GATE_METRICS = new Set(["tankers_in_gate", "tankers_gate_entries_1h"]);
 
 const HEALTH_DOT: Record<string, string> = {
   live: "bg-emerald-400", stale: "bg-amber-400", unknown: "bg-slate-500",
@@ -165,7 +182,7 @@ export default function ChokepointsMap() {
     ...COUNTER_ORDER.map((k) => byMetric.get(k)).filter((m): m is GeoMetric => !!m && m.value != null),
     ...view.metrics.filter((m) => m.value != null && !COUNTER_ORDER.includes(m.metric) && !FOLDED.has(m.metric)),
   ];
-  const coverage = geoCoverage(vessels);
+  const coverage = geoCoverage(vessels, view.metrics);
   const milTanker = byMetric.get("mil_tanker")?.value;
   const milIsr = byMetric.get("mil_isr")?.value;
 
@@ -310,6 +327,46 @@ export default function ChokepointsMap() {
         </div>
       )}
 
+      {view.incidents && view.incidents.incidents.length > 0 && (
+        <div className="rounded-lg border border-slate-700 px-3 py-2.5" aria-label="Reported incidents, UKMTO">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-[13px] font-semibold uppercase tracking-wide text-slate-300">
+              Reported incidents · {view.incidents.source}
+            </span>
+            <span className="text-[13px] text-slate-400">
+              Latest {view.incidents.as_of} · {view.incidents.count} in the region
+              {view.incidents.pulled_at
+                ? ` · pulled ${new Date(view.incidents.pulled_at).toLocaleString()}`
+                : ""}
+            </span>
+            <a href={view.incidents.source_url} target="_blank" rel="noreferrer"
+               className="text-[13px] text-sky-300 underline">
+              UKMTO Recent Incidents
+            </a>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {view.incidents.incidents.slice(0, 6).map((inc) => (
+              <li key={`${inc.ref}-${inc.occurred_at}`} className="border-l-2 border-rose-400/50 pl-3">
+                <div className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
+                  <span className="font-semibold text-white">{inc.type ?? "Incident"}</span>
+                  <span className="text-slate-300">{inc.place ?? "—"}</span>
+                  <span className="text-slate-500">
+                    {inc.date} · {inc.ref}
+                    {inc.vessel_type ? ` · ${inc.vessel_type}` : ""}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[13px] leading-snug text-slate-400">{inc.description}</p>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] text-slate-500">
+            Official reports to UKMTO as published on its Recent Incidents feed — incidents are
+            listed only once reported and verified, so this is a floor, not a total. The live
+            feeds above cannot see most of these: a projectile or a mine makes no heat signature.
+          </p>
+        </div>
+      )}
+
       {GEO_GROUPS.map((group) => {
         const tiles = counters.filter((m) => (GEO_EXPLAIN[m.metric]?.group ?? "background") === group.key);
         if (tiles.length === 0) return null;
@@ -320,7 +377,11 @@ export default function ChokepointsMap() {
             <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {tiles.map((m) => {
                 const isShare = m.metric.startsWith("jamming");
-                const blind = coverage.gap && group.key === "flow";
+                // Per-zone masking (2026-11-14): gate cards are hidden only
+                // when the gate itself is blind; region cards show their
+                // observed values unless the whole region picture is blind.
+                const blind = group.key === "flow"
+                  && (GATE_METRICS.has(m.metric) ? coverage.gateGap : coverage.regionGap);
                 const display = m.value === null ? "—" : isShare ? `${Math.round(m.value * 100)}%` : `${m.value}`;
                 const barPct = m.baseline && m.baseline > 0 && m.value !== null
                   ? Math.min(100, (m.value / m.baseline) * 100) : 0;

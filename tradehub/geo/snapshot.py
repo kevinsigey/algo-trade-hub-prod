@@ -37,7 +37,8 @@ FIRMS_KEY = _firms_key()
 # Metrics carried in a feed's result dict that are measures, not detail. The
 # rest of the dict rides along as the first measure's detail.
 AIS_METRICS = ("tankers_gate_entries_1h", "tankers_in_gate", "anchored_tankers",
-               "tankers_in_region", "vessels_in_region")
+               "tankers_in_region", "vessels_in_region", "vessels_in_gate",
+               "vessels_typed")
 
 
 def _row(region: str, feed: str, metric: str, value, health: str, detail: dict | None = None) -> dict:
