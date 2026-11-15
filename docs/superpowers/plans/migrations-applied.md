@@ -113,8 +113,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 | 88 | `20261113000001_kalshi_demo_orders_lane_key.sql` (applied 2026-11-13 by Claude through the Supabase connector as `kalshi_demo_orders_lane_key`, connector version 20261113021744, on Kevin's go for action plan Step B.3; read back: `gate_version` NOT NULL (1 live row, 0 nulls), the old (series, target) key dropped, `kalshi_demo_orders_series_target_gate_key` UNIQUE (series, target, gate_version) present. Row 88 though its filename sorts before row 87's: it was applied first, and row 87's PR shipped first -- the watermark stays at `20261113000002`, the newest filename) |
 
 | 89 | `20261113000003_kalshi_demo_orders_last_error.sql` (applied 2026-11-14 by Muse at the Supabase-to-VPS cutover, on Kevin's go of 2026-11-13 through Claude (issue #524). Applied to the NEW self-hosted VPS database only (psql over the SSH tunnel as supabase_admin, right after the full re-copy and before the writers resumed); deliberately NOT applied to the cloud project, which stays frozen as the rollback copy without this column. Read back: `last_error` text, nullable, present on `kalshi_demo_orders` in the local DB; the Kalshi runner resumed against the local DB at the same cutover) |
+| 90 | `20261114000001_fifteen_binance_shadow.sql` (applied 2026-11-14 by Muse to the VPS-local database only, on Kevin's explicit go the same evening; read back: `fifteen_binance_decisions` and `fifteen_binance_evals` both exist with row security on and 0 rows. Creates both tables for the preregistered v5-binance-gold-shadow; the runner's passes are fail-soft and its reads treat an absent table as an empty record until the code lands. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy. The watermark advances to this filename because the ledger test tracks the newest file on disk, not applied state) |
 
-**Watermark: `20261113000003_kalshi_demo_orders_last_error.sql`**
+**Watermark: `20261114000001_fifteen_binance_shadow.sql`**
 
 ## How to record a new one
 

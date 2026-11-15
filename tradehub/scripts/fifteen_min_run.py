@@ -40,6 +40,12 @@ challenger (tradehub/fifteen_volregime.py, preregistration
 docs/superpowers/specs/2026-11-13-fifteen-volregime-shadow-prereg.md) -- its
 decision record and its once-a-day evaluation (a record only, it never
 promotes), under the same fail-soft rule.
+
+Amendment 2026-11-14: the same run also writes the Binance-tape gold
+shadow (tradehub/fifteen_binance.py, preregistration
+docs/superpowers/specs/2026-11-14-fifteen-binance-gold-shadow-prereg.md) --
+its decision record and its once-a-day evaluation (a record only, it never
+promotes), under the same fail-soft rule.
 """
 
 from __future__ import annotations
@@ -50,6 +56,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tradehub import (
+    fifteen_binance,
     fifteen_blend,
     fifteen_shadow,
     fifteen_tracking,
@@ -73,6 +80,8 @@ def run(supa, forecasters, now: datetime) -> dict[str, Any]:
                     ("fifteen_blend_eval", fifteen_blend.evaluate_daily),
                     ("fifteen_volregime", fifteen_volregime.record_volregime),
                     ("fifteen_volregime_eval", fifteen_volregime.evaluate_daily),
+                    ("fifteen_binance", fifteen_binance.record_binance),
+                    ("fifteen_binance_eval", fifteen_binance.evaluate_daily),
                     ("fifteen_metals_decisions",
                      lambda s, n: fifteen_tracking.record_decisions(
                          s, n, series_set=metals_fifteen_rule.SERIES, live_gate=False)),
