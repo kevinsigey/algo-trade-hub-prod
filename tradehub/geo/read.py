@@ -55,6 +55,15 @@ def _flow(slug: str, now: datetime) -> dict | None:
     return load_flow(slug, today=now.date())
 
 
+def _incidents(slug: str) -> dict | None:
+    """UKMTO reported incidents for the region (ukmto.py): the official
+    incident record the live feeds cannot see, pulled hourly into the
+    cache. Fail-soft None -- no pull yet reads as no panel."""
+    from tradehub.geo.ukmto import load_incidents
+
+    return load_incidents(slug)
+
+
 def _aircraft(current: list[dict]) -> list[dict]:
     """Military aircraft positions: the snapshot already stores them in the
     adsb rows' detail (callsign, type, kind, lat, lon) -- surface them."""
@@ -81,7 +90,7 @@ def region_view(supa, slug: str, *, now: datetime | None = None) -> dict | None:
         return {"region": slug, "name": region.title, "at": None, "feeds": {},
                 "metrics": [], "geometry": geometry,
                 "vessels": vessels, "vessels_as_of": vessels_as_of, "aircraft": [],
-                "flow": _flow(slug, now)}
+                "flow": _flow(slug, now), "incidents": _incidents(slug)}
     at = latest[0]["taken_at"]
     current = [r for r in latest if r["taken_at"] == at]
     since = (now - timedelta(days=HISTORY_DAYS)).isoformat()
@@ -96,4 +105,4 @@ def region_view(supa, slug: str, *, now: datetime | None = None) -> dict | None:
             "geometry": geometry,
             "vessels": vessels, "vessels_as_of": vessels_as_of,
             "aircraft": _aircraft(current),
-            "flow": _flow(slug, now)}
+            "flow": _flow(slug, now), "incidents": _incidents(slug)}
