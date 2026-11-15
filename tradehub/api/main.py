@@ -1713,6 +1713,21 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
     return payload
 
 
+@app.get("/api/oil/fifteen-where", tags=["Oil"])
+def oil_fifteen_where() -> dict:
+    """Step A: where the 15-minute models work (plan 2026-11-12).
+    The study runner (tradehub.scripts.fifteen_where_run) writes the
+    report JSON; this serves it fail-soft -- no file yet reads as an
+    empty payload, never a 500."""
+    import json
+
+    path = os.environ.get("FIFTEEN_WHERE_PATH", "/cache/research/fifteen_where.json")
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 @app.get("/api/oil/hourly-live", tags=["Oil"])
 def oil_hourly_live():
     """The Commodities hero: the v1 hourly WTI model recomputed against the
