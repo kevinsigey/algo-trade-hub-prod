@@ -284,11 +284,14 @@ class KalshiPortfolio:
         return []
 
     def get_fills(self, limit=50):
-        """Get recent trade fills (execution history)."""
+        """Get recent trade fills (execution history). A failed request
+        raises instead of reading as 'no fills' -- callers reconciling
+        resting orders must not treat an unread book as an unfilled one
+        (same contract as get_positions_strict)."""
         data = self._get("/portfolio/fills", params={"limit": limit})
-        if data:
-            return data.get('fills', [])
-        return []
+        if data is None:
+            raise RuntimeError("Kalshi fills read failed")
+        return data.get('fills', [])
 
     def get_portfolio_summary(self):
         """

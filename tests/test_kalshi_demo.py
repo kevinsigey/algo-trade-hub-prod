@@ -961,3 +961,152 @@ def test_interrupted_writeoff_alerts():
     assert row["skip_reason"] == "placement_interrupted"
     assert out["cancelled"] == 1
     assert "written_off" in _alert_events(db)
+
+
+# -- CodeRabbit round on the reliability PR -------------------------------------
+
+class FillsDownPortfolio(FakePortfolio):
+    """The fills read itself is down; the exchange state is unknown."""
+
+    def get_fills(self, limit=200):
+        raise ConnectionError("fills read failed")
+
+
+def test_failed_fills_read_never_cancels_a_resting_row():
+    # A failed fills read is not an empty book: an order that executed
+    # on the exchange but whose fills were never recorded must not be
+    # written `cancelled` off it -- cancelled is terminal (not an open
+    # status), so the fills would never be recovered. The exchange
+    # cancel of the remainder is still attempted; the row stays open.
+    db = seed(DB(), orders=[order_row(
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    pf = FillsDownPortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.cancelled == ["ord-9"]
+    assert out["cancelled"] == 0
+    assert db.db[kd.ORDERS][0]["status"] == "resting"
+
+    back = FakePortfolio()
+    back.fills = [{"order_id": "ord-9", "side": "yes", "yes_price": 40,
+                   "count_fp": "12.00", "created_ts": NOW.isoformat()}]
+    kd.run_once(db, back, NOW + timedelta(minutes=1))
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "filled" and row["contracts_filled"] == 12
+
+
+class RealFillsDownPortfolio(KalshiPortfolio):
+    """The REAL KalshiPortfolio with only its transport stubbed: _get
+    returns None (every request failed). get_fills itself is inherited
+    untouched -- the fake above raises on its own, which let the old
+    swallow-None implementation pass the test while still cancelling
+    filled orders in production (Claude's #532 hold). Only unrelated
+    methods are scaffolded so run_once can proceed."""
+
+    def __init__(self):
+        self.cancelled: list[str] = []
+
+    def _get(self, endpoint, params=None):
+        return None
+
+    def assert_demo_host(self):
+        return None
+
+    def get_balance(self):
+        return {"balance": 50000}
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
+        return {}
+
+    def get_order(self, order_id):
+        return None
+
+    def get_orders(self, status=None):
+        return []
+
+    def get_positions_strict(self, limit=200):
+        return []
+
+    def get_positions(self, limit=200):
+        return []
+
+    def get_market_data(self, ticker):
+        return None
+
+
+def test_real_get_fills_raises_when_the_read_fails():
+    # _get returning None means the fills read never landed; the real
+    # get_fills must raise (like get_positions_strict), never read as
+    # an empty book.
+    with pytest.raises(RuntimeError):
+        RealFillsDownPortfolio().get_fills(limit=200)
+
+
+def test_real_failed_fills_read_never_cancels_a_resting_row():
+    # Same guarantee as the fake-based test, exercised through the real
+    # class: the cutoff sweep must leave the row open for recovery.
+    db = seed(DB(), orders=[order_row(
+        window_close=(NOW - timedelta(minutes=1)).isoformat())])
+    pf = RealFillsDownPortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert pf.cancelled == ["ord-9"]
+    assert out["cancelled"] == 0
+    assert db.db[kd.ORDERS][0]["status"] == "resting"
+
+
+def test_balance_outage_does_not_overwrite_a_recorded_placement_error():
+    # The cutoff write-off quotes the claim's recorded error; a later
+    # balance blip must not replace the placement refusal already there.
+    db = seed(DB(), open_=[decision()])
+    kd.run_once(db, EndpointGonePortfolio(), NOW)
+    assert "410" in (db.db[kd.ORDERS][0].get("last_error") or "")
+
+    kd.run_once(db, NoBalancePortfolio(), NOW + timedelta(minutes=5))
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "pending"
+    assert "410" in (row.get("last_error") or "")
+
+
+class OrderWritesRefusedDB(DB):
+    """Every insert into the orders table is refused -- the claim and
+    the failure record alike."""
+
+    def table(self, name):
+        q = super().table(name)
+        if name != kd.ORDERS:
+            return q
+        orig = q.execute
+
+        def execute():
+            if q.row is not None and not isinstance(q.row, list):
+                raise RuntimeError("orders insert refused (simulated)")
+            return orig()
+
+        q.execute = execute
+        return q
+
+
+def test_failure_alert_does_not_claim_a_record_that_never_landed():
+    db = seed(OrderWritesRefusedDB(), open_=[decision()])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert out["failed"] == 1
+    assert db.db[kd.ORDERS] == []
+    alerts = _alerts(db)
+    assert len(alerts) == 1
+    assert "claim_failed" in _alert_events(db)
+    body = alerts[0]["body"]
+    assert "recorded as failed on the demo order record" not in body
+    assert "only record" in body
+
+
+def test_placement_error_alert_does_not_assert_a_refusal():
+    # A create that raises may be a refusal OR a response lost after
+    # acceptance (ExecutedOnlyPortfolio is the second case); the
+    # immediate alert must not state the refusal as fact -- adoption,
+    # not the alert, settles which one it was.
+    db = seed(DB(), open_=[decision()])
+    kd.run_once(db, ExecutedOnlyPortfolio(), NOW)
+    bodies = [a["body"] for a in _alerts(db)]
+    assert bodies
+    assert all("was refused by the exchange" not in b for b in bodies)
+    assert any("adopts the order by client_order_id" in b for b in bodies)
