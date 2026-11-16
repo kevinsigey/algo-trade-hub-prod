@@ -11,9 +11,9 @@ import NameDecision from "@/components/NameDecision";
 import { VerdictChipLine } from "@/components/VerdictChip";
 import type { ChipsPayload, VerdictChip } from "@/lib/decisions";
 import {
-  boardGroups, consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
+  consensusPeriodText, gapDisplay, guideDirection, guideText, humanizeGroup, metricLabel, multipleText,
   num, priceText, summarize, zoneInfo,
-  type FactSheet, type FeedItem, type GuidanceRecord, type PageSummary, type SnapshotStamp,
+  type FactSheet, type FeedItem, type GuidanceBoard, type GuidanceRecord, type GridRow, type PageSummary, type SnapshotStamp,
 } from "@/lib/valuation";
 
 /**
@@ -154,46 +154,335 @@ export function BandTrack({ bands, price, ticker }: {
   );
 }
 
-type BoardFilter = "all" | "strong_zones" | "crossings" | "classified" | "held" | "buy_zones" | "strong_short";
-
-const STRONG_ZONES = ["buy_zone_strong", "short_zone_strong"];
-
-/** Move 1: the verdict strip. Every tile is one count from the served
- * summary block, stamped with the snapshot it derives from, and every
- * tile click-throughs to the board filtered to that count's names (or,
- * for pending debates, to the queue panel that owns them). */
-function VerdictStrip({ summary, snapshot, onTile }: {
-  summary: PageSummary; snapshot: SnapshotStamp | null;
-  onTile: (filter: BoardFilter | null, targetId: string) => void;
+/** Rebuild (2026-11-16 brief) — freshness: the snapshot's stamp, its
+ * age, and a staleness badge judged against the stated cadence. The
+ * snapshot-stamp testid and text shape are the page's standing stamp;
+ * the badge is additive. */
+function FreshnessBar({ board, snapshot }: {
+  board: GuidanceBoard | null; snapshot: SnapshotStamp | null;
 }) {
-  const c = summary.counts;
-  const tiles: { id: string; label: string; value: number; filter: BoardFilter | null; target: string }[] = [
-    { id: "tile-banded", label: "Banded names", value: c.banded, filter: "all", target: "zone-board" },
-    { id: "tile-buy-zones", label: "In buy zones", value: c.buy_zones, filter: "buy_zones", target: "zone-board" },
-    { id: "tile-strong-short", label: "In strong short zones", value: c.strong_short_zones, filter: "strong_short", target: "zone-board" },
-    { id: "tile-crossings", label: "Crossings since last snapshot", value: c.crossings_since_last_snapshot, filter: "crossings", target: "zone-board" },
-    { id: "tile-pending-debates", label: "Debate verdicts pending", value: c.pending_debates, filter: null, target: "debate-queue-anchor" },
-    { id: "tile-classified", label: "Print classifications on file", value: c.classified_prints, filter: "classified", target: "zone-board" },
+  const f = board?.freshness ?? null;
+  if (!snapshot && !f) return null;
+  const computed = f?.computed_at ?? snapshot?.computed_at ?? null;
+  const snapId = f?.snapshot_id ?? snapshot?.id ?? null;
+  return (
+    <div data-testid="freshness-bar" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <p data-testid="snapshot-stamp" className="text-xs text-slate-500">
+        {snapId != null
+          ? `Snapshot #${snapId} · computed ${computed ? ctDateTimeYear(computed) : "—"}`
+          : "Unversioned legacy read — no snapshot stamp on this data yet"}
+        {f?.previous_snapshot_id != null && f?.previous_snapshot_id !== undefined
+          ? ` · movers measured against snapshot #${f.previous_snapshot_id}`
+          : ""}
+        {f ? ` · ${f.cadence}.` : ""}
+        {" — one consistent snapshot; a recompute publishes a new snapshot, it never edits this one."}
+      </p>
+      {f && f.age_hours != null && (
+        <span data-testid="freshness-age" className="text-xs text-slate-500">
+          {`Snapshot age ${f.age_hours < 1 ? "<1" : Math.round(f.age_hours)}h`}
+        </span>
+      )}
+      {f?.stale && (
+        <span data-testid="freshness-stale"
+              className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300">
+          Stale — older than the stated cadence
+        </span>
+      )}
+    </div>
+  );
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  below_bear: "Below bear", buy_zone: "In buy zone", between: "Between base and bull",
+  above_bull: "Above bull", no_band: "No band",
+};
+
+function pctText(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+}
+
+function capText(v: number | null | undefined): string {
+  if (v == null) return "—";
+  return v >= 1e12 ? `$${(v / 1e12).toFixed(2)}T` : v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : `$${(v / 1e6).toFixed(0)}M`;
+}
+
+/** Rebuild — the movers lead: what changed between the two latest
+ * completed snapshots. Guide revisions ranked by size with held names
+ * pinned first (the served order), band migrations, and the held
+ * names' band status. With no previous snapshot the section says so
+ * and invents nothing. */
+function MoversSection({ board }: { board: GuidanceBoard }) {
+  const movers = board.movers;
+  return (
+    <section data-testid="movers" aria-label="Movers" className="mt-6">
+      <h2 className="text-lg font-semibold text-white">Movers — since the previous snapshot</h2>
+      {!movers ? (
+        <p className="mt-2 text-sm text-slate-400">
+          No previous completed snapshot to measure movers against yet — the
+          movers start with the next snapshot.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-3">
+          {movers.guide_revisions.length === 0 && movers.band_migrations.length === 0 ? (
+            <p className="text-sm text-slate-400">
+              No guide revisions or band migrations between the two latest snapshots.
+            </p>
+          ) : (
+            <>
+              {movers.guide_revisions.length > 0 && (
+                <ul className="space-y-1.5">
+                  {movers.guide_revisions.map((r, i) => (
+                    <li key={`${r.ticker}-${r.metric}-${i}`}
+                        data-testid={`mover-${r.ticker}-${r.metric}`}
+                        className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-semibold text-white">{r.ticker}</span>
+                        {r.held && (
+                          <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-300">Held</span>
+                        )}
+                        <span className="text-sm text-slate-300">
+                          {r.metric === "anchor"
+                            ? `Guide revised (${metricLabel(r.guide_metric ?? "")})`
+                            : r.metric === "capex" ? "Capex guide revised" : "FCF guide revised"}
+                          {` — ${pctText(r.change_pct)}`}
+                          {r.from && r.to
+                            ? ` · ${feedFigure(r.guide_metric, r.from[0])}–${feedFigure(r.guide_metric, r.from[1])} → ${feedFigure(r.guide_metric, r.to[0])}–${feedFigure(r.guide_metric, r.to[1])}`
+                            : ""}
+                          {r.direction ? ` (${r.direction})` : ""}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {movers.band_migrations.length > 0 && (
+                <ul className="space-y-1.5">
+                  {movers.band_migrations.map((m, i) => (
+                    <li key={`${m.ticker}-mig-${i}`} data-testid={`migration-${m.ticker}`}
+                        className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-semibold text-white">{m.ticker}</span>
+                        {m.held && (
+                          <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-300">Held</span>
+                        )}
+                        <span className="text-sm text-slate-300">
+                          {`Band migration — ${zoneInfo(m.from_zone).label} → ${zoneInfo(m.to_zone).label}`}
+                          {m.price != null ? ` · price ${priceText(m.price)}` : ""}
+                        </span>
+                      </div>
+                      {m.bands && (
+                        <div className="mt-1 max-w-md">
+                          <BandTrack bands={m.bands} price={m.price ?? null} ticker={m.ticker} />
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          {movers.held_status.length > 0 && (
+            <p data-testid="held-status" className="text-sm text-slate-400">
+              {"Held now: "}
+              {movers.held_status.map((h, i) => (
+                <span key={h.ticker}>
+                  {i > 0 ? " · " : ""}
+                  <span className="font-medium text-slate-200">{h.ticker}</span>
+                  {` ${STATUS_LABELS[h.status] ?? h.status} (${pctText(h.distance_pct)} vs base)`}
+                </span>
+              ))}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+type GridSort = "distance" | "revision" | "cap";
+type GridFilter = "all" | "buy" | "below_bear" | "between" | "above_bull";
+
+/** Rebuild — the football-field grid: every banded name as one row —
+ * the band bar with its price marker, the distance to the buy zone as
+ * the headline number, held pinned first, then classified (watchlist),
+ * then the rest; sortable by distance / guide revision / market cap
+ * and filterable by zone status. Prices are the snapshot's, labelled
+ * with their as-of. */
+function BandGrid({ board, classified, onSelect }: {
+  board: GuidanceBoard; classified: Set<string>;
+  onSelect: (ticker: string) => void;
+}) {
+  const [sort, setSort] = useState<GridSort>("distance");
+  const [filter, setFilter] = useState<GridFilter>("all");
+  const revisionBy = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const r of board.movers?.guide_revisions ?? []) {
+      if (r.change_pct == null) continue;
+      const cur = out.get(r.ticker);
+      if (cur === undefined || Math.abs(r.change_pct) > Math.abs(cur)) {
+        out.set(r.ticker, r.change_pct);
+      }
+    }
+    return out;
+  }, [board]);
+  const groupRank = (r: GridRow) => (r.held ? 0 : classified.has(r.ticker) ? 1 : 2);
+  const matches = (r: GridRow) => {
+    switch (filter) {
+      case "buy": return r.status === "buy_zone" || r.status === "below_bear";
+      case "below_bear": return r.status === "below_bear";
+      case "between": return r.status === "between";
+      case "above_bull": return r.status === "above_bull";
+      default: return true;
+    }
+  };
+  const rows = board.grid.filter(matches).sort((a, b) => {
+    const g = groupRank(a) - groupRank(b);
+    if (g !== 0) return g;
+    if (sort === "cap") return (b.market_cap ?? -1) - (a.market_cap ?? -1);
+    if (sort === "revision") {
+      const ra = revisionBy.get(a.ticker), rb = revisionBy.get(b.ticker);
+      if (ra === undefined && rb === undefined) return a.ticker.localeCompare(b.ticker);
+      if (ra === undefined) return 1;
+      if (rb === undefined) return -1;
+      return Math.abs(rb) - Math.abs(ra);
+    }
+    return (a.distance_pct ?? 1e9) - (b.distance_pct ?? 1e9);
+  });
+  const chipCls = (active: boolean) =>
+    `rounded-full px-3 py-1 text-xs font-medium ${active
+      ? "bg-slate-100 text-slate-900" : "border border-slate-700 text-slate-300 hover:border-slate-500"}`;
+  const filters: { id: string; label: string; value: GridFilter }[] = [
+    { id: "grid-filter-all", label: "All banded", value: "all" },
+    { id: "grid-filter-buy", label: "In buy zone", value: "buy" },
+    { id: "grid-filter-below-bear", label: "Below bear", value: "below_bear" },
+    { id: "grid-filter-between", label: "Between", value: "between" },
+    { id: "grid-filter-above-bull", label: "Above bull", value: "above_bull" },
+  ];
+  const sorts: { id: string; label: string; value: GridSort }[] = [
+    { id: "grid-sort-distance", label: "Distance to buy zone", value: "distance" },
+    { id: "grid-sort-revision", label: "Guide revision", value: "revision" },
+    { id: "grid-sort-cap", label: "Market cap", value: "cap" },
   ];
   return (
-    <section data-testid="verdict-strip" aria-label="Verdict summary" className="mt-5">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {tiles.map((t) => (
-          <button key={t.id} type="button" data-testid={t.id}
-                  onClick={() => onTile(t.filter, t.target)}
-                  className="rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2.5 text-left hover:border-slate-600">
-            <span className="block text-xl font-semibold text-white">{t.value}</span>
-            <span className="block text-xs text-slate-400">{t.label}</span>
+    <section data-testid="band-grid" aria-label="Football-field grid" className="mt-8">
+      <h2 className="text-lg font-semibold text-white">Football-field grid</h2>
+      <p className="mt-0.5 text-sm text-slate-400">
+        Every banded name, one row: bear / base / bull as the field, the snapshot
+        price as the marker, and the distance to the buy zone (the base band) as
+        the headline number. Held names pin first, then classified prints.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {filters.map((f) => (
+          <button key={f.id} type="button" data-testid={f.id} aria-pressed={filter === f.value}
+                  onClick={() => setFilter(f.value)} className={chipCls(filter === f.value)}>
+            {f.label}
+          </button>
+        ))}
+        <button type="button" data-testid="grid-filter-noband"
+                onClick={() => document.getElementById("missing-band-queue")?.scrollIntoView?.()}
+                className={chipCls(false)}>
+          {`No band (${board.missing_band.length})`}
+        </button>
+        <span className="mx-1 text-slate-600">|</span>
+        {sorts.map((s) => (
+          <button key={s.id} type="button" data-testid={s.id} aria-pressed={sort === s.value}
+                  onClick={() => setSort(s.value)} className={chipCls(sort === s.value)}>
+            {s.label}
           </button>
         ))}
       </div>
-      <p className="mt-1.5 text-xs text-slate-500">
-        {`Snapshot #${summary.snapshot_id} · computed ${snapshot?.computed_at ? ctDateTimeYear(snapshot.computed_at) : "—"}`}
-        {summary.previous_snapshot_id != null
-          ? ` · changes measured against snapshot #${summary.previous_snapshot_id}`
-          : " · no previous completed snapshot yet"}
-        {" — every tile derives from this one stamped snapshot."}
+      <div className="mt-3 space-y-1.5">
+        {rows.map((r) => (
+          <button key={r.ticker} type="button" data-testid={`grid-row-${r.ticker}`}
+                  onClick={() => onSelect(r.ticker)}
+                  className="block w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-left hover:border-slate-600">
+            <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <span className="font-semibold text-white">{r.ticker}</span>
+              {r.held && (
+                <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">
+                  {`Held${r.books.length ? ` · ${r.books.join(", ")}` : ""}`}
+                </span>
+              )}
+              <span data-testid={`distance-${r.ticker}`}
+                    className="text-base font-semibold text-white">
+                {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to buy zone`}
+              </span>
+              <span className="text-xs text-slate-400">{STATUS_LABELS[r.status] ?? r.status}</span>
+              <span className="text-xs text-slate-400">
+                {`Price ${priceText(r.price)} · snapshot price as of ${r.price_as_of ?? "—"}`}
+              </span>
+              <span className="text-xs text-slate-400">{`Cap ${capText(r.market_cap)}`}</span>
+              {revisionBy.get(r.ticker) !== undefined && (
+                <span className="text-xs text-slate-400">
+                  {`Guide revision ${pctText(revisionBy.get(r.ticker))}`}
+                </span>
+              )}
+            </span>
+            <span className="mt-1 block max-w-xl">
+              <BandTrack bands={r.bands} price={r.price} ticker={r.ticker} />
+            </span>
+            <span className="block text-xs text-slate-500">
+              {`Bear ${priceText(r.bands.bear)} · Base ${priceText(r.bands.base)} · Bull ${priceText(r.bands.bull)}`}
+            </span>
+          </button>
+        ))}
+        {rows.length === 0 && (
+          <p className="text-sm text-slate-400">No banded names match this view.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Rebuild — the missing-band queue: held or watched (classified)
+ * names with no house band in this snapshot, as a worklist. Each row
+ * carries the stored reason and, when the name has a fact sheet, the
+ * way into its sheet — where the band-authoring decision view lives. */
+function MissingBandQueue({ board, hasSheet, onSelect }: {
+  board: GuidanceBoard; hasSheet: (ticker: string) => boolean;
+  onSelect: (ticker: string) => void;
+}) {
+  return (
+    <section data-testid="missing-band-queue" id="missing-band-queue"
+             aria-label="Missing-band queue" className="mt-8">
+      <h2 className="text-lg font-semibold text-white">
+        {`Missing a band — the worklist (${board.missing_band.length})`}
+      </h2>
+      <p className="mt-0.5 text-sm text-slate-400">
+        Held or classified names with no house band in this snapshot. A missing
+        band is a coverage gap to close, not a name to forget.
       </p>
+      {board.missing_band.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-400">
+          Every held and classified name carries a band in this snapshot.
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {board.missing_band.map((r) => (
+            <li key={r.ticker} data-testid={`queue-row-${r.ticker}`}
+                className="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <span className="font-semibold text-white">{r.ticker}</span>
+              {r.held && (
+                <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-300">
+                  {`Held${r.books.length ? ` · ${r.books.join(", ")}` : ""}`}
+                </span>
+              )}
+              {r.watched && (
+                <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-xs font-medium text-slate-300">Classified print</span>
+              )}
+              <span className="text-sm text-slate-400">{r.reason ?? "no bands computed"}</span>
+              {hasSheet(r.ticker) && (
+                <button type="button" data-testid={`queue-open-${r.ticker}`}
+                        onClick={() => onSelect(r.ticker)}
+                        className="text-sm font-medium text-sky-300 hover:text-sky-200">
+                  Open its fact sheet →
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -267,187 +556,6 @@ function AttentionFeed({ summary }: { summary: PageSummary }) {
             </li>
           ))}
         </ul>
-      )}
-    </section>
-  );
-}
-
-/** Moves 3 + 5: the zone board and its one-click views. Banded names as
- * compact chips in zone columns; every banded name appears exactly once
- * (boardGroups guarantees it); the four filter chips — plus any tile-set
- * view — actually filter the chips shown. Held is a marker and a
- * filter, never a column: display context only. */
-function ZoneBoard({ sheets, summary, filter, onFilter, onSelect }: {
-  sheets: FactSheet[]; summary: PageSummary | null;
-  filter: BoardFilter; onFilter: (f: BoardFilter) => void;
-  onSelect: (s: FactSheet) => void;
-}) {
-  const held = summary?.held ?? {};
-  const crossingTickers = new Set((summary?.crossings ?? []).map((c) => c.ticker));
-  const classifiedTickers = new Set((summary?.classified_names ?? []).map((c) => c.ticker));
-  const matches = (s: FactSheet): boolean => {
-    switch (filter) {
-      case "strong_zones": return STRONG_ZONES.includes(s.baseline_verdict ?? "");
-      case "crossings": return crossingTickers.has(s.ticker);
-      case "classified": return classifiedTickers.has(s.ticker);
-      case "held": return !!held[s.ticker];
-      case "buy_zones": return ["buy_zone", "buy_zone_strong"].includes(s.baseline_verdict ?? "");
-      case "strong_short": return s.baseline_verdict === "short_zone_strong";
-      default: return true;
-    }
-  };
-  const groups = boardGroups(sheets)
-    .map((g) => ({ ...g, visible: g.sheets.filter(matches) }))
-    .filter((g) => g.visible.length > 0);
-  const visibleCount = groups.reduce((n, g) => n + g.visible.length, 0);
-  // Round 6 accounting: the classified and held views must account for
-  // every name their counts promise — tile/filter total == the names on
-  // the board + the names accounted under it, each with the stored
-  // sheet status that says why it carries no bands. The server stamps
-  // banded / sheet_status / reason on both lists; the fallbacks below
-  // only cover payloads served before the stamps existed.
-  const boardedTickers = new Set(
-    sheets.filter((s) => s.status === "banded").map((s) => s.ticker));
-  const reasonFor = (status: string | null | undefined,
-                     reason: string | null | undefined): string =>
-    reason ?? (status == null
-      ? "not in the guidance universe / no fact sheet in this snapshot"
-      : status === "no_full_year_guide"
-        ? "no full-year guide on file — no bands computed"
-        : status === "guide_rejected"
-          ? "guide rejected by the sheet guards — no bands computed"
-          : status === "no_peer_multiple"
-            ? "no peer multiple — no bands computed"
-            : `sheet status ${status} — no bands computed`);
-  const classifiedEntries = (summary?.classified_names ?? []).map((c) => ({
-    ...c, banded: c.banded ?? boardedTickers.has(c.ticker),
-  }));
-  const classifiedBoarded = classifiedEntries.filter((c) => c.banded).length;
-  const classifiedAccounted = classifiedEntries.filter((c) => !c.banded);
-  const heldEntries = summary?.held_names ?? Object.entries(held).map(
-    ([ticker, e]) => ({
-      ticker, books: e.books, qty: e.qty, sleeves: e.sleeves,
-      banded: boardedTickers.has(ticker),
-      sheet_status: sheets.find((s) => s.ticker === ticker)?.status ?? null,
-      reason: null as string | null,
-    }));
-  const heldBoarded = heldEntries.filter((h) => h.banded).length;
-  const heldAccounted = heldEntries.filter((h) => !h.banded);
-  const accountingShown =
-    (filter === "classified" && classifiedEntries.length > 0)
-    || (filter === "held" && heldEntries.length > 0);
-  const chipCls = (active: boolean) =>
-    `rounded-full px-3 py-1 text-xs font-medium ${active
-      ? "bg-slate-100 text-slate-900" : "border border-slate-700 text-slate-300 hover:border-slate-500"}`;
-  const filters: { id: string; label: string; value: BoardFilter }[] = [
-    { id: "filter-all", label: "All banded", value: "all" },
-    { id: "filter-strong-zones", label: "Strong zones", value: "strong_zones" },
-    { id: "filter-crossings", label: "Crossings", value: "crossings" },
-    { id: "filter-classified", label: "Classified prints", value: "classified" },
-    { id: "filter-held", label: "Held in the books", value: "held" },
-  ];
-  return (
-    <section aria-label="Zone board" className="mt-8">
-      <h2 className="text-lg font-semibold text-white">Zone board</h2>
-      <p className="mt-0.5 text-sm text-slate-400">
-        Every banded name, once, in the zone its price sits in. A chip opens the
-        name's full fact sheet in the reference table below.
-      </p>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {filters.map((f) => (
-          <button key={f.id} type="button" data-testid={f.id} aria-pressed={filter === f.value}
-                  onClick={() => onFilter(f.value)} className={chipCls(filter === f.value)}>
-            {f.label}
-          </button>
-        ))}
-        {(filter === "buy_zones" || filter === "strong_short") && (
-          <button type="button" data-testid={`filter-${filter === "buy_zones" ? "buy-zones" : "strong-short"}`}
-                  aria-pressed={true} onClick={() => onFilter("all")} className={chipCls(true)}>
-            {filter === "buy_zones" ? "Buy zones ✕" : "Strong short ✕"}
-          </button>
-        )}
-      </div>
-      {summary?.held_positions_unavailable && (
-        <p className="mt-2 text-xs text-amber-300/80">
-          Held positions could not be read for this load — held markers and the
-          held view are unavailable rather than guessed.
-        </p>
-      )}
-      <div data-testid="zone-board" id="zone-board"
-           className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        {groups.map((g) => (
-          <div key={g.key} data-testid={`board-col-${g.key}`}
-               className="rounded-xl border border-slate-800 bg-slate-900/40 p-2">
-            <h3 className="px-1 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              {g.label} ({g.visible.length})
-            </h3>
-            <div className="space-y-1.5">
-              {g.visible.map((s) => {
-                const heldEntry = held[s.ticker];
-                return (
-                  <button key={s.ticker} type="button" data-testid={`board-chip-${s.ticker}`}
-                          title={`Bear ${priceText(s.bands?.bear)} · Base ${priceText(s.bands?.base)} · Bull ${priceText(s.bands?.bull)} · Price ${priceText(s.price)}`}
-                          onClick={() => onSelect(s)}
-                          className="block w-full min-w-0 rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1.5 text-left hover:border-slate-600">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="font-semibold text-white">{s.ticker}</span>
-                      {heldEntry && (
-                        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">
-                          {`Held · ${heldEntry.books.join(", ")}`}
-                        </span>
-                      )}
-                    </span>
-                    <BandTrack bands={s.bands} price={s.price} ticker={s.ticker} />
-                    <span className="block text-xs text-slate-400">
-                      {`Price ${priceText(s.price)} · bear ${priceText(s.bands?.bear)} · bull ${priceText(s.bands?.bull)}`}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {visibleCount === 0 && !accountingShown && (
-          <p className="text-sm text-slate-400">No names match this view.</p>
-        )}
-      </div>
-      {filter === "classified" && classifiedEntries.length > 0 && (
-        <div data-testid="classified-accounting"
-             className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm text-slate-300">
-            {`${classifiedEntries.length} classified prints · ${classifiedBoarded} on the board · ${classifiedAccounted.length} accounted below — a classified name is either on the board or named here.`}
-          </p>
-          {classifiedAccounted.length > 0 && (
-            <ul className="mt-1.5 space-y-1">
-              {classifiedAccounted.map((c) => (
-                <li key={c.ticker} className="text-sm text-slate-400">
-                  <span className="font-semibold text-slate-200">{c.ticker}</span>
-                  {` · ${c.classification}${c.as_of ? ` · ${c.as_of}` : ""} · not banded: ${reasonFor(c.sheet_status, c.reason)}`}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      {filter === "held" && heldEntries.length > 0 && (
-        <div data-testid="held-accounting"
-             className="mt-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <p className="text-sm text-slate-300">
-            {heldBoarded === 0
-              ? `${heldEntries.length} held names, none currently banded — every held name is accounted below.`
-              : `${heldEntries.length} held names · ${heldBoarded} on the board · ${heldAccounted.length} not currently banded — a held name is either on the board or named here.`}
-          </p>
-          {heldAccounted.length > 0 && (
-            <ul className="mt-1.5 space-y-1">
-              {heldAccounted.map((h) => (
-                <li key={h.ticker} className="text-sm text-slate-400">
-                  <span className="font-semibold text-slate-200">{h.ticker}</span>
-                  {` · held in ${h.books.join(", ")} · not banded: ${reasonFor(h.sheet_status, h.reason)}`}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       )}
     </section>
   );
@@ -788,7 +896,7 @@ export default function Valuation() {
   const [sheets, setSheets] = useState<FactSheet[] | null>(null);
   const [snapshot, setSnapshot] = useState<SnapshotStamp | null>(null);
   const [pageSummary, setPageSummary] = useState<PageSummary | null>(null);
-  const [boardFilter, setBoardFilter] = useState<BoardFilter>("all");
+  const [board, setBoard] = useState<GuidanceBoard | null>(null);
   const [refOpen, setRefOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -799,12 +907,13 @@ export default function Valuation() {
 
   useEffect(() => {
     let live = true;
-    adminJson<{ snapshot: SnapshotStamp | null; sheets: FactSheet[]; summary?: PageSummary | null }>("/api/valuation-bands")
+    adminJson<{ snapshot: SnapshotStamp | null; sheets: FactSheet[]; summary?: PageSummary | null; board?: GuidanceBoard | null }>("/api/valuation-bands")
       .then((env) => {
         if (!live) return;
         setSnapshot(env.snapshot);
         setSheets(env.sheets);
         setPageSummary(env.summary ?? null);
+        setBoard(env.board ?? null);
       })
       .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The valuation sheets could not be loaded"); });
     // The verdict chips ride beside the sheets: a name with no rendered
@@ -827,15 +936,15 @@ export default function Valuation() {
     }
   }, [decisionParam, sheets]);
 
-  const onTile = (filter: BoardFilter | null, targetId: string) => {
-    if (filter) setBoardFilter(filter);
-    document.getElementById(targetId)?.scrollIntoView?.();
-  };
-
   const selectFromBoard = (sheet: FactSheet) => {
     setRefOpen(true);
     toggle(sheet);
     document.getElementById("reference-table")?.scrollIntoView?.();
+  };
+
+  const selectByTicker = (ticker: string) => {
+    const sheet = (sheets ?? []).find((s) => s.ticker === ticker);
+    if (sheet) selectFromBoard(sheet);
   };
 
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
@@ -886,33 +995,34 @@ export default function Valuation() {
             {summary.stale > 0 && ` · ${summary.stale} stale (zone held)`}
             {` · ${summary.unbanded} not banded`}
           </p>
-          {snapshot ? (
-            <p data-testid="snapshot-stamp" className="mt-1 text-xs text-slate-500">
-              {`Snapshot #${snapshot.id} · computed ${snapshot.computed_at ? ctDateTimeYear(snapshot.computed_at) : "—"}`}
-              {` · ${snapshot.sheet_count ?? summary.total} sheets / ${snapshot.banded_count ?? summary.banded} banded`}
-              {" — one consistent snapshot; a recompute publishes a new snapshot, it never edits this one."}
-            </p>
+          <FreshnessBar board={board} snapshot={snapshot} />
+
+          {board ? (
+            <>
+              <MoversSection board={board} />
+              <BandGrid board={board}
+                        classified={new Set((pageSummary?.classified_names ?? []).map((c) => c.ticker))}
+                        onSelect={selectByTicker} />
+              <MissingBandQueue board={board}
+                                hasSheet={(t) => sheets.some((s) => s.ticker === t)}
+                                onSelect={selectByTicker} />
+            </>
           ) : (
-            <p data-testid="snapshot-stamp" className="mt-1 text-xs text-amber-300/80">
-              Unversioned legacy read — no snapshot stamp on this data yet; figures can
-              change between loads until the first stamped compute lands.
+            <p className="mt-3 text-xs text-amber-300/80">
+              The board block did not ride this load — the tables below still serve
+              the stamped snapshot; the movers, grid, and missing-band queue return
+              with it.
             </p>
           )}
 
           {pageSummary ? (
-            <>
-              <VerdictStrip summary={pageSummary} snapshot={snapshot} onTile={onTile} />
-              <AttentionFeed summary={pageSummary} />
-            </>
+            <AttentionFeed summary={pageSummary} />
           ) : (
             <p className="mt-3 text-xs text-amber-300/80">
-              The summary block did not ride this load — the board and tables below
-              still serve the stamped snapshot; the strip and feed return with it.
+              The summary block did not ride this load — the feed returns with it;
+              the board and tables above serve the stamped snapshot regardless.
             </p>
           )}
-
-          <ZoneBoard sheets={sheets} summary={pageSummary} filter={boardFilter}
-                     onFilter={setBoardFilter} onSelect={selectFromBoard} />
 
           <div data-testid="zone-legend" className="mt-4 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3">
             <h2 className="text-sm font-medium text-slate-200">What the zones mean</h2>

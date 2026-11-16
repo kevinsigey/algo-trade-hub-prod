@@ -4574,8 +4574,18 @@ def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=D
         summary = page_summary.build_summary(supabase)
     except Exception:  # noqa: BLE001 -- sheets are the payload; summary is additive
         summary = None
+    # Guidance rebuild (2026-11-16 brief): ONE more additive block — the
+    # movers / football-field grid / missing-band board. Same fail-soft
+    # rule: a board failure reads null, never takes the sheets down.
+    board = None
+    try:
+        from tradehub.valuation import guidance_page
+
+        board = guidance_page.build_board(supabase)
+    except Exception:  # noqa: BLE001 -- additive block
+        board = None
     return {"snapshot": _snapshot_stamp(snap), "sheets": sheets,
-            "summary": summary}
+            "summary": summary, "board": board}
 
 
 @app.get("/api/valuation-bands/{ticker}", tags=["Valuation"])
