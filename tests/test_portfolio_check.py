@@ -23,7 +23,7 @@ def _book(positions: dict[str, float]) -> dict[str, dict]:
 BIG = {
     "GLD": 117_000.0,   # 13.0% of invested: over its 12% cap already (the trim is working)
     "XLP": 50_000.0, "XLU": 50_000.0, "XLRE": 50_000.0, "XLV": 50_000.0,
-    "VNQ": 50_000.0, "DBC": 50_000.0, "USO": 50_000.0,          # ballast at ~5.6% each
+    "VNQ": 50_000.0, "DBC": 50_000.0, "USO": 50_000.0,          # the old ballast names at ~5.6% each (XLP/XLU/XLV are Regime members under v6; XLRE/VNQ/DBC/USO unassigned)
     "DLTR": 36_000.0, "DG": 36_000.0, "MO": 36_000.0, "WSM": 36_000.0,  # T2 ~4% each
     "SPY": 110_000.0, "VOO": 74_000.0,                         # index 20.4%
     "AAPL": 9_000.0, "NVDA": 9_000.0, "MSFT": 9_000.0,
@@ -34,8 +34,21 @@ BIG = {
 assert sum(BIG.values()) == 900_000.0
 
 
-def evaluate(positions, deltas, **kw):
-    return pc.evaluate(_book(positions), deltas, pc.DEFAULT_CONFIG, **kw)
+def evaluate(positions, deltas, config=None, **kw):
+    return pc.evaluate(_book(positions), deltas,
+                       pc.DEFAULT_CONFIG if config is None else config, **kw)
+
+
+# A config that still carries a member floor, for the floor-machinery tests:
+# the shipped v6 config has no floors anywhere (Kevin's ruling, 2026-11-16
+# retired the T4 band), but the engine's floor rules -- and the exits-win
+# ruling built on them -- stay law for any config that sets one.
+import copy
+
+FLOOR_CFG = copy.deepcopy(pc.DEFAULT_CONFIG)
+FLOOR_CFG["sleeves"]["floor_band"] = {
+    "label": "Floor band", "symbols": ["DBC"],
+    "member_min_pct": 2.0, "member_max_pct": 8.0}
 
 
 # ── GLD: the name cap with a target (acceptance a) ─────────────────────────────
@@ -66,17 +79,62 @@ def test_a_small_gld_buy_under_the_cap_passes():
     assert out["outcome"] == "pass"
 
 
-# ── sleeve bands and caps ──────────────────────────────────────────────────────
+# ── the v6 remap (Kevin's ruling, 2026-11-16): the T4 band is retired ─────────
 
-def test_a_ballast_member_over_8_percent_blocks():
+def test_a_regime_member_at_8_percent_passes_where_the_ballast_band_blocked():
     out = evaluate(BIG, {"XLP": 25_000.0})              # 75k/925k = 8.1%
+    assert out["outcome"] != "block"                    # the 2-8% band is gone
+
+
+def test_a_regime_member_over_20_percent_blocks():
+    out = evaluate(BIG, {"XLU": 170_000.0})             # 220k/1,070k = 20.6%
     assert out["outcome"] == "block"
-    assert any("XLP" in b["detail"] and "8" in b["detail"] for b in out["blocks"])
+    assert any("XLU" in b["detail"] and "20" in b["detail"]
+               and "Regime" in b["detail"] for b in out["blocks"])
 
 
-def test_a_ballast_member_sold_below_the_2_percent_floor_blocks():
+def test_a_former_ballast_name_sold_to_a_sliver_passes_no_floor_remains():
     book = {**BIG, "DBC": 20_000.0}                     # 2.2% of 870k
-    out = evaluate(book, {"DBC": -5_000.0})             # -> 15k/865k = 1.7%: under the floor
+    out = evaluate(book, {"DBC": -5_000.0})             # -> 1.7%: no floor to break
+    assert out["outcome"] != "block"
+    assert out["blocks"] == []
+
+
+def test_an_ex_ballast_name_is_a_plain_single_name_now():
+    out = evaluate(BIG, {"XLRE": 10_000.0})             # 60k/910k = 6.6%, unassigned
+    assert out["outcome"] == "block"
+    assert any("XLRE" in b["detail"] and "single-name" in b["detail"]
+               for b in out["blocks"])
+
+
+def test_a_regime_single_name_over_5_percent_blocks_via_its_override():
+    # JPM rides the Regime member band (20%) as a sleeve member, but its name
+    # override holds the 5% single-name line -- overrides win over bands.
+    book = {**BIG, "JPM": 30_000.0}                     # 3.2% of 930k
+    out = evaluate(book, {"JPM": 30_000.0})             # -> 60k/960k = 6.25%
+    assert out["outcome"] == "block"
+    assert any("JPM" in b["detail"] and "5" in b["detail"] for b in out["blocks"])
+    book = {**BIG, "AEP": 10_000.0}
+    out = evaluate(book, {"AEP": 50_000.0})             # -> 60k/960k = 6.25%
+    assert out["outcome"] == "block"
+
+
+def test_the_shipped_config_has_no_t4_and_no_member_floors():
+    cfg = pc.DEFAULT_CONFIG
+    assert "t4_ballast" not in cfg["sleeves"]
+    assert {"XLU", "XLV", "XLP"} <= set(cfg["sleeves"]["regime"]["symbols"])
+    assert all("member_min_pct" not in s for s in cfg["sleeves"].values())
+    assert cfg["sleeves"]["t3_index"]["sleeve_max_pct"] == 50.0
+    assert cfg["single_name_max_pct"] == 5.0
+    for name in ("AEP", "D", "JPM"):
+        assert cfg["name_overrides"][name]["max_pct"] == 5.0
+
+
+# ── the member floor, where a config sets one ─────────────────────────────────
+
+def test_a_member_sold_below_a_configured_floor_blocks():
+    book = {**BIG, "DBC": 20_000.0}                     # 2.2% of 870k
+    out = evaluate(book, {"DBC": -5_000.0}, config=FLOOR_CFG)  # -> 1.7%
     assert out["outcome"] == "block"
     assert any("DBC" in b["detail"] for b in out["blocks"])
 
@@ -85,7 +143,7 @@ def test_a_ballast_member_sold_below_the_2_percent_floor_blocks():
 
 def test_an_exit_trim_below_the_floor_warns_and_does_not_block():
     book = {**BIG, "DBC": 20_000.0}                     # 2.2% of 870k
-    out = evaluate(book, {"DBC": -5_000.0}, is_exit=True)   # -> 1.7%: under the floor
+    out = evaluate(book, {"DBC": -5_000.0}, config=FLOOR_CFG, is_exit=True)
     assert out["outcome"] != "block"
     assert out["blocks"] == []
     warn = next(w for w in out["warnings"] if "DBC" in w["detail"])
@@ -96,24 +154,25 @@ def test_an_exit_trim_below_the_floor_warns_and_does_not_block():
 
 def test_the_same_trim_without_exit_classification_still_blocks():
     book = {**BIG, "DBC": 20_000.0}
-    out = evaluate(book, {"DBC": -5_000.0}, is_exit=False)
+    out = evaluate(book, {"DBC": -5_000.0}, config=FLOOR_CFG, is_exit=False)
     assert out["outcome"] == "block"
     assert any(b["rule"] == "member_floor" for b in out["blocks"])
 
 
 def test_exit_classification_downgrades_only_the_floor_never_a_cap():
-    # is_exit is not a general pass: a delta that ADDS to an over-cap member
+    # is_exit is not a general pass: a delta that ADDS to an over-cap name
     # still blocks (the classifier upstream never calls such an order an exit;
     # the engine's cap rules are untouched by the ruling either way).
-    out = evaluate(BIG, {"XLP": 25_000.0}, is_exit=True)    # 75k/925k = 8.1%
+    out = evaluate(BIG, {"GLD": 5_000.0}, is_exit=True)     # 13.5% > GLD's 12% cap
     assert out["outcome"] == "block"
 
 
 def test_check_order_threads_the_exit_flag_and_defaults_to_blocking(monkeypatch):
     # The activation path calls check_order with no exit flag (main.py) and must
-    # keep the shipped floor behavior; the machine door passes its classification.
+    # keep the floor behavior; the machine door passes its classification.
     book = {**BIG, "DBC": 20_000.0}
     monkeypatch.setattr(pc, "positions_by_underlying", lambda book_name: _book(book))
+    monkeypatch.setattr(pc, "load_config", lambda supa: FLOOR_CFG)
     out = pc.check_order(None, "main", {"DBC": -5_000.0}, source="activation",
                          record=False)
     assert out["outcome"] == "block"
@@ -123,9 +182,9 @@ def test_check_order_threads_the_exit_flag_and_defaults_to_blocking(monkeypatch)
     assert any(w["rule"] == "member_floor_exit" for w in out["warnings"])
 
 
-def test_a_ballast_member_bought_back_toward_the_band_passes():
-    book = {**BIG, "DBC": 10_000.0}                     # 1.1%: under the floor already
-    out = evaluate(book, {"DBC": 10_000.0})             # buying back toward the band
+def test_a_small_unassigned_name_bought_from_a_small_base_passes():
+    book = {**BIG, "DBC": 10_000.0}                     # 1.1% of invested
+    out = evaluate(book, {"DBC": 10_000.0})             # -> 2.3%: inside 5%
     assert out["outcome"] != "block"
 
 
@@ -149,11 +208,22 @@ def test_a_t2_name_over_5_percent_blocks():
     assert any("DG" in b["detail"] for b in out["blocks"])
 
 
-def test_the_index_sleeve_over_25_percent_blocks():
-    book = {**BIG, "SPY": 190_000.0, "VOO": 40_000.0}   # index 230k/946k = 24.3%
+def test_the_core_sleeve_at_27_percent_passes_the_old_wall_is_gone():
+    # The staged core fills of 2026-11-16 died on the old 25% index cap; the
+    # v6 core target (40-45% of the book) runs far past it.
+    book = {**BIG, "SPY": 190_000.0, "VOO": 40_000.0}   # core 230k/946k = 24.3%
     out = evaluate(book, {"SPY": 40_000.0})             # -> 270k/986k = 27.4%
+    assert out["outcome"] != "block"
+    out = evaluate(BIG, {"SPY": 125_000.0})             # the big book's tranche
+    assert out["outcome"] != "block"                    # -> 309k/1,025k = 30.1%
+
+
+def test_the_core_sleeve_over_50_percent_of_invested_blocks():
+    book = {**BIG, "SPY": 380_000.0, "VOO": 60_000.0}   # core 440k/1,156k = 38.1%
+    out = evaluate(book, {"SPY": 300_000.0})            # -> 740k/1,456k = 50.8%
     assert out["outcome"] == "block"
-    assert any("index" in b["detail"].lower() for b in out["blocks"])
+    assert any("Core" in b["detail"] and "50" in b["detail"]
+               for b in out["blocks"])
 
 
 def test_an_unassigned_name_over_5_percent_blocks_but_spy_is_not_a_single_name():
@@ -216,8 +286,8 @@ def test_gold_over_12_percent_warns_even_when_the_order_is_not_golds():
 def test_weights_are_percent_of_invested_post_trade():
     out = evaluate(BIG, {"XLP": 5_000.0})
     assert out["weights"]["invested"] == pytest.approx(905_000.0)
-    assert out["weights"]["sleeves"]["t4_ballast"] == pytest.approx(
-        (467_000.0 + 5_000.0) / 905_000.0 * 100, abs=0.01)
+    assert out["weights"]["sleeves"]["regime"] == pytest.approx(
+        (150_000.0 + 5_000.0) / 905_000.0 * 100, abs=0.01)
     assert out["weights"]["names"]["XLP"] == pytest.approx(55_000.0 / 905_000.0 * 100, abs=0.01)
 
 
@@ -256,7 +326,7 @@ def test_load_config_reads_the_stored_row():
     cfg = pc.load_config(db)
     assert cfg["name_overrides"]["GLD"]["max_pct"] == 25.0
     # untouched sections still carry the seed, so a partial edit cannot drop a sleeve
-    assert "GLD" in cfg["sleeves"]["t4_ballast"]["symbols"]
+    assert "XLU" in cfg["sleeves"]["regime"]["symbols"]
 
 
 def test_a_config_edit_changes_the_verdict():

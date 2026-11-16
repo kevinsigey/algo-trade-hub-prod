@@ -10,12 +10,21 @@ callers, so they can never disagree: the machine preflight/placement path
 page's card (GET /api/portfolio/portfolio-check) all read from here.
 
 The rules, as configured (the config is the law -- see load_config):
-- BLOCKING, on post-trade weights as % of invested: T4 ballast members inside their
-  2-8% band; the T8 sleeve at most 10%; T2 names at most 5% each; the index sleeve at
-  most 25%; any other single name at most 5%; GLD at most 12% (its own override: a
+- BLOCKING, on post-trade weights as % of invested: the core (index) sleeve at most
+  50% -- the Thesis v6 core target of 40-45% of the BOOK expressed on the invested
+  base (at the v6 10% cash floor, 50% of invested is exactly 45% of the book);
+  Regime sleeve members at most 20% each, with the sleeve's single names (AEP, D,
+  JPM) held to 5% by name overrides; the T8 sleeve at most 10%; T2 names at most
+  5% each; any other single name at most 5%; GLD at most 12% (its own override: a
   ~11% target while the trim works it down from 21.6%). A block fires only when the
   order itself moves the capped entity deeper into breach -- an exit that reduces an
   over-cap position always passes, because the exit is the cure, never a new breach.
+- The T4 ballast band is RETIRED (Kevin's ruling, 2026-11-16): the W18/T4 sleeve is
+  shelved and its 2-8% member band and 2% member floor are gone. Its sector ETFs
+  (XLU, XLV, XLP) are Regime sleeve members now; its exited names (XLRE, VNQ, DBC,
+  USO) and GLD are unassigned, governed by the single-name rule and GLD's override.
+  No member floors remain in the shipped config; the floor machinery below stays,
+  driven by any config that sets one.
 - IBIT is EXIT-ONLY: any order that increases IBIT exposure blocks; closes pass.
 - Kevin's ruling (2026-11-09, "exits always win over the floor"): when the machine
   door's exit classification (the #440 book math -- never a caller flag, threaded in
@@ -46,19 +55,21 @@ TARGETS_TABLE = "portfolio_targets"
 EVENTS_TABLE = "portfolio_check_events"
 SERIES_TABLE = "portfolio_series"
 
-# The seed (migration 20261109000004): sleeve membership and caps from the cohesion
-# analysis's own constrained-optimizer bounds, with GLD's per-name override.
+# The seed (migration 20261109000004; remapped to Thesis v6 by migration
+# 20261116000002 on Kevin's ruling of 2026-11-16): sleeve membership and caps,
+# with GLD's per-name override from the cohesion analysis.
 DEFAULT_CONFIG: dict[str, Any] = {
     "sleeves": {
-        "t4_ballast": {"label": "T4 ballast (W18 core)",
-                       "symbols": ["GLD", "XLP", "XLU", "XLRE", "XLV", "VNQ", "DBC", "USO"],
-                       "member_min_pct": 2.0, "member_max_pct": 8.0},
+        "regime": {"label": "Regime (v6)",
+                   "symbols": ["XLU", "XLV", "XLP", "XLF", "AEP", "D", "JPM",
+                               "BTAL", "KMLM", "UUP"],
+                   "member_max_pct": 20.0},
         "t2_kshape": {"label": "T2 K-shape carry",
                       "symbols": ["DLTR", "DG", "MO", "WSM"],
                       "member_max_pct": 5.0},
-        "t3_index": {"label": "T3 index",
+        "t3_index": {"label": "Core beta (v6)",
                      "symbols": ["SPY", "VOO"],
-                     "sleeve_max_pct": 25.0},
+                     "sleeve_max_pct": 50.0},
         "t8_ai": {"label": "T8 AI winners core",
                   "symbols": ["AAPL", "NVDA", "MSFT", "AVGO", "MU", "TSM"],
                   "sleeve_max_pct": 10.0, "equal_inside": True},
@@ -69,8 +80,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                       "symbols": ["TXN", "INTC"]},
     },
     # Per-name overrides win over sleeve member bands and the single-name rule.
+    # AEP/D/JPM are the Regime sleeve's single names: the override holds them to
+    # the 5% single-name line inside the sleeve's 20% member band.
     "name_overrides": {
         "GLD": {"target_pct": 11.0, "max_pct": 12.0},
+        "AEP": {"max_pct": 5.0},
+        "D": {"max_pct": 5.0},
+        "JPM": {"max_pct": 5.0},
     },
     "single_name_max_pct": 5.0,
     "clusters": {
