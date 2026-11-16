@@ -12,6 +12,7 @@ import Hormuz from "@/pages/Hormuz";
 import Oil from "@/pages/Oil";
 import Journal from "@/pages/Journal";
 import Thesis from "@/pages/Thesis";
+import ThesisScoreboard from "@/pages/ThesisScoreboard";
 import Health from "@/pages/Health";
 import MachineKeys from "@/pages/MachineKeys";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -99,6 +100,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
   { label: "Track record", items: [
     { to: "/journal", label: "Model Tracker", icon: BookOpen },
     { to: "/thesis", label: "Thesis Tracker", icon: Target },
+    { to: "/thesis-scoreboard", label: "Thesis Scoreboard", icon: Scale },
   ] },
   { label: "Admin", items: [
     { to: "/screening", label: "Screening", icon: ListFilter },
@@ -407,6 +409,7 @@ function App() {
           <Route path="/crypto" element={<Crypto />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/thesis" element={<Thesis />} />
+          <Route path="/thesis-scoreboard" element={<ThesisScoreboard />} />
           {/* Merged into the Model Tracker (Kevin's call, 2026-11-02): the scoreboard and the
               models catalogue were two admin tabs presenting the /api/scoreboard dataset next
               to the Tracker's forward record. Both names now land on the Tracker's Backtests
