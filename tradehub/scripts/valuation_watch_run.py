@@ -26,10 +26,22 @@ def main() -> int:
     out = watch.compute_watch(client, ds)
     rendered = watch.drain_triggers(client, ds)
     sells = sum(1 for f in out["flags"] if f["flag"] == "potential_sell")
+    # Guidance rebuild alert wiring (2026-11-16 brief): held-name band
+    # crossings between the two latest completed snapshots arm level
+    # watches + open manual actions. Fail-soft — an alerts failure must
+    # never fail the watch run that just refreshed the sheets.
+    alerts = {"ran": False, "reason": "not attempted"}
+    try:
+        from tradehub.valuation import guidance_alerts
+
+        alerts = guidance_alerts.run_alerts(client)
+    except Exception as exc:  # noqa: BLE001 -- named in the run line
+        alerts = {"ran": False, "reason": f"{type(exc).__name__}: {exc}"}
     print(f"valuation watch: {len(sheets)} sheets ({banded} banded), "
           f"{len(out['flags'])} held flags ({sells} potential-sell), "
           f"{out['triggers_queued']} triggers queued, "
-          f"{len(rendered)} verdicts rendered")
+          f"{len(rendered)} verdicts rendered, "
+          f"guidance alerts: {alerts}")
     return 0
 
 

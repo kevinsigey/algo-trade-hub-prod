@@ -143,6 +143,89 @@ export interface PageSummary {
   held_positions_unavailable: boolean;
 }
 
+/** ── The Guidance rebuild board block (2026-11-16 brief; additive on
+ * /api/valuation-bands): movers between the two latest completed
+ * snapshots, the football-field grid rows, the missing-band queue, and
+ * the freshness stamp the header badges. Null when the block did not
+ * ride the load — the page renders the sheets without it. */
+export interface BoardFreshness {
+  snapshot_id: number;
+  computed_at: string | null;
+  completed_at: string | null;
+  age_hours: number | null;
+  stale: boolean;
+  cadence: string;
+  previous_snapshot_id: number | null;
+  previous_computed_at: string | null;
+}
+
+export interface MoverRevision {
+  ticker: string;
+  metric: "anchor" | "capex" | "fcf" | string;
+  guide_metric?: string | null;
+  change_pct: number | null;
+  from: [number, number] | null;
+  to: [number, number] | null;
+  direction?: string | null;
+  held: boolean;
+}
+
+export interface MoverMigration {
+  ticker: string;
+  from_zone: string | null;
+  to_zone: string | null;
+  price: number | null;
+  bands: SummaryBands | null;
+  held: boolean;
+}
+
+export interface HeldStatus {
+  ticker: string;
+  zone: string | null;
+  status: string;
+  distance_pct: number | null;
+  price: number | null;
+  bands: SummaryBands | null;
+}
+
+export interface BoardMovers {
+  guide_revisions: MoverRevision[];
+  band_migrations: MoverMigration[];
+  held_status: HeldStatus[];
+  snapshot_pair: boolean;
+}
+
+export interface GridRow {
+  ticker: string;
+  bands: { bear: number | null; base: number | null; bull: number | null };
+  price: number | null;
+  price_as_of: string | null;
+  status: "below_bear" | "buy_zone" | "between" | "above_bull" | "no_band" | string;
+  distance_pct: number | null;
+  held: boolean;
+  books: string[];
+  market_cap: number | null;
+  zone: string | null;
+}
+
+export interface MissingBandRow {
+  ticker: string;
+  held: boolean;
+  watched: boolean;
+  books: string[];
+  sheet_status: string | null;
+  reason: string | null;
+}
+
+export interface GuidanceBoard {
+  snapshot_id: number | null;
+  previous_snapshot_id: number | null;
+  freshness: BoardFreshness | null;
+  movers: BoardMovers | null;
+  grid: GridRow[];
+  missing_band: MissingBandRow[];
+}
+
 /** The zone board's columns, in display order. Every banded name lands
  * in exactly one column: the five zone columns the build names, plus a
  * held/other column that exists so a stale or unpriced banded name is

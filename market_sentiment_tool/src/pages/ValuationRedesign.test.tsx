@@ -70,8 +70,6 @@ const SUMMARY = {
     crossings_since_last_snapshot: 1, pending_debates: 2,
     classified_prints: 1 },
   feed_state: "ok",
-  // Served order is the backend's: conjunctions pinned first, then
-  // crossings, then the snapshot diff (zone changes, guide revisions).
   feed: [
     { kind: "conjunction", ticker: "AMGN", zone: "short_zone_strong",
       classification: "improved", as_of: "2026-11-09",
@@ -85,14 +83,73 @@ const SUMMARY = {
       price: 85.17 },
   ],
   classified_names: [{ ticker: "AMGN", classification: "improved",
-    as_of: "2026-11-09" }],
+    as_of: "2026-11-09", banded: true, sheet_status: "banded", reason: null }],
   crossings: [{ ticker: "CVS", book: "main", zone: "buy_zone",
     action: "starter", created_at: "2026-11-10T05:00:00Z" }],
   held: { CVS: { books: ["big"], qty: 120, sleeves: ["T8 AI winners core"] } },
   held_positions_unavailable: false,
 };
 
-function serve(summary: unknown = SUMMARY, sheets: unknown[] = SHEETS) {
+/** The rebuild board block, computed by the server from snapshots #2
+ * and #3: CVS (held) revised its capex guide up and migrated into the
+ * buy zone; AMGN's anchor guide and FCF guide were cut; AAPL is held
+ * with no band. Grid distances: CVS -7.11 (inside the zone), AMGN
+ * +32.64, LLY +72.19, XYZ +5.0. */
+const BOARD = {
+  snapshot_id: 3, previous_snapshot_id: 2,
+  freshness: { snapshot_id: 3, computed_at: "2026-11-10T03:44:00Z",
+    completed_at: "2026-11-10T03:50:00Z", age_hours: 5.2, stale: false,
+    cadence: "Snapshots recompute hourly while the market is open, weekdays (valuation watch run)",
+    previous_snapshot_id: 2, previous_computed_at: "2026-11-09T18:00:00Z" },
+  movers: {
+    guide_revisions: [
+      { ticker: "CVS", metric: "capex", guide_metric: "capex",
+        change_pct: 12.5, from: null, to: null, direction: null, held: true },
+      { ticker: "AMGN", metric: "anchor", guide_metric: "eps_gaap",
+        change_pct: -5.1, from: [18.34, 19.28], to: [17.4, 18.3],
+        direction: "cut", held: false },
+      { ticker: "AMGN", metric: "fcf", guide_metric: "fcf",
+        change_pct: -20.0, from: null, to: null, direction: null, held: false },
+    ],
+    band_migrations: [
+      { ticker: "CVS", from_zone: "neutral", to_zone: "buy_zone",
+        price: 85.17, bands: { bear: 82.11, base: 91.23, bull: 91.23 },
+        held: true },
+    ],
+    held_status: [
+      { ticker: "CVS", zone: "buy_zone", status: "buy_zone",
+        distance_pct: -7.11, price: 85.17,
+        bands: { bear: 82.11, base: 91.23, bull: 91.23 } },
+    ],
+    snapshot_pair: true,
+  },
+  grid: [
+    { ticker: "CVS", bands: { bear: 82.11, base: 91.23, bull: 91.23 },
+      price: 85.17, price_as_of: "2026-11-06", status: "buy_zone",
+      distance_pct: -7.11, held: true, books: ["big"],
+      market_cap: 107400000000, zone: "buy_zone" },
+    { ticker: "AMGN", bands: { bear: 272.18, base: 310.17, bull: 317.92 },
+      price: 460.42, price_as_of: "2026-11-06", status: "above_bull",
+      distance_pct: 32.64, held: false, books: [],
+      market_cap: 250900000000, zone: "short_zone_strong" },
+    { ticker: "LLY", bands: { bear: 347.35, base: 388.07, bull: 390.19 },
+      price: 1395.48, price_as_of: "2026-11-06", status: "above_bull",
+      distance_pct: 72.19, held: false, books: [],
+      market_cap: 1245000000000, zone: "short_zone_strong" },
+    { ticker: "XYZ", bands: { bear: 40, base: 47.5, bull: 55 },
+      price: 50, price_as_of: "2026-11-06", status: "between",
+      distance_pct: 5.0, held: false, books: [],
+      market_cap: 50000000000, zone: "neutral" },
+  ],
+  missing_band: [
+    { ticker: "AAPL", held: true, watched: false, books: ["main"],
+      sheet_status: "no_full_year_guide",
+      reason: "no full-year guide on file — no bands computed" },
+  ],
+};
+
+function serve(summary: unknown = SUMMARY, sheets: unknown[] = SHEETS,
+               board: unknown = BOARD) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/valuation-bands")) {
@@ -100,7 +157,7 @@ function serve(summary: unknown = SUMMARY, sheets: unknown[] = SHEETS) {
         snapshot: { id: 3, computed_at: "2026-11-10T03:44:00Z",
           completed_at: "2026-11-10T03:50:00Z", sheet_count: sheets.length,
           banded_count: 3, source: "valuation_run" },
-        sheets, summary,
+        sheets, summary, board,
       }), { status: 200 });
     }
     return new Response("{}", { status: 200 });
@@ -114,27 +171,126 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Guidance re-presentation", () => {
-  it("renders the verdict strip stamped with its snapshot, counts reconciling with the board", async () => {
+describe("Guidance rebuild — freshness, movers, grid, queue", () => {
+  it("badges freshness: snapshot stamp, age, cadence, and no stale badge when fresh", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const strip = await screen.findByTestId("verdict-strip");
-    expect(strip).toHaveTextContent("Snapshot #3");
-    expect(strip).toHaveTextContent("Banded");
-    expect(within(strip).getByTestId("tile-banded")).toHaveTextContent("3");
-    expect(within(strip).getByTestId("tile-buy-zones")).toHaveTextContent("1");
-    expect(within(strip).getByTestId("tile-strong-short")).toHaveTextContent("2");
-    expect(within(strip).getByTestId("tile-crossings")).toHaveTextContent("1");
-    expect(within(strip).getByTestId("tile-pending-debates")).toHaveTextContent("2");
-    expect(within(strip).getByTestId("tile-classified")).toHaveTextContent("1");
-    // Board reconciliation: exactly the banded names, each exactly once.
-    const board = screen.getByTestId("zone-board");
-    for (const t of ["AMGN", "CVS", "LLY"]) {
-      expect(within(board).getAllByTestId(`board-chip-${t}`)).toHaveLength(1);
-    }
-    expect(within(board).queryByTestId("board-chip-AAPL")).toBeNull();
+    const bar = await screen.findByTestId("freshness-bar");
+    expect(bar).toHaveTextContent("Snapshot #3");
+    expect(bar).toHaveTextContent(/snapshot age 5h/i);
+    expect(bar).toHaveTextContent(/hourly while the market is open/i);
+    expect(within(bar).queryByTestId("freshness-stale")).toBeNull();
   });
 
+  it("badges a stale snapshot plainly", async () => {
+    serve(SUMMARY, SHEETS, {
+      ...BOARD,
+      freshness: { ...BOARD.freshness, age_hours: 41.5, stale: true },
+    });
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const bar = await screen.findByTestId("freshness-bar");
+    expect(within(bar).getByTestId("freshness-stale")).toHaveTextContent(/stale/i);
+  });
+
+  it("leads with the movers: revisions ranked with held pinned, migrations, held status", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const movers = await screen.findByTestId("movers");
+    const capex = within(movers).getByTestId("mover-CVS-capex");
+    expect(capex).toHaveTextContent("+12.5%");
+    expect(capex).toHaveTextContent(/held/i);
+    const anchor = within(movers).getByTestId("mover-AMGN-anchor");
+    expect(anchor).toHaveTextContent("18.34");
+    expect(anchor).toHaveTextContent("17.40");
+    expect(within(movers).getByTestId("mover-AMGN-fcf")).toHaveTextContent("-20.0%");
+    expect(within(movers).getByTestId("migration-CVS")).toHaveTextContent(/band migration/i);
+    expect(within(movers).getByTestId("held-status")).toHaveTextContent("CVS");
+    // The movers section renders before the grid in the document.
+    const grid = screen.getByTestId("band-grid");
+    expect(movers.compareDocumentPosition(grid)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says plainly when there is no previous snapshot for movers", async () => {
+    serve(SUMMARY, SHEETS, { ...BOARD, movers: null });
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const movers = await screen.findByTestId("movers");
+    expect(movers).toHaveTextContent(/no previous completed snapshot/i);
+  });
+
+  it("renders every banded name once on the grid with its distance headline", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    for (const t of ["AMGN", "CVS", "LLY", "XYZ"]) {
+      expect(within(grid).getAllByTestId(`grid-row-${t}`)).toHaveLength(1);
+    }
+    expect(within(grid).queryByTestId("grid-row-AAPL")).toBeNull();
+    expect(within(grid).getByTestId("distance-CVS")).toHaveTextContent("-7.1%");
+    expect(within(grid).getByTestId("distance-AMGN")).toHaveTextContent("+32.6%");
+    expect(within(grid).getByTestId("grid-row-CVS")).toHaveTextContent(/held/i);
+    expect(within(grid).getByTestId("grid-row-CVS"))
+      .toHaveTextContent(/snapshot price as of 2026-11-06/i);
+    // Default order: held first, then classified, then the rest by distance.
+    const order = within(grid).getAllByTestId(/^grid-row-/)
+      .map((el) => el.getAttribute("data-testid"));
+    expect(order).toEqual(["grid-row-CVS", "grid-row-AMGN",
+      "grid-row-XYZ", "grid-row-LLY"]);
+  });
+
+  it("grid sorts by market cap within the pinned groups and filters by zone status", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    fireEvent.click(within(grid).getByTestId("grid-sort-cap"));
+    const order = within(grid).getAllByTestId(/^grid-row-/)
+      .map((el) => el.getAttribute("data-testid"));
+    // Groups stay pinned (held, classified, rest); inside the rest
+    // group the cap sort puts LLY ($1.25T) ahead of XYZ ($50B).
+    expect(order).toEqual(["grid-row-CVS", "grid-row-AMGN",
+      "grid-row-LLY", "grid-row-XYZ"]);
+    fireEvent.click(within(grid).getByTestId("grid-filter-above-bull"));
+    expect(within(grid).getByTestId("grid-row-AMGN")).toBeInTheDocument();
+    expect(within(grid).getByTestId("grid-row-LLY")).toBeInTheDocument();
+    expect(within(grid).queryByTestId("grid-row-CVS")).toBeNull();
+    fireEvent.click(within(grid).getByTestId("grid-filter-buy"));
+    expect(within(grid).getByTestId("grid-row-CVS")).toBeInTheDocument();
+    expect(within(grid).queryByTestId("grid-row-AMGN")).toBeNull();
+  });
+
+  it("queues held names with no band, with the reason and the way into the sheet", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const queue = await screen.findByTestId("missing-band-queue");
+    const row = within(queue).getByTestId("queue-row-AAPL");
+    expect(row).toHaveTextContent(/held/i);
+    expect(row).toHaveTextContent(/no full-year guide on file/i);
+    expect(within(row).getByTestId("queue-open-AAPL")).toBeInTheDocument();
+  });
+
+  it("opening a sheet from the queue is idempotent — a second click never closes it", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const queue = await screen.findByTestId("missing-band-queue");
+    const open = within(queue).getByTestId("queue-open-AAPL");
+    fireEvent.click(open);
+    // The falsifier text lives in the unbanded row AND, once expanded,
+    // in the sheet detail — two copies while the sheet is open.
+    expect((await screen.findAllByText(/no band to falsify/i)).length).toBe(2);
+    fireEvent.click(open);
+    expect(screen.getAllByText(/no band to falsify/i).length).toBe(2);
+  });
+
+  it("renders the sheets and tables when the board block does not ride the load", async () => {
+    serve(SUMMARY, SHEETS, null);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    expect(await screen.findByTestId("reference-table")).toBeInTheDocument();
+    expect(screen.queryByTestId("band-grid")).toBeNull();
+    expect(screen.getByText(/board block did not ride this load/i)).toBeInTheDocument();
+  });
+});
+
+describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("pins conjunctions at the top of the attention feed", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
@@ -162,67 +318,6 @@ describe("Guidance re-presentation", () => {
     expect(feed).not.toHaveTextContent(/nothing changed/i);
   });
 
-  it("draws the band track on board chips with the numbers in the title", async () => {
-    serve();
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    const chip = within(board).getByTestId("board-chip-AMGN");
-    const track = within(chip).getByTestId("band-track-AMGN");
-    expect(track).toBeInTheDocument();
-    // AMGN's price ($460.42) sits past the bull band ($317.92): the dot
-    // clamps at the right end instead of running off the track.
-    const dot = track.querySelector("[data-price-dot]");
-    expect(dot?.getAttribute("style")).toContain("100%");
-    expect(chip.getAttribute("title")).toContain("Bear $272.18");
-    expect(chip.getAttribute("title")).toContain("Bull $317.92");
-    expect(chip.getAttribute("title")).toContain("Price $460.42");
-  });
-
-  it("marks held names on the board and the Held filter shows only them", async () => {
-    serve();
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    expect(within(board).getByTestId("board-chip-CVS")).toHaveTextContent(/held/i);
-    expect(within(board).getByTestId("board-chip-AMGN")).not.toHaveTextContent(/held/i);
-    fireEvent.click(screen.getByTestId("filter-held"));
-    expect(within(board).getByTestId("board-chip-CVS")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-AMGN")).toBeNull();
-    expect(within(board).queryByTestId("board-chip-LLY")).toBeNull();
-  });
-
-  it("filter chips actually filter: strong zones, crossings, classified prints", async () => {
-    serve();
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    fireEvent.click(screen.getByTestId("filter-strong-zones"));
-    expect(within(board).getByTestId("board-chip-AMGN")).toBeInTheDocument();
-    expect(within(board).getByTestId("board-chip-LLY")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-CVS")).toBeNull();
-    fireEvent.click(screen.getByTestId("filter-crossings"));
-    expect(within(board).getByTestId("board-chip-CVS")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-AMGN")).toBeNull();
-    fireEvent.click(screen.getByTestId("filter-classified"));
-    expect(within(board).getByTestId("board-chip-AMGN")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-CVS")).toBeNull();
-    fireEvent.click(screen.getByTestId("filter-all"));
-    expect(within(board).getByTestId("board-chip-CVS")).toBeInTheDocument();
-  });
-
-  it("verdict strip tiles click through to their filtered board view", async () => {
-    serve();
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    fireEvent.click(screen.getByTestId("tile-crossings"));
-    expect(within(board).getByTestId("board-chip-CVS")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-AMGN")).toBeNull();
-    fireEvent.click(screen.getByTestId("tile-classified"));
-    expect(within(board).getByTestId("board-chip-AMGN")).toBeInTheDocument();
-    expect(within(board).queryByTestId("board-chip-CVS")).toBeNull();
-    fireEvent.click(screen.getByTestId("tile-banded"));
-    expect(within(board).getByTestId("board-chip-CVS")).toBeInTheDocument();
-    expect(within(board).getByTestId("board-chip-LLY")).toBeInTheDocument();
-  });
-
   it("keeps the full reference table intact inside a disclosure, rows == served banded sheets", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
@@ -233,121 +328,5 @@ describe("Guidance re-presentation", () => {
     expect(within(eps).getByText("CVS")).toBeInTheDocument();
     expect(within(rev).getByText("LLY")).toBeInTheDocument();
     expect(within(ref).getByTestId("unbanded")).toHaveTextContent("AAPL");
-  });
-
-  it("stacks the board in one column at phone width with no fixed min-width", async () => {
-    serve();
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    // Base (phone) layout is a single column; wider breakpoints add
-    // columns. No element of the board carries a fixed min-width that
-    // could push past a ~390px viewport.
-    expect(board.className).toContain("grid-cols-1");
-    expect(board.innerHTML).not.toMatch(/min-w-\[/);
-    expect(board.innerHTML).not.toMatch(/min-width/);
-  });
-
-  it("shows an honest no-match state for a filter with no names", async () => {
-    serve({ ...SUMMARY, held: {} });
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    fireEvent.click(screen.getByTestId("filter-held"));
-    expect(within(board).getByText(/no names match this view/i)).toBeInTheDocument();
-  });
-});
-
-// ── Round 6: filtered views reconcile with their counts ──────────────────
-// The classified tile promises 3 names; only AMGN is banded. KKR has no
-// fact sheet in the snapshot and TTWO's sheet carries no full-year guide:
-// both must be accounted under the board, with the reason, not dropped.
-// The held set has banded and non-banded members alike.
-const NO_SHEET = "not in the guidance universe / no fact sheet in this snapshot";
-const NO_GUIDE = "no full-year guide on file — no bands computed";
-
-const R6_SUMMARY = {
-  ...SUMMARY,
-  counts: { ...SUMMARY.counts, classified_prints: 3 },
-  classified_names: [
-    { ticker: "AMGN", classification: "improved", as_of: "2026-11-09",
-      banded: true, sheet_status: "banded", reason: null },
-    { ticker: "KKR", classification: "intact", as_of: "2026-11-09",
-      banded: false, sheet_status: null, reason: NO_SHEET },
-    { ticker: "TTWO", classification: "improved", as_of: "2026-11-09",
-      banded: false, sheet_status: "no_full_year_guide", reason: NO_GUIDE },
-  ],
-  held: {
-    CVS: { books: ["big"], qty: 120, sleeves: ["T8 AI winners core"] },
-    AAPL: { books: ["main"], qty: 26, sleeves: [] },
-    GLD: { books: ["big"], qty: 349, sleeves: [] },
-  },
-  held_names: [
-    { ticker: "AAPL", books: ["main"], qty: 26, sleeves: [],
-      banded: false, sheet_status: "no_full_year_guide", reason: NO_GUIDE },
-    { ticker: "CVS", books: ["big"], qty: 120,
-      sleeves: ["T8 AI winners core"], banded: true,
-      sheet_status: "banded", reason: null },
-    { ticker: "GLD", books: ["big"], qty: 349, sleeves: [],
-      banded: false, sheet_status: null, reason: NO_SHEET },
-  ],
-};
-
-describe("Guidance filtered-view reconciliation (Round 6)", () => {
-  it("classified view: tile count == boarded chips + accounted names, each with its reason", async () => {
-    serve(R6_SUMMARY);
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    expect(within(screen.getByTestId("verdict-strip")).getByTestId("tile-classified"))
-      .toHaveTextContent("3");
-    fireEvent.click(screen.getByTestId("filter-classified"));
-    const chips = within(board).getAllByTestId(/^board-chip-/);
-    expect(chips).toHaveLength(1);
-    expect(chips[0]).toHaveTextContent("AMGN");
-    const acct = screen.getByTestId("classified-accounting");
-    expect(acct).toHaveTextContent("3 classified prints");
-    expect(acct).toHaveTextContent("1 on the board");
-    expect(acct).toHaveTextContent("2 accounted");
-    // 3 (the tile) == 1 boarded + 2 accounted: nothing silently dropped.
-    expect(acct).toHaveTextContent("KKR");
-    expect(acct).toHaveTextContent(/intact/);
-    expect(acct).toHaveTextContent("2026-11-09");
-    expect(acct).toHaveTextContent(NO_SHEET);
-    expect(acct).toHaveTextContent("TTWO");
-    expect(acct).toHaveTextContent(/improved/);
-    expect(acct).toHaveTextContent(NO_GUIDE);
-  });
-
-  it("held view: boarded held names carry the marker; non-banded held names are accounted with status", async () => {
-    serve(R6_SUMMARY);
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    fireEvent.click(screen.getByTestId("filter-held"));
-    const chips = within(board).getAllByTestId(/^board-chip-/);
-    expect(chips).toHaveLength(1);
-    expect(chips[0]).toHaveTextContent("CVS");
-    expect(chips[0]).toHaveTextContent(/held/i);
-    const acct = screen.getByTestId("held-accounting");
-    expect(acct).toHaveTextContent("3 held names");
-    expect(acct).toHaveTextContent("1 on the board");
-    expect(acct).toHaveTextContent("2 not currently banded");
-    expect(acct).toHaveTextContent("AAPL");
-    expect(acct).toHaveTextContent(NO_GUIDE);
-    expect(acct).toHaveTextContent("GLD");
-    expect(acct).toHaveTextContent(NO_SHEET);
-  });
-
-  it("held view with a genuinely empty intersection says so with the full accounting", async () => {
-    serve({
-      ...R6_SUMMARY,
-      held: { AAPL: R6_SUMMARY.held.AAPL, GLD: R6_SUMMARY.held.GLD },
-      held_names: R6_SUMMARY.held_names.filter((h) => !h.banded),
-    });
-    render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const board = await screen.findByTestId("zone-board");
-    fireEvent.click(screen.getByTestId("filter-held"));
-    expect(within(board).queryAllByTestId(/^board-chip-/)).toHaveLength(0);
-    const acct = screen.getByTestId("held-accounting");
-    expect(acct).toHaveTextContent("2 held names, none currently banded");
-    expect(acct).toHaveTextContent("AAPL");
-    expect(acct).toHaveTextContent("GLD");
   });
 });
