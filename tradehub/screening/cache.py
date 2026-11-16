@@ -45,3 +45,13 @@ class Cache:
                 pickle.dump(obj, f)
         except Exception:
             pass  # cache is an optimization; failure to cache is not fatal
+
+    def age_hours(self, key: str) -> float | None:
+        """Hours since the entry was written, or None when absent. The
+        warmer's stale-first rotation orders by this; get() alone cannot
+        say how stale a hit is."""
+        for ext in ("pkl", "json"):
+            p = self._path(key, ext)
+            if p.exists():
+                return (time.time() - p.stat().st_mtime) / 3600
+        return None
