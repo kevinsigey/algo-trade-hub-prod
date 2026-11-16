@@ -40,7 +40,8 @@ def tag_fills(fills: list[dict], client_ids: dict[str, str], labels: dict[str, i
         wanted = labels[order] if order in labels else tag_id(client_ids.get(order))
         idea_id = wanted if wanted in titles else None
         out.append({**f, "idea_id": idea_id, "idea": titles[idea_id] if idea_id is not None else MANUAL,
-                    "tag": (tags or {}).get(order), "reason": (reasons or {}).get(order)})
+                    "tag": (tags or {}).get(order), "reason": (reasons or {}).get(order),
+                    "client_order_id": client_ids.get(order)})
     return out
 
 
@@ -444,18 +445,36 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
                 "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],
                 "reason": lot[5] if len(lot) > 5 else None,
+                # The opening order's client id (thesis tracker PR 5):
+                # the join key trade_links and the play-kind ledgers
+                # read P&L by. Lots always carry it (None when the
+                # order map had no id for the fill).
+                "client_order_id": lot[6] if len(lot) > 6 else None,
             })
             lot[0] -= signed
             qty += signed
             if not lot[0]:
                 del book[at_lot]
         if qty:
-            book.append([qty, price, at, idea, lot_tag, lot_reason])
+            book.append([qty, price, at, idea, lot_tag, lot_reason,
+                         f.get("client_order_id")])
     return trades, lots
 
 
 def closed_trades(fills: list[dict]) -> list[dict]:
     return _fifo(fills)[0]
+
+
+def open_client_ids(fills: list[dict]) -> set[str]:
+    """Client order ids with a lot still open (thesis tracker PR 5):
+    a trade_link whose id is in this set is a fire still in flight,
+    however much of it has already closed."""
+    out: set[str] = set()
+    for lots in _fifo(fills)[1].values():
+        for lot in lots:
+            if len(lot) > 6 and lot[6]:
+                out.add(lot[6])
+    return out
 
 
 def open_lots(fills: list[dict]) -> dict[str, dict[str, float]]:

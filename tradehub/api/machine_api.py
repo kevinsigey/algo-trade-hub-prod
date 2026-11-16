@@ -571,6 +571,140 @@ def classify_option_exit(legs: list[dict], held: dict[str, float], claim=None,
     return info
 
 
+def _tracker_gate(supa, out: dict, gate, *, spec: dict, book: str,
+                  is_exit: bool, risk: float, cash_delta: float) -> bool:
+    """The thesis tracker preflight (v6 spec Sections 2.4/4/7, tracker
+    design PR 5): the blocks that make the event lab's rules mechanical
+    rather than remembered. Engages only when the order carries a
+    play_kind — every other order through this door is untouched.
+
+    An event-lab ENTRY blocks on: play kind c placed live while
+    play_kind_c_live is false (shadow records of kind c pass — they
+    are graded, never placed); a missing opposing_case_ref; a missing
+    modal_value; a tracker reference (forecast_id / thesis_id) that
+    names nothing in the ledger; risk above the governing unit (the
+    sizing fork: Schedule v2 while the grader is fresh, the $1,500
+    fallback otherwise — read from tracker_health at this moment); or
+    a post-trade cash share under the floor (tracker_config's
+    cash_floor_pct; shadow records move no cash and skip it). Exits
+    are exempt, per the standing exits-win ruling, and never write a
+    trade_link: the FIFO joins P&L to the ENTRY's client_order_id.
+
+    `risk` is the caller's figure for its own path: options pass the
+    computed max_loss (a declared figure never overrides computed
+    math); shares pass the declared risk_amount when present, else
+    risk-to-stop from stop_loss_price, else the full notional. On a
+    pass, out["tracker"] carries the link payload the route writes at
+    placement."""
+    play_kind = spec.get("play_kind")
+    if play_kind is None:
+        return True
+    out["tracker"] = None
+    if play_kind not in ("a", "b", "c"):
+        return gate("tracker_gate", False,
+                    f"play_kind {play_kind!r} is not a play kind",
+                    ("tracker", 422,
+                     f"play_kind must be one of 'a', 'b', 'c'; got {play_kind!r}"))
+    if is_exit:
+        out["checks"].append({
+            "name": "tracker_gate", "ok": True, "blocking": False,
+            "detail": "tracker gate exempt: an exit closes a position "
+                      "the entry's link already records"})
+        return True
+    from tradehub.tracker import links as tracker_links
+    from tradehub.tracker import sizing as tracker_sizing
+
+    shadow = bool(spec.get("shadow"))
+    config = tracker_sizing.load_config(supa)
+    if play_kind == "c" and not shadow and not config["play_kind_c_live"]:
+        return gate("tracker_play_kind", False,
+                    "play kind c is shadow-only: reaction entries carry "
+                    "no capital until the drift-test verdict flips "
+                    "play_kind_c_live in tracker_config",
+                    ("tracker", 422,
+                     "play kind c is shadow-only while play_kind_c_live "
+                     "is false; place it as a shadow record or not at all"))
+    ref = str(spec.get("opposing_case_ref") or "").strip()
+    if not gate("tracker_opposing_case", bool(ref),
+                f"opposing case on file: {ref}" if ref else
+                "the order carries no opposing_case_ref",
+                ("tracker", 422,
+                 "an event-lab order must name its opposing case "
+                 "(opposing_case_ref): Opposing Case First is a "
+                 "preflight block, not a reminder")):
+        return False
+    modal = spec.get("modal_value")
+    if not gate("tracker_modal_value", modal is not None,
+                f"modal value {modal}" if modal is not None else
+                "the order carries no modal_value",
+                ("tracker", 422,
+                 "an event-lab order must carry its modal_value (the "
+                 "modal-structure EV figure from its research file)")):
+        return False
+    thesis_id, err = tracker_links.resolve_thesis(
+        supa, forecast_id=spec.get("forecast_id"),
+        thesis_id=spec.get("thesis_id"))
+    if not gate("tracker_reference", err is None,
+                f"linked to thesis {thesis_id}" if thesis_id is not None
+                else "no forecast or thesis named; the play kind alone "
+                     "carries the link",
+                ("tracker", 422, err or "")):
+        return False
+    unit = tracker_sizing.governing_unit(
+        supa, top_tier=bool(spec.get("top_tier")))
+    if not gate("tracker_unit", risk <= unit["unit"] + 1e-9,
+                f"risk ${risk:,.0f} within the governing unit "
+                f"${unit['unit']:,.0f} ({unit['source']})",
+                ("tracker", 422,
+                 f"risk ${risk:,.0f} exceeds the governing unit "
+                 f"${unit['unit']:,.0f} ({unit['source']}: Schedule v2 "
+                 "applies only while automatic grading is fresh; "
+                 "otherwise the unit is the $1,500 fallback)")):
+        return False
+    if not shadow:
+        from tradehub.portfolio.alpaca_paper import paper_get
+
+        try:
+            account = paper_get("/v2/account", book=book)
+            cash = float(account["cash"])
+            equity = float(account["equity"])
+        except Exception:  # noqa: BLE001 -- unverifiable cash fails closed
+            return gate("tracker_cash_floor", False,
+                        "the book's cash could not be read; the "
+                        "cash-floor check cannot run",
+                        ("tracker", 424,
+                         "the book's cash could not be read; an "
+                         "event-lab entry cannot be checked against "
+                         "the cash floor"))
+        post_pct = (cash + cash_delta) / equity * 100 if equity else None
+        floor = float(config["cash_floor_pct"])
+        if not gate("tracker_cash_floor",
+                    post_pct is not None and post_pct >= floor - 1e-9,
+                    f"post-trade cash {post_pct:.1f}% of equity, floor "
+                    f"{floor:g}%" if post_pct is not None else
+                    "the account reports no equity; the cash share "
+                    "cannot be computed",
+                    ("tracker", 422,
+                     f"post-trade cash {post_pct:.1f}% of equity "
+                     f"breaches the {floor:g}% cash floor: a breach "
+                     "blocks new event-lab entries until cured"
+                     if post_pct is not None else
+                     "the account reports no equity; the cash floor "
+                     "cannot be verified")):
+            return False
+    out["tracker"] = {
+        "play_kind": play_kind, "thesis_id": thesis_id,
+        "forecast_id": spec.get("forecast_id"),
+        "modal_value": float(modal), "opposing_case_ref": ref,
+        "shadow": shadow, "governing_unit": unit["unit"],
+        "unit_source": unit["source"], "risk": risk}
+    gate("tracker_gate", True,
+         f"tracker gate: play kind {play_kind}, unit "
+         f"${unit['unit']:,.0f} ({unit['source']})"
+         + ("; shadow record — no capital" if shadow else ""))
+    return True
+
+
 def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dict:
     """The placement validators, shared verbatim by POST /api/v1/orders and the
     preflight route (2026-11-08): one code path, so a dry run can never promise
@@ -590,7 +724,7 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     checks: list[dict] = []
     out: dict = {"refusal": None, "price": None, "chunks": [], "checks": checks,
                  "symbol": "", "book": key_book(key), "daily_used": None, "breaker": None,
-                 "option": None, "portfolio_check": None,
+                 "option": None, "portfolio_check": None, "tracker": None,
                  "exit": {"is_exit": False, "bypassed": [], "claimed": spec.get("exit_claim"),
                           "detail": "not classified: an earlier gate refused this order"}}
 
@@ -805,6 +939,25 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     gate("circuit_breaker", True,
          "the book's circuit breaker is not tripped" if not breaker["tripped"]
          else "the breaker is tripped but this order closes or protects a position")
+    # The thesis tracker gate (tracker design PR 5): engages only when
+    # the order carries a play_kind. Share risk is the declared
+    # risk_amount when the file sized one, else risk-to-stop from the
+    # declared stop level, else the full notional — the strictest
+    # computable reading, in that order of preference for the file's
+    # own figure. Cash moves by the priced notional.
+    if spec.get("play_kind") is not None:
+        if spec.get("risk_amount") is not None:
+            risk = float(spec["risk_amount"])
+        elif spec.get("stop_loss_price") is not None and price is not None:
+            risk = abs(price - float(spec["stop_loss_price"])) * qty
+        else:
+            risk = (price or 0.0) * qty
+        cash_delta = ((-(price * qty) if side == "buy" else price * qty)
+                      if price is not None else 0.0)
+        if not _tracker_gate(supa, out, gate, spec=spec, book=book,
+                             is_exit=is_exit, risk=risk,
+                             cash_delta=cash_delta):
+            return out
     # The portfolio check (Kevin, 2026-11-09): the last gate, on the post-trade
     # book. A protective stop moves nothing unless it fills and is already fenced
     # to held shares, so it carries a stated pass instead of a book read.
@@ -1072,6 +1225,15 @@ def _validate_option_order(supa, key: dict, spec: dict, out: dict, gate, *, dry_
          f"max loss ${max_loss:,.0f} within options buying power ${obp:,.0f}" if opening
          else "a closing order risks nothing new")
     out["price"] = float(limit_price) if kind == "combo" else prices[legs[0]["symbol"]]
+
+    # ── the thesis tracker gate (tracker design PR 5): options risk is
+    # the computed max_loss, never a declared figure; cash moves by the
+    # package premium (a credit package's negative premium adds cash).
+    if spec.get("play_kind") is not None:
+        if not _tracker_gate(supa, out, gate, spec=spec, book=book,
+                             is_exit=is_exit, risk=float(max_loss),
+                             cash_delta=-float(premium)):
+            return out
 
     # ── daily cap: the package counts once, never per leg; an exit counts zero ──
     used = placed_today(supa, key["id"])

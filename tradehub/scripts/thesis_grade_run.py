@@ -13,9 +13,10 @@ drop the event-lab unit to the $1,500 fallback every Monday morning
 even with the grader healthy. A weekend run grades nothing new and
 re-stamps.
 
-Claim C's fire nets are wired from trade_links P&L in PR 5 (the
-placement writes do not exist yet); until then the run passes an
-empty list and Claim C's progress reads zero fires.
+Claim C's fire nets are wired from trade_links P&L (PR 5): the FIFO's
+closed trades and open lots, joined by client_order_id per book. A
+book that cannot be read is left out of the state, which stops the
+fire walk at that book's first link rather than guessing its nets.
 """
 from __future__ import annotations
 
@@ -62,12 +63,35 @@ def daily_closes(symbol: str, start: date, end: date, *,
         params["page_token"] = token
 
 
+def book_state(client) -> dict:
+    """Per-book FIFO state for the fire walk: closed trades (carrying
+    the opening order's client_order_id since PR 5) and the client ids
+    with a lot still open. A book whose account is not connected or
+    whose fills cannot be read is omitted — see the module docstring."""
+    from tradehub.portfolio import book as book_mod
+    from tradehub.portfolio import books, service
+
+    state: dict = {}
+    for name in books.names():
+        try:
+            fills = service.tagged_fills(client, book_name=name)[0]
+        except Exception:  # noqa: BLE001 -- an unreadable book is omitted
+            continue
+        state[name] = {"closed": book_mod.closed_trades(fills),
+                       "open_client_ids": book_mod.open_client_ids(fills)}
+    return state
+
+
 def main() -> None:
     client = get_client()
     now = datetime.now(UTC)
     try:
+        from tradehub.tracker import links
+
+        fire_nets = links.claim_c_fire_nets(client, book_state(client),
+                                            now=now)
         summary = grader.grade_run(client, daily_closes, now,
-                                   fire_nets=())
+                                   fire_nets=fire_nets)
     except Exception as exc:  # noqa: BLE001 -- the stamp is the alarm
         try:
             grader.stamp_health(client, now, ok=False)
