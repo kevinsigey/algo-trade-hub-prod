@@ -106,7 +106,8 @@ def test_preflight_blocks_a_gld_buy_over_its_cap_naming_cap_and_weight(api):
     assert gate["ok"] is False and gate["blocking"] is True
     assert "12" in gate["detail"] and "13.5" in gate["detail"]
     block = body["portfolio_check"]
-    assert block["outcome"] == "block" and block["thesis"]["id"] == "t4_ballast"
+    # Under the v6 remap GLD belongs to no sleeve: its own override caps it.
+    assert block["outcome"] == "block" and block["thesis"]["id"] is None
 
 
 def test_placement_refuses_what_preflight_blocked_and_audits_it(api):
@@ -138,7 +139,7 @@ def test_preflight_passes_a_conforming_order_with_the_block_visible(api):
     assert body["portfolio_check"]["outcome"] == "pass"
     gate = next(c for c in body["checks"] if c["name"] == "portfolio_check")
     assert gate["ok"] is True and gate["blocking"] is False
-    assert body["portfolio_check"]["weights"]["sleeves"]["t4_ballast"] > 50.0
+    assert body["portfolio_check"]["weights"]["sleeves"]["regime"] > 16.0
 
 
 def test_a_gld_sell_places_because_exits_reduce_the_breach(api):
@@ -169,12 +170,21 @@ def test_a_stored_targets_edit_changes_the_preflight_verdict(api):
 
 
 # ── Kevin's ruling (2026-11-09): exits win over the member floor ──────────────
+# The shipped v6 config has no member floors (the T4 band was retired on
+# 2026-11-16), so these two tests install a floor through the stored targets
+# row -- the config is the law, and the ruling binds any config with a floor.
+
+def _dbc_floor_config(db):
+    db.db["portfolio_targets"] = [{"scope": "global", "config": {
+        "sleeves": {"floor_band": {"label": "Floor band", "symbols": ["DBC"],
+                                   "member_min_pct": 2.0}}}}]
+
 
 def _dbc_at_the_floor_edge(state):
-    """Rest the fixture book so DBC (a T4 ballast member) sits just over its 2%
-    floor with enough shares held for a classified exit: DBC $20k of $843k
-    invested = 2.4%, 100 shares held; GLD rested under its gold flag so the
-    floor warning is the check's headline."""
+    """Rest the fixture book so DBC sits just over the test floor with enough
+    shares held for a classified exit: DBC $20k of $843k invested = 2.4%,
+    100 shares held; GLD rested under its gold flag so the floor warning is
+    the check's headline."""
     _gold_under_its_flag(state)
     state["positions"] = [
         {**row, "qty": "100", "market_value": "20000"} if row["symbol"] == "DBC" else row
@@ -183,6 +193,7 @@ def _dbc_at_the_floor_edge(state):
 
 def test_preflight_an_exit_trim_below_the_floor_passes_with_a_named_warning(api):
     client, db, _, state = api
+    _dbc_floor_config(db)
     _dbc_at_the_floor_edge(state)
     r = _preflight(client, _key(db), symbol="DBC", qty=50, side="sell",
                    client_order_id="floor-exit-1")   # -$5k -> 15k/838k = 1.8%
@@ -201,6 +212,7 @@ def test_preflight_an_exit_trim_below_the_floor_passes_with_a_named_warning(api)
 
 def test_preflight_the_same_trim_oversold_is_not_an_exit_and_still_blocks(api):
     client, db, _, state = api
+    _dbc_floor_config(db)
     _dbc_at_the_floor_edge(state)
     r = _preflight(client, _key(db, max_qty=1000), symbol="DBC", qty=150, side="sell",
                    client_order_id="floor-over-1")   # 150 > the 100 held: no exit
@@ -251,10 +263,15 @@ def test_the_card_reads_the_same_engine_state(api):
     body = r.json()
     assert body["invested"] == 900_000.0
     assert body["cash_pct"] == pytest.approx(150_000 / 1_050_000 * 100, abs=0.01)
-    ballast = next(s for s in body["sleeves"] if s["id"] == "t4_ballast")
-    gld = next(m for m in ballast["members"] if m["symbol"] == "GLD")
+    regime = next(s for s in body["sleeves"] if s["id"] == "regime")
+    xlu = next(m for m in regime["members"] if m["symbol"] == "XLU")
+    assert xlu["weight_pct"] == pytest.approx(50_000 / 900_000 * 100, abs=0.01)
+    assert xlu["max_pct"] == 20.0 and xlu["min_pct"] is None
+    assert xlu["status"] == "ok"
+    # GLD belongs to no sleeve under v6: it reads as unassigned, still over
+    # its own 12% override, and the gold cluster still flags it.
+    gld = next(u for u in body["unassigned"] if u["symbol"] == "GLD")
     assert gld["weight_pct"] == pytest.approx(13.0, abs=0.01)
-    assert gld["target_pct"] == 11.0 and gld["max_pct"] == 12.0 and gld["status"] == "over"
     assert body["clusters"]["gold"]["pct"] == pytest.approx(13.0, abs=0.01)
     t8 = next(s for s in body["sleeves"] if s["id"] == "t8_ai")
     assert t8["weight_pct"] == pytest.approx(6.0, abs=0.01) and t8["status"] == "ok"
