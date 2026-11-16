@@ -173,6 +173,11 @@ def _is_union_rooted(universe: dict) -> bool:
 def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     validate_spec(spec)
     store = store or DataStore()
+    # The missing ledger is cumulative on a reused store; this run's
+    # accounting reads only the notes THIS run records (a prior run's
+    # miss must not leak into this run's evaluation block -- a name can
+    # otherwise read as both not evaluated and missing a field).
+    missing_start = len(store.missing)
     resolved = resolve_universe(store, spec["universe"])
     universe_full = len(resolved)
     union_rooted = _is_union_rooted(spec["universe"])
@@ -328,9 +333,13 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     # used fields named, from the same ledger the footer has always kept)
     # or not evaluated, with the reason. Lists are capped for the stored
     # record (the house pattern: near-misses do the same); counts are not.
-    missing_used = [m for m in store.missing if m["field"] in used_fns]
+    missing_used = [m for m in store.missing[missing_start:]
+                    if m["field"] in used_fns]
+    evaluated_set = {str(t) for t in tickers}
     missing_fields: dict[str, list[str]] = {}
     for m in missing_used:
+        if m["ticker"] not in evaluated_set:
+            continue  # a note about a name this run did not evaluate
         fields = missing_fields.setdefault(m["ticker"], [])
         if m["field"] not in fields:
             fields.append(m["field"])

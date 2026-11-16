@@ -91,21 +91,67 @@ def test_spec_cap_names_every_dropped_name_as_not_evaluated(fake_fields):
     assert "max_universe" in ev["not_evaluated"][0]["reason"]
 
 
-def test_evaluation_block_groups_missing_fields_by_name(fake_fields):
-    # A getter's missing note (seeded here the way the data layer records
-    # it) lands in the per-name status block, counted per field.
-    missing = [{"ticker": "CCC", "field": "fake_alpha", "reason": "no data"},
-               {"ticker": "CCC", "field": "fake_beta", "reason": "no data"},
-               {"ticker": "BBB", "field": "fake_alpha", "reason": "no data"},
-               {"ticker": "BBB", "field": "unrelated_fn", "reason": "not used"}]
+@pytest.fixture
+def noting_fields(monkeypatch):
+    """Fields that record missing notes the way the data layer's getters
+    do (DataStore.note_missing appends {ticker, field, reason})."""
+    def noting(values, misses):
+        def fn(store, tickers, **params):
+            for t in tickers:
+                if t in misses:
+                    store.missing.append({"ticker": t, "field": misses[t],
+                                          "reason": "no data"})
+            return pd.Series({t: values.get(t) for t in tickers}, dtype=float)
+        return fn
+
+    saved = dict(REGISTRY)
+    REGISTRY["fake_alpha"] = {"fn": noting({"AAA": 10.0}, {"BBB": "fake_alpha", "CCC": "fake_alpha"}),
+                              "kind": "field", "returns": "float", "params": {},
+                              "source": "test", "category": "test", "doc": "fake"}
+    REGISTRY["fake_beta"] = {"fn": noting({"AAA": 2.0}, {"CCC": "fake_beta"}),
+                             "kind": "field", "returns": "float", "params": {},
+                             "source": "test", "category": "test", "doc": "fake"}
+    yield
+    REGISTRY.clear()
+    REGISTRY.update(saved)
+
+
+def test_evaluation_block_groups_missing_fields_by_name(noting_fields):
     spec = {**BASE, "filters": [{"fn": "fake_alpha", "op": "gt", "value": 0},
                                 {"fn": "fake_beta", "op": "gt", "value": 0}]}
-    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=missing))
+    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
     ev = result.footer["evaluation"]
     assert ev["missing_fields"] == {"BBB": ["fake_alpha"],
                                     "CCC": ["fake_alpha", "fake_beta"]}
     assert ev["missing_field_counts"] == {"fake_alpha": 2, "fake_beta": 1}
     assert ev["evaluated_count"] == 3  # missing data is evaluated, not dropped
+
+
+def test_evaluation_missing_fields_are_scoped_to_this_run(noting_fields):
+    # A reused store's ledger is cumulative: run 1's misses must not leak
+    # into run 2's block (a cap-dropped name would otherwise read as both
+    # not evaluated AND missing a field).
+    store = SimpleNamespace(asof={}, missing=[])
+    spec = {**BASE, "filters": [{"fn": "fake_alpha", "op": "gt", "value": 0}]}
+    runner.run_spec(spec, store=store)
+    capped = runner.run_spec({**spec, "max_universe": 2}, store=store)
+    ev = capped.footer["evaluation"]
+    assert [n["ticker"] for n in ev["not_evaluated"]] == ["CCC"]
+    assert "CCC" not in ev["missing_fields"]
+    assert ev["missing_fields"] == {"BBB": ["fake_alpha"]}  # run 2's own note
+
+
+def test_no_default_cap_above_the_old_300(fake_fields):
+    # The regression guard for the structural removal: a non-union universe
+    # LARGER than the old 300 default evaluates in full.
+    tickers = [f"T{i:03d}" for i in range(305)]
+    spec = {"name": "wide", "universe": {"type": "list", "tickers": tickers},
+            "filters": [{"fn": "fake_beta", "op": "gt", "value": 0}]}
+    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
+    assert "universe_capped" not in result.footer
+    ev = result.footer["evaluation"]
+    assert ev["universe_total"] == 305 and ev["evaluated_count"] == 305
+    assert ev["not_evaluated_count"] == 0
 
 
 def test_catalog_and_run_endpoints(monkeypatch):

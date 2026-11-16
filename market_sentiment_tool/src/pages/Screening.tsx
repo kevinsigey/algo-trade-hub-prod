@@ -526,7 +526,9 @@ export default function Screening() {
               <span> · evaluated {result.footer.evaluation.evaluated_count} of {result.footer.evaluation.universe_total} names</span>
             )}
             {result.footer.evaluation && result.footer.evaluation.not_evaluated_count > 0 && (
-              <span className="text-amber-300"> · {result.footer.evaluation.not_evaluated_count} not evaluated — each is named, with its reason, in the run record</span>
+              <span className="text-amber-300"> · {result.footer.evaluation.not_evaluated_count} not evaluated — {result.footer.evaluation.not_evaluated_count <= 200
+                ? "each is named, with its reason, in the run record"
+                : "the run record names the first 200, with their reasons; the count is complete"}</span>
             )}
             {result.footer.data_as_of && <> · data as of {result.footer.data_as_of.replace("T", " ").slice(0, 16)} UTC</>}
             {" "}· click a column to sort, a row for its quote and provenance

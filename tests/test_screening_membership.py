@@ -252,6 +252,14 @@ def test_max_universe_is_the_only_cap(fake_fields):
     assert capped.footer["universe_size"] == 2
     assert capped.footer["universe_capped"] == {"cap": 2, "universe_size_full": 3}
     assert [n["ticker"] for n in capped.footer["evaluation"]["not_evaluated"]] == ["CCC"]
+    # Larger than the removed default: 305 names, no spec cap -> all run.
+    wide = {"name": "wide", "universe": {"type": "list",
+                                         "tickers": [f"T{i:03d}" for i in range(305)]},
+            "filters": [{"fn": "fake_alpha", "op": "gt", "value": 3}]}
+    out = runner.run_spec(wide, store=store)
+    assert out.footer["universe_size"] == 305
+    assert out.footer["evaluation"]["evaluated_count"] == 305
+    assert out.footer["evaluation"]["not_evaluated_count"] == 0
 
 
 def test_list_screens_passes_near_misses_through():
