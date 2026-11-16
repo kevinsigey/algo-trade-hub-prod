@@ -429,10 +429,18 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
             lot = book[at_lot]
             matched = min(abs(qty), abs(lot[0]))
             signed = math.copysign(matched, lot[0])
+            # Option fills arrive as contracts x per-share premium; the
+            # 100-shares-per-contract multiplier is what turns premium
+            # points into dollars. Without it an option round trip books
+            # at 1/100 of its true P&L (Fable audit 2026-11-16: the CRWV
+            # 45 puts, 22 contracts 2.94 -> 0.21, lost $6,006 and the
+            # ledger showed -$60, which also threw every realized total
+            # off the equity-minus-unrealized identity).
+            mult = 100.0 if _OCC.match(f["symbol"]) else 1.0
             trades.append({
                 "symbol": f["symbol"], "sector": sector_for(f["symbol"]),
                 "qty": signed, "entry_price": lot[1], "exit_price": price,
-                "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed,
+                "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed * mult,
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
                 "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],
                 "reason": lot[5] if len(lot) > 5 else None,
