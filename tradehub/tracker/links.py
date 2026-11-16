@@ -8,8 +8,10 @@ ledger's own math — option round trips at the x100 contract
 multiplier, as fixed in PR #543.
 
 Claim C reads its fire nets here: play-kind-(a) links in placement
-order, each fire's net counted only once the fire is FULLY closed,
-and the walk stops at the first incomplete fire — the frozen window
+order, each fire's net counted only once the fire is FULLY closed
+AND its entry order is terminal (a partly-filled entry whose filled
+part already closed can still take more fills), and the walk stops
+at the first incomplete fire — the frozen window
 is the NEXT five fires, so a later fire may not jump an earlier one
 that is still open. A link that produced no position at all (the
 order never filled) is skipped once it is older than the pending
@@ -41,17 +43,41 @@ def record_link(client, *, client_order_id: str, book: str,
                 shadow: bool = False) -> dict:
     """Insert the link for one placed order; a retry of the same
     placement returns the row already written (the table's unique
-    client_order_id is the idempotency key)."""
-    rows = (client.table(LINKS).select("*")
-            .eq("client_order_id", client_order_id).execute().data) or []
+    client_order_id is the idempotency key). A row recorded on
+    DIFFERENT terms (a shadow record vs a live order, or another play
+    kind) is a conflict, not a retry — the same caller id reused for a
+    different thing — and raises."""
+    def fetch():
+        return (client.table(LINKS).select("*")
+                .eq("client_order_id", client_order_id)
+                .execute().data) or []
+
+    def check_terms(row):
+        if bool(row.get("shadow")) != bool(shadow) \
+                or row.get("play_kind") != play_kind:
+            raise ValueError(
+                f"client_order_id {client_order_id} is already recorded "
+                "with different link terms (shadow/play_kind)")
+
+    rows = fetch()
     if rows:
+        check_terms(rows[0])
         return rows[0]
     row = {"client_order_id": client_order_id, "book": book,
            "forecast_id": forecast_id, "thesis_id": thesis_id,
            "play_kind": play_kind, "modal_value": modal_value,
            "opposing_case_ref": opposing_case_ref,
            "shadow": bool(shadow)}
-    inserted = (client.table(LINKS).insert(row).execute().data) or []
+    try:
+        inserted = (client.table(LINKS).insert(row).execute().data) or []
+    except Exception:
+        # A concurrent call stored the same id between the check and
+        # the insert (the column is unique): its row is the record.
+        stored = fetch()
+        if not stored:
+            raise
+        check_terms(stored[0])
+        return stored[0]
     return inserted[0] if inserted else row
 
 
@@ -82,12 +108,14 @@ def all_links(client) -> list[dict]:
                                        r.get("id") or 0))
 
 
-def _book_view(book_state: dict, book: str) -> tuple[list[dict], set]:
-    """(closed trades, open client_order_ids) for one book the caller
-    DID read (an unreadable book is absent from book_state, and the
-    fire walk stops at its first link rather than guessing)."""
+def _book_view(book_state: dict, book: str) -> tuple[list[dict], set, set]:
+    """(closed trades, open-lot client_order_ids, non-terminal-order
+    client_order_ids) for one book the caller DID read (an unreadable
+    book is absent from book_state, and the fire walk stops at its
+    first link rather than guessing)."""
     view = book_state.get(book) or {}
-    return view.get("closed") or [], view.get("open_client_ids") or set()
+    return (view.get("closed") or [], view.get("open_client_ids") or set(),
+            view.get("open_order_ids") or set())
 
 
 def claim_c_fire_nets(client, book_state: dict, *,
@@ -104,9 +132,14 @@ def claim_c_fire_nets(client, book_state: dict, *,
             continue
         if link["book"] not in book_state:
             break  # the book could not be read: undecidable, stop here
-        closed, open_ids = _book_view(book_state, link["book"])
+        closed, open_ids, open_orders = _book_view(book_state,
+                                                   link["book"])
         cid = link["client_order_id"]
         trades = [t for t in closed if t.get("client_order_id") == cid]
+        if cid in open_orders:
+            break  # the entry order is not terminal (e.g. partly
+            # filled, the filled part already closed): more fills can
+            # still land and change this fire's net — it is not final
         if cid in open_ids:
             break  # still open: this fire has no net yet, and it is next
         if trades:
@@ -131,7 +164,7 @@ def pnl_by_play_kind(client, book_state: dict) -> dict:
     for link in all_links(client):
         if link.get("shadow"):
             continue
-        closed, _ = _book_view(book_state, link["book"])
+        closed, _, _ = _book_view(book_state, link["book"])
         trades = [t for t in closed
                   if t.get("client_order_id") == link["client_order_id"]]
         if not trades:

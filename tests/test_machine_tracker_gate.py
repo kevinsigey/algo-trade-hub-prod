@@ -272,3 +272,83 @@ def test_the_option_gate_uses_computed_max_loss(monkeypatch):
     assert out["refusal"] is not None
     assert out["refusal"][0] == "tracker"
     assert "governing unit" in out["refusal"][2]
+
+
+# -- CodeRabbit round (PR #549): the shadow edges and the stop side ---------
+
+def test_shadow_without_a_play_kind_is_refused(api):
+    client, db, sent, _ = api
+    r = client.post("/api/v1/orders", headers=_key(db), json={
+        "symbol": "NVDA", "qty": 1, "side": "buy", "client_order_id": "s-0",
+        "reason": "record only", "shadow": True})
+    # Without a play_kind the gate never engages: the order would have
+    # placed LIVE. The refusal is the whole point of a shadow record.
+    assert r.status_code == 422
+    assert sent == [] and _links(db) == []
+
+
+def test_a_shadow_exit_is_refused(api):
+    client, db, sent, state = api
+    state["positions"] = [{"symbol": "NVDA", "qty": "10", "side": "long"}]
+    r = _post(client, _key(db), side="sell", qty=10, client_order_id="s-1",
+              shadow=True)
+    assert r.status_code == 422
+    assert sent == [] and _links(db) == []
+
+
+def test_a_stop_on_the_gain_side_does_not_shrink_risk(api):
+    client, db, sent, _ = api
+    # Buy at the fixture's 100.0 with the stop ABOVE entry: the stop
+    # limits nothing, so risk falls back to the $10,000 notional and
+    # the $5,000 unit blocks. Priced off the stop it would read $1.
+    r = _post(client, _key(db), qty=100, stop_loss_price=100.01,
+              client_order_id="s-2")
+    assert r.status_code == 422
+    assert sent == []
+    # The same order with the stop on the loss side risks $1,000.
+    r = _post(client, _key(db), qty=100, stop_loss_price=90.0,
+              client_order_id="s-3")
+    assert r.status_code == 200 and len(sent) == 1
+
+
+def test_a_failed_shadow_link_write_is_an_error(api, monkeypatch):
+    from tradehub.tracker import links as tracker_links
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(tracker_links, "record_link", boom)
+    client, db, sent, _ = api
+    r = _post(client, _key(db), play_kind="c", shadow=True,
+              client_order_id="s-4")
+    # A shadow request's only effect is its link: a 200 here would
+    # report a record that does not exist.
+    assert r.status_code == 503
+    assert sent == [] and _links(db) == []
+
+
+def test_a_duplicate_retry_repairs_a_failed_link(api, monkeypatch):
+    from tradehub.tracker import links as tracker_links
+
+    real = tracker_links.record_link
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return real(*args, **kwargs)
+    monkeypatch.setattr(tracker_links, "record_link", flaky)
+    client, db, sent, _ = api
+    headers = _key(db)
+    r = _post(client, headers)
+    assert r.status_code == 200 and r.json()["link_note"]
+    assert _links(db) == []
+    failed = [e for e in db.db.get("api_key_events", [])
+              if e["outcome"] == "tracker_link_failed"]
+    assert len(failed) == 1  # the failure is in the audit trail
+    # The retry hits the broker's duplicate guard — and repairs the
+    # link on its way to the 409.
+    r = _post(client, headers)
+    assert r.status_code == 409
+    assert len(_links(db)) == 1
+    assert _links(db)[0]["client_order_id"] == "ext-1-run-1"

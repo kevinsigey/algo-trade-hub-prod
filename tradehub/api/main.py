@@ -2530,6 +2530,13 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     if tracker is not None and tracker["shadow"]:
         client_order_id = f"ext-{key['id']}-{body.client_order_id}"
         note = write_link(client_order_id)
+        if note:
+            # A shadow request's ONLY effect is its link: reporting
+            # success with nothing recorded would lose the record
+            # silently. record_link is idempotent, so a retry is safe.
+            refused("tracker_link", 503,
+                    "the shadow record could not be written; "
+                    "retry the request")
         machine_keys.record_event(supabase, key["id"], route, "shadow_recorded",
                                   detail=note, client_order_id=client_order_id)
         return {"shadow": True, "client_order_id": client_order_id,
@@ -2587,6 +2594,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except paper_orders.OrdersDisabled as exc:
             refused("paper_switch_off", 409, str(exc))
         except paper_orders.DuplicateOrder:
+            write_link(client_order_id)  # a retry repairs a link the
+            # first attempt failed to write (idempotent)
             refused("duplicate", 409, "an order with this client_order_id was already sent")
         except AccountNotConnected:
             refused("account", 424, "the paper account is not connected")
@@ -2597,6 +2606,10 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                                       label(order["id"]), result["exit"]["is_exit"]),
                                   client_order_id=client_order_id)
         link_note = write_link(client_order_id)
+        if link_note:
+            machine_keys.record_event(
+                supabase, key["id"], route, "tracker_link_failed",
+                detail=link_note, client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
@@ -2636,6 +2649,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except paper_orders.OrdersDisabled as exc:
             refused("paper_switch_off", 409, str(exc))
         except paper_orders.DuplicateOrder:
+            write_link(client_order_id)  # a retry repairs a link the
+            # first attempt failed to write (idempotent)
             refused("duplicate", 409, "an order with this client_order_id was already sent")
         except AccountNotConnected:
             refused("account", 424, "the paper account is not connected")
@@ -2646,6 +2661,10 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                                       label(order["id"]), result["exit"]["is_exit"]),
                                   client_order_id=client_order_id)
         link_note = write_link(client_order_id)
+        if link_note:
+            machine_keys.record_event(
+                supabase, key["id"], route, "tracker_link_failed",
+                detail=link_note, client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(

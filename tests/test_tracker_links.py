@@ -36,7 +36,8 @@ def _link(c, cid, *, kind="a", book="main", days_ago=10, shadow=False):
 
 def _state(**books):
     return {name: {"closed": view.get("closed", []),
-                   "open_client_ids": view.get("open", set())}
+                   "open_client_ids": view.get("open", set()),
+                   "open_order_ids": view.get("open_order_ids", set())}
             for name, view in books.items()}
 
 
@@ -55,6 +56,64 @@ def test_record_link_is_idempotent_on_the_client_order_id():
     assert again["id"] == first["id"]
     assert len(c.tables["trade_links"]) == 1
     assert c.tables["trade_links"][0]["modal_value"] == 1.5
+
+
+def test_record_link_conflicting_terms_raise():
+    import pytest
+
+    c = _client()
+    _link(c, "ext-1-a", shadow=True)
+    # The same caller id reused for a LIVE order is a conflict, not a
+    # retry: returning the shadow row would hide the live entry from
+    # Claim C and the play-kind P&L.
+    with pytest.raises(ValueError, match="different link terms"):
+        links.record_link(
+            c, client_order_id="ext-1-a", book="main", play_kind="a",
+            modal_value=1.5, opposing_case_ref="research/x.md#opposing-case",
+            shadow=False)
+    with pytest.raises(ValueError, match="different link terms"):
+        links.record_link(
+            c, client_order_id="ext-1-a", book="main", play_kind="b",
+            modal_value=1.5, opposing_case_ref="research/x.md#opposing-case",
+            shadow=True)
+
+
+class _RaceTable:
+    """A table whose insert loses a race: the row appears (written by
+    the 'concurrent' call) while this insert raises the unique
+    violation."""
+
+    def __init__(self, client):
+        self._client = client
+        self._filters = {}
+
+    def select(self, *_a):
+        return self
+
+    def eq(self, key, value):
+        self._filters[key] = value
+        return self
+
+    def insert(self, row):
+        self._client.tables["trade_links"] = [dict(row, id=99)]
+        raise RuntimeError("duplicate key value violates unique constraint")
+
+    def execute(self):
+        rows = [r for r in self._client.tables.get("trade_links", [])
+                if all(r.get(k) == v for k, v in self._filters.items())]
+        return type("R", (), {"data": rows})()
+
+
+def test_record_link_recovers_a_concurrent_insert():
+    c = _client()
+    c.tables["trade_links"] = []
+    real_table = c.table
+    c.table = lambda name: _RaceTable(c) if name == "trade_links" \
+        else real_table(name)
+    row = links.record_link(
+        c, client_order_id="ext-1-race", book="main", play_kind="a",
+        modal_value=1.5, opposing_case_ref="research/x.md#opposing-case")
+    assert row["id"] == 99
 
 
 def test_resolve_thesis_from_card_and_errors():
@@ -114,7 +173,25 @@ def test_shadow_and_other_kinds_are_not_fires_and_unreadable_books_stop():
 
     c2 = _client()
     _link(c2, "ext-2-a", book="big", days_ago=10)
-    assert links.claim_c_fire_nets(c2, _state(), now=NOW) == []
+    _link(c2, "ext-1-d", days_ago=9)
+    state2 = _state(main={"closed": [_trade("ext-1-d", 5.0)]})
+    # The unreadable 'big' book stops the walk BEFORE the readable
+    # fire behind it — without the stop, the positionless big link is
+    # old enough to skip as never-filled and the walk returns [5.0].
+    assert links.claim_c_fire_nets(c2, state2, now=NOW) == []
+
+
+def test_fire_net_waits_for_a_terminal_entry_order():
+    c = _client()
+    _link(c, "ext-1-a", days_ago=10)
+    _link(c, "ext-1-b", days_ago=9)
+    state = _state(main={"closed": [_trade("ext-1-a", 7.0),
+                                     _trade("ext-1-b", 5.0)],
+                          "open_order_ids": {"ext-1-a"}})
+    # ext-1-a's filled part is closed, but its entry order is partly
+    # filled and can still take fills: its net is not final, and the
+    # fire behind it may not jump it.
+    assert links.claim_c_fire_nets(c, state, now=NOW) == []
 
 
 def test_pnl_by_play_kind_never_blends():

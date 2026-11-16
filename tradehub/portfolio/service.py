@@ -150,6 +150,34 @@ def _orders(book_name: str | None = None) -> dict[str, str]:
     return out
 
 
+_TERMINAL_ORDER_STATUSES = {"filled", "canceled", "expired", "rejected",
+                             "replaced", "suspended", "done_for_day"}
+
+
+@_with_book
+def open_order_client_ids(book_name: str | None = None) -> set[str]:
+    """client_order_ids whose order is NOT in a terminal state (GET
+    only) — a partly-filled entry lives here until its last fill or
+    its cancel/expiry, which is what a 'fully closed' test needs on
+    top of the FIFO's open lots. Legs inherit the parent's id, as in
+    _orders."""
+    out: set[str] = set()
+    params: dict = {"status": "open", "direction": "asc",
+                    "limit": ORDER_PAGE, "nested": "true"}
+    for _ in range(20):  # ponytail: same 10,000-order cap as _orders
+        page = paper_get("/v2/orders", params)
+        for o in page:
+            if (o.get("status") or "") in _TERMINAL_ORDER_STATUSES:
+                continue  # status=open should exclude these; belt+braces
+            cid = o.get("client_order_id") or ""
+            if cid:
+                out.add(cid)
+        if len(page) < ORDER_PAGE:
+            break
+        params = {**params, "after": page[-1]["submitted_at"]}
+    return out
+
+
 def orders_since(day: date) -> list[dict]:
     """Every order on the current book submitted from `day` on. Raises rather than return part of it."""
     out: list[dict] = []

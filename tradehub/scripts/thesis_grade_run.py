@@ -65,9 +65,10 @@ def daily_closes(symbol: str, start: date, end: date, *,
 
 def book_state(client) -> dict:
     """Per-book FIFO state for the fire walk: closed trades (carrying
-    the opening order's client_order_id since PR 5) and the client ids
-    with a lot still open. A book whose account is not connected or
-    whose fills cannot be read is omitted — see the module docstring."""
+    the opening order's client_order_id since PR 5), the client ids
+    with a lot still open, and the client ids whose entry order is
+    not yet terminal. A book whose account is not connected or whose
+    fills cannot be read is omitted — see the module docstring."""
     from tradehub.portfolio import book as book_mod
     from tradehub.portfolio import books, service
 
@@ -75,10 +76,12 @@ def book_state(client) -> dict:
     for name in books.names():
         try:
             fills = service.tagged_fills(client, book_name=name)[0]
+            open_orders = service.open_order_client_ids(book_name=name)
         except Exception:  # noqa: BLE001 -- an unreadable book is omitted
             continue
         state[name] = {"closed": book_mod.closed_trades(fills),
-                       "open_client_ids": book_mod.open_client_ids(fills)}
+                       "open_client_ids": book_mod.open_client_ids(fills),
+                       "open_order_ids": open_orders}
     return state
 
 

@@ -606,6 +606,13 @@ def _tracker_gate(supa, out: dict, gate, *, spec: dict, book: str,
                     ("tracker", 422,
                      f"play_kind must be one of 'a', 'b', 'c'; got {play_kind!r}"))
     if is_exit:
+        if spec.get("shadow"):
+            return gate("tracker_gate", False,
+                        "a shadow record of an exit would place nothing "
+                        "and record a link no entry owns",
+                        ("tracker", 422,
+                         "shadow records are entries only: an exit "
+                         "cannot be shadow-recorded"))
         out["checks"].append({
             "name": "tracker_gate", "ok": True, "blocking": False,
             "detail": "tracker gate exempt: an exit closes a position "
@@ -773,6 +780,18 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
                   else "the order carries no idea_id and no reason",
                   ("attribution", 422,
                    "a machine order must carry an idea_id or a stated reason")):
+        return out
+    # A shadow record exists only as a tracker link: without a play_kind
+    # the tracker gate never engages and the order would place LIVE,
+    # which is the opposite of what the caller asked for. Refuse here,
+    # before either path, so both routes (place and preflight) see it.
+    if spec.get("shadow") and spec.get("play_kind") is None:
+        gate("tracker_shadow", False,
+             "shadow=true without a play_kind: nothing would record "
+             "the link and the order would place live",
+             ("tracker", 422,
+              "a shadow record must carry a play_kind; without one it "
+              "is not a record at all"))
         return out
     # Options (2026-11-09): an OCC symbol or a legs[] body leaves the share path
     # entirely -- a 21-char contract symbol is not a too-long ticker. The branch
@@ -946,10 +965,18 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     # computable reading, in that order of preference for the file's
     # own figure. Cash moves by the priced notional.
     if spec.get("play_kind") is not None:
+        stop = spec.get("stop_loss_price")
+        # Risk-to-stop counts only when the stop actually limits the
+        # loss for this side (below the price for a buy, above it for
+        # a short entry): a stop on the gain side limits nothing, and
+        # pricing risk off it would wave the order past the unit.
+        stop_limits = (stop is not None and price is not None and
+                       ((side == "buy" and float(stop) < price) or
+                        (side == "sell" and float(stop) > price)))
         if spec.get("risk_amount") is not None:
             risk = float(spec["risk_amount"])
-        elif spec.get("stop_loss_price") is not None and price is not None:
-            risk = abs(price - float(spec["stop_loss_price"])) * qty
+        elif stop_limits:
+            risk = abs(price - float(stop)) * qty
         else:
             risk = (price or 0.0) * qty
         cash_delta = ((-(price * qty) if side == "buy" else price * qty)
