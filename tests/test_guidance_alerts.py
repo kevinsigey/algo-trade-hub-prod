@@ -96,14 +96,53 @@ def test_held_crossing_arms_watch_and_opens_manual_action():
     assert w["instrument"] == "HELD"
     assert float(w["level"]) == 110.0
     assert w["intent"] == "alert" and w["rung"] == 1
+    # The watcher tick evaluates only cross_up / cross_down /
+    # touch_and_hold / zone_entry — a downward band crossing is
+    # cross_down; any other value would sit as unknown_trigger_type
+    # and never fire.
+    assert w["trigger_type"] == "cross_down"
+    assert w["conditions"]["crossing"] == "entered_buy_zone"
     actions = db.table("manual_actions").select("*").execute().data
     assert len(actions) == 1
     a = actions[0]
     assert a["kind"] == "band_crossing_review"
     assert a["book"] == "main" and a["symbol"] == "HELD"
-    # state is the schema default ('open'); the fake does not apply
-    # column defaults, so assert it only when the row carries it.
-    assert a.get("state") in (None, "open")
+    # The action's state comes from the schema default (asserted
+    # against the migration below); the fake applies no defaults, so
+    # the row here carries no state — what the bridge itself persists
+    # is the snapshot-pair identity in the detail.
+    assert "snapshot" in a["detail"] and "->" in a["detail"]
+
+
+def test_manual_actions_state_defaults_to_open_in_the_schema():
+    """Schema contract for the assertion the fake cannot make: the
+    manual_actions migration declares the state default the bridge
+    relies on when it reads a row as open."""
+    from pathlib import Path
+
+    sql = (Path(__file__).resolve().parents[1]
+           / "market_sentiment_tool" / "supabase" / "migrations"
+           / "20261102000006_manual_actions.sql").read_text()
+    assert "state text not null default 'open'" in sql
+
+
+def test_resolved_action_and_disabled_watch_stay_wired_on_replay():
+    """The dedupe key is the persisted crossing identity, not live
+    resource state: resolving the action and disabling the watch must
+    not re-arm or re-open the same snapshot pair on a re-run."""
+    db = _db_with_crossing()
+    ga.run_alerts(db, positions_fn=_positions, now=T1)
+    action = db.table("manual_actions").select("*").execute().data[0]
+    db.table("manual_actions").update({"state": "done"}) \
+        .eq("id", action["id"]).execute()
+    watch = db.table("level_watches").select("*").execute().data[0]
+    db.table("level_watches").update({"enabled": False}) \
+        .eq("id", watch["id"]).execute()
+    out = ga.run_alerts(db, positions_fn=_positions, now=T1)
+    assert out["watches_armed"] == 0
+    assert out["actions_opened"] == 0
+    assert len(db.table("level_watches").select("*").execute().data) == 1
+    assert len(db.table("manual_actions").select("*").execute().data) == 1
 
 
 def test_rerun_over_the_same_pair_is_a_noop():

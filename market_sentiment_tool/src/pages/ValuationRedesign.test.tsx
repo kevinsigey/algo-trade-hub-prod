@@ -268,6 +268,19 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
     expect(within(row).getByTestId("queue-open-AAPL")).toBeInTheDocument();
   });
 
+  it("opening a sheet from the queue is idempotent — a second click never closes it", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const queue = await screen.findByTestId("missing-band-queue");
+    const open = within(queue).getByTestId("queue-open-AAPL");
+    fireEvent.click(open);
+    // The falsifier text lives in the unbanded row AND, once expanded,
+    // in the sheet detail — two copies while the sheet is open.
+    expect((await screen.findAllByText(/no band to falsify/i)).length).toBe(2);
+    fireEvent.click(open);
+    expect(screen.getAllByText(/no band to falsify/i).length).toBe(2);
+  });
+
   it("renders the sheets and tables when the board block does not ride the load", async () => {
     serve(SUMMARY, SHEETS, null);
     render(<MemoryRouter><Valuation /></MemoryRouter>);

@@ -99,6 +99,39 @@ def test_recorder_revisions_split_capex_and_fcf_by_evidence():
     assert abs(rev["fcf"] - (-20.0)) < 0.01  # the buyback row is not FCF
 
 
+def test_recorder_revision_window_excludes_history():
+    """A revision whose newest guide predates the window is history,
+    not a mover: with `since` after the pair's newest record the
+    revision disappears; with `since` before it, it stands."""
+    recs = [
+        {"ticker": "AAA", "metric": "capex", "period": "FY2026",
+         "low": 10.0, "high": 10.0, "evidence": "capex guide",
+         "created_at": "2026-10-01T00:00:00Z"},
+        {"ticker": "AAA", "metric": "capex", "period": "FY2026",
+         "low": 12.0, "high": 12.0, "evidence": "capex guide",
+         "created_at": "2026-11-01T00:00:00Z"},
+    ]
+    by_ticker = {"AAA": recs}
+    fresh = gp.recorder_revisions(by_ticker, since="2026-10-15T00:00:00Z")
+    assert abs(fresh["AAA"]["capex"] - 20.0) < 0.01
+    stale = gp.recorder_revisions(by_ticker, since="2026-11-10T00:00:00Z")
+    assert "AAA" not in stale
+
+
+def test_records_read_pages_past_the_postgrest_cap():
+    """guidance_records only grows and PostgREST caps a response at
+    1000 rows: the read must page, or it silently degrades to the
+    oldest records."""
+    db = DB()
+    rows = [{"ticker": "AAA", "metric": "capex", "period": "FY2026",
+             "low": 10.0, "high": 10.0, "evidence": "capex guide",
+             "created_at": f"2026-10-{(i % 28) + 1:02d}T{i % 24:02d}:00:00Z"}
+            for i in range(1001)]
+    db.table("guidance_records").insert(rows).execute()
+    out = gp._records(db)
+    assert len(out["AAA"]) == 1001
+
+
 # ── grid position ────────────────────────────────────────────────────────────
 
 def test_position_statuses_and_distance():

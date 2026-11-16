@@ -62,15 +62,22 @@ def _sheet_account(sheet: dict | None) -> tuple[bool, str | None, str | None]:
     return False, status, reason
 
 
-def previous_snapshot(client) -> dict | None:
+def previous_snapshot(client, *, before_id=None) -> dict | None:
     """The second-newest COMPLETED snapshot, or None. An in-flight
-    recompute is invisible here, exactly as in store.latest_snapshot."""
+    recompute is invisible here, exactly as in store.latest_snapshot.
+    With before_id, the newest completed snapshot OLDER than that id —
+    the predecessor of a snapshot the caller has already selected, so
+    a recompute completing mid-request can never make a snapshot its
+    own predecessor."""
     try:
         rows = (client.table("valuation_snapshots").select("*")
                 .order("id", desc=True).limit(10).execute().data) or []
     except Exception:  # noqa: BLE001 -- pre-migration reads as no snapshot
         return None
-    completed = [r for r in rows if r.get("completed_at")]
+    completed = [r for r in rows if r.get("completed_at")
+                 and (before_id is None or r["id"] < before_id)]
+    if before_id is not None:
+        return completed[0] if completed else None
     return completed[1] if len(completed) > 1 else None
 
 

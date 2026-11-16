@@ -936,9 +936,18 @@ export default function Valuation() {
     }
   }, [decisionParam, sheets]);
 
+  // Board, grid, and queue navigation OPENS the sheet — idempotently.
+  // (toggle() belongs to the reference table's own disclosure buttons:
+  // selecting "open its fact sheet" for an already-open sheet must not
+  // close it.)
   const selectFromBoard = (sheet: FactSheet) => {
     setRefOpen(true);
-    toggle(sheet);
+    setExpanded(sheet.ticker);
+    if (sheet.peer_group && members[sheet.ticker] === undefined) {
+      adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
+        .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
+        .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
+    }
     document.getElementById("reference-table")?.scrollIntoView?.();
   };
 

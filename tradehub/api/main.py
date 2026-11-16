@@ -4581,7 +4581,8 @@ def valuation_bands_list(_admin: dict = Depends(admin.require_admin), supabase=D
     try:
         from tradehub.valuation import guidance_page
 
-        board = guidance_page.build_board(supabase)
+        board = guidance_page.build_board(
+            supabase, snapshot_id=snap["id"] if snap else None)
     except Exception:  # noqa: BLE001 -- additive block
         board = None
     return {"snapshot": _snapshot_stamp(snap), "sheets": sheets,

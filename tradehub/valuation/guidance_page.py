@@ -8,8 +8,13 @@ plus the guidance recorder, served as one additive block on
   guide, from band history) ranked beside the recorder's capex and FCF
   guide revisions (the screening layer's own definition: a period's two
   most recent guide midpoints, the period whose latest guide is
-  newest), and band migrations (zone changes). Held names pin first in
-  every list.
+  newest) — a recorder revision counts as a mover for a snapshot pair
+  only when that period's newest guide was recorded after the previous
+  snapshot completed, so a historical revision is never re-presented
+  as this pair's news — and band migrations (zone changes). Held names
+  pin first in every list. The board anchors to the snapshot the
+  endpoint selected for its sheets: a recompute completing mid-request
+  never mixes a newer board over older sheets.
 - GRID: every banded name of the latest snapshot with its bands, the
   snapshot price (labelled with the snapshot's computed-at — never a
   live price in disguise), the position status computed from price vs
@@ -45,22 +50,30 @@ def _num(value):
 
 # ── guide revisions from the recorder (the screening definition) ────────────
 
-def guide_change_pct(records: list[dict]) -> float | None:
+def guide_change_pct(records: list[dict], *, since=None) -> float | None:
     """% change between a period's two most recent guide midpoints, for
     the period whose latest guide is newest — the same rule the
     screening layer's capex/fcf guide-change fields use. None when no
-    period has a comparable pair."""
+    period has a comparable pair. With `since`, only periods whose
+    newest guide was recorded after that instant are eligible: the
+    revision then happened inside the caller's window instead of being
+    history re-presented as news."""
     by_period: dict[str, list[dict]] = {}
     for r in records:
         if r.get("low") is None or r.get("high") is None \
                 or not r.get("period"):
             continue
         by_period.setdefault(r["period"], []).append(r)
+    since_dt = _parse(since) if since is not None else None
     best = None
     for rs in by_period.values():
         rs = sorted(rs, key=lambda r: str(r.get("created_at") or ""))
         if len(rs) < 2:
             continue
+        if since_dt is not None:
+            latest_dt = _parse(rs[-1].get("created_at"))
+            if latest_dt is None or latest_dt <= since_dt:
+                continue
         prev_mid = (float(rs[-2]["low"]) + float(rs[-2]["high"])) / 2
         last_mid = (float(rs[-1]["low"]) + float(rs[-1]["high"])) / 2
         if not prev_mid:
@@ -71,29 +84,44 @@ def guide_change_pct(records: list[dict]) -> float | None:
     return None if best is None else best[1]
 
 
+_RECORDS_PAGE = 1000
+
+
 def _records(client) -> dict[str, list[dict]]:
     """Guidance records grouped by ticker, WITH the evidence column
-    (val_store's RECORD_COLS omits it; the FCF rule needs it)."""
-    rows = (client.table("guidance_records")
-            .select("ticker,metric,period,low,high,evidence,created_at")
-            .order("created_at").execute().data) or []
+    (val_store's RECORD_COLS omits it; the FCF rule needs it). Paged:
+    PostgREST returns at most 1000 rows per response and nothing ever
+    deletes from this table, so a single unbounded read would silently
+    degrade to the OLDEST records once the table outgrows the cap."""
     out: dict[str, list[dict]] = {}
-    for r in rows:
-        out.setdefault(r["ticker"], []).append(r)
-    return out
+    start = 0
+    while True:
+        rows = (client.table("guidance_records")
+                .select("ticker,metric,period,low,high,evidence,created_at")
+                .order("created_at")
+                .range(start, start + _RECORDS_PAGE - 1)
+                .execute().data) or []
+        for r in rows:
+            out.setdefault(r["ticker"], []).append(r)
+        if len(rows) < _RECORDS_PAGE:
+            return out
+        start += _RECORDS_PAGE
 
 
-def recorder_revisions(records_by_ticker: dict[str, list[dict]]) -> dict:
+def recorder_revisions(records_by_ticker: dict[str, list[dict]], *,
+                       since=None) -> dict:
     """{ticker: {"capex": pct|None, "fcf": pct|None}} from guidance
     records: capex reads metric 'capex'; FCF reads metric 'other' whose
-    evidence names free cash flow (the recorder's convention)."""
+    evidence names free cash flow (the recorder's convention). `since`
+    windows the revisions (see guide_change_pct)."""
     out: dict[str, dict] = {}
     for ticker, recs in records_by_ticker.items():
         capex = guide_change_pct(
-            [r for r in recs if r.get("metric") == "capex"])
+            [r for r in recs if r.get("metric") == "capex"], since=since)
         fcf = guide_change_pct(
             [r for r in recs if r.get("metric") == "other"
-             and "free cash flow" in (r.get("evidence") or "").lower()])
+             and "free cash flow" in (r.get("evidence") or "").lower()],
+            since=since)
         if capex is not None or fcf is not None:
             out[ticker] = {"capex": capex, "fcf": fcf}
     return out
@@ -136,18 +164,34 @@ def _bands_of(row: dict) -> dict | None:
 
 # ── assembly ─────────────────────────────────────────────────────────────────
 
+def _snapshot_by_id(client, snapshot_id) -> dict | None:
+    try:
+        rows = (client.table("valuation_snapshots").select("*")
+                .eq("id", snapshot_id).execute().data) or []
+    except Exception:  # noqa: BLE001 -- unreadable reads as unanchored
+        return None
+    return rows[0] if rows and rows[0].get("completed_at") else None
+
+
 def build_board(client, *, positions_fn=None,
-                now: datetime | None = None) -> dict:
-    """The board block for the latest completed snapshot. Sections fail
-    soft independently; with no completed snapshot the block says so."""
+                now: datetime | None = None,
+                snapshot_id=None) -> dict:
+    """The board block for one completed snapshot — the latest, or the
+    snapshot_id the caller already selected for its sheets (the
+    endpoint passes its own snapshot so the board can never describe a
+    newer snapshot than the sheets beside it). Sections fail soft
+    independently; with no completed snapshot the block says so."""
     now = now or datetime.now(timezone.utc)
     empty = {"snapshot_id": None, "previous_snapshot_id": None,
              "freshness": None, "movers": None, "grid": [],
              "missing_band": []}
-    snap = val_store.latest_snapshot(client)
+    snap = (_snapshot_by_id(client, snapshot_id)
+            if snapshot_id is not None else None)
+    if snap is None:
+        snap = val_store.latest_snapshot(client)
     if snap is None:
         return empty
-    prev = page_summary.previous_snapshot(client)
+    prev = page_summary.previous_snapshot(client, before_id=snap["id"])
     snapshot_id = snap["id"]
     sheets = val_store.snapshot_sheets(client, snapshot_id)
     sheet_by = {s["ticker"]: s for s in sheets if s.get("ticker")}
@@ -175,7 +219,9 @@ def build_board(client, *, positions_fn=None,
                                           if prev else None)}
 
     movers = _movers(client, latest_hist, prev_hist, held_set,
-                     have_prev=prev is not None)
+                     have_prev=prev is not None,
+                     since=(prev.get("completed_at")
+                            or prev.get("computed_at")) if prev else None)
     grid = _grid(sheets, latest_hist, held)
     missing = _missing_band(client, sheet_by, held)
     return {"snapshot_id": snapshot_id,
@@ -196,7 +242,7 @@ def _parse(value) -> datetime | None:
 
 
 def _movers(client, latest_hist, prev_hist, held_set, *,
-            have_prev: bool) -> dict | None:
+            have_prev: bool, since=None) -> dict | None:
     """The movers block, or None when there is no previous snapshot to
     move against (the page renders the honest no-baseline state)."""
     if not have_prev:
@@ -219,7 +265,7 @@ def _movers(client, latest_hist, prev_hist, held_set, *,
         records = _records(client)
     except Exception:  # noqa: BLE001 -- recorder unreadable: anchor only
         records = {}
-    for ticker, rev in recorder_revisions(records).items():
+    for ticker, rev in recorder_revisions(records, since=since).items():
         for metric in ("capex", "fcf"):
             if rev.get(metric) is not None:
                 revisions.append({
