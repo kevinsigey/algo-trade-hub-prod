@@ -20,7 +20,24 @@ from tradehub.core.supabase_client import get_client
 
 def main() -> int:
     load_local_env()
-    out = lw.run_tick(get_client())
+    client = get_client()
+    out = lw.run_tick(client)
+    # Thesis tracker PR 6: the kill-line bridge rides the watcher
+    # runner — sync theses.kill_lines into watches and open an
+    # exit_review action for any kill-line fire. Fail-soft: a bridge
+    # failure never takes the tick down with it.
+    try:
+        from tradehub.tracker import kill_lines
+        bridge = kill_lines.run_bridge(client)
+        sync, reviews = bridge["sync"], bridge["reviews"]
+        if sync["armed"] or sync["disabled"] or reviews["actions_opened"]:
+            print(f"kill-line bridge: {sync['armed']} armed, "
+                  f"{sync['reenabled']} re-enabled, "
+                  f"{sync['disabled']} disabled, "
+                  f"{reviews['actions_opened']} exit reviews opened "
+                  f"({reviews['fires_seen']} recent fires)")
+    except Exception as exc:  # noqa: BLE001 -- named, never fatal
+        print(f"kill-line bridge failed: {type(exc).__name__}: {exc}")
     if not out["market_hours"]:
         print("level watcher: outside market hours — idle")
         return 0
