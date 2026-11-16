@@ -27,8 +27,35 @@ def test_translate_returns_a_validated_spec(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     spec = {"name": "cheap", "universe": {"type": "index", "index": "sp500"},
             "filters": [{"fn": "pe_ratio", "op": "lt", "value": 15}]}
-    out, model = translate("cheap stocks", post=_post_returning(json.dumps(spec)))
+    out, model, notes = translate("cheap stocks", post=_post_returning(json.dumps(spec)))
     assert out["filters"][0]["fn"] == "pe_ratio" and model == "stub-model"
+    assert notes == []
+
+
+def test_translate_surfaces_the_models_unhonored_list(monkeypatch):
+    # Translator rule (Nov 2026): what the translation cannot express is
+    # DISCLOSED in the notes, never silently dropped. The "unhonored" key
+    # rides outside the spec (the schema admits no such key) and is
+    # stripped before validation.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    spec = {"name": "cheap", "universe": {"type": "index", "index": "sp500"},
+            "filters": [{"fn": "pe_ratio", "op": "lt", "value": 15}],
+            "unhonored": ["insider buying — no field measures it"]}
+    out, _, notes = translate("cheap stocks with insider buying",
+                              post=_post_returning(json.dumps(spec)))
+    assert "unhonored" not in out
+    assert notes == ["not honored: insider buying — no field measures it"]
+
+
+def test_translate_can_express_a_union_universe(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    spec = {"name": "wide", "universe": {"type": "index_union",
+                                         "indexes": ["sp500", "nasdaq100"]},
+            "filters": [{"fn": "price_to_book", "op": "between", "value": [0.2, 1]}]}
+    out, _, notes = translate("below book across the S&P 500 and Nasdaq 100",
+                              post=_post_returning(json.dumps(spec)))
+    assert out["universe"]["type"] == "index_union"
+    assert notes == []
 
 
 def test_translate_refuses_an_invalid_spec(monkeypatch):
@@ -65,7 +92,7 @@ def test_openrouter_route_is_capped_at_three_models(monkeypatch):
                                   "filters": [{"fn": "pe_ratio", "op": "lt", "value": 15}]})
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    spec, _ = translate("cheap stocks", post=post)
+    spec, _, _ = translate("cheap stocks", post=post)
     assert len(seen["models"]) <= 3
     assert spec["name"] == "x"
 
@@ -75,18 +102,33 @@ def test_translate_falls_back_to_rules_when_the_ai_raises(monkeypatch):
         raise RuntimeError("HTTP 400")
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
-    spec, model = translate("stocks with strong momentum and beat earnings with positive guidance",
-                            post=boom)
+    spec, model, notes = translate("stocks with strong momentum and beat earnings with positive guidance",
+                                   post=boom)
     fns = {(f["fn"], f["op"]) for f in spec["filters"]}
     assert ("momentum", "pct_gte") in fns
     assert ("last_print_surprise_pct", "gt") in fns
     assert ("last_print_reaction_pct", "gt") in fns
     assert model.startswith("rules")
+    # The fallback's standing disclosure rides along: the rules spec is
+    # never served as if it covered everything the request named.
+    assert len(notes) == 1 and "rules fallback" in notes[0]
+
+
+def test_translate_notes_the_refusal_when_rules_serve_after_an_invalid_ai_spec(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    bad = {"name": "x", "universe": {"type": "index", "index": "sp500"},
+           "filters": [{"fn": "not_a_function", "op": "gt", "value": 1}]}
+    spec, model, notes = translate("cheap stocks", post=_post_returning(json.dumps(bad)))
+    assert model.startswith("rules")
+    assert spec["filters"]  # the rules read "cheap" fine
+    assert "rules fallback" in notes[0]
+    assert "refused" in notes[1] and "not_a_function" in notes[1]
 
 
 def test_translate_repairs_the_id_alias_for_the_index_universe(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     spec = {"name": "cheap", "universe": {"type": "index", "id": "sp500"},
             "filters": [{"fn": "pe_ratio", "op": "lt", "value": 15}]}
-    out, _ = translate("cheap stocks", post=_post_returning(json.dumps(spec)))
+    out, _, notes = translate("cheap stocks", post=_post_returning(json.dumps(spec)))
     assert out["universe"] == {"type": "index", "index": "sp500"}
+    assert any("read as the universe index" in n for n in notes)

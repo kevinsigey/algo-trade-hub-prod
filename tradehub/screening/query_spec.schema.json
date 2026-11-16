@@ -71,7 +71,7 @@
    "type": "integer"
   },
   "max_universe": {
-   "description": "This screen's own enrichment cap, overriding the standard 300-name run cap (the classic watchlist screens carry it for their wider index-union universe). Absent = the standard cap; the run footer discloses whichever cap applied.",
+   "description": "This screen's own enrichment cap (the classic watchlist screens carry one deliberately). Absent = no cap: the run evaluates the full resolved universe. When a cap bites, the run footer's evaluation block names every dropped name as not evaluated, with the reason.",
    "minimum": 1,
    "type": "integer"
   },

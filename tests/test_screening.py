@@ -64,12 +64,94 @@ def test_run_computes_a_derived_ratio_and_filters_on_it(fake_fields):
     assert result.footer["columns"]["alpha_per_beta"]["source"] == "derived: fake_alpha / fake_beta"
 
 
-def test_run_discloses_the_universe_cap(fake_fields, monkeypatch):
-    monkeypatch.setattr(runner, "MAX_UNIVERSE", 2)
+def test_run_has_no_default_universe_cap(fake_fields):
+    # Universe expansion (Nov 2026): the old 300-name default cap is gone --
+    # a spec without max_universe evaluates its full universe, and the
+    # footer's evaluation block accounts for every name.
     spec = {**BASE, "filters": [{"fn": "fake_beta", "op": "gt", "value": 0}]}
+    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
+    assert result.footer["universe_size"] == 3
+    assert "universe_capped" not in result.footer
+    ev = result.footer["evaluation"]
+    assert ev["universe_total"] == 3 and ev["evaluated_count"] == 3
+    assert ev["not_evaluated"] == [] and ev["not_evaluated_count"] == 0
+    assert result.footer["universe_total"] == 3
+    assert result.footer["evaluated_count"] == 3
+
+
+def test_spec_cap_names_every_dropped_name_as_not_evaluated(fake_fields):
+    spec = {**BASE, "max_universe": 2,
+            "filters": [{"fn": "fake_beta", "op": "gt", "value": 0}]}
     result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
     assert result.footer["universe_size"] == 2
     assert result.footer["universe_capped"] == {"cap": 2, "universe_size_full": 3}
+    ev = result.footer["evaluation"]
+    assert ev["evaluated_count"] == 2 and ev["not_evaluated_count"] == 1
+    assert [n["ticker"] for n in ev["not_evaluated"]] == ["CCC"]
+    assert "max_universe" in ev["not_evaluated"][0]["reason"]
+
+
+@pytest.fixture
+def noting_fields(monkeypatch):
+    """Fields that record missing notes the way the data layer's getters
+    do (DataStore.note_missing appends {ticker, field, reason})."""
+    def noting(values, misses):
+        def fn(store, tickers, **params):
+            for t in tickers:
+                if t in misses:
+                    store.missing.append({"ticker": t, "field": misses[t],
+                                          "reason": "no data"})
+            return pd.Series({t: values.get(t) for t in tickers}, dtype=float)
+        return fn
+
+    saved = dict(REGISTRY)
+    REGISTRY["fake_alpha"] = {"fn": noting({"AAA": 10.0}, {"BBB": "fake_alpha", "CCC": "fake_alpha"}),
+                              "kind": "field", "returns": "float", "params": {},
+                              "source": "test", "category": "test", "doc": "fake"}
+    REGISTRY["fake_beta"] = {"fn": noting({"AAA": 2.0}, {"CCC": "fake_beta"}),
+                             "kind": "field", "returns": "float", "params": {},
+                             "source": "test", "category": "test", "doc": "fake"}
+    yield
+    REGISTRY.clear()
+    REGISTRY.update(saved)
+
+
+def test_evaluation_block_groups_missing_fields_by_name(noting_fields):
+    spec = {**BASE, "filters": [{"fn": "fake_alpha", "op": "gt", "value": 0},
+                                {"fn": "fake_beta", "op": "gt", "value": 0}]}
+    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
+    ev = result.footer["evaluation"]
+    assert ev["missing_fields"] == {"BBB": ["fake_alpha"],
+                                    "CCC": ["fake_alpha", "fake_beta"]}
+    assert ev["missing_field_counts"] == {"fake_alpha": 2, "fake_beta": 1}
+    assert ev["evaluated_count"] == 3  # missing data is evaluated, not dropped
+
+
+def test_evaluation_missing_fields_are_scoped_to_this_run(noting_fields):
+    # A reused store's ledger is cumulative: run 1's misses must not leak
+    # into run 2's block (a cap-dropped name would otherwise read as both
+    # not evaluated AND missing a field).
+    store = SimpleNamespace(asof={}, missing=[])
+    spec = {**BASE, "filters": [{"fn": "fake_alpha", "op": "gt", "value": 0}]}
+    runner.run_spec(spec, store=store)
+    capped = runner.run_spec({**spec, "max_universe": 2}, store=store)
+    ev = capped.footer["evaluation"]
+    assert [n["ticker"] for n in ev["not_evaluated"]] == ["CCC"]
+    assert "CCC" not in ev["missing_fields"]
+    assert ev["missing_fields"] == {"BBB": ["fake_alpha"]}  # run 2's own note
+
+
+def test_no_default_cap_above_the_old_300(fake_fields):
+    # The regression guard for the structural removal: a non-union universe
+    # LARGER than the old 300 default evaluates in full.
+    tickers = [f"T{i:03d}" for i in range(305)]
+    spec = {"name": "wide", "universe": {"type": "list", "tickers": tickers},
+            "filters": [{"fn": "fake_beta", "op": "gt", "value": 0}]}
+    result = runner.run_spec(spec, store=SimpleNamespace(asof={}, missing=[]))
+    assert "universe_capped" not in result.footer
+    ev = result.footer["evaluation"]
+    assert ev["universe_total"] == 305 and ev["evaluated_count"] == 305
+    assert ev["not_evaluated_count"] == 0
 
 
 def test_catalog_and_run_endpoints(monkeypatch):
@@ -97,8 +179,8 @@ def test_translate_validates_the_models_spec(monkeypatch):
         def json(self):
             return {"model": "x/y:free", "choices": [{"message": {"content": "Here you go:\n" + json.dumps(good)}}]}
 
-    spec, model = tr.translate("cheap stocks", post=lambda *a, **k: Resp())
-    assert spec == good and model == "x/y:free"
+    spec, model, notes = tr.translate("cheap stocks", post=lambda *a, **k: Resp())
+    assert spec == good and model == "x/y:free" and notes == []
     bad = {"name": "t", "universe": {"type": "list", "tickers": ["AAA"]},
            "filters": [{"fn": "nope", "op": "lt", "value": 1}]}
 
@@ -106,6 +188,13 @@ def test_translate_validates_the_models_spec(monkeypatch):
         def json(self):
             return {"model": "x/y:free", "choices": [{"message": {"content": json.dumps(bad)}}]}
 
+    # Nov 2026: an invalid AI spec no longer dead-ends when the rules can
+    # read the query -- the rules spec is served WITH the refusal disclosed
+    # in the notes (never a silent fix-up). A query the rules cannot read
+    # still raises (test_screening_translate.py covers that path).
+    spec2, model2, notes2 = tr.translate("cheap stocks", post=lambda *a, **k: BadResp())
+    assert model2.startswith("rules") and spec2["filters"]
+    assert any("refused" in n and "nope" in n for n in notes2)
     with pytest.raises(tr.TranslateUnavailable, match="nope"):
         tr.translate("???", post=lambda *a, **k: BadResp())
 

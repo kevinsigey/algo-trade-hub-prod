@@ -345,6 +345,26 @@ describe("Screening page (Round 2)", () => {
     expect(screen.getByText(/union universe, no enrichment cap/)).toBeInTheDocument();
   });
 
+  it("shows the evaluation accounting on a run's header", async () => {
+    const runEval = {
+      columns: ["ticker", "roe"],
+      rows: [{ ticker: "AAA", roe: 30 }],
+      footer: { spec_name: "capped_screen", run_at: "2026-11-16T05:10:00Z",
+        universe_size: 2, survivors: 1,
+        universe_capped: { cap: 2, universe_size_full: 3 },
+        evaluation: { universe_total: 3, evaluated_count: 2, not_evaluated_count: 1,
+          not_evaluated: [{ ticker: "CCC", reason: "cap" }],
+          missing_field_counts: {}, missing_fields: {} },
+        columns: { roe: { fn: "roe", source: "yfinance.info", as_of: "2026-11-16" } } },
+    };
+    serve(undefined, { run: runEval });
+    render(<MemoryRouter><Screening /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /Earnings momentum/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run the screen" }));
+    expect(await screen.findByText(/evaluated 2 of 3 names/)).toBeInTheDocument();
+    expect(screen.getByText(/1 not evaluated/)).toBeInTheDocument();
+  });
+
   it("carries the debate verdict chip on result rows (Batch 2)", async () => {
     const chips = { generated_at: "2026-11-10T12:00:00Z", chips: { AAA: {
       ticker: "AAA", verdict_id: 7, rendered_at: "2026-11-10T06:00:00+00:00",

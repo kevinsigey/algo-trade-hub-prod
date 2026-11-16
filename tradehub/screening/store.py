@@ -62,6 +62,15 @@ def _last_run_view(last_run: dict | None) -> dict | None:
         view["survivor_issuers"] = footer["survivor_issuers"]
     if footer.get("universe_selection"):
         view["universe_selection"] = footer["universe_selection"]
+    # Coverage accounting (universe expansion, Nov 2026): the saved card
+    # shows how much of the resolved universe the recorded run actually
+    # evaluated -- a screen whose run silently skipped names reads as
+    # partial here, never as a clean full run.
+    evaluation = footer.get("evaluation") or {}
+    if evaluation:
+        view["evaluated_count"] = evaluation.get("evaluated_count")
+        view["universe_total"] = evaluation.get("universe_total")
+        view["not_evaluated_count"] = evaluation.get("not_evaluated_count")
     return view
 
 

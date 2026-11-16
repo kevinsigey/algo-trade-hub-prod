@@ -382,11 +382,14 @@ export default function Screening() {
   };
 
   const translate = () => act("translate", async () => {
-    const d = await adminJson<{ spec: ScreenSpec; model: string }>("/api/screening/translate",
+    const d = await adminJson<{ spec: ScreenSpec; model: string; notes?: string[] }>("/api/screening/translate",
       { method: "POST", body: JSON.stringify({ query }) });
-    applySpec(d.spec, d.model.startsWith("rules")
+    const base = d.model.startsWith("rules")
       ? `Built by the built-in rules (${d.model}): the cards below are set; nudge any number, then run.`
-      : `Translated by ${d.model}: the cards below are set; nudge any number, then run.`);
+      : `Translated by ${d.model}: the cards below are set; nudge any number, then run.`;
+    // Translator disclosure (Nov 2026): anything the translation could not
+    // honor is named in the notice, never silently dropped.
+    applySpec(d.spec, d.notes?.length ? `${base} Translator notes: ${d.notes.join(" ")}` : base);
   });
 
   const runSpec = (sp: ScreenSpec) => act("run", async () => {
@@ -518,6 +521,14 @@ export default function Screening() {
             )}
             {!result.footer.universe_capped && result.footer.universe_selection && (
               <span> · {result.footer.universe_selection}</span>
+            )}
+            {result.footer.evaluation && (
+              <span> · evaluated {result.footer.evaluation.evaluated_count} of {result.footer.evaluation.universe_total} names</span>
+            )}
+            {result.footer.evaluation && result.footer.evaluation.not_evaluated_count > 0 && (
+              <span className="text-amber-300"> · {result.footer.evaluation.not_evaluated_count} not evaluated — {result.footer.evaluation.not_evaluated_count <= 200
+                ? "each is named, with its reason, in the run record"
+                : "the run record names the first 200, with their reasons; the count is complete"}</span>
             )}
             {result.footer.data_as_of && <> · data as of {result.footer.data_as_of.replace("T", " ").slice(0, 16)} UTC</>}
             {" "}· click a column to sort, a row for its quote and provenance

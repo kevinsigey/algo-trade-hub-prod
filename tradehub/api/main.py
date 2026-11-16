@@ -4620,10 +4620,10 @@ def screening_translate(body: _TranslateIn, _admin: dict = Depends(admin.require
     from tradehub.screening.translate import TranslateUnavailable, translate
 
     try:
-        spec, model = translate(body.query)
+        spec, model, notes = translate(body.query)
     except TranslateUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"spec": spec, "model": model}
+    return {"spec": spec, "model": model, "notes": notes}
 
 
 @app.post("/api/screening/run", tags=["Screening"])

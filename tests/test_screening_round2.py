@@ -58,18 +58,16 @@ def _union_spec():
 
 # ── FIX 2: the union is never capped; capped subsets are deterministic ──────
 
-def test_union_universe_is_never_capped(refreshed, roe_field, monkeypatch):
-    # Even with the process default cap BELOW the union size and no
-    # max_universe in the spec, a union-rooted screen enriches every name.
-    monkeypatch.setattr(runner, "MAX_UNIVERSE", 2)
+def test_union_universe_is_never_capped(refreshed, roe_field):
+    # A union-rooted screen enriches every name (since Nov 2026 no run has
+    # a default cap at all; the union wording stays on the footer).
     out = runner.run_spec(_union_spec(), store=_store())
     assert out.footer["universe_size"] == 3
     assert "universe_capped" not in out.footer
     assert "no enrichment cap" in out.footer["universe_selection"]
 
 
-def test_common_equity_wrapped_union_is_never_capped(refreshed, roe_field, monkeypatch):
-    monkeypatch.setattr(runner, "MAX_UNIVERSE", 2)
+def test_common_equity_wrapped_union_is_never_capped(refreshed, roe_field):
     spec = _union_spec()
     spec["universe"] = {"type": "common_equity", "base": spec["universe"]}
     out = runner.run_spec(spec, store=_store())
@@ -77,12 +75,13 @@ def test_common_equity_wrapped_union_is_never_capped(refreshed, roe_field, monke
     assert "universe_capped" not in out.footer
 
 
-def test_capped_subset_is_the_sorted_set_not_the_arrival_order(refreshed, roe_field, monkeypatch):
+def test_capped_subset_is_the_sorted_set_not_the_arrival_order(refreshed, roe_field):
     # The refreshed file order is the arrival order; rewriting it reversed
-    # must not change who gets enriched. Pre-fix, the cap slices the raw
-    # order, so the cohort flips with the file.
-    monkeypatch.setattr(runner, "MAX_UNIVERSE", 2)
+    # must not change who gets enriched. The cap is the spec's own
+    # max_universe (the only cap since Nov 2026); it slices the SORTED set,
+    # never the file's arrival order.
     spec = {"name": "capped", "universe": {"type": "index", "index": "sp500"},
+            "max_universe": 2,
             "filters": [{"fn": "roe", "op": "gt", "value": 10}]}
     (refreshed / "universe_sp500.json").write_text(json.dumps(
         {"as_of": "x", "source": "wikipedia", "tickers": ["CCC", "AAA", "BBB"]}))

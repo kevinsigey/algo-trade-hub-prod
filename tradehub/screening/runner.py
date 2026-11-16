@@ -18,12 +18,13 @@ from .sources import DataStore
 from .spec import validate_spec
 from .universes import issuer_key, resolve_universe
 
-import os
-
-# Interactive runs enrich one ticker at a time from rate-limited free sources;
-# the cap keeps a run inside a sane budget and is DISCLOSED in the footer when
-# it bites (the prototype's rule: caps on the run line, never silent).
-MAX_UNIVERSE = int(os.environ.get("TRADEHUB_SCREENING_MAX_UNIVERSE", "300"))
+# Universe expansion (Nov 2026): there is NO default enrichment cap. The old
+# 300-name default silently dropped late-alphabet names from non-union
+# universes (VICI was never evaluated by the sp500 screen that surfaced the
+# gap). The only cap left is a spec's own max_universe, and every name it
+# drops is named in the footer's evaluation block as not evaluated, with the
+# reason. Keeping the cache warm over the full listed universe is the nightly
+# warmer's job, not a run-time cut.
 
 _SOURCE_KIND = {"yfinance prices": "prices", "yfinance.info": "info",
                 "yfinance statements": "statements", "SEC EDGAR": "edgar",
@@ -172,26 +173,36 @@ def _is_union_rooted(universe: dict) -> bool:
 def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
     validate_spec(spec)
     store = store or DataStore()
-    tickers = resolve_universe(store, spec["universe"])
-    universe_full = len(tickers)
+    # The missing ledger is cumulative on a reused store; this run's
+    # accounting reads only the notes THIS run records (a prior run's
+    # miss must not leak into this run's evaluation block -- a name can
+    # otherwise read as both not evaluated and missing a field).
+    missing_start = len(store.missing)
+    resolved = resolve_universe(store, spec["universe"])
+    universe_full = len(resolved)
     union_rooted = _is_union_rooted(spec["universe"])
-    if union_rooted:
-        cap = None
-        selection = (f"all {universe_full} names enriched — union universe, "
-                     "no enrichment cap")
+    # A spec may carry its own cap (max_universe — the classic watchlist
+    # screens carry one deliberately); nothing else caps a run. A capped
+    # subset is the first `cap` names in SORTED ticker order: the cohort
+    # must be a function of the ticker SET, never of the order a refreshed
+    # universe file happens to list them in. Dropped names are recorded in
+    # the footer's evaluation block as not evaluated, with this reason.
+    cap = spec.get("max_universe")
+    if cap is not None and universe_full > cap:
+        ordered = sorted(resolved)
+        tickers, dropped = ordered[:cap], ordered[cap:]
+        selection = (f"first {cap} of {universe_full} names in sorted "
+                     "ticker order (this spec's max_universe cap)")
+        dropped_reason = (f"this spec's max_universe cap kept the first "
+                          f"{cap} of {universe_full} names in sorted "
+                          "ticker order")
     else:
-        # A spec may carry its own cap (max_universe — the classic watchlist
-        # screens' wider-universe option); specs without it get the standard
-        # cap. A capped subset is the first `cap` names in SORTED ticker
-        # order: the cohort must be a function of the ticker SET, never of
-        # the order a refreshed universe file happens to list them in.
-        cap = spec.get("max_universe") or MAX_UNIVERSE
-        if universe_full > cap:
-            tickers = sorted(tickers)[:cap]
-            selection = (f"first {cap} of {universe_full} names in sorted "
-                         "ticker order (enrichment cap)")
-        else:
-            selection = f"all {universe_full} names enriched"
+        tickers, dropped = list(resolved), []
+        cap = None
+        dropped_reason = ""
+        selection = (f"all {universe_full} names enriched — union universe, "
+                     "no enrichment cap") if union_rooted else \
+                    f"all {universe_full} names enriched"
     # Prefetch the per-ticker kinds this spec needs, concurrently, so the
     # field functions below read the local cache instead of fetching one
     # name at a time inside the request (Kevin, 2026-11-03).
@@ -317,12 +328,43 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
                               "as_of": store.asof.get(kind) if kind else None}
     used_fns = {name.split("(")[0] for name in used}
     used_fns |= {c["fn"] for c in spec.get("context") or []}
+    # Run-record accounting (universe expansion, Nov 2026): every resolved
+    # name is accounted for exactly once -- evaluated (with its missing
+    # used fields named, from the same ledger the footer has always kept)
+    # or not evaluated, with the reason. Lists are capped for the stored
+    # record (the house pattern: near-misses do the same); counts are not.
+    missing_used = [m for m in store.missing[missing_start:]
+                    if m["field"] in used_fns]
+    evaluated_set = {str(t) for t in tickers}
+    missing_fields: dict[str, list[str]] = {}
+    for m in missing_used:
+        if m["ticker"] not in evaluated_set:
+            continue  # a note about a name this run did not evaluate
+        fields = missing_fields.setdefault(m["ticker"], [])
+        if m["field"] not in fields:
+            fields.append(m["field"])
+    missing_field_counts: dict[str, int] = {}
+    for fields in missing_fields.values():
+        for fname in fields:
+            missing_field_counts[fname] = missing_field_counts.get(fname, 0) + 1
     ages = [p["as_of"] for p in columns_prov.values() if p.get("as_of")]
     footer = {
         "spec_name": spec["name"],
         "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_as_of": min(ages) if ages else None,
         "universe_size": len(tickers),
+        "universe_total": universe_full,
+        "evaluated_count": len(tickers),
+        "evaluation": {
+            "universe_total": universe_full,
+            "evaluated_count": len(tickers),
+            "not_evaluated_count": len(dropped),
+            "not_evaluated": [{"ticker": t, "reason": dropped_reason}
+                              for t in dropped[:200]],
+            "missing_field_counts": missing_field_counts,
+            "missing_fields": {t: missing_fields[t]
+                               for t in sorted(missing_fields)[:200]},
+        },
         **({"universe_capped": {"cap": cap, "universe_size_full": universe_full}}
            if cap is not None and universe_full > cap else {}),
         "universe_selection": selection,
@@ -345,7 +387,7 @@ def run_spec(spec: dict, store: DataStore | None = None) -> RunResult:
         "filters": filter_report,
         "columns": columns_prov,
         "context": context,
-        "missing": [m for m in store.missing if m["field"] in used_fns],
+        "missing": missing_used,
         "spec_echo": spec,
     }
     return RunResult(table=table, footer=footer, spec=spec)
