@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
@@ -300,6 +300,8 @@ function MoversSection({ board }: { board: GuidanceBoard }) {
   );
 }
 
+const FULL_GRID_ROWS = 8;
+
 type GridSort = "distance" | "revision" | "cap";
 type GridFilter = "all" | "buy" | "below_bear" | "between" | "above_bull";
 
@@ -309,12 +311,23 @@ type GridFilter = "all" | "buy" | "below_bear" | "between" | "above_bull";
  * then the rest; sortable by distance / guide revision / market cap
  * and filterable by zone status. Prices are the snapshot's, labelled
  * with their as-of. */
-function BandGrid({ board, classified, onSelect }: {
+function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
+  members, onCloseRibbon }: {
   board: GuidanceBoard; classified: Set<string>;
   onSelect: (ticker: string) => void;
+  ribbonTicker: string | null;
+  sheetFor: (ticker: string) => FactSheet | undefined;
+  members: Record<string, string[]>;
+  onCloseRibbon: () => void;
 }) {
   const [sort, setSort] = useState<GridSort>("distance");
   const [filter, setFilter] = useState<GridFilter>("all");
+  // One-screen default (Kevin, 2026-11-16): only the first FULL_ROWS
+  // rows under the current sort render as full football fields; the
+  // rest are compact one-line rows that expand in place on click.
+  // Sorting/filtering always run over the full set — no name is ever
+  // dropped or paginated away.
+  const [openedRows, setOpenedRows] = useState<Set<string>>(new Set());
   const revisionBy = useMemo(() => {
     const out = new Map<string, number>();
     for (const r of board.movers?.guide_revisions ?? []) {
@@ -370,7 +383,10 @@ function BandGrid({ board, classified, onSelect }: {
       <p className="mt-0.5 text-sm text-slate-400">
         Every banded name, one row: bear / base / bull as the field, the snapshot
         price as the marker, and the distance to the buy zone (the base band) as
-        the headline number. Held names pin first, then classified prints.
+        the headline number. Held names pin first, then classified prints. The
+        first eight rows under the current sort carry the full field; the rest
+        ride compact and expand in place. Selecting a full row opens its fact
+        sheet in a ribbon right under it.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {filters.map((f) => (
@@ -393,8 +409,38 @@ function BandGrid({ board, classified, onSelect }: {
         ))}
       </div>
       <div className="mt-3 space-y-1.5">
-        {rows.map((r) => (
-          <button key={r.ticker} type="button" data-testid={`grid-row-${r.ticker}`}
+        {rows.map((r, idx) => {
+          const full = idx < FULL_GRID_ROWS || openedRows.has(r.ticker);
+          if (!full) {
+            return (
+              <button key={r.ticker} type="button" data-testid={`grid-row-${r.ticker}`}
+                      data-compact="true"
+                      onClick={() => setOpenedRows((s) => new Set(s).add(r.ticker))}
+                      className="block w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-1.5 text-left hover:border-slate-600">
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  <span className="font-semibold text-white">{r.ticker}</span>
+                  {r.held && (
+                    <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">
+                      {`Held${r.books.length ? ` · ${r.books.join(", ")}` : ""}`}
+                    </span>
+                  )}
+                  <span data-testid={`distance-${r.ticker}`}
+                        className="text-sm font-semibold text-white">
+                    {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to buy zone`}
+                  </span>
+                  <span className="text-xs text-slate-400">{STATUS_LABELS[r.status] ?? r.status}</span>
+                  <span className="block w-44 shrink-0">
+                    <BandTrack bands={r.bands} price={r.price} ticker={r.ticker} />
+                  </span>
+                  <span className="text-xs text-slate-500">Full bar →</span>
+                </span>
+              </button>
+            );
+          }
+          const sheet = sheetFor(r.ticker);
+          return (
+          <Fragment key={r.ticker}>
+          <button type="button" data-testid={`grid-row-${r.ticker}`}
                   onClick={() => onSelect(r.ticker)}
                   className="block w-full rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-left hover:border-slate-600">
             <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
@@ -426,7 +472,26 @@ function BandGrid({ board, classified, onSelect }: {
               {`Bear ${priceText(r.bands.bear)} · Base ${priceText(r.bands.base)} · Bull ${priceText(r.bands.bull)}`}
             </span>
           </button>
-        ))}
+          {ribbonTicker === r.ticker && sheet && (
+            <div data-testid={`ribbon-${r.ticker}`}
+                 className="rounded-lg border border-slate-700 bg-slate-900/60 px-3.5 py-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-white">
+                  {`${r.ticker} — the full fact sheet`}
+                </span>
+                <button type="button" data-testid={`ribbon-close-${r.ticker}`}
+                        onClick={onCloseRibbon}
+                        className="shrink-0 text-xs font-medium text-slate-400 hover:text-slate-200">
+                  Close
+                </button>
+              </div>
+              <SheetDetail sheet={sheet} members={members[r.ticker]} />
+              <NameDecision ticker={r.ticker} />
+            </div>
+          )}
+          </Fragment>
+          );
+        })}
         {rows.length === 0 && (
           <p className="text-sm text-slate-400">No banded names match this view.</p>
         )}
@@ -443,6 +508,13 @@ function MissingBandQueue({ board, hasSheet, onSelect }: {
   board: GuidanceBoard; hasSheet: (ticker: string) => boolean;
   onSelect: (ticker: string) => void;
 }) {
+  // One-screen default: the queue leads with a summary line that NAMES
+  // the held names (a held name with no band is a work item, not a
+  // statistic) plus the total count; the full worklist sits behind
+  // the expander.
+  const [open, setOpen] = useState(false);
+  const heldNames = board.missing_band.filter((r) => r.held)
+    .map((r) => r.ticker);
   return (
     <section data-testid="missing-band-queue" id="missing-band-queue"
              aria-label="Missing-band queue" className="mt-8">
@@ -458,6 +530,20 @@ function MissingBandQueue({ board, hasSheet, onSelect }: {
           Every held and classified name carries a band in this snapshot.
         </p>
       ) : (
+        <>
+          <p data-testid="queue-summary" className="mt-2 text-sm text-slate-300">
+            {`${board.missing_band.length} ${board.missing_band.length === 1 ? "name has" : "names have"} no band in this snapshot`}
+            {heldNames.length > 0
+              ? ` — held: ${heldNames.join(", ")}`
+              : " — none of them held"}
+            {". "}
+            <button type="button" data-testid="queue-expand" aria-expanded={open}
+                    onClick={() => setOpen((v) => !v)}
+                    className="font-medium text-sky-300 hover:text-sky-200">
+              {open ? "Hide the full queue" : "Show the full queue"}
+            </button>
+          </p>
+          {open && (
         <ul className="mt-2 space-y-1.5">
           {board.missing_band.map((r) => (
             <li key={r.ticker} data-testid={`queue-row-${r.ticker}`}
@@ -482,6 +568,8 @@ function MissingBandQueue({ board, hasSheet, onSelect }: {
             </li>
           ))}
         </ul>
+          )}
+        </>
       )}
     </section>
   );
@@ -898,6 +986,13 @@ export default function Valuation() {
   const [pageSummary, setPageSummary] = useState<PageSummary | null>(null);
   const [board, setBoard] = useState<GuidanceBoard | null>(null);
   const [refOpen, setRefOpen] = useState(false);
+  // Presentation fix (Kevin, 2026-11-16): the default view is one
+  // screen — freshness, movers, the compact grid, the queue summary.
+  // Everything else lives behind the Reference toggle. null = not yet
+  // touched: the section then defaults OPEN when the board block did
+  // not ride the load (the tables are the page in that case) and
+  // closed when it did.
+  const [showReference, setShowReference] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, string[]>>({});
@@ -933,6 +1028,7 @@ export default function Valuation() {
     if (sheet) {
       setExpanded(sheet.ticker);
       setRefOpen(true);
+      setShowReference(true);
     }
   }, [decisionParam, sheets]);
 
@@ -942,6 +1038,7 @@ export default function Valuation() {
   // close it.)
   const selectFromBoard = (sheet: FactSheet) => {
     setRefOpen(true);
+    setShowReference(true);
     setExpanded(sheet.ticker);
     if (sheet.peer_group && members[sheet.ticker] === undefined) {
       adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
@@ -956,7 +1053,27 @@ export default function Valuation() {
     if (sheet) selectFromBoard(sheet);
   };
 
+  // Grid tiles open their full fact sheet in a ribbon right under the
+  // row (Kevin, 2026-11-16) — no scroll to the bottom tables. The
+  // ribbon carries the same SheetDetail + decision view the reference
+  // table's expansion carries. Selecting is idempotent; the ribbon's
+  // own Close dismisses it.
+  const [ribbonTicker, setRibbonTicker] = useState<string | null>(null);
+  const openRibbon = (sheet: FactSheet) => {
+    setRibbonTicker(sheet.ticker);
+    if (sheet.peer_group && members[sheet.ticker] === undefined) {
+      adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
+        .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
+        .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
+    }
+  };
+  const openRibbonByTicker = (ticker: string) => {
+    const sheet = (sheets ?? []).find((s) => s.ticker === ticker);
+    if (sheet) openRibbon(sheet);
+  };
+
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
+  const referenceShown = showReference ?? !board;
 
   const toggle = (sheet: FactSheet) => {
     const next = expanded === sheet.ticker ? null : sheet.ticker;
@@ -1011,7 +1128,11 @@ export default function Valuation() {
               <MoversSection board={board} />
               <BandGrid board={board}
                         classified={new Set((pageSummary?.classified_names ?? []).map((c) => c.ticker))}
-                        onSelect={selectByTicker} />
+                        onSelect={openRibbonByTicker}
+                        ribbonTicker={ribbonTicker}
+                        sheetFor={(t) => (sheets ?? []).find((s) => s.ticker === t)}
+                        members={members}
+                        onCloseRibbon={() => setRibbonTicker(null)} />
               <MissingBandQueue board={board}
                                 hasSheet={(t) => sheets.some((s) => s.ticker === t)}
                                 onSelect={selectByTicker} />
@@ -1024,6 +1145,18 @@ export default function Valuation() {
             </p>
           )}
 
+          <button type="button" data-testid="reference-toggle"
+                  aria-expanded={referenceShown}
+                  onClick={() => setShowReference(!referenceShown)}
+                  className="mt-10 flex w-full items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3 text-left hover:border-slate-600">
+            <span className="text-sm font-medium text-slate-200">
+              Reference — attention feed, zone legend, band crossings, level watcher, debates and the full fact-sheet tables
+            </span>
+            <span className="shrink-0 text-xs text-slate-400">{referenceShown ? "Hide" : "Show"}</span>
+          </button>
+
+          {referenceShown && (
+          <>
           {pageSummary ? (
             <AttentionFeed summary={pageSummary} />
           ) : (
@@ -1146,6 +1279,8 @@ export default function Valuation() {
             </div>
           </section>
           </details>
+          </>
+          )}
         </>
       )}
     </div>
