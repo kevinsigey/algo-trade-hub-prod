@@ -48,8 +48,8 @@ def test_parse_lines_normalizes_and_keys():
     assert bad == 0
     assert lines[0] == {"symbol": "NVDA", "level": 159.0,
                         "direction": "below", "note": "support",
-                        "key": "NVDA@159:below"}
-    assert lines[1]["key"] == "SPY@700:above"
+                        "key": "NVDA@159.0:below"}
+    assert lines[1]["key"] == "SPY@700.0:above"
 
 
 def test_parse_lines_counts_unusable_entries():
@@ -64,6 +64,28 @@ def test_parse_lines_counts_unusable_entries():
     assert bad == 4
     assert kl.parse_lines({}) == ([], 0)
     assert kl.parse_lines({"kill_lines": "junk"}) == ([], 1)
+
+
+def test_parse_lines_rejects_non_finite_levels():
+    # float() accepts "NaN" and "Infinity", and NaN <= 0 is False —
+    # without a finiteness check a NaN level would arm a watch.
+    lines, bad = kl.parse_lines({"kill_lines": [
+        {"symbol": "X", "level": "NaN"},
+        {"symbol": "X", "level": "Infinity"},
+        {"symbol": "X", "level": float("nan")},
+    ]})
+    assert lines == [] and bad == 3
+
+
+def test_parse_lines_keys_never_collapse_distinct_levels():
+    # A %g key carries six significant digits: 10000.01 and 10000.02
+    # would share one identity and the stale watch would never move.
+    lines, bad = kl.parse_lines({"kill_lines": [
+        {"symbol": "BRK", "level": 10000.01},
+        {"symbol": "BRK", "level": 10000.02},
+    ]})
+    assert bad == 0
+    assert lines[0]["key"] != lines[1]["key"]
 
 
 # ── watch sync ───────────────────────────────────────────────────────
@@ -81,7 +103,7 @@ def test_sync_arms_a_watch_per_line_tagged_with_the_thesis():
     assert watch["level"] == 159.0
     assert watch["intent"] == "alert" and watch["rung"] == 1
     assert watch["conditions"]["thesis_id"] == 1
-    assert watch["conditions"]["kill_line"] == "NVDA@159:below"
+    assert watch["conditions"]["kill_line"] == "NVDA@159.0:below"
     assert "159 support break" in watch["note"]
     # A re-sync is a no-op — the persisted identity blocks a duplicate.
     assert kl.sync_watches(db, now=NOW)["armed"] == 0
@@ -139,7 +161,7 @@ def test_a_fire_opens_one_exit_review_per_held_book():
     assert {a["book"] for a in actions} == {"main", "big"}
     assert all(a["kind"] == "exit_review" for a in actions)
     assert all(a["symbol"] == "NVDA" for a in actions)
-    assert all("[kill line event-lab:NVDA@159:below]" in a["detail"]
+    assert all("[kill line event-lab:NVDA@159.0:below]" in a["detail"]
                for a in actions)
     assert all("[kill-line fire 1]" in a["detail"] for a in actions)
     # A replay opens nothing new — the fire marker persists.
@@ -165,6 +187,24 @@ def test_a_second_fire_waits_while_the_first_review_is_open():
                                positions_fn=_positions({"NVDA": 40.0}))
     assert out["actions_opened"] == 1
     assert "[kill-line fire 2]" in _actions(db)[-1]["detail"]
+
+
+def test_fire_completion_is_tracked_per_book():
+    # Regression (CodeRabbit, PR #551): big's action already carries
+    # this fire's marker (its review was created and resolved), while
+    # main's insert never landed — main must still get its review;
+    # a global fire-marker check would skip both books forever.
+    db = _armed_db_with_fire()
+    db.db.setdefault("manual_actions", []).append(
+        {"id": 99, "book": "big", "idea_id": None, "kind": "exit_review",
+         "symbol": "NVDA", "state": "done",
+         "detail": "earlier review [kill-line fire 1]"})
+    out = kl.open_exit_reviews(
+        db, now=NOW, positions_fn=_positions({"NVDA": 40.0},
+                                             {"NVDA": 120.0}))
+    assert out["actions_opened"] == 1
+    new = [a for a in _actions(db) if a["id"] != 99]
+    assert len(new) == 1 and new[0]["book"] == "main"
 
 
 def test_a_fire_on_a_name_no_longer_held_opens_nothing():

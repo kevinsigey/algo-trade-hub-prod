@@ -26,19 +26,23 @@ Materialization is a SYNC, run on every watcher-runner invocation:
   duplicated; a disabled one whose line came back is re-enabled.
 
 Exit reviews: the bridge scans watcher_fires for this family's fires
-from the last FIRE_WINDOW_DAYS. A fire opens an exit_review action —
+from the last FIRE_WINDOW_DAYS (the cutoff is applied in the query,
+paged in fired_at order). A fire opens an exit_review action —
 through workshop store.add_manual_action, the same path as every
 other review — in each book where the symbol is currently held
-(nothing held, nothing to exit, no action). Dedupe is per kill line
-and keyed on persisted markers in the action detail, the guidance
-bridge's discipline: the line marker blocks while ANY exit_review
-for that line is still open (one open review per kill line), and the
-fire marker means a resolved line reviews again only on a NEW fire.
-Resolving or dismissing an action therefore never re-opens the same
-fire on a replay.
+(nothing held, nothing to exit, no action). Dedupe is per
+(kill line, book) and keyed on persisted markers in the action
+detail, the guidance bridge's discipline: the line marker blocks a
+book while an exit_review for that line is still open IN THAT BOOK
+(one open review per kill line per book), and the fire marker means
+a fire produces at most one review per book, ever — a resolved line
+reviews again only on a NEW fire, and one book's completed review
+never blocks another book's. Resolving or dismissing an action
+therefore never re-opens the same fire on a replay.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
 
 from tradehub.valuation import candidates as cand
@@ -75,14 +79,17 @@ def parse_lines(thesis: dict) -> tuple[list[dict], int]:
         symbol = str(entry.get("symbol") or "").strip().upper()
         level = _num(entry.get("level"))
         direction = str(entry.get("direction") or "below").strip().lower()
-        if not symbol or level is None or level <= 0 \
-                or direction not in ("below", "above"):
+        if not symbol or level is None or not math.isfinite(level) \
+                or level <= 0 or direction not in ("below", "above"):
             invalid += 1
             continue
+        # The key is the line's persistent identity: repr() round-trips
+        # the float exactly, so two distinct levels can never collapse
+        # into one key (a %g key would merge 10000.01 and 10000.02).
         out.append({"symbol": symbol, "level": level,
                     "direction": direction,
                     "note": str(entry.get("note") or "").strip(),
-                    "key": f"{symbol}@{level:g}:{direction}"})
+                    "key": f"{symbol}@{level!r}:{direction}"})
     return out, invalid
 
 
@@ -164,15 +171,27 @@ def sync_watches(client, *, now: datetime | None = None) -> dict:
             "skipped_invalid": invalid, "theses": len(theses)}
 
 
-def _parse_ts(value) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(
-        tzinfo=timezone.utc)
+def _recent_fires(client, cutoff: datetime) -> list[dict]:
+    """This family's fires at or after the cutoff, oldest first. The
+    cutoff is applied in the query and the read is paged: PostgREST
+    caps a response at 1000 rows, so an unfiltered, unpaged read
+    could silently drop the newest fires once the family grows past
+    the cap. Rows with no fired_at never satisfy the gte filter and
+    are excluded by construction."""
+    out: list[dict] = []
+    lo = 0
+    while True:
+        page = (client.table("watcher_fires")
+                .select("id, watch_id, instrument, fired_at,"
+                        " trigger_price, level")
+                .eq("family", FAMILY)
+                .gte("fired_at", cutoff.isoformat())
+                .order("fired_at")
+                .range(lo, lo + 999).execute().data) or []
+        out.extend(page)
+        if len(page) < 1000:
+            return out
+        lo += 1000
 
 
 def open_exit_reviews(client, *, now: datetime | None = None,
@@ -181,13 +200,7 @@ def open_exit_reviews(client, *, now: datetime | None = None,
     recent kill-line fire that has not produced one yet."""
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=FIRE_WINDOW_DAYS)
-    fires = (client.table("watcher_fires")
-             .select("id, watch_id, instrument, fired_at, trigger_price,"
-                     " level")
-             .eq("family", FAMILY).execute().data) or []
-    recent = [f for f in fires
-              if (_parse_ts(f.get("fired_at")) or now) >= cutoff]
-    recent.sort(key=lambda f: _parse_ts(f.get("fired_at")) or now)
+    recent = _recent_fires(client, cutoff)
     if not recent:
         return {"fires_seen": 0, "actions_opened": 0,
                 "held_unavailable": False}
@@ -209,16 +222,6 @@ def open_exit_reviews(client, *, now: datetime | None = None,
         slug = conds.get("thesis_slug")
         line_marker = f"[kill line {slug}:{conds.get('kill_line')}]"
         fire_marker = f"[kill-line fire {fire.get('id')}]"
-        rows = (client.table("manual_actions")
-                .select("id, book, state, detail")
-                .eq("kind", ACTION_KIND).eq("symbol", symbol)
-                .is_("idea_id", "null")
-                .execute().data) or []
-        if any(fire_marker in (r.get("detail") or "") for r in rows):
-            continue  # this fire already produced its review(s)
-        if any(line_marker in (r.get("detail") or "")
-               and r.get("state") in (None, "open") for r in rows):
-            continue  # one open review per kill line
         detail = (
             f"{symbol} fired its kill line for thesis '{slug}': "
             f"trigger {fire.get('trigger_price')} vs level "
@@ -227,6 +230,22 @@ def open_exit_reviews(client, *, now: datetime | None = None,
             f"review trigger, not an order. "
             f"{line_marker} {fire_marker}")
         for book in books:
+            # Completion is tracked per (fire, book): a fire marker in
+            # ANOTHER book's action must not block this book (its own
+            # insert may have been deduped away by an earlier open
+            # review, or failed), and the line marker blocks only
+            # while this book's own review for the line is open.
+            rows = (client.table("manual_actions")
+                    .select("id, state, detail")
+                    .eq("book", book).eq("kind", ACTION_KIND)
+                    .eq("symbol", symbol)
+                    .is_("idea_id", "null")
+                    .execute().data) or []
+            if any(fire_marker in (r.get("detail") or "") for r in rows):
+                continue  # this fire already produced this book's review
+            if any(line_marker in (r.get("detail") or "")
+                   and r.get("state") in (None, "open") for r in rows):
+                continue  # one open review per kill line per book
             # Count rows (any state) before/after: the store swallows
             # the insert when an open row already exists for the book,
             # and a state filter would miss rows whose state the DB
