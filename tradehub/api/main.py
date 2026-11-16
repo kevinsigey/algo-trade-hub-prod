@@ -2441,6 +2441,24 @@ class _MachineOrderIn(BaseModel):
     # book math computed in machine_api.validate_order; when the claim and the
     # math disagree, the math wins and the preflight says so.
     exit: bool | None = None
+    # Thesis tracker linkage (tracker design PR 5): carrying a play_kind
+    # makes this an event-lab order — the tracker preflight blocks engage
+    # (opposing case, modal value, the governing unit, the cash floor)
+    # and a trade_links row is written at placement. shadow=true records
+    # the link WITHOUT placing (play kind c's graded form); top_tier
+    # selects the Schedule v2 top unit; risk_amount is the research
+    # file's sized risk for a share play (options always use their
+    # computed max loss); stop_loss_price lets a share play's
+    # risk-to-stop be computed instead of falling back to notional.
+    play_kind: str | None = Field(default=None, pattern=r"^[abc]$")
+    thesis_id: int | None = None
+    forecast_id: int | None = None
+    modal_value: float | None = None
+    opposing_case_ref: str | None = Field(default=None, max_length=500)
+    shadow: bool = False
+    top_tier: bool = False
+    risk_amount: float | None = Field(default=None, ge=0)
+    stop_loss_price: float | None = Field(default=None, gt=0)
 
 
 @app.post("/api/v1/orders", tags=["Machine API"])
@@ -2473,11 +2491,60 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
-            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason}
+            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason,
+            "play_kind": body.play_kind, "thesis_id": body.thesis_id,
+            "forecast_id": body.forecast_id, "modal_value": body.modal_value,
+            "opposing_case_ref": body.opposing_case_ref, "shadow": body.shadow,
+            "top_tier": body.top_tier, "risk_amount": body.risk_amount,
+            "stop_loss_price": body.stop_loss_price}
     result = machine_api.validate_order(supabase, key, spec)
     if result["refusal"] is not None:
         refused(*result["refusal"])
     book, symbol = result["book"], result["symbol"]
+    # Thesis tracker (design PR 5): a shadow record writes its link and
+    # returns without touching the broker — graded, never placed. A
+    # placed tracker order writes its link beside the placement, one
+    # per client_order_id (one per split child); a failed link write is
+    # reported on the response, never allowed to un-place the order —
+    # the label() precedent directly above.
+    tracker = result["tracker"]
+
+    def write_link(client_order_id: str) -> str | None:
+        if tracker is None:
+            return None
+        try:
+            from tradehub.tracker import links as tracker_links
+
+            tracker_links.record_link(
+                supabase, client_order_id=client_order_id, book=book,
+                play_kind=tracker["play_kind"],
+                modal_value=tracker["modal_value"],
+                opposing_case_ref=tracker["opposing_case_ref"],
+                forecast_id=tracker["forecast_id"],
+                thesis_id=tracker["thesis_id"],
+                shadow=tracker["shadow"])
+        except Exception:  # noqa: BLE001 -- the order exists; the link must not un-place it
+            return "tracker link failed"
+        return None
+
+    if tracker is not None and tracker["shadow"]:
+        client_order_id = f"ext-{key['id']}-{body.client_order_id}"
+        note = write_link(client_order_id)
+        if note:
+            # A shadow request's ONLY effect is its link: reporting
+            # success with nothing recorded would lose the record
+            # silently. record_link is idempotent, so a retry is safe.
+            refused("tracker_link", 503,
+                    "the shadow record could not be written; "
+                    "retry the request")
+        machine_keys.record_event(supabase, key["id"], route, "shadow_recorded",
+                                  detail=note, client_order_id=client_order_id)
+        return {"shadow": True, "client_order_id": client_order_id,
+                "placed_by": f"api:{key['label']}", "tag": body.tag,
+                "idea_id": body.idea_id, "reason": body.reason,
+                "exit": result["exit"],
+                "portfolio_check": result["portfolio_check"],
+                "tracker": tracker, "link_note": note}
     submit_kwargs = {}
     if body.order_type == "stop":
         submit_kwargs["stop_price"] = body.stop_price
@@ -2527,6 +2594,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except paper_orders.OrdersDisabled as exc:
             refused("paper_switch_off", 409, str(exc))
         except paper_orders.DuplicateOrder:
+            write_link(client_order_id)  # a retry repairs a link the
+            # first attempt failed to write (idempotent)
             refused("duplicate", 409, "an order with this client_order_id was already sent")
         except AccountNotConnected:
             refused("account", 424, "the paper account is not connected")
@@ -2536,6 +2605,11 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                                   detail=machine_api.exit_event_detail(
                                       label(order["id"]), result["exit"]["is_exit"]),
                                   client_order_id=client_order_id)
+        link_note = write_link(client_order_id)
+        if link_note:
+            machine_keys.record_event(
+                supabase, key["id"], route, "tracker_link_failed",
+                detail=link_note, client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
@@ -2546,7 +2620,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                     "placed_by": f"api:{key['label']}", "tag": body.tag,
                     "idea_id": body.idea_id, "reason": body.reason,
                     "exit": result["exit"], **session,
-                    "portfolio_check": result["portfolio_check"]}
+                    "portfolio_check": result["portfolio_check"],
+                    "tracker": tracker, "link_note": link_note}
         if option["kind"] == "single":
             response["position_intent"] = option["legs"][0]["position_intent"]
         else:
@@ -2574,6 +2649,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         except paper_orders.OrdersDisabled as exc:
             refused("paper_switch_off", 409, str(exc))
         except paper_orders.DuplicateOrder:
+            write_link(client_order_id)  # a retry repairs a link the
+            # first attempt failed to write (idempotent)
             refused("duplicate", 409, "an order with this client_order_id was already sent")
         except AccountNotConnected:
             refused("account", 424, "the paper account is not connected")
@@ -2583,6 +2660,11 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                                   detail=machine_api.exit_event_detail(
                                       label(order["id"]), result["exit"]["is_exit"]),
                                   client_order_id=client_order_id)
+        link_note = write_link(client_order_id)
+        if link_note:
+            machine_keys.record_event(
+                supabase, key["id"], route, "tracker_link_failed",
+                detail=link_note, client_order_id=client_order_id)
         from datetime import datetime, timezone
 
         session = machine_api.session_fields(
@@ -2593,7 +2675,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                 "placed_by": f"api:{key['label']}", "tag": body.tag,
                 "idea_id": body.idea_id, "reason": body.reason,
                 "exit": result["exit"], **session,
-                "portfolio_check": result["portfolio_check"]}
+                "portfolio_check": result["portfolio_check"],
+                "tracker": tracker, "link_note": link_note}
 
     # A parent order: the server chunks the total under the key's caps and places
     # the children as one logical order. A child the broker already has (a retry of
@@ -2609,6 +2692,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         try:
             order = submit_one(chunk, child_id)
         except paper_orders.DuplicateOrder:
+            write_link(child_id)  # idempotent: the retry keeps its link
             placed_children.append(child_id)
             continue
         except paper_orders.OrdersDisabled as exc:
@@ -2621,7 +2705,9 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
             failure = ("rejected", 422, str(exc), child_id)
             break
         note = label(order["id"])
+        link_note = write_link(child_id)
         detail = f"group:{body.client_order_id}" + (f"; {note}" if note else "")
+        detail += f"; {link_note}" if link_note else ""
         detail = machine_api.exit_event_detail(detail, result["exit"]["is_exit"])
         machine_keys.record_event(supabase, key["id"], route, "placed",
                                   detail=detail, client_order_id=child_id)
@@ -2657,7 +2743,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                                          _machine_label_tags(supabase)),
             "client_order_id": namespaced, "placed_by": f"api:{key['label']}", "tag": body.tag,
             "idea_id": body.idea_id, "reason": body.reason,
-            "exit": result["exit"], "portfolio_check": result["portfolio_check"]}
+            "exit": result["exit"], "portfolio_check": result["portfolio_check"],
+            "tracker": tracker}
 
 
 @app.post("/api/v1/orders/preflight", tags=["Machine API"])
@@ -2684,7 +2771,12 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
             "limit_price": body.limit_price, "stop_price": body.stop_price,
             "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
-            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason}
+            "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason,
+            "play_kind": body.play_kind, "thesis_id": body.thesis_id,
+            "forecast_id": body.forecast_id, "modal_value": body.modal_value,
+            "opposing_case_ref": body.opposing_case_ref, "shadow": body.shadow,
+            "top_tier": body.top_tier, "risk_amount": body.risk_amount,
+            "stop_loss_price": body.stop_loss_price}
     result = machine_api.validate_order(supabase, key, spec, dry_run=True)
     from tradehub.portfolio import option_orders as _option_orders
 

@@ -111,9 +111,9 @@ def refresh_claim_states(client, fire_nets) -> dict:
 
 def grade_run(client, bars_for, now, *, fire_nets=()) -> dict:
     """Grade every due print once, refresh the claim states, stamp
-    health. `fire_nets` is the play-kind-(a) net list in fire order
-    (wired from trade_links P&L by the caller; empty until PR 5's
-    placement writes exist)."""
+    health. `fire_nets` is the play-kind-(a) net list in fire order,
+    wired from trade_links P&L by the caller (PR 5: the grade run
+    builds it from the FIFO via tracker.links.claim_c_fire_nets)."""
     already = _graded_card_ids(client)
     graded = waiting = 0
     for ticker, print_at in _due_prints(client, now):
