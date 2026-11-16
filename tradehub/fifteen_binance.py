@@ -20,6 +20,14 @@ promotion bar is evaluated and stored, but nothing here can promote,
 feed a demo lane, or place an order: that path is Kevin's word and a
 separate commission. Nothing here writes to v1's, the live rule's, the
 blend's or the challenger's tables.
+
+Transport amendment (2026-11-16, Kevin's pick; preregistration
+amendment in the prereg doc): Binance's REST hosts refuse the hub's
+VPS egress (HTTP 451), so the tape is read from the websocket
+collector's cache (tradehub/binance_tape.py) instead of a REST pull.
+Same XAUUSDT 1-minute tape, same read, same bar -- only the transport
+changed. The REST reader below stays for the replay convention and in
+case the egress block ever lifts.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from tradehub import binance_tape
 from tradehub import fifteen_blend as blend
 from tradehub import fifteen_tracking as tracking
 from tradehub import oil_fifteen_rule as rule
@@ -101,7 +110,7 @@ def record_binance(supa, now: datetime, *, klines_fn=None,
     first = tracking._first_forecasts(supa, NAME, VERSION, names)
     settled = store.fetch_settlements(supa, names)
     earliest_open = min(_dt(t["cutoff_at"]) for t in targets) - timedelta(minutes=WINDOW_MINUTES)
-    tape = (klines_fn or binance_klines)(
+    tape = (klines_fn or binance_tape.read_cached_klines)(
         BINANCE_SYMBOL, earliest_open - TAPE_SPAN, now)
     rows: list[dict] = []
     for t in targets:

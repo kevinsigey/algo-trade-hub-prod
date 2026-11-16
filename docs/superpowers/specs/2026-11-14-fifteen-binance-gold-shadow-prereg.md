@@ -106,3 +106,32 @@ No other series (silver and WTI tied; Brent, gas and copper failed the
 gate). No change to v1, its tape or its record. No websocket feed — one
 REST klines fetch per record pass. No page or endpoint: the record is
 read from its tables until a surface is commissioned.
+
+## Amendment 2026-11-16 — transport: websocket collector (Kevin's pick)
+
+The frozen text above assumed one REST klines fetch per record pass.
+On the shadow's first live day that proved impossible from the hub's
+VPS: Binance's REST hosts (fapi.binance.com, api.binance.com) refuse
+the egress with HTTP 451, the numbered mirrors redirect to the block
+page, and the reachable Vision REST mirror serves spot markets only
+(no XAUUSDT). The futures websocket host (fstream.binance.com) is
+reachable. Kevin picked the live-read route on 2026-11-16 over the
+alternatives (Vision daily-archive reads a day late; leaving the
+shadow dark).
+
+What changes: only the transport. A collector
+(`tradehub/scripts/binance_ws_collect.py`, mirroring the AIS
+consumer's shape) subscribes to Binance's own XAUUSDT 1-minute kline
+stream and keeps the rolling tape in a cache file
+(`tradehub/binance_tape.py`); the record pass reads the tape from the
+cache at the same freeze instant, through the same `read_window`. At
+collector start the cache is seeded from Binance Vision's daily
+archive — the published archive of this same feed — so a cold start
+begins with history. The reader raises on a missing or stale cache,
+so a dead collector reads as a tape outage, never as data.
+
+What does not change: the tape itself (Binance XAUUSDT 1-minute
+closes, the (open time -> close) convention), the variant, the freeze
+instant, the quotes, the bar, the scoring, the promotion bar, and the
+stopping rule. The REST reader stays in the code for the replay
+convention and in case the egress block lifts.
