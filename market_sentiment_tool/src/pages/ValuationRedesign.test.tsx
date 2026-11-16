@@ -262,6 +262,13 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
     const queue = await screen.findByTestId("missing-band-queue");
+    // The default view is the summary line: it NAMES the held name
+    // and gives the count; the worklist sits behind the expander.
+    const summary = within(queue).getByTestId("queue-summary");
+    expect(summary).toHaveTextContent("AAPL");
+    expect(summary).toHaveTextContent(/1 name has no band/i);
+    expect(within(queue).queryByTestId("queue-row-AAPL")).toBeNull();
+    fireEvent.click(within(queue).getByTestId("queue-expand"));
     const row = within(queue).getByTestId("queue-row-AAPL");
     expect(row).toHaveTextContent(/held/i);
     expect(row).toHaveTextContent(/no full-year guide on file/i);
@@ -272,6 +279,7 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
     const queue = await screen.findByTestId("missing-band-queue");
+    fireEvent.click(within(queue).getByTestId("queue-expand"));
     const open = within(queue).getByTestId("queue-open-AAPL");
     fireEvent.click(open);
     // The falsifier text lives in the unbanded row AND, once expanded,
@@ -294,6 +302,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("pins conjunctions at the top of the attention feed", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    fireEvent.click(await screen.findByTestId("reference-toggle"));
     const feed = await screen.findByTestId("attention-feed");
     const items = within(feed).getAllByTestId(/feed-item-/);
     expect(items[0]).toHaveTextContent("AMGN");
@@ -305,6 +314,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("renders the honest empty state when nothing changed", async () => {
     serve({ ...SUMMARY, feed: [] });
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    fireEvent.click(await screen.findByTestId("reference-toggle"));
     const feed = await screen.findByTestId("attention-feed");
     expect(feed).toHaveTextContent(/nothing changed/i);
   });
@@ -313,6 +323,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
     serve({ ...SUMMARY, feed: [], feed_state: "no_previous_snapshot",
       previous_snapshot_id: null });
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    fireEvent.click(await screen.findByTestId("reference-toggle"));
     const feed = await screen.findByTestId("attention-feed");
     expect(feed).toHaveTextContent(/no previous completed snapshot/i);
     expect(feed).not.toHaveTextContent(/nothing changed/i);
@@ -321,6 +332,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("keeps the full reference table intact inside a disclosure, rows == served banded sheets", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    fireEvent.click(await screen.findByTestId("reference-toggle"));
     const ref = await screen.findByTestId("reference-table");
     const eps = within(ref).getByTestId("basis-eps");
     const rev = within(ref).getByTestId("basis-revenue");
@@ -328,5 +340,103 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
     expect(within(eps).getByText("CVS")).toBeInTheDocument();
     expect(within(rev).getByText("LLY")).toBeInTheDocument();
     expect(within(ref).getByTestId("unbanded")).toHaveTextContent("AAPL");
+  });
+});
+
+describe("Guidance presentation fix — one-screen default (2026-11-16)", () => {
+  const extraRow = (ticker: string, distance: number, cap: number) => ({
+    ticker, bands: { bear: 90, base: 100, bull: 110 }, price: 95,
+    price_as_of: "2026-11-06", status: "between", distance_pct: distance,
+    held: false, books: [], market_cap: cap, zone: "neutral",
+  });
+  const BOARD10 = {
+    ...BOARD,
+    grid: [...BOARD.grid,
+      extraRow("R1", 10, 40e9), extraRow("R2", 20, 30e9),
+      extraRow("R3", 30, 20e9), extraRow("R4", 40, 10e9),
+      extraRow("R5", 50, 5e9), extraRow("R6", 60, 2e12)],
+  };
+
+  it("renders only the first eight rows full; the rest ride compact and expand in place", async () => {
+    serve(SUMMARY, SHEETS, BOARD10);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    // Every banded name is present — nothing dropped, nothing paged.
+    expect(within(grid).getAllByTestId(/^grid-row-/)).toHaveLength(10);
+    const compact = (t: string) =>
+      within(grid).getByTestId(`grid-row-${t}`).getAttribute("data-compact");
+    // Default sort (distance, groups pinned): CVS, AMGN, XYZ, R1..R5 full.
+    expect(compact("CVS")).toBeNull();
+    expect(compact("R5")).toBeNull();
+    expect(compact("R6")).toBe("true");
+    expect(compact("LLY")).toBe("true");
+    // A compact row still carries its distance headline and mini bar.
+    expect(within(grid).getByTestId("distance-LLY")).toHaveTextContent("+72.2%");
+    expect(within(grid).getByTestId("band-track-LLY")).toBeInTheDocument();
+    // One click expands it in place to the full football field.
+    fireEvent.click(within(grid).getByTestId("grid-row-LLY"));
+    expect(compact("LLY")).toBeNull();
+    expect(within(grid).getByTestId("grid-row-LLY"))
+      .toHaveTextContent(/Bear \$347\.35/);
+  });
+
+  it("changing the sort re-selects which eight rows render full", async () => {
+    serve(SUMMARY, SHEETS, BOARD10);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    fireEvent.click(within(grid).getByTestId("grid-sort-cap"));
+    const compact = (t: string) =>
+      within(grid).getByTestId(`grid-row-${t}`).getAttribute("data-compact");
+    // Cap sort inside the rest group: R6 ($2T) and LLY ($1.25T) lead,
+    // so both render full and R4/R5 fall to compact.
+    expect(compact("R6")).toBeNull();
+    expect(compact("LLY")).toBeNull();
+    expect(compact("R4")).toBe("true");
+    expect(compact("R5")).toBe("true");
+  });
+
+  it("keeps the attention feed and reference table behind the Reference toggle", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const toggle = await screen.findByTestId("reference-toggle");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("attention-feed")).toBeNull();
+    expect(screen.queryByTestId("reference-table")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByTestId("attention-feed")).toBeInTheDocument();
+    expect(screen.getByTestId("reference-table")).toBeInTheDocument();
+  });
+});
+
+describe("Guidance tiles — the in-place ribbon (2026-11-16)", () => {
+  it("opens the full fact sheet in a ribbon under the tile, not at the bottom tables", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    fireEvent.click(within(grid).getByTestId("grid-row-AMGN"));
+    const ribbon = await screen.findByTestId("ribbon-AMGN");
+    // The same full information the reference expansion carries: the
+    // band chart and the guide provenance block.
+    expect(within(ribbon).getByTestId("band-chart-AMGN"))
+      .toHaveTextContent("Bear $272.18");
+    expect(ribbon).toHaveTextContent("The guide behind the bands");
+    expect(ribbon).toHaveTextContent("0000318154-26-000153");
+    // Nothing navigated to the bottom: the reference section never
+    // had to open for the sheet to be readable.
+    expect(screen.queryByTestId("reference-table")).toBeNull();
+  });
+
+  it("moves with the selection and closes from its own control", async () => {
+    serve();
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const grid = await screen.findByTestId("band-grid");
+    fireEvent.click(within(grid).getByTestId("grid-row-AMGN"));
+    expect(await screen.findByTestId("ribbon-AMGN")).toBeInTheDocument();
+    fireEvent.click(within(grid).getByTestId("grid-row-CVS"));
+    expect(await screen.findByTestId("ribbon-CVS")).toBeInTheDocument();
+    expect(screen.queryByTestId("ribbon-AMGN")).toBeNull();
+    fireEvent.click(screen.getByTestId("ribbon-close-CVS"));
+    expect(screen.queryByTestId("ribbon-CVS")).toBeNull();
   });
 });
