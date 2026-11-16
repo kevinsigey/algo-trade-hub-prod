@@ -32,7 +32,7 @@ import websockets
 
 from tradehub import binance_tape as tape
 
-STREAM = "wss://fstream.binance.com/ws/xauusdt@kline_1m"
+STREAM = "wss://fstream.binance.com/market/ws/xauusdt@kline_1m"
 VISION_DAILY = ("https://data.binance.vision/data/futures/um/daily/"
                 "klines/XAUUSDT/1m/XAUUSDT-1m-{day}.zip")
 FLUSH_SECONDS = 20
@@ -52,15 +52,26 @@ def _seed_from_vision(state: dict, now: datetime) -> None:
             continue
 
 
+def _restored_klines(path: str) -> dict:
+    """The klines a previous run of the collector saved, or {} when the
+    cache is missing, unreadable, not a mapping, or holds another
+    symbol's tape -- a foreign file must never be relabeled as this
+    symbol's by the next flush (CodeRabbit on PR #544)."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        payload = json.loads(open(path).read())
+        if not isinstance(payload, dict) or payload.get("symbol") != tape.SYMBOL:
+            return {}
+        return {str(int(ms)): float(close)
+                for ms, close in payload.get("klines") or []}
+    except (ValueError, OSError, TypeError):
+        return {}
+
+
 async def run(path: str) -> None:
     state = tape.empty_state()
-    if os.path.exists(path):
-        try:
-            payload = json.loads(open(path).read())
-            state["klines"] = {str(int(ms)): float(close)
-                                for ms, close in payload.get("klines") or []}
-        except (ValueError, OSError, TypeError):
-            pass
+    state["klines"] = _restored_klines(path)
     _seed_from_vision(state, datetime.now(UTC))
     backoff = 5
     while True:

@@ -40,15 +40,19 @@ def empty_state() -> dict:
 
 def apply_kline(state: dict, msg: dict, now: datetime) -> bool:
     """Fold one Binance kline stream message into the state. Returns
-    True when the tape changed. Malformed frames are ignored (one bad
-    frame never kills the feed). Only the candle's close is kept, keyed
-    by its open time -- the stream's last update of a minute IS that
-    minute's close, the REST convention."""
+    True when the tape changed. Only FINAL candles land (Binance marks
+    them k.x = true): a provisional close is not a close -- if the
+    connection dropped mid-minute, the last provisional update would
+    otherwise sit in the cache indefinitely and read_window would
+    accept it as that minute's completed close. Malformed frames are
+    ignored (one bad frame never kills the feed)."""
     try:
         k = msg["k"]
+        if not k.get("x"):
+            return False
         open_ms = int(k["t"])
         close = float(k["c"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, AttributeError):
         return False
     key = str(open_ms)
     if state["klines"].get(key) == close:

@@ -26,10 +26,14 @@ def _msg(minute: datetime, close: float, *, closed=True):
 # -- the fold -------------------------------------------------------------------
 
 
-def test_apply_kline_keeps_the_last_close_per_minute():
+def test_apply_kline_keeps_only_final_closes():
     state = tape.empty_state()
     m = datetime(2026, 11, 16, 15, 59, tzinfo=UTC)
-    assert tape.apply_kline(state, _msg(m, 4000.0, closed=False), NOW)
+    # A provisional update (k.x false) never lands: it is not the
+    # minute's close, and a dropped connection would freeze it in the
+    # cache as if it were (CodeRabbit on PR #544).
+    assert not tape.apply_kline(state, _msg(m, 4000.0, closed=False), NOW)
+    assert state["klines"] == {}
     assert tape.apply_kline(state, _msg(m, 4001.5, closed=True), NOW)
     assert not tape.apply_kline(state, _msg(m, 4001.5, closed=True), NOW)
     assert state["klines"] == {str(int(m.timestamp() * 1000)): 4001.5}
@@ -143,3 +147,8 @@ def test_record_pass_reads_the_cache_by_default(tmp_path, monkeypatch):
     rows = supa.tables.get(fb.DECISIONS_TABLE, [])
     assert len(rows) == 1
     assert rows[0]["gate_version"] == fb.SHADOW_VERSION
+    # The read must have SUCCEEDED: a stale tape writes a skip row with
+    # the same gate version, and these assertions are what tell the two
+    # apart (CodeRabbit on PR #544).
+    assert rows[0]["model_prob"] is not None and rows[0]["sigma_1m"] is not None
+    assert rows[0]["reason"] != "stale_tape"
