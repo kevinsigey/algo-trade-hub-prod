@@ -156,10 +156,11 @@ def claim_c_fire_nets(client, book_state: dict, *,
 
 def pnl_by_play_kind(client, book_state: dict) -> dict:
     """Realized P&L per play kind from the FIFO, net of the ledger's
-    math: {kind: {links, trades, pnl}} over non-shadow links that have
-    closed trades (a partially closed fire contributes what has
-    realized so far). The scoreboard (PR 7) renders this; the kinds
-    are reported separately, never blended."""
+    math: {kind: {links, trades, wins, pnl}} over non-shadow links
+    that have closed trades (a partially closed fire contributes what
+    has realized so far). The scoreboard (PR 7) renders this — wins
+    are the closed trades with pnl > 0, its hit-rate numerator; the
+    kinds are reported separately, never blended."""
     out: dict[str, dict] = {}
     for link in all_links(client):
         if link.get("shadow"):
@@ -170,9 +171,12 @@ def pnl_by_play_kind(client, book_state: dict) -> dict:
         if not trades:
             continue
         slot = out.setdefault(link["play_kind"],
-                              {"links": 0, "trades": 0, "pnl": 0.0})
+                              {"links": 0, "trades": 0, "wins": 0,
+                               "pnl": 0.0})
         slot["links"] += 1
         slot["trades"] += len(trades)
+        slot["wins"] += sum(1 for t in trades
+                            if float(t.get("pnl") or 0) > 0)
         slot["pnl"] = round(slot["pnl"] + sum(
             float(t.get("pnl") or 0) for t in trades), 2)
     return out

@@ -203,8 +203,8 @@ def test_pnl_by_play_kind_never_blends():
                                     _trade("ext-1-b", -30.0),
                                     _trade("ext-1-c", 999.0)]})
     out = links.pnl_by_play_kind(c, state)
-    assert out == {"a": {"links": 1, "trades": 1, "pnl": 100.0},
-                   "b": {"links": 1, "trades": 1, "pnl": -30.0}}
+    assert out == {"a": {"links": 1, "trades": 1, "wins": 1, "pnl": 100.0},
+                   "b": {"links": 1, "trades": 1, "wins": 0, "pnl": -30.0}}
 
 
 # -- the FIFO join (book.py) ---------------------------------------------------

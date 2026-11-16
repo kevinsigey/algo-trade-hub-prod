@@ -3044,6 +3044,26 @@ def get_thesis_cards(supabase=Depends(get_supabase)):
     return {"cards": rows}
 
 
+@app.get("/api/thesis/scoreboard", tags=["Thesis Tracker"])
+def get_thesis_scoreboard(supabase=Depends(get_supabase)):
+    """The tracker scoreboard (PR 7): per-claim progress with the
+    grader's own math, per-play-kind P&L, the regime panel, the
+    cash-floor gauge and the breach log, as one read model. A missing
+    tracker table (pre-migration deploy) serves a null board rather
+    than a 500 -- the page's true statement then is 'not seeded yet'."""
+    from tradehub.tracker import scoreboard
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    try:
+        board = scoreboard.build_scoreboard(supabase)
+    except Exception as exc:  # noqa: BLE001 - classified below
+        if table_missing(exc, "theses"):
+            return {"scoreboard": None}
+        raise _table_fault("theses", exc) from exc
+    return {"scoreboard": board}
+
+
 # ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
 # audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
 # a 403 -- the API does not confirm the order exists.
