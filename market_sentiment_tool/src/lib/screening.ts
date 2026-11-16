@@ -54,6 +54,16 @@ export interface RunFooter {
   run_at?: string;
   data_as_of?: string | null;
   universe_size?: number;
+  universe_total?: number;
+  evaluated_count?: number;
+  evaluation?: {
+    universe_total: number;
+    evaluated_count: number;
+    not_evaluated_count: number;
+    not_evaluated: { ticker: string; reason: string }[];
+    missing_field_counts: Record<string, number>;
+    missing_fields: Record<string, string[]>;
+  };
   universe_capped?: { cap: number; universe_size_full: number };
   universe_selection?: string;
   universe_union?: boolean;

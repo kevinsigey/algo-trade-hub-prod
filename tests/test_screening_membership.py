@@ -5,8 +5,10 @@
 Diffing contract: a refresh diffs survivors vs the persisted membership —
 entrances and exits are dated events; the FIRST diffed run baselines
 silently (members since the baseline date, no entrance storm); a no-change
-refresh produces no events. The universe option is a spec-level choice;
-specs without it (screens 1-4) keep the standard 300 cap exactly.
+refresh produces no events. The universe option is a spec-level choice.
+(Updated Nov 2026: the standard 300-name run cap no longer exists — a spec
+without max_universe evaluates its full universe; max_universe is the only
+cap, and the names it drops are recorded as not evaluated.)
 """
 
 import json
@@ -236,17 +238,20 @@ def test_spec_validation_rejects_a_bad_max_universe():
         validate_spec({**base, "max_universe": "600"})
 
 
-def test_max_universe_lifts_the_cap_for_that_spec_only(fake_fields, monkeypatch):
-    monkeypatch.setattr(runner, "MAX_UNIVERSE", 2)
+def test_max_universe_is_the_only_cap(fake_fields):
+    # Nov 2026: no default cap remains to lift -- a spec without
+    # max_universe evaluates everything; a spec with one caps at its own
+    # number and names the dropped names as not evaluated.
     base = {"name": "t", "universe": {"type": "list", "tickers": ["AAA", "BBB", "CCC"]},
             "filters": [{"fn": "fake_alpha", "op": "gt", "value": 3}]}
     store = SimpleNamespace(asof={}, missing=[])
-    capped = runner.run_spec(base, store=store)
+    full = runner.run_spec(base, store=store)
+    assert full.footer["universe_size"] == 3
+    assert "universe_capped" not in full.footer
+    capped = runner.run_spec({**base, "max_universe": 2}, store=store)
     assert capped.footer["universe_size"] == 2
     assert capped.footer["universe_capped"] == {"cap": 2, "universe_size_full": 3}
-    wide = runner.run_spec({**base, "max_universe": 3}, store=store)
-    assert wide.footer["universe_size"] == 3
-    assert "universe_capped" not in wide.footer
+    assert [n["ticker"] for n in capped.footer["evaluation"]["not_evaluated"]] == ["CCC"]
 
 
 def test_list_screens_passes_near_misses_through():
