@@ -1,7 +1,7 @@
 import pytest
 
 from tradehub.portfolio import book
-from tradehub.portfolio.book import MANUAL, closed_trades, composition, curve, positions_view, scoreboard, win_rate
+from tradehub.portfolio.book import MANUAL, closed_trades, composition, curve, positions_view, results_split, scoreboard, win_rate
 
 
 def snap(t, equity, spy, account="PA1", cash=0.0):
@@ -130,6 +130,38 @@ def test_closed_trades_carry_their_sector():
 def test_short_round_trip():
     t = closed_trades([fill("XLE", "sell", 20, 100, "2026-11-02"), fill("XLE", "buy", 20, 90, "2026-11-04")])
     assert len(t) == 1 and t[0]["qty"] == -20 and t[0]["pnl"] == pytest.approx(200)
+
+
+def test_option_round_trip_books_the_contract_multiplier():
+    # Fable audit 2026-11-16: the CRWV 45 puts, 22 contracts in at 2.94
+    # and out at 0.21, lost $6,006 -- the ledger showed -$60 because the
+    # FIFO booked (exit - entry) x contracts with no x100 multiplier.
+    t = closed_trades([fill("CRWV261120P00045000", "buy", 22, 2.94, "2026-11-10"),
+                       fill("CRWV261120P00045000", "sell", 22, 0.21, "2026-11-13")])
+    assert len(t) == 1 and t[0]["qty"] == 22
+    assert t[0]["pnl"] == pytest.approx(-6006.0)
+    # return_pct is a per-share premium return: the multiplier is not in it.
+    assert t[0]["return_pct"] == pytest.approx((0.21 / 2.94 - 1) * 100)
+
+
+def test_short_option_round_trip_books_the_multiplier():
+    t = closed_trades([fill("SPY261204C00770000", "sell", 10, 3.00, "2026-11-02"),
+                       fill("SPY261204C00770000", "buy", 10, 1.00, "2026-11-04")])
+    assert len(t) == 1 and t[0]["qty"] == -10 and t[0]["pnl"] == pytest.approx(2000.0)
+
+
+def test_option_partial_close_scales_by_contracts():
+    t = closed_trades([fill("NVDA261120C00160000", "buy", 10, 2.00, "2026-11-02"),
+                       fill("NVDA261120C00160000", "sell", 4, 3.00, "2026-11-03")])
+    assert len(t) == 1 and t[0]["qty"] == 4 and t[0]["pnl"] == pytest.approx(400.0)
+
+
+def test_results_split_carries_the_multiplied_option_pnl():
+    # The split's discretionary line is where the CRWV loss was hiding.
+    t = closed_trades([fill("CRWV261120P00045000", "buy", 22, 2.94, "2026-11-10"),
+                       fill("CRWV261120P00045000", "sell", 22, 0.21, "2026-11-13")])
+    split = results_split(t)
+    assert split["discretionary"]["pnl"] == pytest.approx(-6006.0)
 
 
 def test_empty_inputs():
