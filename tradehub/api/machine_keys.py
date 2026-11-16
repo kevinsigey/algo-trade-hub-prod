@@ -19,7 +19,7 @@ KEYS = "api_keys"
 EVENTS = "api_key_events"
 
 ALLOWED_SCOPES = ("orders:place", "orders:read", "portfolio:read",
-                  "classifications:write")
+                  "classifications:write", "tracker:write")
 _KEY_RE = re.compile(r"^thk_[0-9a-f]{32}$")
 _LAST_USED_WRITE_EVERY = timedelta(seconds=60)
 

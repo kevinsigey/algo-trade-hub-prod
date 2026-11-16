@@ -2875,6 +2875,83 @@ def machine_record_classification(body: _ClassificationIn,
                                                        row["ticker"])}
 
 
+class _ForecastCardIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(min_length=1, max_length=12)
+    thesis_slug: str = Field(default="event-lab", max_length=60)
+    print_at: str
+    whisper_esp: float | None = None
+    whisper_sign: str | None = None
+    money_flow_direction: str | None = None
+    money_flow_evidence: list | None = None
+    guide_position: str | None = Field(default=None, max_length=500)
+    predicted_direction: str | None = None
+    opposing_case_ref: str | None = Field(default=None, max_length=300)
+    classification: str | None = None
+    supersedes_id: int | None = None
+
+
+@app.post("/api/v1/thesis/forecast-cards", tags=["Machine API"],
+          status_code=201)
+def machine_record_forecast_card(body: _ForecastCardIn,
+                                 authorization: str | None = Header(None),
+                                 supabase=Depends(get_supabase)):
+    """Freeze one forecast card (Thesis v6, spec Section 3). The write
+    contract: bearer machine key with the `tracker:write` scope. The
+    store enforces the freeze -- a card at or after `print_at` is a
+    422, as are unknown theses, out-of-vocabulary signal values, and a
+    money-flow direction without named evidence. Cards are never
+    edited: a correction is a new card with `supersedes_id` set, and
+    the response is the stored row so the writer verifies the freeze
+    (its `frozen_at` stamp) in the same call."""
+    from tradehub.api import machine_api, machine_keys
+    from tradehub.tracker import cards
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    route = "POST /api/v1/thesis/forecast-cards"
+    key = machine_api.authenticate(supabase, authorization)
+    machine_api.check_rate_limit(key)
+    machine_api.require_scope(supabase, key, "tracker:write", route)
+    try:
+        row = cards.create_card(
+            supabase, ticker=body.ticker, thesis_slug=body.thesis_slug,
+            print_at=body.print_at, whisper_esp=body.whisper_esp,
+            whisper_sign=body.whisper_sign,
+            money_flow_direction=body.money_flow_direction,
+            money_flow_evidence=body.money_flow_evidence,
+            guide_position=body.guide_position,
+            predicted_direction=body.predicted_direction,
+            opposing_case_ref=body.opposing_case_ref,
+            classification=body.classification,
+            supersedes_id=body.supersedes_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    machine_keys.record_event(
+        supabase, key["id"], route, "recorded",
+        detail=f"{row['ticker']} print {row['print_at']}")
+    return {"recorded": row}
+
+
+@app.get("/api/thesis/cards", tags=["Thesis Tracker"])
+def get_thesis_cards(supabase=Depends(get_supabase)):
+    """The frozen forecast cards, newest first, superseded ones marked.
+    A missing table (pre-migration deploy) serves an empty list rather
+    than a 500 -- the page's true statement then is 'no cards yet'."""
+    from tradehub.tracker import cards
+
+    if supabase is None:
+        raise HTTPException(status_code=503, detail="Supabase is not configured")
+    try:
+        rows = cards.list_cards(supabase)
+    except Exception as exc:  # noqa: BLE001 - classified below
+        if table_missing(exc, "forecast_cards"):
+            return {"cards": []}
+        raise _table_fault("forecast_cards", exc) from exc
+    return {"cards": rows}
+
+
 # ── Machine API step 4: read/cancel for a key's own orders (spec §1.3). Ownership is the ──
 # audit trail: an order is yours iff your key placed it. Somebody else's id is a 404, never
 # a 403 -- the API does not confirm the order exists.
