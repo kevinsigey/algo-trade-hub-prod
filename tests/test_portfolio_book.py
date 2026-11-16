@@ -119,6 +119,26 @@ def test_fifo_closed_trades_with_partial_fills():
     assert t[0]["idea"] == MANUAL
 
 
+def test_option_closed_trades_use_the_contract_multiplier():
+    # An option fill's price is per share and one contract is 100 shares. The
+    # big book's CRWV 45 puts (Nov 10-11, 2026): 22 contracts bought at 2.94,
+    # sold at 0.21, lost $6,006 -- the ledger booked it as -$60.06, and the
+    # short 38 leg (+$814) as +$8.14. Stock P&L is unchanged.
+    t = closed_trades([fill("CRWV261113P00045000", "buy", 22, 2.94, "2026-11-10"),
+                       fill("CRWV261113P00045000", "sell", 22, 0.21, "2026-11-11"),
+                       fill("CRWV261113P00038000", "sell", 11, 0.84, "2026-11-10"),
+                       fill("CRWV261113P00038000", "buy", 11, 0.10, "2026-11-11"),
+                       fill("GLD", "buy", 10, 200, "2026-11-10"), fill("GLD", "sell", 10, 190, "2026-11-11")])
+    pnl = {x["symbol"]: x["pnl"] for x in t}
+    assert pnl["CRWV261113P00045000"] == pytest.approx(-6006.0)
+    assert pnl["CRWV261113P00038000"] == pytest.approx(814.0)
+    assert pnl["GLD"] == pytest.approx(-100.0)
+    # Per-share prices and the percentage return are not scaled.
+    long_put = next(x for x in t if x["symbol"] == "CRWV261113P00045000")
+    assert (long_put["entry_price"], long_put["exit_price"]) == (2.94, 0.21)
+    assert long_put["return_pct"] == pytest.approx((0.21 / 2.94 - 1) * 100)
+
+
 def test_closed_trades_carry_their_sector():
     # The Performance tab's P&L-by-sector panel reads realized P&L per sector,
     # so a closed trade carries the same sector its position row carried.

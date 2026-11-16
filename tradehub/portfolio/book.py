@@ -417,6 +417,9 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
     of the lot that opened it."""
     lots: dict[str, deque] = defaultdict(deque)  # symbol -> [signed qty, price, time, idea, tag, reason]
     trades = []
+    # Option fills quote the price per share; one contract is 100 shares. Dollar P&L
+    # scales by that; per-share prices and the percentage return do not.
+    per_unit = {f["symbol"]: 100 if _OCC.match(f["symbol"]) else 1 for f in fills}
     for f in sorted(fills, key=lambda f: f["transaction_time"]):
         qty = float(f["qty"]) * (1 if f["side"] == "buy" else -1)
         price, at = float(f["price"]), f["transaction_time"]
@@ -432,7 +435,7 @@ def _fifo(fills: list[dict]) -> tuple[list[dict], dict[str, deque]]:
             trades.append({
                 "symbol": f["symbol"], "sector": sector_for(f["symbol"]),
                 "qty": signed, "entry_price": lot[1], "exit_price": price,
-                "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed,
+                "entered_at": lot[2], "exited_at": at, "pnl": (price - lot[1]) * signed * per_unit[f["symbol"]],
                 "return_pct": _pct(price, lot[1]) * (1 if signed > 0 else -1),
                 "held_days": (_day(at).date() - _day(lot[2]).date()).days, "idea": lot[3],
                 "reason": lot[5] if len(lot) > 5 else None,
