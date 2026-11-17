@@ -187,6 +187,30 @@ describe("ChokepointsMap", () => {
     expect(screen.getByText(/a floor, not a total/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /UKMTO Recent Incidents/ }))
       .toHaveAttribute("href", "https://www.ukmto.org/recent-incidents");
+    // Each story carries its time: occurred_at is served as a UTC instant
+    // and rendered on the reader's clock (Kevin, 2026-11-16), with the UTC
+    // original in the title. The bare served date no longer leads the line.
+    const stamp = new Date("2026-11-11T18:00:00Z")
+      .toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const meta = screen.getByTitle(/2026-11-11T18:00:00Z as served \(UTC\)/);
+    expect(meta.textContent).toContain(stamp);
+    expect(meta.textContent).toContain("UKMTO 204-26");
+    expect(screen.queryByText(/2026-11-11 · UKMTO 204-26/)).toBeNull();
+    // The panel sits beside the map (same grid wrapper), not under it.
+    const panel = screen.getByLabelText("Reported incidents, UKMTO");
+    expect(panel.parentElement?.className).toContain("lg:grid-cols");
+    expect(panel.parentElement?.firstElementChild).not.toBe(panel);
+  });
+
+  it("orders the metric groups with Barrels moving last", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(VIEW), { status: 200 })));
+    render(<ChokepointsMap />);
+    const barrels = await screen.findByText("Barrels moving");
+    const background = screen.getByText("Background");
+    const risk = screen.getByText("Chance of trouble");
+    // DOCUMENT_POSITION_FOLLOWING on the earlier node: barrels comes after both.
+    expect(background.compareDocumentPosition(barrels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(risk.compareDocumentPosition(barrels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows collapsed traffic banner when year-ago delta <= -50", async () => {
