@@ -43,6 +43,20 @@ interface GeoIncident {
   vessel_type: string | null; description: string; url: string;
 }
 
+/** An incident's moment, browser-local (Kevin, 2026-11-16): the API
+ * serves occurred_at as a UTC instant ("2026-11-16T19:00:00Z") and the
+ * reader's clock is the right frame for when it happened; the UTC
+ * original rides in the title. A stamp that does not parse falls back
+ * to the served date -- never an invented time. */
+function incidentStamp(inc: GeoIncident): { label: string; title: string } {
+  const at = new Date(inc.occurred_at);
+  if (Number.isNaN(at.getTime())) return { label: inc.date, title: inc.date };
+  return {
+    label: at.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+    title: `${at.toLocaleString()} local · ${inc.occurred_at} as served (UTC)`,
+  };
+}
+
 interface GeoIncidents {
   source: string; source_url: string; pulled_at: string | null;
   as_of: string; count: number; incidents: GeoIncident[];
@@ -214,6 +228,10 @@ export default function ChokepointsMap() {
         ))}
       </div>
 
+      {/* The map is static, so the news sits beside it, not under it
+          (Kevin, 2026-11-16): map left, incidents right on wide screens,
+          stacked on narrow ones. */}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
       <div ref={wrapRef} className="relative overflow-hidden rounded-lg border border-slate-700"
            style={{ width: "100%", maxWidth: frame.width, height: frame.height * scale }}>
         <div className="absolute inset-0" style={{ transform: `scale(${scale})`, transformOrigin: "top left" }}>
@@ -277,6 +295,50 @@ export default function ChokepointsMap() {
         <span className="absolute bottom-1 right-2 text-[10px] text-slate-300">Imagery © Esri, Maxar, Earthstar Geographics</span>
       </div>
 
+      {view.incidents && view.incidents.incidents.length > 0 && (
+        <div className="rounded-lg border border-slate-700 px-3 py-2.5" aria-label="Reported incidents, UKMTO">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="text-[13px] font-semibold uppercase tracking-wide text-slate-300">
+              Reported incidents · {view.incidents.source}
+            </span>
+            <span className="text-[13px] text-slate-400">
+              Latest {view.incidents.as_of} · {view.incidents.count} in the region
+              {view.incidents.pulled_at
+                ? ` · pulled ${new Date(view.incidents.pulled_at).toLocaleString()}`
+                : ""}
+            </span>
+            <a href={view.incidents.source_url} target="_blank" rel="noreferrer"
+               className="text-[13px] text-sky-300 underline">
+              UKMTO Recent Incidents
+            </a>
+          </div>
+          <ul className="mt-2 space-y-2">
+            {view.incidents.incidents.slice(0, 6).map((inc) => {
+              const stamp = incidentStamp(inc);
+              return (
+              <li key={`${inc.ref}-${inc.occurred_at}`} className="border-l-2 border-rose-400/50 pl-3">
+                <div className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
+                  <span className="font-semibold text-white">{inc.type ?? "Incident"}</span>
+                  <span className="text-slate-300">{inc.place ?? "—"}</span>
+                  <span className="text-slate-500" title={stamp.title}>
+                    {stamp.label} · {inc.ref}
+                    {inc.vessel_type ? ` · ${inc.vessel_type}` : ""}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[13px] leading-snug text-slate-400">{inc.description}</p>
+              </li>
+              );
+            })}
+          </ul>
+          <p className="mt-2 text-[12px] text-slate-500">
+            Official reports to UKMTO as published on its Recent Incidents feed — incidents are
+            listed only once reported and verified, so this is a floor, not a total. The live
+            feeds on the map cannot see most of these: a projectile or a mine makes no heat signature.
+          </p>
+        </div>
+      )}
+      </div>
+
       {coverage.gap && (
         <p className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm text-amber-200">
           {view.flow && view.flow.tanker_year_ago_delta_pct != null && view.flow.tanker_year_ago_delta_pct <= -50
@@ -324,46 +386,6 @@ export default function ChokepointsMap() {
               AIS-visible ships only — a floor, not a total
             </span>
           </div>
-        </div>
-      )}
-
-      {view.incidents && view.incidents.incidents.length > 0 && (
-        <div className="rounded-lg border border-slate-700 px-3 py-2.5" aria-label="Reported incidents, UKMTO">
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <span className="text-[13px] font-semibold uppercase tracking-wide text-slate-300">
-              Reported incidents · {view.incidents.source}
-            </span>
-            <span className="text-[13px] text-slate-400">
-              Latest {view.incidents.as_of} · {view.incidents.count} in the region
-              {view.incidents.pulled_at
-                ? ` · pulled ${new Date(view.incidents.pulled_at).toLocaleString()}`
-                : ""}
-            </span>
-            <a href={view.incidents.source_url} target="_blank" rel="noreferrer"
-               className="text-[13px] text-sky-300 underline">
-              UKMTO Recent Incidents
-            </a>
-          </div>
-          <ul className="mt-2 space-y-2">
-            {view.incidents.incidents.slice(0, 6).map((inc) => (
-              <li key={`${inc.ref}-${inc.occurred_at}`} className="border-l-2 border-rose-400/50 pl-3">
-                <div className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
-                  <span className="font-semibold text-white">{inc.type ?? "Incident"}</span>
-                  <span className="text-slate-300">{inc.place ?? "—"}</span>
-                  <span className="text-slate-500">
-                    {inc.date} · {inc.ref}
-                    {inc.vessel_type ? ` · ${inc.vessel_type}` : ""}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-[13px] leading-snug text-slate-400">{inc.description}</p>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[12px] text-slate-500">
-            Official reports to UKMTO as published on its Recent Incidents feed — incidents are
-            listed only once reported and verified, so this is a floor, not a total. The live
-            feeds above cannot see most of these: a projectile or a mine makes no heat signature.
-          </p>
         </div>
       )}
 

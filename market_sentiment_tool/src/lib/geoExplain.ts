@@ -4,9 +4,11 @@
 export type GeoGroup = "flow" | "risk" | "background";
 
 export const GEO_GROUPS: { key: GeoGroup; title: string; note: string }[] = [
-  { key: "flow", title: "Barrels moving", note: "A direct read on supply, when the feed can see the ships." },
   { key: "risk", title: "Chance of trouble", note: "Risk is up but supply hasn't changed: expect bigger swings with no clear direction." },
   { key: "background", title: "Background", note: "Weak link to prices. Useful as context." },
+  // Barrels moving LAST (Kevin, 2026-11-16): the flow read is the one the
+  // dark Gulf feed most often leaves empty, so it no longer leads the page.
+  { key: "flow", title: "Barrels moving", note: "A direct read on supply, when the feed can see the ships." },
 ];
 
 export const IN_OIL_MODEL = new Set(["tankers_gate_entries_1h", "jamming_intraday", "mil_total"]);
