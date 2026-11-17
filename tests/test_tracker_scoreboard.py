@@ -323,3 +323,55 @@ def test_scoreboard_route_serves_the_board():
     assert [c["claim"] for c in board["claims"]] == ["A", "B", "C"]
     assert board["claims"][0]["graded"] == 4
     assert len(board["theses"]) == 2
+
+
+def test_scoreboard_route_rejects_a_signed_out_request():
+    """Claude's #552 blocker: the route shipped with no admin
+    dependency and served the board (refusal log with key ids, sizing
+    config, live cash %) to anyone. This test overrides ONLY the
+    supabase dependency -- require_admin runs for real, and a request
+    with no Bearer token must get its 401."""
+    from fastapi.testclient import TestClient
+
+    from tradehub.api import main
+    from tradehub.api.dependencies import get_supabase
+
+    db = DB()
+    _seed_core(db)
+    main.app.dependency_overrides[get_supabase] = lambda: db
+    try:
+        resp = TestClient(main.app).get("/api/thesis/scoreboard")
+    finally:
+        main.app.dependency_overrides.clear()
+    assert resp.status_code == 401, resp.text
+    assert "scoreboard" not in resp.json()
+
+
+def test_default_account_reads_are_cached_for_a_minute(monkeypatch):
+    """The board's cash gauge reads each book's Alpaca account through
+    _default_account; repeat reads inside the TTL must not re-hit
+    Alpaca (Claude's #552 review), and an expired entry refetches."""
+    import tradehub.portfolio.alpaca_paper as alpaca_paper
+    from tradehub.tracker import scoreboard
+
+    calls = []
+
+    def fake_paper_get(path, *, book=None):
+        calls.append(book)
+        return {"cash": "100", "portfolio_value": "1000"}
+
+    monkeypatch.setattr(alpaca_paper, "paper_get", fake_paper_get)
+    scoreboard._account_cache.clear()
+    try:
+        first = scoreboard._default_account("main")
+        second = scoreboard._default_account("main")
+        assert first == second == {"cash": "100", "portfolio_value": "1000"}
+        assert calls == ["main"]
+        # Age the entry past the TTL: the next read refetches.
+        stamp, account = scoreboard._account_cache["main"]
+        scoreboard._account_cache["main"] = (
+            stamp - scoreboard._ACCOUNT_TTL_SECONDS - 1, account)
+        scoreboard._default_account("main")
+        assert calls == ["main", "main"]
+    finally:
+        scoreboard._account_cache.clear()
