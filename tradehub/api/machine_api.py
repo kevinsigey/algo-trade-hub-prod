@@ -592,10 +592,12 @@ def _tracker_gate(supa, out: dict, gate, *, spec: dict, book: str,
 
     `risk` is the caller's figure for its own path: options pass the
     computed max_loss (a declared figure never overrides computed
-    math); shares pass the declared risk_amount when present, else
-    risk-to-stop from stop_loss_price, else the full notional. On a
-    pass, out["tracker"] carries the link payload the route writes at
-    placement."""
+    math); shares pass the declared risk_amount FLOORED by the
+    computable figure -- risk-to-stop from stop_loss_price, or the
+    full notional when no stop limits the loss (Claude's post-merge
+    review of #549: a declared 0 on a $50k buy passed the unit on
+    trust alone). On a pass, out["tracker"] carries the link payload
+    the route writes at placement."""
     play_kind = spec.get("play_kind")
     if play_kind is None:
         return True
@@ -960,10 +962,12 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
          else "the breaker is tripped but this order closes or protects a position")
     # The thesis tracker gate (tracker design PR 5): engages only when
     # the order carries a play_kind. Share risk is the declared
-    # risk_amount when the file sized one, else risk-to-stop from the
-    # declared stop level, else the full notional — the strictest
-    # computable reading, in that order of preference for the file's
-    # own figure. Cash moves by the priced notional.
+    # risk_amount FLOORED by the computable figure: risk-to-stop from
+    # the declared stop level, or the full notional when no stop
+    # limits the loss. A declared figure may raise the risk, never
+    # lower it below what the order's own numbers compute (Claude's
+    # post-merge review of #549: risk_amount=0 on a $50k buy passed
+    # the unit on trust alone). Cash moves by the priced notional.
     if spec.get("play_kind") is not None:
         stop = spec.get("stop_loss_price")
         # Risk-to-stop counts only when the stop actually limits the
@@ -973,12 +977,14 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
         stop_limits = (stop is not None and price is not None and
                        ((side == "buy" and float(stop) < price) or
                         (side == "sell" and float(stop) > price)))
-        if spec.get("risk_amount") is not None:
-            risk = float(spec["risk_amount"])
-        elif stop_limits:
-            risk = abs(price - float(stop)) * qty
+        if stop_limits:
+            computable = abs(price - float(stop)) * qty
         else:
-            risk = (price or 0.0) * qty
+            computable = (price or 0.0) * qty
+        if spec.get("risk_amount") is not None:
+            risk = max(float(spec["risk_amount"]), computable)
+        else:
+            risk = computable
         cash_delta = ((-(price * qty) if side == "buy" else price * qty)
                       if price is not None else 0.0)
         if not _tracker_gate(supa, out, gate, spec=spec, book=book,

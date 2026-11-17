@@ -427,6 +427,49 @@ def test_cross_sizes_on_the_live_ask():
     assert db.db[kd.ORDERS][0]["contracts"] == 20
 
 
+def test_cross_skips_when_the_live_ask_ran_past_the_slippage_cap():
+    # The edge still clears the bar at the live ask (model_prob 0.75 at
+    # a 0.55 ask nets ~18c against the 10c bar), but the ask ran 15c
+    # above the frozen 0.40 -- past the 3c cap. The recomputed edge
+    # rests on a minutes-old probability; a run that large is news it
+    # has not heard (Claude's post-merge review of #534).
+    db = seed(DB(), open_=[decision(model_prob=0.75)])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 55.0
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["placed"] == 0
+    assert out["skipped_no_depth"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "skipped_no_depth"
+    assert row["skip_reason"] == "slippage_cap"
+
+
+def test_cross_places_inside_the_slippage_cap():
+    db = seed(DB(), open_=[decision(model_prob=0.75)])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 42.0  # 2c above the frozen quote: inside the cap
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    assert db.db[kd.ORDERS][0]["limit_price"] == 0.42
+
+
+def test_a_retried_claim_records_the_new_cross_price():
+    # Pass one froze a claim at 0.40 and its create raised, leaving the
+    # row pending. The retry crosses at the new live ask, and the row's
+    # limit_price must become the price the IOC actually went out at --
+    # not the first pass's (Claude's post-merge review of #534).
+    db = seed(DB(), open_=[decision()],
+              orders=[order_row(status="pending", kalshi_order_id=None,
+                                limit_price=0.40)])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 36.0
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "resting"
+    assert row["limit_price"] == 0.36 and row["frozen_quote"] == 0.40
+
+
 def test_ioc_order_that_crosses_nothing_closes_at_placement():
     db = seed(DB(), open_=[decision()])
     pf = FakePortfolio()
