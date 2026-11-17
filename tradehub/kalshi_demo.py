@@ -44,9 +44,14 @@ quote frozen ~9 minutes earlier. Placement now re-reads the live book,
 re-validates the decision's edge at the live ask with the rule's own
 net_edges against the lane's bar, sizes on the live ask, and sends an
 immediate-or-cancel order at that ask (the row's limit_price is the
-crossed ask; frozen_quote keeps the freeze-time quote). An unreadable
+crossed ask, rewritten on every placement including a retried claim;
+frozen_quote keeps the freeze-time quote). An unreadable
 book, an unmeasured probability, or an edge that no longer clears the
 bar is a skip with its reason, never a fallback to the frozen quote.
+So is a cross whose live ask has run more than KALSHI_DEMO_MAX_SLIPPAGE
+(default 0.03) above the frozen quote (skip_reason "slippage_cap",
+Claude's post-merge review of #534): the edge is recomputed from a
+minutes-old model_prob, and a run that large is news it has not heard.
 The shadow record and the decisions it scores are unchanged.
 
 Placement reliability (2026-11-13): every gated buy a lane selects
@@ -124,6 +129,15 @@ def max_contracts_per_day() -> int:
 
 def max_loss_per_day_usd() -> float:
     return float(os.getenv("KALSHI_DEMO_MAX_LOSS_PER_DAY_USD", "20"))
+
+
+def max_slippage() -> float:
+    """The most the live ask may sit ABOVE the frozen quote before the
+    cross is refused (Claude's post-merge review of #534): the edge
+    re-validation runs off a ~9-minute-old model_prob, so without a
+    cap a frozen 0.40 could be crossed at 0.55. In price units
+    (0.03 = 3 cents)."""
+    return float(os.getenv("KALSHI_DEMO_MAX_SLIPPAGE", "0.03"))
 
 
 def size_contracts(balance_usd: float, price: float, pct: float) -> int:
@@ -412,6 +426,20 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             summary["skipped_no_depth"] += 1
             lane_summary["skipped_no_depth"] += 1
             continue
+        # Slippage cap (Claude's post-merge review of #534): the edge
+        # above was recomputed from a ~9-minute-old model_prob, so the
+        # cross also refuses when the live ask has run too far above
+        # the quote the decision froze at -- the move itself is the
+        # news the frozen probability has not heard.
+        frozen = base_row.get("frozen_quote")
+        if frozen is not None and price - float(frozen) > max_slippage():
+            _skip(supa, existing, {
+                **base_row, "contracts": 0, "ask_size": None,
+                "status": "skipped_no_depth",
+                "skip_reason": "slippage_cap"})
+            summary["skipped_no_depth"] += 1
+            lane_summary["skipped_no_depth"] += 1
+            continue
         base_row["limit_price"] = price
         depth = ask_size_at(supa, SERIES, d["close_time"], d["side"], now)
         if depth is not None and depth < 1:
@@ -508,6 +536,7 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                                 "status": "cancelled",
                                 "skip_reason": "ioc_unfilled",
                                 "contracts": contracts,
+                                "limit_price": price,
                                 "balance_at_sizing": balance,
                                 "budget_pct": pct, "ask_size": depth,
                                 "expires_at": _iso(expires)})
@@ -515,6 +544,7 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
         else:
             _update(supa, row, {"kalshi_order_id": order.get("order_id"),
                                 "status": "resting", "contracts": contracts,
+                                "limit_price": price,
                                 "balance_at_sizing": balance,
                                 "budget_pct": pct, "ask_size": depth,
                                 "expires_at": _iso(expires)})

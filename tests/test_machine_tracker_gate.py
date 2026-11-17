@@ -153,15 +153,36 @@ def test_the_unit_forks_on_grader_freshness(api):
     assert len(sent) == 1
 
 
-def test_declared_risk_and_stop_based_risk_beat_notional(api):
+def test_declared_risk_is_floored_by_the_computable_figure(api):
     client, db, sent, _ = api
-    # 100 shares = $10,000 notional, but the file sized the risk at $4,000
-    r = _post(client, _key(db), qty=100, risk_amount=4000.0)
+    # A stop alone prices risk-to-stop: 100 @ $100 against a $60 stop
+    # risks $4,000, under the fresh $5,000 unit.
+    r = _post(client, _key(db), qty=100, stop_loss_price=60.0)
     assert r.status_code == 200, r.text
-    # and a declared stop level prices risk-to-stop at $4,000 the same way
+    # A declared figure beside the stop may agree or raise, never
+    # lower: declared $4,000 = the risk-to-stop, passes the same way.
     r = _post(client, _key(db), qty=100, client_order_id="run-2",
-              stop_loss_price=60.0)
+              risk_amount=4000.0, stop_loss_price=60.0)
     assert r.status_code == 200, r.text
+    # Claude's #549 hole: a declared $0 on a $10,000 buy with NO stop
+    # was trusted and passed. With no stop the computable figure is
+    # the full notional, and the declared figure cannot lower it.
+    r = _post(client, _key(db), qty=100, client_order_id="run-3",
+              risk_amount=0.0)
+    assert r.status_code == 422 and "governing unit" in r.text
+    # A declared figure under the risk-to-stop floors at the stop:
+    # declared $100 against the $4,000 risk-to-stop passes while the
+    # unit is $5,000, and blocks once the stale-grader fallback drops
+    # the unit to $1,500 -- on trust it would have passed both.
+    r = _post(client, _key(db), qty=100, client_order_id="run-4",
+              risk_amount=100.0, stop_loss_price=60.0)
+    assert r.status_code == 200, r.text
+    db.db["tracker_health"][0]["last_grader_run_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    r = _post(client, _key(db), qty=100, client_order_id="run-5",
+              risk_amount=100.0, stop_loss_price=60.0)
+    assert r.status_code == 422 and "governing unit" in r.text
+    assert len(sent) == 3
 
 
 def test_the_cash_floor_blocks_an_entry(api):
