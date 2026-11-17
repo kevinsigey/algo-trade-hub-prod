@@ -408,8 +408,8 @@ function App() {
           <Route path="/shadow" element={<Navigate to="/crypto" replace />} />
           <Route path="/crypto" element={<Crypto />} />
           <Route path="/journal" element={<Journal />} />
-          <Route path="/thesis" element={<Thesis />} />
-          <Route path="/thesis-scoreboard" element={<ThesisScoreboard />} />
+          <Route path="/thesis" element={<RequireAdmin><Thesis /></RequireAdmin>} />
+          <Route path="/thesis-scoreboard" element={<RequireAdmin><ThesisScoreboard /></RequireAdmin>} />
           {/* Merged into the Model Tracker (Kevin's call, 2026-11-02): the scoreboard and the
               models catalogue were two admin tabs presenting the /api/scoreboard dataset next
               to the Tracker's forward record. Both names now land on the Tracker's Backtests

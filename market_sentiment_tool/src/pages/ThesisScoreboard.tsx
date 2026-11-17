@@ -141,7 +141,7 @@ function RegimePanel({ board }: { board: Scoreboard }) {
               <li key={book.book} className="flex items-center gap-2">
                 <span className="font-mono text-slate-300">{book.book}</span>
                 <span className="font-mono text-white">
-                  {book.cash_pct === null ? "unreadable" : `${book.cash_pct.toFixed(1)}% cash`}
+                  {book.cash_pct === null ? "—" : `${book.cash_pct.toFixed(1)}% cash`}
                 </span>
                 {book.breach && <StateChip state="breach" />}
               </li>

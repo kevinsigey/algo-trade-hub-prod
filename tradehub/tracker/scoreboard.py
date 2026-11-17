@@ -280,12 +280,30 @@ def _default_book_state(client) -> dict:
     return book_state(client)
 
 
+_ACCOUNT_TTL_SECONDS = 60.0
+_account_cache: dict[str, tuple[float, dict | None]] = {}
+
+
 def _default_account(book: str) -> dict | None:
+    """One book's Alpaca account, cached for ~60 s (Claude's #552
+    review): the board is read on every page view and the account only
+    moves when a trade lands, so a per-book TTL cache keeps the gauge
+    honest without an Alpaca read per request. A failed read caches as
+    None for the same window -- the gauge already reads None as
+    unknown, and the next window retries."""
+    import time
+
+    now = time.monotonic()
+    hit = _account_cache.get(book)
+    if hit is not None and now - hit[0] < _ACCOUNT_TTL_SECONDS:
+        return hit[1]
     try:
         from tradehub.portfolio.alpaca_paper import paper_get
-        return paper_get("/v2/account", book=book)
+        account = paper_get("/v2/account", book=book)
     except Exception:  # noqa: BLE001 -- an unreadable book shows null
-        return None
+        account = None
+    _account_cache[book] = (now, account)
+    return account
 
 
 def _cash_gauge(floor_pct: float, *, account_fn) -> dict:

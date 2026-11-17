@@ -3027,7 +3027,8 @@ def machine_record_forecast_card(body: _ForecastCardIn,
 
 
 @app.get("/api/thesis/cards", tags=["Thesis Tracker"])
-def get_thesis_cards(supabase=Depends(get_supabase)):
+def get_thesis_cards(supabase=Depends(get_supabase),
+                     _admin: dict = Depends(admin.require_admin)):
     """The frozen forecast cards, newest first, superseded ones marked.
     A missing table (pre-migration deploy) serves an empty list rather
     than a 500 -- the page's true statement then is 'no cards yet'."""
@@ -3045,12 +3046,17 @@ def get_thesis_cards(supabase=Depends(get_supabase)):
 
 
 @app.get("/api/thesis/scoreboard", tags=["Thesis Tracker"])
-def get_thesis_scoreboard(supabase=Depends(get_supabase)):
+def get_thesis_scoreboard(supabase=Depends(get_supabase),
+                          _admin: dict = Depends(admin.require_admin)):
     """The tracker scoreboard (PR 7): per-claim progress with the
     grader's own math, per-play-kind P&L, the regime panel, the
-    cash-floor gauge and the breach log, as one read model. A missing
-    tracker table (pre-migration deploy) serves a null board rather
-    than a 500 -- the page's true statement then is 'not seeded yet'."""
+    cash-floor gauge and the breach log, as one read model. ADMIN ONLY
+    (Claude's post-merge review of #552, 2026-11-16): the board carries
+    the order-route refusal log with key ids, the sizing config and
+    live cash percentages -- it shipped without the dependency and
+    served 200 signed-out. A missing tracker table (pre-migration
+    deploy) serves a null board rather than a 500 -- the page's true
+    statement then is 'not seeded yet'."""
     from tradehub.tracker import scoreboard
 
     if supabase is None:

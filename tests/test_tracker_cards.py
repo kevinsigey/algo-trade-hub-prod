@@ -185,6 +185,26 @@ def test_write_endpoint_records_and_reads_back():
     assert view["cards"][0]["superseded"] is False
 
 
+def test_read_endpoint_rejects_a_signed_out_request():
+    """Kevin's call (Nov 16, relayed on #524 as 6939739790): the cards
+    read is admin-only too -- the cards carry money_flow_evidence and
+    guide_position. This test overrides ONLY the supabase dependency;
+    require_admin runs for real and a request with no Bearer <redacted>
+    gets its 401. (The _client helper's override covers the happy
+    path above; the machine-key write route is untouched.)"""
+    c = _seeded()
+    # _client() leaves its require_admin override installed; remove it
+    # explicitly or this test would inherit the pass it exists to deny.
+    main.app.dependency_overrides.pop(admin.require_admin, None)
+    main.app.dependency_overrides[get_supabase] = lambda: c
+    try:
+        resp = TestClient(main.app).get(READ_URL)
+    finally:
+        main.app.dependency_overrides.clear()
+    assert resp.status_code == 401, resp.text
+    assert "cards" not in resp.json()
+
+
 def test_write_endpoint_needs_the_tracker_scope():
     c = _seeded()
     resp = _client(c).post(WRITE_URL, headers=_key(c, ("portfolio:read",)),
