@@ -333,11 +333,14 @@ def test_scoreboard_route_rejects_a_signed_out_request():
     with no Bearer token must get its 401."""
     from fastapi.testclient import TestClient
 
-    from tradehub.api import main
+    from tradehub.api import admin, main
     from tradehub.api.dependencies import get_supabase
 
     db = DB()
     _seed_core(db)
+    # Another test's client helper may leave a require_admin override
+    # installed; remove it explicitly or this test inherits the pass.
+    main.app.dependency_overrides.pop(admin.require_admin, None)
     main.app.dependency_overrides[get_supabase] = lambda: db
     try:
         resp = TestClient(main.app).get("/api/thesis/scoreboard")
