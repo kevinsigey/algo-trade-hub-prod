@@ -108,6 +108,23 @@ describe("curve trading days and order labels (2026-11-12 fixes)", () => {
                                 day_pl: -88, idea: null, sector: "Commodities (Gold)" });
   });
 
+  it("carries the session folds (AH % and PM %) through the row mapping", () => {
+    const row = aggregateToRow({
+      symbol: "MU", asset: "stock", qty: 10, market_value: 3000, pct_of_equity: 3,
+      pct_of_book: 3, avg_entry: 290, tags: [], sector: null, side: "long",
+      last_price: 300, change_pct: 1.2, day_pl: 30, cost_basis: 2900, unrealized_pl: 100,
+      ah_change_pct: 0.8, pm_change_pct: -1.5,
+    });
+    expect(row.ah_change_pct).toBe(0.8);
+    expect(row.pm_change_pct).toBe(-1.5);
+    const bare = aggregateToRow({
+      symbol: "MU", asset: "stock", qty: 10, market_value: 3000, pct_of_equity: 3,
+      pct_of_book: 3, avg_entry: 290, tags: [], sector: null, side: "long",
+      last_price: 300, change_pct: 1.2, day_pl: 30, cost_basis: 2900, unrealized_pl: 100,
+    });
+    expect(bare.pm_change_pct).toBeNull();
+  });
+
   it("counts weekdays only, so a weekend live point can't advance the Sharpe guard", () => {
     // Fri Nov 6, Sat Nov 7, Sun Nov 8, Mon Nov 9 2026: four calendar
     // days on the curve, but only two trading days.

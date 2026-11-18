@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
+from tradehub.journal.nyse import is_session as _is_session
 from tradehub.portfolio.sectors import sector_for
 
 _ET = ZoneInfo("America/New_York")
@@ -200,7 +201,7 @@ def positions_aggregate(rows: list[dict], equity: float | None) -> list[dict]:
                     "sector": g["sector"],
                     "side": "long" if g["qty"] > 0 else "short" if g["qty"] < 0 else None,
                     "last_price": g["last_price"], "change_pct": g["change_pct"],
-                    "ah_change_pct": None,
+                    "ah_change_pct": None, "pm_change_pct": None,
                     "day_pl": g["day_pl"] if g["_day_seen"] else None,
                     "cost_basis": g["_cost"] if g["_cb_seen"] else None,
                     "unrealized_pl": g["unrealized_pl"] if g["_pl_seen"] else None})
@@ -287,6 +288,13 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
                 qqq_prev_close: float | None = None) -> dict:
     """Today, split at the 4:00 PM ET close (Portfolio header, 2026-11-12).
 
+    Before the open the day carries a PREMARKET segment instead
+    (2026-11-16): inside 04:00-09:30 ET on a session day, state
+    "premarket" reports the live equity and benchmarks against the same
+    prior close the regular figure will use, with regular_* still None --
+    the overnight move is shown as itself, not folded silently into the
+    regular session's figure once the bell rings.
+
     The regular-session figure is measured against the PRIOR CLOSE: the
     broker's `last_equity` when the caller has it (the snapshot series runs
     09:05-16:05 ET, so yesterday's last snapshot is not quite the close --
@@ -305,8 +313,10 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
     out: dict = {"state": "no_prior", "prior_close_at": None, "close_at": None,
                  "regular_pl": None, "regular_pct": None,
                  "after_hours_pl": None, "after_hours_pct": None,
+                 "premarket_pl": None, "premarket_pct": None,
                  "spy_regular_pct": None, "spy_after_hours_pct": None,
                  "qqq_regular_pct": None, "qqq_after_hours_pct": None,
+                 "spy_premarket_pct": None, "qqq_premarket_pct": None,
                  "for_date": None, "day_label": None, "is_today": True}
     if not snapshots:
         return out
@@ -314,10 +324,15 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
     dated = [(_day(s["taken_at"]).astimezone(_ET), s) for s in snapshots]
     et_now = now.astimezone(_ET)
     # The closed-day reading applies only when today genuinely has no
-    # session: a weekend, or a weekday past the first snapshot hour (a
-    # holiday). A weekday pre-market is not a closed day (Claude's #514
-    # review) -- it falls through and reads as a regular day so far.
-    closed_day = et_now.weekday() >= 5 or et_now.time() >= time(10, 5)
+    # session. The NYSE calendar decides that at any hour (Claude's
+    # #555 review): under the old first-snapshot-hour heuristic a
+    # weekday holiday read as "premarket" until 10:05, showing a
+    # Premarket +$0.00 header on a day the market never opens. The
+    # 10:05 arm survives for a session day whose snapshots never
+    # started. A weekday pre-market on a session day is not a closed
+    # day (Claude's #514 review) -- it falls through and reads as a
+    # regular day so far.
+    closed_day = not _is_session(today) or et_now.time() >= time(10, 5)
     if closed_day and all(et.date() != today for et, _ in dated):
         # Closed day: report the last snapshot's own day, in full.
         for_date = dated[-1][0].date()
@@ -393,6 +408,23 @@ def today_split(snapshots: list[dict], now: datetime, equity: float | None = Non
             out["qqq_regular_pct"] = _pct(float(close["qqq_price"]), float(prior["qqq_price"]))
         if current_qqq is not None and close.get("qqq_price"):
             out["qqq_after_hours_pct"] = _pct(float(current_qqq), float(close["qqq_price"]))
+    elif time(4, 0) <= et_now.time() < time(9, 30) and _is_session(today):
+        # Premarket: the forming move against the prior close, reported
+        # as its own segment; the regular figure starts at the bell.
+        # The session gate is belt-and-braces behind the closed-day
+        # branch above (which takes every non-session day with no
+        # snapshot today): a holiday never reads as premarket.
+        out["state"] = "premarket"
+        out["premarket_pl"] = round(current_eq - prior_eq, 2)
+        out["premarket_pct"] = _pct(current_eq, prior_eq) if prior_eq else None
+        if spy_prev_close and current_spy is not None:
+            out["spy_premarket_pct"] = _pct(float(current_spy), float(spy_prev_close))
+        elif current_spy is not None and prior.get("spy_price"):
+            out["spy_premarket_pct"] = _pct(float(current_spy), float(prior["spy_price"]))
+        if qqq_prev_close and current_qqq is not None:
+            out["qqq_premarket_pct"] = _pct(float(current_qqq), float(qqq_prev_close))
+        elif current_qqq is not None and prior.get("qqq_price"):
+            out["qqq_premarket_pct"] = _pct(float(current_qqq), float(prior["qqq_price"]))
     else:
         out["state"] = "regular"
         out["regular_pl"] = round(current_eq - prior_eq, 2)

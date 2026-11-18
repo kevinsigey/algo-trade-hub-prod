@@ -70,8 +70,21 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
         <span className="text-xs text-slate-400">Net liquidation value</span>
         <span className="font-display text-2xl font-semibold tabular-nums tracking-tight text-white">{money(s.equity)}</span>
       </div>
-      {t && t.state !== "no_prior" && t.regular_pl != null ? (
+      {t && t.state !== "no_prior" && (t.regular_pl != null || (t.state === "premarket" && t.premarket_pl != null)) ? (
         <div className="text-sm tabular-nums text-slate-200">
+          {t.state === "premarket" && t.premarket_pl != null ? (
+            <>
+              <span className={tone(t.premarket_pl)}>
+                Premarket {signed(t.premarket_pl)} ({fmtPct(t.premarket_pct)})
+              </span>
+              {t.spy_premarket_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_premarket_pct)}</span>}
+              {t.qqq_premarket_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_premarket_pct)}</span>}
+              <span className="ml-2 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                Premarket
+              </span>
+            </>
+          ) : (
+            <>
           <span className={tone(t.regular_pl)}>
             {t.is_today === false ? (t.day_label ?? "Today") : "Today"} {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
           </span>
@@ -85,6 +98,8 @@ export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
               <span className="ml-2 rounded border border-sky-500/40 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
                 After hours
               </span>
+            </>
+          )}
             </>
           )}
         </div>

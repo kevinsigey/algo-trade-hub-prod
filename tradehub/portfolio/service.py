@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 
 _log = logging.getLogger(__name__)
 
@@ -274,6 +274,7 @@ def portfolio(supa, now: datetime | None = None, book_name: str | None = None) -
     score["equity"] = float(account["equity"])
     aggregate = book.positions_aggregate(rows, float(account["equity"]))
     _fold_after_hours(aggregate, now)
+    _fold_premarket(aggregate, now)
     # Today's figures are based on the broker's prior close (last_equity,
     # and the benchmarks' previous daily-bar closes), not on yesterday's
     # last hourly snapshot (Claude's #506 review, item 1). A missing
@@ -345,6 +346,59 @@ def _fold_after_hours(aggregate: list[dict], now: datetime) -> None:
         if (now - trade_et).total_seconds() > 3600:
             continue  # frozen print, not a current move
         row["ah_change_pct"] = (snap["price"] / snap["day_close"] - 1) * 100
+
+
+def _fold_premarket(aggregate: list[dict], now: datetime) -> None:
+    """Per-position premarket move: the latest trade against the PRIOR
+    session's close, from the same batched snapshot as the after-hours
+    fold. Only inside the premarket window (04:00-09:30 ET) on a session
+    day and only for stocks (options have no daily bar here); anything
+    missing stays None -- unknown, never zero.
+
+    The trade must be a premarket trade from today. The snapshot's own
+    "day" is the prior session's bar before the open, so the day check
+    rides on the trade's timestamp, and the base is the snapshot's
+    prev_close. Unlike the after-hours fold there is no one-hour
+    freshness cut: this fold only runs while the premarket session is
+    live and premarket prints are sparse -- a 04:05 print is still the
+    latest premarket move at 06:00. The frozen-print failure the
+    after-hours rule guards against (a finished session's last print
+    served as current for hours) cannot occur inside the window that
+    bounds this fold."""
+    from zoneinfo import ZoneInfo
+
+    from tradehub.journal.nyse import is_session
+
+    et_zone = ZoneInfo("America/New_York")
+    et_now = now.astimezone(et_zone)
+    if not (time(4, 0) <= et_now.time() < time(9, 30)):
+        return
+    if not is_session(et_now.date()):
+        return  # no premarket on a non-session day (Claude's #555 review)
+    symbols = [a["symbol"] for a in aggregate if a.get("asset") == "stock"]
+    if not symbols:
+        return
+    try:
+        snaps = _latest_snapshots_cached(symbols, now)
+    except Exception:  # noqa: BLE001 -- the column just stays unknown
+        return
+    today = et_now.date().isoformat()
+    for row in aggregate:
+        snap = snaps.get(row["symbol"])
+        if not snap or not snap.get("prev_close"):
+            continue
+        try:
+            trade_et = datetime.fromisoformat(
+                str(snap.get("trade_at", "")).replace("Z", "+00:00")).astimezone(et_zone)
+        except ValueError:
+            continue
+        if trade_et.date().isoformat() != today:
+            continue  # not a trade from today (yesterday's last print)
+        if not (time(4, 0) <= trade_et.time() < time(9, 30)):
+            continue  # not a premarket trade
+        if trade_et > et_now:
+            continue  # a future-stamped print is not a move yet
+        row["pm_change_pct"] = (snap["price"] / snap["prev_close"] - 1) * 100
 
 
 _TERMINAL = {"filled", "canceled", "expired", "rejected", "replaced"}
