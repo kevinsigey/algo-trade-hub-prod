@@ -198,12 +198,85 @@ def test_saturday_shows_fridays_figures_under_fridays_label():
 
 def test_weekday_premarket_is_not_a_closed_day():
     # Claude's #514 review: at Thursday 08:00 ET there is no Thursday
-    # snapshot yet, but Thursday is a trading day -- the split must read
-    # as a regular day so far, not as "Wed" closed-day figures.
+    # snapshot yet, but Thursday is a trading day -- the split must not
+    # read as "Wed" closed-day figures. Since the premarket segment
+    # landed (Kevin, 2026-11-16) it reads as today's PREMARKET instead:
+    # the forming move against the prior close, regular still None.
     tue = snap("2026-11-10T21:05:00+00:00", 990.0, 594.0)
     wed = snap("2026-11-11T21:05:00+00:00", 1000.0, 600.0)
     now = datetime(2026, 11, 12, 13, 0, tzinfo=UTC)  # Thursday 08:00 ET
     out = book.today_split([tue, wed], now, equity=1000.0, spy_price=600.0)
-    assert out["state"] == "regular"
+    assert out["state"] == "premarket"
     assert out["is_today"] is True
-    assert out["regular_pl"] == 0.0
+    assert out["premarket_pl"] == 0.0
+    assert out["regular_pl"] is None
+
+
+def test_premarket_figures_against_the_prior_close():
+    now = datetime(2026, 11, 12, 13, 0, tzinfo=UTC)  # Thursday 08:00 ET
+    snaps = QPRIOR  # Wed close: equity 1000, SPY 600, QQQ 400
+    out = book.today_split(snaps, now, equity=1010.0, spy_price=606.0, qqq_price=404.0)
+    assert out["state"] == "premarket"
+    assert out["for_date"] == "2026-11-12"
+    assert out["premarket_pl"] == 10.0
+    assert out["premarket_pct"] == pytest.approx(1.0)
+    assert out["spy_premarket_pct"] == pytest.approx(1.0)
+    assert out["qqq_premarket_pct"] == pytest.approx(1.0)
+    assert out["regular_pl"] is None and out["after_hours_pl"] is None
+    assert out["spy_regular_pct"] is None and out["spy_after_hours_pct"] is None
+
+
+def test_premarket_uses_the_brokers_last_equity_and_bar_priors():
+    now = datetime(2026, 11, 12, 13, 0, tzinfo=UTC)  # 08:00 ET
+    snaps = PRIOR + []
+    out = book.today_split(snaps, now, equity=1000.0, spy_price=606.0,
+                           last_equity=990.0, spy_prev_close=595.0)
+    assert out["state"] == "premarket"
+    assert out["premarket_pl"] == 10.0  # 1000 - last_equity 990, not - snapshot 1000
+    assert out["spy_premarket_pct"] == pytest.approx((606 / 595 - 1) * 100)
+
+
+def test_premarket_window_edges():
+    snaps = PRIOR
+    # 03:59 ET: before the premarket window -- the legacy regular reading.
+    out = book.today_split(snaps, datetime(2026, 11, 12, 8, 59, tzinfo=UTC),
+                           equity=1005.0, spy_price=603.0)
+    assert out["state"] == "regular"
+    assert out["regular_pl"] == 5.0
+    assert out["premarket_pl"] is None
+    # 09:30 ET sharp: the regular session has opened.
+    out = book.today_split(snaps, datetime(2026, 11, 12, 14, 30, tzinfo=UTC),
+                           equity=1005.0, spy_price=603.0)
+    assert out["state"] == "regular"
+    assert out["regular_pl"] == 5.0
+    assert out["premarket_pl"] is None
+
+
+def test_a_weekday_holiday_morning_is_a_closed_day():
+    # Claude's #555 review: Thanksgiving (Thu Nov 26, 2026) at 06:00 ET
+    # has no session at all. Under the old first-snapshot-hour
+    # heuristic the split read state=premarket and the header showed
+    # "Premarket +$0.00" on a day the market never opens. The NYSE
+    # calendar decides now: closed_day, Wednesday's figures, named.
+    tue = snap("2026-11-24T21:05:00+00:00", 990.0, 594.0)
+    wed = snap("2026-11-25T21:05:00+00:00", 1000.0, 600.0)
+    now = datetime(2026, 11, 26, 11, 0, tzinfo=UTC)  # Thu 06:00 ET
+    out = book.today_split([tue, wed], now, equity=1000.0, spy_price=600.0)
+    assert out["state"] == "closed_day"
+    assert out["is_today"] is False
+    assert out["for_date"] == "2026-11-25"
+    assert out["day_label"] == "Wed"
+    assert out["regular_pl"] == 10.0
+    assert out["premarket_pl"] is None and out["premarket_pct"] is None
+
+
+def test_a_normal_wednesday_morning_is_premarket():
+    # The other half of Claude's pair: Wed Nov 25, 2026 IS a session
+    # day, so 06:00 ET reads as premarket against Tuesday's close.
+    mon = snap("2026-11-23T21:05:00+00:00", 980.0, 588.0)
+    tue = snap("2026-11-24T21:05:00+00:00", 990.0, 594.0)
+    now = datetime(2026, 11, 25, 11, 0, tzinfo=UTC)  # Wed 06:00 ET
+    out = book.today_split([mon, tue], now, equity=995.0, spy_price=597.0)
+    assert out["state"] == "premarket"
+    assert out["is_today"] is True
+    assert out["premarket_pl"] == 5.0

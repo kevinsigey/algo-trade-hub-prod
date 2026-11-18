@@ -201,8 +201,8 @@ function MoversCard({ rows }: { rows: PositionRow[] }) {
   );
 }
 
-type SortKey = "symbol" | "qty" | "avg" | "last" | "change" | "day" | "ah" | "cost" | "value" | "weight" | "unrealized";
-const SIGNED_SORT: ReadonlySet<SortKey> = new Set(["change", "day", "ah", "unrealized"]);
+type SortKey = "symbol" | "qty" | "avg" | "last" | "change" | "day" | "ah" | "pm" | "cost" | "value" | "weight" | "unrealized";
+const SIGNED_SORT: ReadonlySet<SortKey> = new Set(["change", "day", "ah", "pm", "unrealized"]);
 
 const COLUMNS: { key: SortKey; label: string; read: (r: PositionRow) => number | string | null | undefined }[] = [
   { key: "qty", label: "Shares", read: (r) => r.qty },
@@ -211,6 +211,7 @@ const COLUMNS: { key: SortKey; label: string; read: (r: PositionRow) => number |
   { key: "change", label: "Chg %", read: (r) => r.change_pct },
   { key: "day", label: "Day P&L", read: (r) => r.day_pl },
   { key: "ah", label: "AH %", read: (r) => r.ah_change_pct },
+  { key: "pm", label: "PM %", read: (r) => r.pm_change_pct },
   { key: "cost", label: "Cost basis", read: (r) => r.cost_basis },
   { key: "value", label: "Market value", read: (r) => r.market_value },
   { key: "weight", label: "% book", read: (r) => r.pct_of_book },
@@ -309,6 +310,7 @@ function PositionsTable({ rows, cashRow }: { rows: PositionRow[]; cashRow: Posit
                     <td className={`px-2 py-1.5 text-right ${tone(r.change_pct)}`}>{fmtPct(r.change_pct)}</td>
                     <td className={`px-2 py-1.5 text-right ${tone(r.day_pl)}`}>{signed(r.day_pl)}</td>
                     <td className={`px-2 py-1.5 text-right ${tone(r.ah_change_pct)}`}>{r.ah_change_pct == null ? "—" : fmtPct(r.ah_change_pct)}</td>
+                    <td className={`px-2 py-1.5 text-right ${tone(r.pm_change_pct)}`}>{r.pm_change_pct == null ? "—" : fmtPct(r.pm_change_pct)}</td>
                     <td className="px-2 py-1.5 text-right">{money(r.cost_basis)}</td>
                     <td className="px-2 py-1.5 text-right">{money(r.market_value)}</td>
                     <td className="px-2 py-1.5 text-right">

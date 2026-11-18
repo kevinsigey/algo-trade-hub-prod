@@ -35,20 +35,29 @@ export interface PositionRow {
   day_pl?: number | null;
   /** After-hours move vs today's regular close (aggregate rows only, after 4 PM ET). */
   ah_change_pct?: number | null;
+  /** Premarket move vs the prior close (aggregate rows only, 4:00-9:30 AM ET). */
+  pm_change_pct?: number | null;
 }
 
 /** Today split at the 4:00 PM ET close (tradehub.portfolio.book.today_split).
  * regular_* is the regular session against the prior close; after_hours_* is
  * the move since the close snapshot. state is "regular" until a post-close
- * snapshot exists, then "after_hours"; "no_prior" on the book's first day. */
+ * snapshot exists, then "after_hours"; "no_prior" on the book's first day.
+ * Inside 4:00-9:30 AM ET the state is "premarket" instead: premarket_* is
+ * the forming move against the prior close and regular_* is still null. */
 export interface TodaySplit {
-  state: "regular" | "after_hours" | "no_prior" | "closed_day";
+  state: "regular" | "after_hours" | "no_prior" | "closed_day" | "premarket";
   prior_close_at: string | null;
   close_at: string | null;
   regular_pl: number | null;
   regular_pct: number | null;
   after_hours_pl: number | null;
   after_hours_pct: number | null;
+  /** Premarket segment; absent on old payloads, null outside the window. */
+  premarket_pl?: number | null;
+  premarket_pct?: number | null;
+  spy_premarket_pct?: number | null;
+  qqq_premarket_pct?: number | null;
   spy_regular_pct: number | null;
   spy_after_hours_pct: number | null;
   /** QQQ beside SPY; absent on old payloads, null where no QQQ price exists. */
@@ -116,6 +125,8 @@ export interface AggregatePositionRow {
   unrealized_pl: number | null;
   /** After-hours move vs today's regular close; null before the close or when unknown. */
   ah_change_pct?: number | null;
+  /** Premarket move vs the prior close; null outside the premarket window or when unknown. */
+  pm_change_pct?: number | null;
 }
 
 /** The aggregate line in the PositionRow shape the page's tables read.
@@ -136,6 +147,7 @@ export function aggregateToRow(a: AggregatePositionRow): PositionRow {
     cost_basis: a.cost_basis ?? null,
     day_pl: a.day_pl ?? null,
     ah_change_pct: a.ah_change_pct ?? null,
+    pm_change_pct: a.pm_change_pct ?? null,
   };
 }
 

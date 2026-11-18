@@ -530,6 +530,23 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
   });
 
+  it("shows the premarket segment in the header before the open", async () => {
+    serve(payload({
+      scoreboard: { ...EMPTY_SCORE, equity: 100500, return_pct: 0.5, spy_return_pct: 0.1, ahead_pts: 0.4 },
+      today: {
+        state: "premarket", prior_close_at: "2026-11-11T21:30:00Z", close_at: null,
+        regular_pl: null, regular_pct: null, after_hours_pl: null, after_hours_pct: null,
+        premarket_pl: 500, premarket_pct: 0.5,
+        spy_regular_pct: null, spy_after_hours_pct: null, spy_premarket_pct: 0.3,
+      },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100500, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    }));
+    page(<Portfolio />);
+    expect(await screen.findByText(/Premarket \+\$500/)).toBeInTheDocument();
+    expect(screen.getByText("Premarket", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText(/SPY \+0\.3%/)).toBeInTheDocument();
+  });
+
   it("shows QQQ beside SPY in the header when the payload carries it", async () => {
     serve(payload({
       scoreboard: { ...EMPTY_SCORE, equity: 98839, return_pct: -3.5, spy_return_pct: -0.4, ahead_pts: -3.1,
