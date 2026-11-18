@@ -802,6 +802,14 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     from tradehub.portfolio import option_orders as _option_orders
 
     if spec.get("legs") or _option_orders.is_option_symbol(spec.get("symbol")):
+        if spec.get("extended_hours"):
+            gate("extended_hours", False,
+                 "extended hours is an equity session flag; options do not "
+                 "support it",
+                 ("extended_hours", 422,
+                  "extended-hours orders are equity limit orders; options "
+                  "do not support extended hours"))
+            return out
         return _validate_option_order(supa, key, spec, out, gate, dry_run=dry_run)
     symbol = str(spec.get("symbol") or "").strip().upper()
     out["symbol"] = symbol
@@ -846,6 +854,39 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     if not gate("order_shape", shape is None,
                 "the order shape is one the machine door takes", shape):
         return out
+    if spec.get("extended_hours"):
+        # Extended hours (Kevin via the trading chat, 2026-11-17): the
+        # flag rides to Alpaca on equity limit orders with a day or gtc
+        # time in force, filling in the pre-market (04:00-09:30 ET),
+        # after-hours (16:00-20:00 ET) and overnight (20:00-04:00 ET)
+        # sessions. The door mirrors the broker's own fence here so
+        # preflight and place refuse the same shapes. A gtc
+        # extended-hours order needs no new sanction: the place route
+        # already namespaces gtc limits into the ext-<key>-gtc- family
+        # paper_orders sanctions for a resting limit.
+        if order_type != "limit":
+            gate("extended_hours", False,
+                 "extended hours needs a limit order",
+                 ("extended_hours", 422,
+                  "extended-hours orders must be limit orders"))
+            return out
+        if tif not in ("day", "gtc"):
+            gate("extended_hours", False,
+                 f"extended hours needs time_in_force day or gtc, not {tif}",
+                 ("extended_hours", 422,
+                  "extended-hours orders need time_in_force day or gtc"))
+            return out
+        if split:
+            gate("extended_hours", False,
+                 "an extended-hours order rests as one order",
+                 ("extended_hours", 422,
+                  "split is not supported with extended_hours: the "
+                  "order must rest as one order"))
+            return out
+        gate("extended_hours", True,
+             "extended-hours eligible: a limit order that can fill in "
+             "the pre-market (04:00-09:30 ET), after-hours (16:00-20:00 "
+             "ET) and overnight (20:00-04:00 ET) sessions")
     if not gate("qty", qty >= 1, "qty is a positive whole number of shares",
                 ("validation", 422, "qty must be at least 1")):
         return out

@@ -2402,6 +2402,12 @@ def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.req
 # single-leg and mleg options): a limit option order with time_in_force "gtc" rides the
 # same ext-<key>-gtc- family, placed through submit/submit_mleg carrying the tif; GTC
 # market option orders and opg/cls on options still 422 in validate_order.
+# Extended-hours equity limits joined 2026-11-17 (Kevin via the trading chat:
+# exits into after-hours news and pre-market entries): extended_hours=true
+# passes through to Alpaca on limit orders with time_in_force day or gtc --
+# a gtc one rides the ext-<key>-gtc- family above, which is the sanction
+# paper_orders requires for a resting limit; market orders, opg/cls,
+# options and splits with the flag still 422 in validate_order.
 class _MachineOrderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")  # order_class and other broker shapes 422 here
 
@@ -2432,6 +2438,12 @@ class _MachineOrderIn(BaseModel):
     # A parent order (2026-11-08): qty is the TOTAL and the server chunks it under
     # the key's caps, placing children <caller id>-1..n as one logical order.
     split: bool = False
+    # Extended hours (2026-11-17): passed through to Alpaca on equity
+    # limit orders (time_in_force day or gtc) so the order can fill in
+    # the pre-market, after-hours and overnight sessions. validate_order
+    # fences the shapes (no market orders, no opg/cls, no options, no
+    # splits); the service layer's own fence agrees.
+    extended_hours: bool = False
     # A thesis tag (2026-11-08): a short slug stored with the order's label and
     # surfaced on the resulting portfolio lots. Metadata only -- it never affects
     # caps, routing or the ext- namespacing.
@@ -2489,7 +2501,8 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
+            "split": body.split, "extended_hours": body.extended_hours,
+            "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
             "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason,
             "play_kind": body.play_kind, "thesis_id": body.thesis_id,
@@ -2550,9 +2563,13 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         submit_kwargs["stop_price"] = body.stop_price
 
     def submit_one(qty: int, client_order_id: str):
+        # extended_hours joins the call ONLY when set -- an order without
+        # the flag reaches submit exactly as it did before (the position
+        # intent precedent in paper_orders).
         return paper_orders.submit(symbol, qty, body.side, client_order_id,
                                    order_type=body.order_type, time_in_force=body.time_in_force,
                                    limit_price=body.limit_price if body.order_type == "limit" else None,
+                                   **({"extended_hours": True} if body.extended_hours else {}),
                                    book=book, **submit_kwargs)
 
     def label(order_id: str) -> str | None:
@@ -2769,7 +2786,8 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
-            "split": body.split, "position_intent": body.position_intent, "exit_claim": body.exit,
+            "split": body.split, "extended_hours": body.extended_hours,
+            "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
             "tag": body.tag, "idea_id": body.idea_id, "reason": body.reason,
             "play_kind": body.play_kind, "thesis_id": body.thesis_id,
@@ -2864,6 +2882,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
         except Exception:  # noqa: BLE001
             breaker = None
     namespaced = (f"ext-{key['id']}-stop-{body.client_order_id}" if body.order_type == "stop"
+                  else f"ext-{key['id']}-gtc-{body.client_order_id}" if body.time_in_force == "gtc"
                   else f"ext-{key['id']}-{body.client_order_id}")
     if body.split:
         plan = [{"qty": c, "client_order_id": f"{namespaced}-{i}"}
