@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CloudSun, Loader2 } from "lucide-react";
 
 import { useWeather } from "@/hooks/useWeather";
-import { buildApiUrl } from "@/lib/api";
 import { getJson } from "@/lib/getJson";
 import { US_STATE_PATHS, US_VIEWBOX } from "@/lib/usStates";
 import { cityHeadline, markerLayout, type WeatherCity, type WeatherMapResponse } from "@/lib/weatherMap";
@@ -14,6 +13,7 @@ import {
   pickSentence,
   weatherStats,
   weatherLabel,
+  parseWeatherTarget,
   weatherChip,
   type Chip,
 } from "@/lib/weather";
@@ -78,7 +78,13 @@ function WeatherMap() {
   if (cities.length === 0) {
     return <p className="text-sm text-slate-500">No city forecasts frozen yet.</p>;
   }
-  const city = cities.find((c) => c.sid === selected) ?? cities[0];
+  // Step 13: the page is rain-only (highs, lows and ERCOT are retired) --
+  // a city plots only when it carries a rain freeze.
+  const rainCities = cities.filter((c) => c.rain);
+  if (rainCities.length === 0) {
+    return <p className="text-sm text-slate-500">No city rain forecasts frozen yet.</p>;
+  }
+  const city = rainCities.find((c) => c.sid === selected) ?? rainCities[0];
   // Ours and Kalshi side by side, one column each (Kevin's ask, 2026-11-01):
   // the same buckets the marker summarizes, priced by both, climatology muted.
   const kindBlock = (label: string, k: WeatherCity["high"]) =>
@@ -120,7 +126,7 @@ function WeatherMap() {
           {Object.entries(US_STATE_PATHS).map(([name, d]) => (
             <path key={name} d={d} className="fill-slate-900 stroke-slate-700" strokeWidth={0.7} />
           ))}
-          {cities.map((c) => {
+          {rainCities.map((c) => {
             const { point, at, callout } = markerLayout(c);
             const active = c.sid === city.sid;
             return (
@@ -149,20 +155,8 @@ function WeatherMap() {
       <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-semibold text-white">{city.name}</h2>
-          {city.record ? (
-            <p className="text-xs tabular-nums text-slate-400">
-              Station record: {city.record.n} settled · Brier ours {city.record.brier_ours.toFixed(3)} vs Kalshi {city.record.brier_market.toFixed(3)}
-            </p>
-          ) : (
-            <p className="text-xs text-slate-500">No settled record at this station yet.</p>
-          )}
         </div>
-        {kindBlock("High", city.high)}
-        {kindBlock("Low", city.low)}
         {kindBlock("Rain", city.rain)}
-        {!city.high && !city.low && !city.rain && (
-          <p className="mt-2 text-sm text-slate-500">No live ensemble freeze for this city — the marker is its settled record.</p>
-        )}
       </div>
     </section>
   );
@@ -183,8 +177,6 @@ function EnsembleRecord() {
   }, []);
   if (!rows || rows.length === 0) return null;
   const families = [
-    { label: "High temperature", name: "weather_high" },
-    { label: "Low temperature", name: "weather_low" },
     { label: "Rain", name: "weather_rain" },
   ];
   const find = (name: string, version: string) =>
@@ -228,7 +220,11 @@ function EnsembleRecord() {
 }
 
 export default function Weather() {
-  const { today, settled, loading, error } = useWeather();
+  const { today: allToday, settled: allSettled, loading, error } = useWeather();
+  // Step 13: rain only -- the temperature families are retired, so their
+  // rows never render here (the journal still freezes and settles them).
+  const today = allToday.filter((r) => parseWeatherTarget(r.target).kind === "rain");
+  const settled = allSettled.filter((r) => parseWeatherTarget(r.target).kind === "rain");
   const s = weatherStats(today, settled);
 
   return (
@@ -251,7 +247,6 @@ export default function Weather() {
             <span>{error}</span>
           </div>
         ) : null}
-        {error && <DegreeDaysPanel />}
         {loading || error ? null : (
           <>
             {/* One screen (2026-11-06): the map on the left, the record and the numbers on the right. */}
@@ -264,12 +259,11 @@ export default function Weather() {
                   <Stat label="Settled" value={s.settledCount} sub="with outcome" />
                 </div>
                 <EnsembleRecord />
-                <DegreeDaysPanel />
               </div>
             </div>
 
             {today.length === 0 && settled.length === 0 ? (
-              <p className="text-sm text-slate-500">No weather data available.</p>
+              <p className="text-sm text-slate-500">No rain data available.</p>
             ) : (
               <details>
                 <summary className="cursor-pointer text-sm font-bold uppercase tracking-wider text-slate-400">
@@ -351,85 +345,5 @@ export default function Weather() {
         )}
       </div>
     </div>
-  );
-}
-
-interface DegreeRow { hdd: number | null; cdd: number | null; hdd_anomaly: number | null; cdd_anomaly: number | null; share: number }
-interface DegreePanel {
-  week_end: string; as_of: string;
-  national: { hdd: number; cdd: number; hdd_anomaly: number | null; cdd_anomaly: number | null; population_covered_pct: number };
-  regions: Record<string, DegreeRow>;
-  missing_regions: string[];
-}
-
-const signed = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
-
-/** Degree-day demand (phase-2 section 5.3): the week's heating/cooling demand vs its
- * 10-year normal -- the first link of the degree-day -> storage -> gas chain the
- * engines trade on. Serves the weekly snapshot; an unbuilt snapshot says so. */
-function DegreeDaysPanel() {
-  const [panel, setPanel] = useState<DegreePanel | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  useEffect(() => {
-    fetch(buildApiUrl("/api/weather/degree-days"))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((body) => {
-        // Shape-guard the snapshot like every other panel: a malformed body is
-        // "unavailable", never a crash or a panel of invented numbers.
-        if (body && typeof body === "object" && body.national && body.regions) setPanel(body as DegreePanel);
-        else setUnavailable(true);
-      })
-      .catch(() => setUnavailable(true));
-  }, []);
-  return (
-    <section>
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-wider text-slate-400">
-        Degree-day demand
-      </h2>
-      {unavailable ? (
-        <p className="text-sm text-slate-500">
-          The weekly degree-day snapshot has not been built yet, so there is no demand read to show.
-        </p>
-      ) : !panel ? (
-        <p className="text-sm text-slate-500">Loading the demand snapshot…</p>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="US heating degree days" value={panel.national.hdd.toFixed(0)}
-              sub={`week ending ${panel.week_end}`} />
-            <Stat label="HDD vs 10-yr normal" value={signed(panel.national.hdd_anomaly)}
-              sub="population-weighted" />
-            <Stat label="US cooling degree days" value={panel.national.cdd.toFixed(0)} />
-            <Stat label="CDD vs 10-yr normal" value={signed(panel.national.cdd_anomaly)}
-              sub={`${panel.national.population_covered_pct}% of population covered`} />
-          </div>
-          <details className="mt-2">
-            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">
-              By region · {Object.keys(panel.regions).length}
-            </summary>
-          <div className="mt-2 flex flex-col">
-            {Object.entries(panel.regions).map(([name, r]) => (
-              <div key={name} className="flex items-center justify-between gap-3 border-t border-slate-800 py-1.5 text-xs">
-                <div className="font-semibold text-slate-200">{name}</div>
-                <div className="flex items-center gap-4 tabular-nums text-slate-300">
-                  <span>HDD {r.hdd?.toFixed(0) ?? "—"} ({signed(r.hdd_anomaly)})</span>
-                  <span>CDD {r.cdd?.toFixed(0) ?? "—"} ({signed(r.cdd_anomaly)})</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          </details>
-          {panel.missing_regions.length > 0 && (
-            <p className="mt-2 text-xs text-slate-500">
-              No read for {panel.missing_regions.join(", ")} this week -- omitted, not zero-filled.
-            </p>
-          )}
-          <p className="mt-2 text-xs text-slate-600">
-            Base 65°F, Open-Meteo archive daily means, 2020 Census division shares. A cold surprise
-            (HDD above normal) is the first link toward a bigger Thursday storage draw.
-          </p>
-        </>
-      )}
-    </section>
   );
 }

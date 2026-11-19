@@ -35,6 +35,7 @@ production database on Nov 12, 00:20 UTC.
 ## In flight (open PRs from Muse)
 | Item | PR |
 |---|---|
+| Product step 13 — Weather page trim (product item 5): the Weather page is rain-only. The contract lists and the stat strip filter to rain rows (`parseWeatherTarget` kind), the map plots only cities with a rain freeze and its card shows only the rain buckets (marker headline = the rain probability; the all-family station record line is dropped — the rain family's own record table below carries it properly), the ensemble-record table lists the rain family only, the ERCOT degree-day panel and its fetch are deleted from the page, and the intro says rain. Display trim only: `/api/weather`, `/api/weather/map` and `/api/weather/degree-days` are unchanged, and the journal's high/low forecasters keep freezing and settling | this PR (branch `rev/step13-weather-rain`) |
 | Product step 15 — the Oil "YES costs 0c" check (product item 7): verified live and in source (see the item-7 note for the full evidence: the board's null guard is sound and today's books carry no zero quotes), and the one admitting path is closed — `kalshi_live.quote_from_market_raw` now rejects both degenerate ends (ask "0.0000", bid "1.0000") with the same strictly-between-0-and-1 rule as `markets.quote_cents`, pinned by new tests in tests/test_kalshi_live.py (written failing first). No frontend change: a missing quote reaches the board as null and renders "—", as it already did | this PR (branch `rev/step15-oil-zero-quote`) |
 | Trade tab follow-up to #514, ported onto #521's dashboard code (Claude's rewrite kept the same flaw): the ManualActions admin check now stops its retry poller and clears the failed-read warning when a later check 401s/403s (CodeRabbit's leftover finding on merged #514), with a regression test that fails on the dashboard code and passes with the fix | this PR (branch `rev/tradetab-manual-actions-poll-fix`) |
 | Step B.3 demo candidate lane: the Kalshi demo runner gains a second lane trading v4-edge20-shadow beside the live gate (Claude's ruling 2026-11-13) -- same freeze-time decisions through `open_decisions`, kept only when the decision's own `edge_net` clears the candidate's preregistered dial read from `fifteen_candidates` (20c, never restated), gas only, half the live lane's budget pct and daily caps, orders tagged `gate_version = v4-edge20-shadow` with `kd-edge20-` client ids; caps and tallies are per lane (each lane's day counts its own rows), the never-twice key is (target, gate_version) with a both-lanes regression test; the lane is a demo trial and never counts toward the candidate's promotion bar; the demo tab shows lanes separately (per-lane record in the report, a Lane column, per-lane settled lines); the lane-key migration file ships here (applied 2026-11-13, ledger row 88, watermark unchanged) | this PR (branch `rev/demo-lane-edge20`) |
@@ -96,7 +97,13 @@ The order of the remaining work is in `action-plan-2026-11-12.md`.
 3. **Split the Workshop idea page** into Draft, Verdict and Go live, with the gate panel built once.
 4. **Workshop: claims that could fail.** "Cushions down days" passes by definition for low-beta assets. Require a test
    against an equal-beta SPY-plus-cash mix.
-5. **Weather page**: highs, lows and ERCOT are retired. Trim it to rain, or move it to a lab archive.
+5. ~~**Weather page**: highs, lows and ERCOT are retired. Trim it to rain, or move it to a lab archive.~~ Done in
+   the step-13 PR (branch `rev/step13-weather-rain`): the page renders rain only — the contract lists and stats
+   filter to KXRAIN rows, the map plots only cities carrying a rain freeze with the rain bucket card (the marker
+   headline is the rain probability), the ensemble-record table carries the rain family only, and the ERCOT
+   degree-day panel is deleted from the page. The APIs and the journal forecasters are untouched: the families
+   still freeze and settle (the rain paper rule, step 19, reads them), and `/api/weather/degree-days` still
+   serves whoever asks — only the page stopped showing them.
 6. **Copy**:
    - One-sentence intros (Strategies, Debates, Guidance, Deals).
    - One heading style.
