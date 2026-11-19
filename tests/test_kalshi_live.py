@@ -37,6 +37,21 @@ def test_quote_empty_sides_are_none():
     assert q.yes_bid is None and q.yes_ask is None
 
 
+def test_quote_degenerate_zero_ask_and_full_bid_are_none():
+    # Step 15: the mirror pair was unguarded -- an ask of "0.0000" passed the
+    # old `ask < 1.0` check as a real 0.0, so the Oil board printed "YES costs
+    # 0c" and the edge math read a probability-sized edge at zero cost; a bid
+    # of "1.0000" likewise made NO cost 0c. Same rule as markets.quote_cents:
+    # a price is tradeable only strictly between 0 and 1.
+    q = quote_from_market_raw(dict(OPEN, yes_ask_dollars="0.0000"))
+    assert q.yes_ask is None and q.yes_bid == pytest.approx(0.41)
+    q = quote_from_market_raw(dict(OPEN, yes_bid_dollars="1.0000"))
+    assert q.yes_bid is None and q.yes_ask == pytest.approx(0.44)
+    # A genuine sub-cent tail quote stays a quote (it renders 0.1c, not 0c).
+    q = quote_from_market_raw(dict(OPEN, yes_ask_dollars="0.0010"))
+    assert q.yes_ask == pytest.approx(0.001)
+
+
 def test_open_markets_paginates_and_pairs_quotes():
     get = FakeGet({"/markets": [{"markets": [OPEN], "cursor": "c"}, {"markets": [OPEN], "cursor": ""}]})
     live = KalshiLive(get_json=get).open_markets("KXAAAGASD")
