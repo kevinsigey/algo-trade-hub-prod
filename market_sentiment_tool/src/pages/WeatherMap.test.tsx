@@ -35,27 +35,26 @@ function stubFetch() {
   });
 }
 
-describe("Weather map (phase-3 §3.1)", () => {
+describe("Weather map (phase-3 §3.1, rain-only since step 13)", () => {
   beforeEach(() => { vi.stubGlobal("fetch", stubFetch()); });
 
-  it("plots a marker per city with its headline and opens the city card", async () => {
+  it("plots markers only for cities with a rain freeze and opens the rain card", async () => {
     render(<MemoryRouter><Weather /></MemoryRouter>);
-    expect(await screen.findByText("72°")).toBeTruthy();           // NYC marker headline (ensemble mean)
-    expect(screen.getByText("35% rain")).toBeTruthy();             // Chicago marker headline
-    expect(await screen.findByText("72 to 73 degrees")).toBeTruthy(); // default card = first city
+    expect(await screen.findByText("35% rain")).toBeTruthy();      // Chicago marker headline
+    expect(screen.queryByText("72°")).toBeNull();                  // NYC has no rain freeze: not plotted
+    expect(screen.queryByText("72 to 73 degrees")).toBeNull();     // the temperature blocks are gone
+    expect(await screen.findByText("Rain")).toBeTruthy();          // default card = the rain city
     expect(screen.getByText(/ensemble ens-v1/)).toBeTruthy();      // the model is named on the card
-    expect(screen.getByText(/Brier ours 0.190 vs Kalshi 0.110/)).toBeTruthy();
     fireEvent.click(screen.getByText("35% rain"));
-    expect(await screen.findByText(/No settled record at this station yet/)).toBeTruthy();
+    expect(screen.getAllByText("Chicago").length).toBeGreaterThan(0); // marker label + card heading
   });
 
   it("prices each bucket ours-vs-Kalshi in its own column", async () => {
     render(<MemoryRouter><Weather /></MemoryRouter>);
-    expect(await screen.findByText("72 to 73 degrees")).toBeTruthy();
+    expect(await screen.findByText("35% rain")).toBeTruthy();
     expect(screen.getByText("Ours")).toBeTruthy();
     expect(screen.getByText("Kalshi")).toBeTruthy();
-    expect(screen.getByText("42%")).toBeTruthy();   // ours, NYC bucket
-    expect(screen.getByText("38%")).toBeTruthy();   // Kalshi, same bucket
+    expect(screen.getByText("30%")).toBeTruthy();   // Kalshi, Chicago rain bucket
   });
 });
 

@@ -31,7 +31,7 @@ export interface Chip {
 
 /** Lede. Kept under the word budget and asserted by test. */
 export const WEATHER_INTRO =
-  "Today's ensemble forecast against the Kalshi price and climatology. No new forecasting.";
+  "Today's ensemble rain forecast against the Kalshi price and climatology. No new forecasting.";
 
 /**
  * Format a probability as a percentage string.

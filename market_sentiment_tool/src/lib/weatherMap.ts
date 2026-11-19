@@ -30,10 +30,9 @@ export interface WeatherMapResponse {
   cities: WeatherCity[];
 }
 
-/** The marker's headline: the ensemble mean for temps, the rain probability. */
+/** The marker's headline: the rain probability (the page is rain-only
+ * since step 13; the temperature families are retired). */
 export function cityHeadline(c: WeatherCity): string {
-  if (c.high?.mean != null) return `${Math.round(c.high.mean)}°`;
-  if (c.low?.mean != null) return `${Math.round(c.low.mean)}°`;
   const rain = c.rain?.buckets[0];
   if (rain?.ours != null) return `${Math.round(rain.ours * 100)}% rain`;
   return "—";
