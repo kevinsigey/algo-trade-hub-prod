@@ -35,6 +35,7 @@ production database on Nov 12, 00:20 UTC.
 ## In flight (open PRs from Muse)
 | Item | PR |
 |---|---|
+| Product step 15 — the Oil "YES costs 0c" check (product item 7): verified live and in source (see the item-7 note for the full evidence: the board's null guard is sound and today's books carry no zero quotes), and the one admitting path is closed — `kalshi_live.quote_from_market_raw` now rejects both degenerate ends (ask "0.0000", bid "1.0000") with the same strictly-between-0-and-1 rule as `markets.quote_cents`, pinned by new tests in tests/test_kalshi_live.py (written failing first). No frontend change: a missing quote reaches the board as null and renders "—", as it already did | this PR (branch `rev/step15-oil-zero-quote`) |
 | Trade tab follow-up to #514, ported onto #521's dashboard code (Claude's rewrite kept the same flaw): the ManualActions admin check now stops its retry poller and clears the failed-read warning when a later check 401s/403s (CodeRabbit's leftover finding on merged #514), with a regression test that fails on the dashboard code and passes with the fix | this PR (branch `rev/tradetab-manual-actions-poll-fix`) |
 | Step B.3 demo candidate lane: the Kalshi demo runner gains a second lane trading v4-edge20-shadow beside the live gate (Claude's ruling 2026-11-13) -- same freeze-time decisions through `open_decisions`, kept only when the decision's own `edge_net` clears the candidate's preregistered dial read from `fifteen_candidates` (20c, never restated), gas only, half the live lane's budget pct and daily caps, orders tagged `gate_version = v4-edge20-shadow` with `kd-edge20-` client ids; caps and tallies are per lane (each lane's day counts its own rows), the never-twice key is (target, gate_version) with a both-lanes regression test; the lane is a demo trial and never counts toward the candidate's promotion bar; the demo tab shows lanes separately (per-lane record in the report, a Lane column, per-lane settled lines); the lane-key migration file ships here (applied 2026-11-13, ledger row 88, watermark unchanged) | this PR (branch `rev/demo-lane-edge20`) |
 | Scoreboard (action plan step 9, model item 1): `earned_weight` wired on the journal scorecard -- the fifteen blend's own `earned_weight` called (never copied) on contested rows only, whole settled set plus each chronological half, stored in the new `journal_scores.earned_weight` jsonb (migration `20261113000002`, applied by Claude 2026-11-13 on Kevin's go, ledger row 87); the paired gap's error bar now counts days, not rows (per-contract diffs clustered by frozen ET day, the clustered_low95 estimator at SE scale; a card frozen on a single day carries no interval rather than a too-narrow one); `/api/journal` labels retired scorecards from the registry, and the league table hides predictors with zero settled forecasts and badges the retired ones | this PR (branch `rev/step9-scoreboard`) |
@@ -101,8 +102,15 @@ The order of the remaining work is in `action-plan-2026-11-12.md`.
    - Fold Agent debates into Guidance.
    - Admin pages behind a lock in the public menu.
    - Screening preset blurbs (`--`, "W18-style selection layer", "FCC lens", "bundled proxy — not yet refreshed").
-7. **Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from the
-   source.
+7. ~~**Oil/Commodities page**: "YES costs 0c" on rows with no quote. Check this, as I couldn't confirm it from
+   the source.~~ Checked and fixed in the step-15 PR (branch `rev/step15-oil-zero-quote`): the board itself was
+   innocent — a null ask already rendered "—", and the live payload carries no zero quotes (49 hourly rows
+   checked live: 14 null asks, 0 zeros; the current KXWTIH event's 36 one-sided markets all mark the missing
+   side 0.0000/1.0000 the expected way). The one path that could still print it was the ladder's quote parser,
+   `kalshi_live.quote_from_market_raw`: it guarded bid 0.0000 and ask 1.0000 but let an ask of "0.0000" through
+   as a real 0.0 (and a bid of "1.0000" made NO cost 0c the same way) — the defect class `markets.quote_cents`
+   already rejects. The parser now applies the same rule (a price is tradeable only strictly between 0 and 1),
+   with tests pinning both degenerate ends and a genuine 0.0010 tail quote staying a quote.
 8. **Code health**:
    - Split `tradehub/api/main.py` into routers by area. It has grown to 4,770 lines from 4,410.
    - Rewrite the README, which still describes the Vercel-reads-Supabase architecture.

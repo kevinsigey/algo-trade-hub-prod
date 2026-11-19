@@ -21,9 +21,13 @@ class LiveMarket:
 def quote_from_market_raw(raw: dict[str, Any]) -> Quote:
     bid = float(raw.get("yes_bid_dollars") or 0.0)
     ask = float(raw.get("yes_ask_dollars") or 1.0)
+    # A price is tradeable only strictly between 0 and 1 (the same rule as
+    # markets.quote_cents): the degenerate ends are Kalshi's missing-side
+    # markers, and a 0.0 ask that slipped through here printed "YES costs 0c"
+    # on the Oil board and read as a probability-sized edge at zero cost.
     return Quote(
-        yes_bid=bid if bid > 0.0 else None,
-        yes_ask=ask if ask < 1.0 else None,
+        yes_bid=bid if 0.0 < bid < 1.0 else None,
+        yes_ask=ask if 0.0 < ask < 1.0 else None,
         yes_bid_size=float(raw.get("yes_bid_size_fp") or 0.0),
         yes_ask_size=float(raw.get("yes_ask_size_fp") or 0.0),
     )
