@@ -58,16 +58,26 @@ class Dial:
     """One series' fixed dial for a candidate: entry minutes
     (inclusive), the fee-netted edge bar on top of the live 10c floor
     the rows already carry, and whether the late-minute fillability
-    rule binds this dial."""
+    rule binds this dial. The step-18 filters (preregistered
+    2026-11-19) ride as optional dial terms: min_side_prob refuses a
+    trade whose taken side the model itself rates below it, and
+    min_spread refuses a trade quoted tighter than it; a row that
+    cannot prove a bound term does not pass it."""
     minutes: tuple[int, int]
     min_edge: float
     fill_checked: bool = False
+    min_side_prob: float | None = None
+    min_spread: float | None = None
 
 
 @dataclass(frozen=True)
 class Candidate:
     default: Dial | None
     per_series: dict[str, Dial | None]
+    # A candidate joining the family later scores only windows from
+    # its own preregistration -- the rows it was selected on never
+    # score it. The founding four keep the family's PREREG_AT.
+    prereg_at: datetime = PREREG_AT
 
     def dial_for(self, series: str) -> Dial | None:
         return self.per_series.get(series, self.default)
@@ -99,6 +109,21 @@ CANDIDATES: dict[str, Candidate] = {
             COPPER: Dial((11, 13), 0.20, fill_checked=True),
             GOLD: None,
         }),
+    # Step 18 (preregistered 2026-11-19, docs/superpowers/specs/
+    # 2026-11-19-fifteen-oil-filters-prereg.md): the deep dive's two
+    # oil filters as separate candidates on the live dial, oil series
+    # only -- gas does not show the long-shot pattern. Each scores
+    # from its own PREREG_AT below.
+    "v4-side50-shadow": Candidate(
+        default=None,
+        per_series={WTI: Dial((LIVE_MINUTE, LIVE_MINUTE), 0.10, min_side_prob=0.50),
+                    BRENT: Dial((LIVE_MINUTE, LIVE_MINUTE), 0.10, min_side_prob=0.50)},
+        prereg_at=datetime(2026, 11, 19, 6, tzinfo=UTC)),
+    "v4-spread3-shadow": Candidate(
+        default=None,
+        per_series={WTI: Dial((LIVE_MINUTE, LIVE_MINUTE), 0.10, min_spread=0.03),
+                    BRENT: Dial((LIVE_MINUTE, LIVE_MINUTE), 0.10, min_spread=0.03)},
+        prereg_at=datetime(2026, 11, 19, 6, tzinfo=UTC)),
 }
 
 
@@ -123,6 +148,23 @@ def window_open(row: dict) -> datetime:
     return _close_dt(row) - timedelta(minutes=WINDOW_MINUTES)
 
 
+def _filters_ok(row: dict, dial: Dial) -> bool:
+    """The dial's step-18 filter terms against one row. A term the row
+    cannot prove (a missing prob_up or quote) does not pass."""
+    if dial.min_side_prob is not None:
+        prob_up = row.get("prob_up")
+        if prob_up is None:
+            return False
+        side_prob = float(prob_up) if row.get("side") == "yes" else 1.0 - float(prob_up)
+        if side_prob < dial.min_side_prob:
+            return False
+    if dial.min_spread is not None:
+        bid, ask = row.get("yes_bid"), row.get("yes_ask")
+        if bid is None or ask is None or float(ask) - float(bid) < dial.min_spread:
+            return False
+    return True
+
+
 def candidate_trade(rows: list[dict], candidate: Candidate,
                     series: str) -> dict | None:
     """The window's one trade under a candidate: the earliest settled
@@ -135,7 +177,8 @@ def candidate_trade(rows: list[dict], candidate: Candidate,
     for row in sorted(rows, key=lambda r: int(r["offset_min"])):
         k = int(row["offset_min"])
         if lo <= k <= hi and _settled_trade(row) \
-                and float(row["edge_net"]) >= dial.min_edge:
+                and float(row["edge_net"]) >= dial.min_edge \
+                and _filters_ok(row, dial):
             return row
     return None
 
@@ -174,7 +217,7 @@ def evaluate(rows: list[dict], version: str, *, now: datetime,
     candidate = CANDIDATES[version]
     windows: dict[tuple[str, str], list[dict]] = {}
     for row in rows:
-        if window_open(row) < PREREG_AT:
+        if window_open(row) < candidate.prereg_at:
             continue
         windows.setdefault((row["series"], row["target"]), []).append(row)
 
@@ -216,7 +259,7 @@ def evaluate(rows: list[dict], version: str, *, now: datetime,
     low95 = clustered_low95(trades) if n else None
     paired_low95 = clustered_low95(deltas) if deltas else None
     eligible = criterion_met(n, low95, paired_low95)
-    days_run = (now - PREREG_AT).days
+    days_run = (now - candidate.prereg_at).days
     killed = not eligible and (days_run >= STOP_DAYS or n >= STOP_TRADES)
     return {
         "version": version,
