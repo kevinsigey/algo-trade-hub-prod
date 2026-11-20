@@ -99,6 +99,15 @@ def pending_triggers(client) -> list[dict]:
             .order("priority").order("created_at").execute().data) or []
 
 
+def recent_triggers(client, ticker: str, kind: str,
+                    limit: int = 50) -> list[dict]:
+    """Rendered/failed triggers for a ticker+kind, newest first, bounded."""
+    rows = (client.table(TRIGGERS).select("*").eq("ticker", ticker)
+            .eq("kind", kind).order("created_at", desc=True)
+            .limit(limit).execute().data) or []
+    return [r for r in rows if r.get("state") in ("done", "failed")]
+
+
 def mark_trigger(client, trigger_id: int, state: str,
                  verdict_id: int | None = None) -> None:
     update = {"state": state}

@@ -1,11 +1,12 @@
 """The section 5 band watch: held positions get flags (never orders), band
 crossings and new guidance queue debate triggers by the frozen priority —
 crossings first, new guidance next, refresh last."""
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from tradehub.valuation import watch
+from tradehub.valuation import verdict_store, watch
 from tests.test_valuation_verdicts import FakeClient, _sheet_row
 
 NOW = datetime(2026, 11, 9, 15, 0, tzinfo=timezone.utc)
@@ -75,6 +76,33 @@ def _client():
 
 def _positions(_book):
     return {"AMGN": 10.0, "GILD": 25.0, "SPY261204C00770000": -1.0}
+
+
+class _PrintDS(_DS):
+    """A price layer with earnings prints for one ticker only."""
+
+    def __init__(self, *print_dates, ticker="AMGN"):
+        self.print_dates = list(print_dates)
+        self.ticker = ticker
+
+    def earnings_dates(self, ticker):
+        if ticker != self.ticker:
+            return pd.DataFrame()
+        return pd.DataFrame(index=pd.to_datetime(self.print_dates))
+
+
+def _prior_ticker_state(client, ticker="AMGN", *, zone="neutral",
+                        price=300.0,
+                        last_guide_at="2026-11-05T12:00:00+00:00"):
+    verdict_store.set_watch_state(client, {
+        "key": f"ticker:{ticker}", "kind": "ticker", "ticker": ticker,
+        "zone": zone, "price": price, "last_guide_at": last_guide_at})
+
+
+def _rendered_trigger(client, ticker, kind, created_at, **detail):
+    verdict_store.insert_trigger(client, {
+        "ticker": ticker, "kind": kind, "priority": watch.PRIORITY[kind],
+        "state": "done", "created_at": created_at, "detail": detail})
 
 
 def test_held_position_above_the_top_band_is_a_potential_sell_flag():
@@ -157,3 +185,94 @@ def test_drain_renders_by_priority_and_marks_triggers_done():
     assert [r["ticker"] for r in rendered] == ["AMGN", "GILD"]  # priority 1 first
     assert verdict_store.pending_triggers(client) == []
     assert len(client.tables["valuation_verdicts"]) == 2
+
+
+def test_done_falsifier_suppresses_same_print_and_drains_nothing(caplog):
+    client = _client()
+    _rendered_trigger(client, "AMGN", "falsifier_window",
+                      "2026-11-09T10:00:00+00:00",
+                      within_days=watch.PRINT_WINDOW_DAYS,
+                      print_date="2026-11-12")
+    ds = _PrintDS("2026-11-12")
+    with caplog.at_level(logging.INFO, logger="tradehub.valuation.watch"):
+        out = watch.compute_watch(client, ds, positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 1
+    pending = [t for t in verdict_store.pending_triggers(client)
+               if t["ticker"] == "AMGN" and t["kind"] == "falsifier_window"]
+    assert pending == []
+    rendered = watch.drain_triggers(client, ds, chat=_chat, now=NOW)
+    assert all(r["ticker"] != "AMGN" for r in rendered)
+    assert "valuation watch: suppressed falsifier_window re-fire for AMGN " \
+           "(same print_date)" in caplog.text
+
+
+def test_different_print_date_queues_a_new_falsifier():
+    client = _client()
+    _rendered_trigger(client, "AMGN", "falsifier_window",
+                      "2026-11-09T10:00:00+00:00",
+                      within_days=watch.PRINT_WINDOW_DAYS,
+                      print_date="2026-11-12")
+    later = datetime(2027, 2, 8, 15, 0, tzinfo=timezone.utc)
+    ds = _PrintDS("2027-02-10")
+    out = watch.compute_watch(client, ds, positions_fn=_positions, now=later)
+    assert out["triggers_queued"] == 1
+    assert out["triggers_suppressed"] == 0
+    pending = [t for t in verdict_store.pending_triggers(client)
+               if t["ticker"] == "AMGN" and t["kind"] == "falsifier_window"]
+    assert len(pending) == 1
+    assert pending[0]["detail"]["print_date"] == "2027-02-10"
+    assert pending[0]["detail"]["within_days"] == watch.PRINT_WINDOW_DAYS
+
+
+def test_crossing_within_cooldown_is_suppressed():
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    _rendered_trigger(client, "AMGN", "crossing",
+                      (NOW - timedelta(hours=2)).isoformat(), band="base")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 1
+    assert [t for t in verdict_store.pending_triggers(client)
+            if t["ticker"] == "AMGN"] == []
+
+
+def test_crossing_after_cooldown_queues():
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    _rendered_trigger(client, "AMGN", "crossing",
+                      (NOW - timedelta(hours=25)).isoformat(), band="base")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 1
+    assert out["triggers_suppressed"] == 0
+    pending = [t for t in verdict_store.pending_triggers(client)
+               if t["ticker"] == "AMGN" and t["kind"] == "crossing"]
+    assert len(pending) == 1
+
+
+def test_done_guidance_with_same_recorded_at_is_suppressed():
+    client = _client()
+    _prior_ticker_state(client, "AMGN", zone="short_zone_strong",
+                        price=460.42, last_guide_at="2026-11-01T00:00:00+00:00")
+    _rendered_trigger(client, "AMGN", "new_guidance",
+                      "2026-11-09T10:00:00+00:00",
+                      recorded_at="2026-11-05T12:00:00+00:00")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 1
+    assert [t for t in verdict_store.pending_triggers(client)
+            if t["ticker"] == "AMGN" and t["kind"] == "new_guidance"] == []
+
+
+def test_pending_twin_is_still_skipped():
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    verdict_store.insert_trigger(client, {
+        "ticker": "AMGN", "kind": "crossing", "priority": 1,
+        "state": "pending", "created_at": NOW.isoformat(), "detail": {}})
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 0
+    pending = [t for t in verdict_store.pending_triggers(client)
+               if t["ticker"] == "AMGN" and t["kind"] == "crossing"]
+    assert len(pending) == 1
