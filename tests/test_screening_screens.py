@@ -164,3 +164,37 @@ def test_an_interrupted_promotion_resumes_the_same_idea(client, monkeypatch):
     assert len(fake.store["idea_runs"]) == 1 and len(runs) == 1  # no second run
     assert fake.store["ideas"][0]["tracked_at"] and fake.store["ideas"][0]["published_at"]
     assert c.post(f"/api/screening/screens/{screen['id']}/promote").status_code == 409
+
+
+
+def test_a_failed_marker_write_is_recovered_by_the_idea_key(client, monkeypatch):
+    # CodeRabbit on #575: if the screen's marker write fails right after the
+    # idea is created, the retry finds the idea by its durable key, links it
+    # and finishes -- never a second idea.
+    from tradehub.screening import store as screen_store
+
+    c, fake = client
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: object())
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, closes, start, bars_fn=None: closes)
+    monkeypatch.setattr(main, "rule_series", lambda spec, start, fred=None, analyst_fn=None: {})
+    monkeypatch.setattr(main, "workshop_div_yields", lambda spec, prices: {})
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: {"verdict": "PASS", "data_end": "2026-10-29"})
+    real_set = screen_store.set_promoted
+
+    def failing_set(*a, **k):
+        raise RuntimeError("marker write failed")
+
+    monkeypatch.setattr(screen_store, "set_promoted", failing_set)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    assert len(fake.store["ideas"]) == 1 and not fake.store["screens"][0].get("promoted_idea_id")
+
+    monkeypatch.setattr(screen_store, "set_promoted", real_set)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert len(fake.store["ideas"]) == 1
+    assert fake.store["screens"][0]["promoted_idea_id"] == fake.store["ideas"][0]["id"]
+    assert fake.store["ideas"][0]["tracked_at"]

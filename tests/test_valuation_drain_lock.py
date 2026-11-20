@@ -1,28 +1,25 @@
-"""Candidate drains never overlap (CodeRabbit on #575)."""
+"""Candidate drains never overlap, across processes (CodeRabbit on #575)."""
 from __future__ import annotations
 
-import threading
+import fcntl
 
-from tradehub.api.routers import valuation as val_router
+from tradehub.valuation import candidates as cand
 
 
-def test_a_second_drain_while_one_runs_is_skipped(monkeypatch):
-    from tradehub.valuation import candidates as cand_mod
-
-    started, release, calls = threading.Event(), threading.Event(), []
-
-    def slow_drain(supa, ds):
-        calls.append(1)
-        started.set()
-        release.wait(5)
-
-    monkeypatch.setattr(cand_mod, "run_candidate_debates", slow_drain)
-    first = threading.Thread(target=val_router._drain_candidates, args=(None, None))
-    first.start()
-    assert started.wait(5)
-    assert val_router._drain_candidates(None, None) is False   # overlapping: skipped
-    release.set()
-    first.join(5)
-    assert calls == [1]
-    assert val_router._drain_candidates(None, None) is True    # free again afterwards
+def test_a_drain_skips_while_another_process_holds_the_lock(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRADEHUB_LOCK_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(cand, "_run_candidate_debates", lambda *a, **k: calls.append(1) or ["ran"])
+    # Another process (the cron script, or an API drain thread) holds the file lock:
+    # a separate open file description, which is what a second process has.
+    other = open(tmp_path / "tradehub-candidate-drain.lock", "a+")
+    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert cand.run_candidate_debates(None, None) == []
+        assert calls == []
+    finally:
+        fcntl.flock(other, fcntl.LOCK_UN)
+        other.close()
+    assert cand.run_candidate_debates(None, None) == ["ran"]     # free again
+    assert cand.run_candidate_debates(None, None) == ["ran"]     # released after each drain
     assert calls == [1, 1]

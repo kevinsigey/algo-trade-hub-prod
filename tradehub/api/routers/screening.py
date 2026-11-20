@@ -153,11 +153,21 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
     # handoff (a write failing midway) resumes that same idea on retry instead
     # of creating a second one (CodeRabbit on #575). Only a finished handoff --
     # the idea tracking -- is "already promoted".
+    # The idea's text carries a durable key, so even a failed marker write is
+    # recoverable: the retry finds the idea by its key and links it.
+    key = f"[screen-promotion:{screen_id}]"
     resumed = None
     if row.get("promoted_idea_id"):
         resumed = workshop_store.get_idea(supabase, row["promoted_idea_id"])
         if resumed is None or resumed["idea"].get("tracked_at"):
             raise HTTPException(status_code=409, detail="this screen already promoted to an idea")
+    else:
+        # ponytail: whole-table id/text read; ideas number in the dozens
+        ideas = supabase.table(workshop_store.IDEAS).select("id,plain_words").execute().data or []
+        orphan = next((i for i in ideas if key in (i.get("plain_words") or "")), None)
+        if orphan is not None:
+            screen_store.set_promoted(supabase, screen_id, orphan["id"])
+            resumed = workshop_store.get_idea(supabase, orphan["id"])
     last_run = row.get("last_run") or {}
     survivors = last_run.get("survivors") or []
     if not survivors:
@@ -167,7 +177,7 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
     plain = (f"Promoted from the screen '{row['name']}' (run {footer.get('run_at') or 'unknown'}): "
              f"its {len(survivors)} survivors as a fixed equal-weight basket -- {', '.join(survivors)}. "
              f"The screen's exact spec is preserved on the screen record; any re-screen is a new idea. "
-             f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))}")
+             f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))} {key}")
     if resumed is None:
         idea_id = workshop_store.create_idea(supabase, title, plain)["id"]
         screen_store.set_promoted(supabase, screen_id, idea_id)

@@ -318,28 +318,6 @@ def debate_candidates_list(_admin: dict = Depends(admin.require_admin),
             "generated_at": max(generated) if generated else None}
 
 
-# One candidate drain at a time (CodeRabbit on #575): two overlapping drains
-# could both read the same pending candidate and render its debate twice.
-# ponytail: in-process lock; the API runs one uvicorn worker (Dockerfile CMD).
-# A second worker would need a row claim (pending -> rendering) instead.
-_DRAIN_LOCK = threading.Lock()
-
-
-def _drain_candidates(supabase, ds) -> bool:
-    """Run one drain unless another is in flight; False when skipped. A skipped
-    request loses nothing: the running drain works the same pending queue, and
-    a capacity decline still leaves candidates pending for the next run."""
-    from tradehub.valuation import candidates as cand_mod
-
-    if not _DRAIN_LOCK.acquire(blocking=False):
-        return False
-    try:
-        cand_mod.run_candidate_debates(supabase, ds)
-    finally:
-        _DRAIN_LOCK.release()
-    return True
-
-
 @router.post("/api/debate-candidates/run", tags=["Valuation"], status_code=202)
 def debate_candidates_run(_admin: dict = Depends(admin.require_admin),
                           supabase=Depends(get_supabase)):
@@ -354,7 +332,8 @@ def debate_candidates_run(_admin: dict = Depends(admin.require_admin),
     def _go() -> None:
         from tradehub.screening.sources import DataStore
 
-        _drain_candidates(supabase, DataStore())
+        # run_candidate_debates holds the cross-process drain lock itself.
+        cand_mod.run_candidate_debates(supabase, DataStore())
 
     threading.Thread(target=_go, daemon=True,
                      name="debate-candidates-drain").start()
