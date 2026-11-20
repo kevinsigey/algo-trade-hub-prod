@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from tradehub.valuation import verdicts
+from tradehub.valuation import judge, verdicts
 
 NOW = datetime(2026, 11, 9, 15, 0, tzinfo=timezone.utc)
 
@@ -233,6 +233,48 @@ def test_invented_packet_price_logs_a_void_verdict_not_a_decision():
     [row] = client.tables["valuation_verdicts"]
     assert row["status"] == "void" and row["verdict"] is None
     assert "void" in row["void_reason"].lower() or row["void_reason"]
+
+
+def test_empty_rationale_logs_a_void_verdict():
+    def no_rationale_chat(system, user, *, schema=None):
+        out = _chat(system, user, schema=schema)
+        if isinstance(out[0], dict):
+            return {**out[0], "rationale": "   "}, out[1]
+        return out
+
+    client = _client_with_sheet()
+    result = verdicts.render_verdict(client, _DS(), "AMGN",
+                                     trigger="on_demand",
+                                     chat=no_rationale_chat, now=NOW)
+    assert result["status"] == "void"
+    assert result["reason"] == "empty rationale"
+    [row] = client.tables["valuation_verdicts"]
+    assert row["status"] == "void" and row["verdict"] is None
+    assert row["void_reason"] == "empty rationale"
+    assert row["judge"] == "free-ai-proposer"
+    # What the debate/packet established is kept; only the call is void.
+    assert row["proposer_model"] == "qwen-fake"
+    assert row["proposer_pick"]["choice_id"] == "act_at_band_mid"
+    assert row["choices"] and row["rubric_weights"] and row["digest"]
+    assert row["bull_case"] == "bull prose" and row["bear_case"] == "bear prose"
+    assert row["target_price"] is None
+
+
+def test_kev_act_without_a_direction_logs_a_void_not_seat_unavailable():
+    class _KevClient:
+        def decide(self, packet):
+            return {"choice_id": "act_at_band_low", "direction": "none",
+                    "probability": 0.7, "rationale": "kev: act, but no side"}
+
+    client = _client_with_sheet()
+    result = verdicts.render_verdict(
+        client, _DS(), "AMGN", trigger="on_demand", chat=_chat, now=NOW,
+        seat=judge.KevSeat(client=_KevClient()))
+    assert result["status"] == "void"
+    [row] = client.tables["valuation_verdicts"]
+    assert row["status"] == "void" and row["verdict"] is None
+    assert row["judge"] == "kev:jaredpalmer/kev-4b"
+    assert "without a direction" in row["void_reason"]
 
 
 def test_daily_cap_stops_renders():

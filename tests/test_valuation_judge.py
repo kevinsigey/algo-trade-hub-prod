@@ -57,3 +57,48 @@ def test_jev_seat_delegates_to_a_decisions_client_when_wired():
     decision = seat.render(PACKET)
     assert decision["choice_id"] == "watch"
     assert seat.judge_id == "jev:typesafe/jev-1.13"
+
+
+def _decision(**over):
+    base = {"choice_id": "act_at_band_mid", "direction": "short",
+            "probability": 0.62, "rationale": "The price implies too much."}
+    base.update(over)
+    return base
+
+
+def test_validate_decision_rejects_an_empty_rationale():
+    for blank in ("", "   \n  ", None):
+        with pytest.raises(judge.DecisionInvalid, match="empty rationale"):
+            judge.validate_decision(_decision(rationale=blank))
+
+
+def test_validate_decision_forces_none_for_watch_with_a_direction():
+    cleaned = judge.validate_decision(_decision(
+        choice_id="watch", direction="long", probability=0.9))
+    assert cleaned["direction"] == "none"
+    assert cleaned["probability"] is None
+    assert cleaned["choice_id"] == "watch"
+
+
+def test_validate_decision_rejects_an_act_without_a_direction():
+    with pytest.raises(judge.DecisionInvalid, match="act without a direction"):
+        judge.validate_decision(_decision(
+            choice_id="act_at_band_low", direction="none"))
+
+
+@pytest.mark.parametrize("probability", [0.4, None])
+def test_validate_decision_rejects_an_act_without_usable_probability(
+        probability):
+    with pytest.raises(judge.DecisionInvalid, match="above 0.5"):
+        judge.validate_decision(_decision(probability=probability))
+
+
+def test_validate_decision_passes_a_coherent_act_unchanged():
+    decision = _decision(choice_id="act_at_band_low", direction="long",
+                         probability=0.7)
+    assert judge.validate_decision(decision) == decision
+
+
+def test_consistent_direction_voids_an_act_without_a_direction():
+    with pytest.raises(judge.DecisionInvalid):
+        judge._consistent_direction("act_at_band_low", "none")

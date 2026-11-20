@@ -109,6 +109,23 @@ class OilWtiHourly(_HourlyBase):
     def forecast(self, entry: CalendarEntry, now: datetime) -> Forecast | None:
         return self._forecast(entry, now)
 
+    def _anchor(self, entry: CalendarEntry, now: datetime):
+        """The price observation the forecast centres on. A variant that
+        is graded paired against another row overrides this to read THAT
+        row's frozen observation, so the pair shares one anchor and the
+        grading isolates the one thing the variant changes."""
+        return self._inputs.price(now)
+
+    def _sigma(self, entry: CalendarEntry, now: datetime) -> tuple[float, int] | None:
+        """(hourly sigma, observations used), or None when the record
+        cannot speak. The variant hook (Claude's review of the v7 PR):
+        v7 overrides this with realised volatility instead of copying
+        the forecast body."""
+        changes = hourly_changes(self._inputs.settled(now))
+        if len(changes) < MIN_CHANGES:
+            return None
+        return hourly_sigma(changes), min(len(changes), 72)
+
     def _forecast(self, entry: CalendarEntry, now: datetime, *,
                   sigma_mult: float = 1.0, extra: dict | None = None) -> Forecast | None:
         """The v1 math, with an optional sigma multiplier and payload extras
@@ -118,14 +135,15 @@ class OilWtiHourly(_HourlyBase):
         lm = self._open.get(entry.target)
         if lm is None:
             return None
-        changes = hourly_changes(self._inputs.settled(now))
-        if len(changes) < MIN_CHANGES:
-            return None
-        price = self._inputs.price(now)
+        price = self._anchor(entry, now)
         if price is None or now - price.published_at > MAX_PRICE_AGE:
             return None  # no live anchor: a gap, never a stale price dressed as live
+        got = self._sigma(entry, now)
+        if got is None:
+            return None
+        sigma_h, changes_used = got
+        sigma_h = sigma_h * sigma_mult
         minutes = (lm.market.close_time - now).total_seconds() / 60.0
-        sigma_h = hourly_sigma(changes) * sigma_mult
         return Forecast(self.name, self.version, entry.target,
                         hourly_prob(lm.market, price.value, sigma_h, minutes),
                         market_prob=quote_mid(lm),
@@ -133,7 +151,11 @@ class OilWtiHourly(_HourlyBase):
                                  "price_at": price.published_at.isoformat(),
                                  "sigma_h": sigma_h, "sigma_eff": sigma_for(sigma_h, minutes),
                                  "minutes_to_close": round(minutes, 1),
-                                 "changes_used": min(len(changes), 72), **(extra or {})})
+                                 "changes_used": changes_used,
+                                 # Full-precision decision time: run_journal hands every
+                                 # forecaster in a pass the same `now`, so this is the pass
+                                 # identity paired shadows match on (oil v7, #564).
+                                 "decided_at": now.isoformat(), **(extra or {})})
 
 
 class OilHourlyPersistence(_HourlyBase):
