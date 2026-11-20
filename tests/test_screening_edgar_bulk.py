@@ -90,7 +90,9 @@ def test_load_bulk_writes_the_same_entries_the_api_path_reads(tmp_path, monkeypa
 
 
 def test_download_streams_via_requests_with_the_house_ua(tmp_path, monkeypatch):
-    # _UA is a headers dict (sources.py); download must pass it as one.
+    # The headers come from the one helper (tradehub.sec_ua), built
+    # from SEC_CONTACT_EMAIL at call time; download passes the dict.
+    monkeypatch.setenv("SEC_CONTACT_EMAIL", "sec-contact@example.com")
     seen = {}
 
     class Resp:
@@ -118,8 +120,36 @@ def test_download_streams_via_requests_with_the_house_ua(tmp_path, monkeypatch):
     dest = tmp_path / "z.zip"
     assert edgar_bulk.download("https://example.invalid/z.zip", dest) == dest
     assert dest.read_bytes() == b"abcdef"
-    assert seen["headers"] == {"User-Agent": "screening-lab research sigeykevin@gmail.com"}
+    assert seen["headers"] == {
+        "User-Agent": "algo-trade-hub research sec-contact@example.com"}
     assert seen["stream"] is True
+
+
+def test_user_agent_comes_from_sec_contact_email():
+    # The SEC contact in the User-Agent is environment configuration
+    # (SEC_CONTACT_EMAIL), never a literal in code (Claude's cleanup,
+    # 2026-11-17; one helper, Claude's #559 fix round). Checked in a
+    # fresh interpreter: with the variable set the helper builds the
+    # header; without it the helper refuses, clearly.
+    import os
+    import subprocess
+    import sys
+
+    code = ("from tradehub.sec_ua import sec_user_agent; "
+            "print(sec_user_agent()['User-Agent'])")
+    env = {**os.environ, "SEC_CONTACT_EMAIL": "sec-contact@example.com"}
+    out = subprocess.run([sys.executable, "-c", code],
+                         capture_output=True, text=True, env=env,
+                         check=True)
+    assert out.stdout.strip() == (
+        "algo-trade-hub research sec-contact@example.com")
+
+    env = {k: v for k, v in os.environ.items()
+           if k != "SEC_CONTACT_EMAIL"}
+    out = subprocess.run([sys.executable, "-c", code],
+                         capture_output=True, text=True, env=env)
+    assert out.returncode != 0
+    assert "SEC_CONTACT_EMAIL" in out.stderr
 
 
 def test_load_bulk_counts_a_universe_with_no_ciks(tmp_path):

@@ -45,13 +45,14 @@ def public_company(ticker: str) -> dict:
 
 import requests
 
-_UA = {"User-Agent": "algo-trade-hub sigeykevin@gmail.com"}
+from tradehub.sec_ua import sec_user_agent
+
 _cik_cache: dict[str, str] = {}
 
 
 def _cik(ticker: str, get=requests.get) -> str:
     if ticker not in _cik_cache:
-        data = get("https://www.sec.gov/files/company_tickers.json", headers=_UA, timeout=30).json()
+        data = get("https://www.sec.gov/files/company_tickers.json", headers=sec_user_agent(), timeout=30).json()
         _cik_cache.update({row["ticker"].upper(): str(row["cik_str"]).zfill(10) for row in data.values()})
     if ticker not in _cik_cache:
         raise ValueError(f"{ticker}: not found in EDGAR's ticker map")
@@ -64,7 +65,7 @@ def _concept(cik: str, taxonomy: str, names: list[str], get=requests.get) -> tup
     for name in names:
         try:
             payload = get(f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/{taxonomy}/{name}.json",
-                          headers=_UA, timeout=30).json()
+                          headers=sec_user_agent(), timeout=30).json()
         except Exception:  # noqa: BLE001 -- a missing concept 404s; try the next
             continue
         units = payload.get("units") or {}

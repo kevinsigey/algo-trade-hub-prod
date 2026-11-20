@@ -9,6 +9,10 @@
 -- Written by tradehub/scripts/fifteen_min_run.py (via
 -- tradehub/fifteen_binance.py); read from the tables until a surface is
 -- commissioned.
+-- NOTE (2026-11-17): this migration creates the tables WITHOUT the
+-- service_role grant; a rebuild must also apply
+-- 20261116000001_fifteen_binance_grants.sql (PR #539) or the shadow's
+-- writes are refused.
 create table if not exists public.fifteen_binance_decisions (
   id bigint generated always as identity primary key,
   series text not null,

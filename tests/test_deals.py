@@ -106,7 +106,10 @@ def test_ipo_prob_below_talk_mid():
     assert out["implied_ps_at_pw"] == pytest.approx(1656.15 / 65.0, abs=0.2)
 
 
-def test_edgar_prefill_parses_filed_facts():
+def test_edgar_prefill_parses_filed_facts(monkeypatch):
+    # The EDGAR prefill builds its SEC header from SEC_CONTACT_EMAIL
+    # (tradehub.sec_ua); the stubbed transport still needs the config.
+    monkeypatch.setenv("SEC_CONTACT_EMAIL", "sec-contact@example.com")
     pub = pytest.importorskip("tradehub.deals.public")
 
     class Resp:

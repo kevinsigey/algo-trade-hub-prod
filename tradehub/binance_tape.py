@@ -92,15 +92,31 @@ def seed(state: dict, pairs) -> int:
 
 
 def write_cache(path: str, state: dict, now: datetime) -> None:
-    """Atomic write (tmp + replace), the house cache pattern."""
+    """Atomic write (tmp + replace), the house cache pattern. The
+    collector's reconnect-gap record rides along when the state
+    carries one (Claude's cleanup, 2026-11-17)."""
     payload = {"symbol": state["symbol"],
                "written_at": now.isoformat(),
                "klines": [[int(ms), state["klines"][ms]]
-                          for ms in sorted(state["klines"], key=int)]}
+                          for ms in sorted(state["klines"], key=int)],
+               "gaps": list(state.get("gaps") or [])}
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         fh.write(json.dumps(payload))
     os.replace(tmp, path)
+
+
+def read_gaps(*, path: str | None = None) -> list[dict]:
+    """The collector's recorded reconnect gaps [{start, end} ISO], or
+    [] when the cache is missing/corrupt or carries none -- a missing
+    gap record reads as no recorded gaps, never as an error."""
+    p = path or cache_path()
+    try:
+        payload = json.loads(open(p).read())
+        gaps = payload.get("gaps") if isinstance(payload, dict) else None
+        return [g for g in gaps if isinstance(g, dict)] if gaps else []
+    except (ValueError, OSError, TypeError):
+        return []
 
 
 def read_cached_klines(symbol: str, start: datetime, end: datetime, *,
