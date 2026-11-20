@@ -163,29 +163,18 @@ describe("Strategies", () => {
     expect(within(tile!).getByText(/A real edge should hold while futures trade/)).toBeInTheDocument();
   });
 
-  it("gives the oil shadow its own block with its promotion state, apart from the v1 record", async () => {
+  it("no longer shows the killed oil shadow, even if a stale payload carries its block", async () => {
+    // v2-oil-shadow was killed on Kevin's ruling (2026-11-17): the
+    // endpoint stopped serving the block and the page dropped it.
     const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
     serve({ "/api/oil/fifteen-rule": { ...base,
       shadow: { gate_version: "v2-oil-shadow", prereg_at: "2026-11-09T19:00:00+00:00",
-                variant: { series: ["WTI", "Brent"], offset_min: 1, bar: 0.05,
-                           rule: "Oil only, decided at minute 1 on the live tick read: buy the side whose chance beats its price by 5 points or more after Kalshi's taker fee, hold to the close. A shadow record until the frozen criterion promotes it." },
-                fresh: { windows: 60, trades: 12, net_per_contract: 0.295, low95: 0.181, win_rate: 0.8 },
-                paired: { windows: 192, delta_per_window: 0.055, low95: 0.02 },
-                grid: [{ offset_min: 1, bar: 0.05, windows: 60, trades: 12, net_per_contract: 0.295, low95: 0.181 }],
-                promotion: { state: "v1", met: false,
-                             criterion: { min_trades: 150, shadow_low95_above: 0, paired_low95_above: 0 },
-                             promoted_at: null, evidence: null } } } });
+                fresh: { windows: 273, trades: 246, net_per_contract: -0.048, low95: -0.108, win_rate: 0.4 } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
-    const summary = await within(tile!).findByText("Oil shadow — the minute-1 variant", { selector: "summary" });
-    expect(summary.closest("details")).not.toBeNull();
-    expect(within(tile!).getByText(/decided at minute 1 on the live tick read/)).toBeInTheDocument();
-    expect(within(tile!).getByText(/12 fresh trades · \+29\.5¢ a contract · win rate 80% · low end \+18\.1¢/)).toBeInTheDocument();
-    expect(within(tile!).getByText(/Against the live rule on the same 192 windows: \+5\.5¢ a window \(low end \+2\.0¢\)/)).toBeInTheDocument();
-    expect(within(tile!).getByText(/Promotion state: shadow — the live oil gate still runs v1/)).toBeInTheDocument();
-    expect(within(tile!).getByText(/promotes itself at 150 fresh trades with both low ends above zero \(12\/150 so far\)/)).toBeInTheDocument();
+    expect(within(tile!).queryByText("Oil shadow — the minute-1 variant")).not.toBeInTheDocument();
   });
 
   it("puts the decline monitor in the fifteen tile: v1 rule, blend and challenger per day and market", async () => {

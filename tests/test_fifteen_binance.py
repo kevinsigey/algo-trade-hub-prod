@@ -233,8 +233,6 @@ def test_runner_hook_is_fail_soft(monkeypatch):
     ok = {"ran": True}
     for mod, fn in ((fifteen_min_run.fifteen_tracking, "record_decisions"),
                     (fifteen_min_run.fifteen_tracking, "record_offsets"),
-                    (fifteen_min_run.fifteen_shadow, "record_shadow"),
-                    (fifteen_min_run.fifteen_shadow, "evaluate_daily"),
                     (fifteen_min_run.fifteen_blend, "record_blend"),
                     (fifteen_min_run.fifteen_blend, "evaluate_daily"),
                     (fifteen_min_run.fifteen_volregime, "record_volregime"),

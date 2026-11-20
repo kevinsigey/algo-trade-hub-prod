@@ -1668,16 +1668,10 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
         payload = {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
                    "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
                    "bar": go_live_bar(empty, empty)}
-    # The oil minute-1 shadow variant (preregistration 2026-11-09): one
-    # additive block -- its fresh record, the grid, and the promotion flag.
-    # Fail-soft like the rest of this endpoint: no shadow, no block.
-    try:
-        from tradehub import fifteen_shadow
-
-        payload["shadow"] = fifteen_shadow.summary(supabase)
-    except Exception:  # noqa: BLE001
-        if strict:
-            raise
+    # The oil minute-1 shadow variant used to ride here as an additive
+    # `shadow` block; v2-oil-shadow was killed on Kevin's ruling of
+    # 2026-11-17 and dropped from the page (its stored record stays in
+    # its tables, readable by hand, but nothing serves it here).
     # The self-weighting blend shadow (preregistration 2026-11-11): one
     # additive block -- its fresh record, the daily weights, and the
     # promotion flag. Fail-soft the same way.
