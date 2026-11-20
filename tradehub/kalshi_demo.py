@@ -195,10 +195,13 @@ def _lanes(live_version: str) -> list[dict]:
 # -- reads --------------------------------------------------------------------
 
 def _select(supa, table: str, filters: dict, order: str | None = None,
-            desc: bool = False, limit: int = 1000) -> list[dict]:
+            desc: bool = False, limit: int = 1000,
+            null: tuple[str, ...] = ()) -> list[dict]:
     query = supa.table(table).select("*")
     for col, val in filters.items():
         query = query.eq(col, val)
+    for col in null:  # in the query, so the limit applies after the filter
+        query = query.is_(col, "null")
     if order:
         query = query.order(order, desc=desc)
     rows = query.limit(limit).execute().data or []
@@ -355,7 +358,8 @@ def _settle_prod_fills(supa, tracked: dict, now: datetime,
     recorded would-have price, through the rule's own fee-netted pnl --
     the same settlement the shadow record gets."""
     for r in _select(supa, PROD_FILLS, {"status": "would_fill"},
-                     order="created_at", desc=True, limit=1000):
+                     order="created_at", desc=True, limit=1000,
+                     null=("outcome",)):
         if r.get("outcome") is not None or r.get("would_price") is None:
             continue
         d = tracked.get(r["target"])
@@ -1270,10 +1274,13 @@ def _prod_lane_summaries(supa) -> list[dict]:
         settled = [r for r in fills if r.get("pnl") is not None]
         contracts = sum(int(r.get("contracts") or 0) for r in settled)
         pnl = sum(float(r["pnl"]) for r in settled)
+        # One item per contract, so the low95's mean is the contract-weighted
+        # pnl_per_contract the headline shows (Claude's #560 review, :1277).
         items = [((r["series"], _dt(r["window_close"]).astimezone(ET)
                    .date().isoformat()),
                   float(r["pnl"]) / int(r["contracts"]) * 100.0)
-                 for r in settled if int(r.get("contracts") or 0) > 0]
+                 for r in settled if int(r.get("contracts") or 0) > 0
+                 for _ in range(int(r["contracts"]))]
         low = clustered_low95(items) if items else None
         out.append({
             "gate_version": version,

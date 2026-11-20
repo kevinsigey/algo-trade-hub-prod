@@ -267,3 +267,51 @@ def test_the_dead_book_alert_sees_todays_skips_past_the_limit(prod):
               if (a.get("evidence") or {}).get("event") == "dead_book"]
     assert len(alerts) == 1
     assert alerts[0]["evidence"]["count"] == 1
+
+
+def test_settle_skips_already_settled_rows_in_the_query(prod):
+    # 1,000 newer would_fill rows that are already settled, then an older
+    # unsettled row: settled rows must be excluded in the query, before the
+    # limit, or they fill the page and hide it (Claude's #560 review, :358).
+    settled = [{"id": i + 2, "series": kd.SERIES, "target": f"kalshi:NEW-{i}",
+                "gate_version": "v1", "ticker": "NEW", "side": "yes",
+                "would_price": 0.38, "contracts": 1, "status": "would_fill",
+                "outcome": 0, "pnl": -0.38, "settled_at": NOW.isoformat(),
+                "created_at": (NOW + timedelta(minutes=1)).isoformat()}
+               for i in range(1000)]
+    older = {"id": 1, "series": kd.SERIES, "target": TARGET,
+             "gate_version": "v1", "ticker": TICKER, "side": "yes",
+             "would_price": 0.38, "contracts": 13, "status": "would_fill",
+             "outcome": None, "created_at": (NOW - timedelta(days=1)).isoformat()}
+    db = _seeded(DB())
+    db.db[kd.PROD_FILLS] = [older] + settled
+    db.db[kd.DECISIONS] = [decision(outcome=1)]
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert out["prod_settled"] == 1
+    assert _fills(db)[0]["outcome"] == 1
+
+
+def test_low95_uses_the_same_contract_weighted_mean_as_the_headline():
+    # Three settled days with very different sizes. The headline is pnl /
+    # contracts; the low95 must be built on that same contract-weighted mean,
+    # not an unweighted mean of per-row cents (Claude's #560 review, :1277).
+    from tradehub.fifteen_volregime import clustered_low95
+
+    def row(i, day, contracts, cents_per_contract):
+        return {"id": i, "series": kd.SERIES, "target": f"kalshi:T{i}",
+                "gate_version": "v1", "status": "would_fill",
+                "contracts": contracts, "pnl": contracts * cents_per_contract / 100.0,
+                "window_close": (NOW + timedelta(days=day)).isoformat(),
+                "created_at": (NOW + timedelta(days=day)).isoformat()}
+
+    db = _seeded(DB())
+    db.db[kd.PROD_FILLS] = [row(1, 0, 1, 50.0), row(2, 1, 9, -10.0), row(3, 2, 2, 5.0)]
+    (lane,) = kd._prod_lane_summaries(db)
+    headline_cents = lane["pnl_per_contract"] * 100
+    weighted = [((kd.SERIES, d), c) for d, n, c in [(0, 1, 50.0), (1, 9, -10.0), (2, 2, 5.0)]
+                for _ in range(n)]
+    assert abs(sum(c for _k, c in weighted) / len(weighted) - headline_cents) < 1e-6
+    assert lane["low95_cents"] == round(clustered_low95(weighted), 2)
+    unweighted = clustered_low95([((kd.SERIES, d), c) for d, c in [(0, 50.0), (1, -10.0), (2, 5.0)]])
+    assert lane["low95_cents"] != round(unweighted, 2)
+    assert lane["low95_cents"] < headline_cents
