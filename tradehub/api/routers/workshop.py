@@ -581,11 +581,13 @@ def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.r
         raise HTTPException(status_code=409, detail="already live")
     gate, run = _gate(supabase, idea_id, body.size_pct)
     if gate["status"] != "ready":
-        # The override covers the day-count wait and nothing else: the run
-        # must exist and have PASSed (both enforced inside _gate's callers --
-        # run is None for event studies and unsaved-only ideas), the size
-        # must fit, and the claim must not have FAILED on the new data.
-        overridable = (run is not None and gate.get("size_ok") is not False
+        # The override covers the day-count wait and nothing else: the gate
+        # must be WAITING (a "fails" -- the claim fell on new data, or the
+        # saved PASS no longer meets the hub-wide standard -- is never
+        # waivable, even with its checks unset), the run must exist, and the
+        # size must have positively fit (CodeRabbit on #575).
+        overridable = (run is not None and gate["status"] == "waiting"
+                       and gate.get("size_ok") is True
                        and (gate.get("claim") or {}).get("holds") is not False)
         if not (body.override and overridable):
             raise HTTPException(status_code=409, detail="; ".join(gate["reasons"]) or "the gate is not clear")
