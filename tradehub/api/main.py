@@ -1710,6 +1710,16 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
     except Exception:  # noqa: BLE001
         if strict:
             raise
+    # The Strategies redesign board (2026-11-19): the fifteen family
+    # grouped by commodity, every model ranked per commodity with its
+    # simulated account. Additive and fail-soft the same way.
+    try:
+        from tradehub import fifteen_board
+
+        payload["board"] = fifteen_board.board(supabase)
+    except Exception:  # noqa: BLE001
+        if strict:
+            raise
     return payload
 
 

@@ -117,6 +117,34 @@ describe("Strategies", () => {
     expect(within(list).getByText(/7 gated trades · \+14\.0¢ a contract · 57% win · raw control 10 · \+5\.0¢ a contract/)).toBeInTheDocument();
   });
 
+  it("renders the redesign board: commodity cards with ranked models and simulated accounts", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    const model = (version: string, label: string, trades: number, net: number | null, extra: Record<string, unknown> = {}) => ({
+      version, label, series: "KXNATGAS15M", trades, net_cents: net, low95: 1.5, paired_low95: -2,
+      fill_short: 1, too_few: trades < 10,
+      progress: { n: trades, needed: 100, legs: { n: false, low95: true, paired: false } },
+      account: { start: 20, balance: 26.31, drawdown: 2.25, bust: false, curve: [20, 22.5, 26.31], trades_taken: trades },
+      ...extra });
+    serve({ "/api/oil/fifteen-rule": { ...base, board: { account_start: 20, commodities: [
+      { series: "KXNATGAS15M", commodity: "Natural gas", models: [
+        model("live", "Live rule", 97, 7.8, { progress: { n: 97, needed: 300, legs: { n: false, low95: true, paired: true } } }),
+        model("v4-edge20-shadow", "v4-edge20-shadow", 8, 4.21,
+              { fill_short: 0, account: { start: 20, balance: 21.5, drawdown: 0.5, bust: false, curve: [20, 21.5], trades_taken: 8 } }),
+      ] } ] } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
+    expect(tile).not.toBeNull();
+    const card = await within(tile!).findByRole("region", { name: "Natural gas models" });
+    expect(within(card).getByText("Live rule")).toBeInTheDocument();
+    expect(within(card).getByText(/97 trades/)).toBeInTheDocument();
+    expect(within(card).getByText(/\+7\.8¢/)).toBeInTheDocument();
+    expect(within(card).getByText(/97\/300/)).toBeInTheDocument();
+    expect(within(card).getByText(/\$26\.31/)).toBeInTheDocument();
+    expect(within(card).getByText("too few trades")).toBeInTheDocument();
+    expect(within(card).getByText(/fill-short 1/)).toBeInTheDocument();
+  });
+
   it("splits the fifteen expansion into small titled expansions instead of one mega-dropdown", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
@@ -192,9 +220,7 @@ describe("Strategies", () => {
     const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
     const cell = (trades: number, pnl: number | null) => ({ trades, pnl_per_trade: pnl });
     serve({ "/api/oil/fifteen-rule": { ...base,
-      decline: [{ day: "2026-11-12", series: "Natural gas", live: cell(12, 0.025), blend: cell(4, 0.08), volregime: cell(0, null) }],
-      volregime: { fresh: { trades: 40, net_per_contract: 0.06, low95: 0.01, clustered_low95: -0.03 },
-                   paired: { windows: 300, delta_per_window: 0.01, low95: 0.002, clustered_low95: -0.004 } } } });
+      decline: [{ day: "2026-11-12", series: "Natural gas", live: cell(12, 0.025), blend: cell(4, 0.08), volregime: cell(0, null) }] } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
@@ -202,7 +228,8 @@ describe("Strategies", () => {
     const table = within(tile!).getByRole("table", { name: "15-minute decline monitor" });
     expect(within(table).getByText("+2.5¢")).toBeInTheDocument();
     expect(within(table).getByText("+8.0¢")).toBeInTheDocument();
-    expect(within(tile!).getByText(/40 fresh trades, \+6\.0¢ a trade,\s+low95 \+1\.0¢, day-clustered low95 −3\.0¢/)).toBeInTheDocument();
+    // The vol-regime challenger's own record no longer rides as prose here;
+    // it lives on its commodity card (the redesign board test covers it).
   });
 
   it("adds a metals tile in the same visual form when the fifteen payload carries the metals block", async () => {
