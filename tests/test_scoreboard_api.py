@@ -967,7 +967,16 @@ class TestTheCatalogue:
 # ── structural: the route has to be reachable, and above the SPA mount ────────
 class TestRegistration:
     def test_the_route_is_registered(self):
-        assert "/api/scoreboard" in {getattr(route, "path", None) for route in app.routes}
+        # Step 20 split main.py into per-area routers; FastAPI 0.162 stores an
+        # included router as one lazy entry in app.routes, so expand those
+        # entries' original routers when collecting the registered paths.
+        paths = set()
+        for route in app.routes:
+            if getattr(route, "path", None):
+                paths.add(route.path)
+            for sub in getattr(getattr(route, "original_router", None), "routes", []):
+                paths.add(getattr(sub, "path", None))
+        assert "/api/scoreboard" in paths
 
     def test_every_api_route_is_registered_above_the_spa_mount(self):
         """The SPA is mounted at "/", so a route added after `mount_frontend` is shadowed and
