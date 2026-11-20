@@ -97,3 +97,16 @@ def test_sort_board_best_first_too_few_last_cards_by_best_model():
     wti = next(c for c in out if c["series"] == "KXWTI15M")
     assert [m["version"] for m in wti["models"]] == ["c", "a", "b"]  # 40c model last: too few
     assert out[0]["series"] == "KXBRENT15M"   # Brent's best (12) beats WTI's best proven (9)
+
+
+def test_zero_cost_trade_is_never_counted_thin_and_does_not_crash():
+    # demo_size divides by cost; the account replay skips cost <= 0, so the
+    # size check must skip it too rather than raise (Claude's #568 review).
+    from tradehub.fifteen_board import _attach_sizes, _too_thin
+    fills = {("S", "c", 5): {"yes": 1}}
+    trades = [{"series": "S", "close_time": "c", "offset": 5, "side": "yes", "cost": 0.0}]
+    assert _attach_sizes(trades, fills) == 0
+    assert trades[0]["ask_size"] == 1
+    assert _too_thin(1, 0.0) is False and _too_thin(1, -0.1) is False
+    assert _too_thin(1, 0.38) is True        # 1% of $500 at 38c is 13 contracts
+    assert _too_thin(None, 0.38) is False    # unmeasured is not thin

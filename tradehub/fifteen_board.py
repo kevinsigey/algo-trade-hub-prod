@@ -15,8 +15,10 @@ contract at all (balance < cost), and the replay stops there. Models sort best t
 cents per contract, models under 10 trades last ("too few"); commodity
 cards sort by their best proven model (best net among models with
 10+ trades, else the best overall). The board's pairing is uniform:
-every model pairs against the live rule's recorded trades on the
-union of both sides' settled windows in that series.
+every model pairs against the live rule on the model's own settled
+windows in that series -- the ones it traded and the ones it sat out --
+with the live rule's pnl on each (0 where it did not trade); live
+windows outside the model's span are not paired.
 """
 
 from __future__ import annotations
@@ -88,8 +90,9 @@ def model_row(version: str, label: str, series: str, trades: list[dict],
     """One model's row on one commodity card. `trades` are its settled
     fresh trades in time order; `live_by_target` is the live rule's pnl
     by target in this series; `extra_windows` are settled windows the
-    model sat out (its own decision rows with no trade) so the pairing
-    covers the union of both sides' windows."""
+    model sat out (its own decision rows with no trade), so the pairing
+    covers every window the model saw -- traded or sat out -- and skips
+    live windows outside that span."""
     ordered = sorted(trades, key=lambda t: t["frozen_at"])
     pnls = [float(t["pnl"]) for t in ordered]
     n = len(pnls)
@@ -165,18 +168,25 @@ def _fills(supa, rows: list[dict]) -> dict:
     return fills
 
 
+def _too_thin(size, cost: float) -> bool:
+    """A measured ask size below the demo's 1% order at `cost`. A cost of
+    zero or less has no order size (demo_size would divide by it) and the
+    account replay skips such a trade, so it is never counted thin."""
+    from tradehub.fifteen_candidates import demo_size
+    return size is not None and cost > 0 and float(size) < demo_size(cost)
+
+
 def _attach_sizes(trades: list[dict], fills: dict) -> int:
     """In place: each trade's ask_size from the tape (None when
     unmeasured). Returns the fill_short count: measured sizes below
     the demo's 1% size for the trade's cost (fifteen_candidates'
     demo_size)."""
-    from tradehub.fifteen_candidates import demo_size
     short = 0
     for trade in trades:
         sizes = fills.get((trade["series"], str(trade["close_time"]), int(trade["offset"])))
         size = sizes.get(trade["side"]) if sizes else None
         trade["ask_size"] = size
-        if size is not None and float(size) < demo_size(float(trade["cost"])):
+        if _too_thin(size, float(trade["cost"])):
             short += 1
     return short
 
@@ -255,7 +265,7 @@ def _candidate_trades(supa, offsets: list[dict], fills: dict) -> dict[str, dict[
                 size = sizes.get(mine["side"]) if sizes else None
                 if size is None:
                     continue  # unmeasured: the window leaves scoring
-                if float(size) < fc.demo_size(float(mine["side_cost"])):
+                if _too_thin(size, float(mine["side_cost"])):
                     short += 1
                     mine = None  # measured, too thin: no trade that window
             if mine is None:
@@ -308,9 +318,10 @@ def board(supa) -> dict[str, Any]:
         live_short = _attach_sizes(live.get(series, []), fills)
         models.append(model_row("live", "Live rule", series, live.get(series, []),
                                 {}, fill_short=live_short, needed=300))
-        # The live row pairs against itself by construction; its paired
-        # leg is its own low95 leg in the go-live bar. Recompute plainly:
-        models[-1]["paired_low95"] = models[-1]["low95"]
+        # The live row pairs against itself by construction, so it has no
+        # paired interval to show; its paired leg in the go-live bar is its
+        # own low95 leg.
+        models[-1]["paired_low95"] = None
         models[-1]["progress"]["legs"]["paired"] = models[-1]["progress"]["legs"]["low95"]
         for version, label, trades_map, out_map, needed in (
                 ("v2-blend-shadow", "Blend", blend_trades, blend_out, 100),
