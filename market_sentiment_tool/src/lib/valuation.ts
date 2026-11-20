@@ -417,7 +417,9 @@ export function multipleText(sheet: FactSheet): string {
   const kind = sheet.band_basis === "revenue" ? "P/S" : "fwd P/E";
   const own = num(sheet.own_multiple);
   if (sheet.band_basis !== "revenue" && sheet.multiple_basis === "blend" && own != null) {
-    return `${((own + m) / 2).toFixed(2)}× ${kind} (50/50 own ${own.toFixed(2)} / peer ${m.toFixed(2)})`;
+    // Trailing own P/E blended with the forward peer P/E: it is neither a
+    // forward nor a trailing multiple, so it is labelled for what it is (#569).
+    return `${((own + m) / 2).toFixed(2)}× blended P/E (50/50 own ${own.toFixed(2)} / peer ${m.toFixed(2)})`;
   }
   if (sheet.band_basis !== "revenue" && sheet.multiple_basis === "peer_only") {
     return `${m.toFixed(2)}× ${kind} (peer only)`;

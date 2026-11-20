@@ -201,17 +201,20 @@ class DataStore:
         return out
 
     # -- yfinance: prices ------------------------------------------------------
-    def prices(self, tickers: list[str], years: int = 3) -> pd.DataFrame:
-        """Adjusted daily closes, wide frame (columns = tickers)."""
+    def prices(self, tickers: list[str], years: int = 3, adjusted: bool = True) -> pd.DataFrame:
+        """Daily closes, wide frame (columns = tickers). Adjusted (splits and
+        dividends) by default; adjusted=False leaves dividends in but -- as
+        yfinance serves them -- the closes are still split-adjusted, so pair
+        it with splits() to recover the price that actually traded."""
         import yfinance as yf
 
         tickers = sorted(set(tickers))
-        key = f"prices|{years}|{','.join(tickers)}"
+        key = f"prices|{years}|{','.join(tickers)}" + ("" if adjusted else "|raw")
         hit = self.cache.get(key, TTL["prices"])
         if hit is not None:
             self._note_asof("prices")
             return hit
-        raw = yf.download(tickers, period=f"{years}y", auto_adjust=True,
+        raw = yf.download(tickers, period=f"{years}y", auto_adjust=adjusted,
                           progress=False, threads=True)
         if raw is None or len(raw) == 0:
             raise RuntimeError("yfinance download returned no data")
@@ -224,6 +227,20 @@ class DataStore:
         self.cache.set(key, closes)
         self._note_asof("prices")
         return closes
+
+    def splits(self, ticker: str) -> pd.Series:
+        """Split ratios by date (2.0 = 2-for-1), tz-naive index; empty when none."""
+        import yfinance as yf
+
+        key = f"splits|{ticker}"
+        hit = self.cache.get(key, TTL["info"])
+        if hit is not None:
+            return hit
+        s = yf.Ticker(ticker).splits
+        s = pd.Series(dtype=float) if s is None else s.astype(float)
+        s.index = pd.DatetimeIndex(s.index).tz_localize(None) if len(s) else pd.DatetimeIndex([])
+        self.cache.set(key, s)
+        return s
 
     # -- yfinance: info ---------------------------------------------------------
     def info(self, ticker: str) -> dict:
