@@ -299,3 +299,20 @@ def test_a_legacy_falsifier_row_without_print_date_suppresses_inside_the_window(
                       within_days=watch.PRINT_WINDOW_DAYS)
     out = watch.compute_watch(client, _PrintDS("2026-11-12"), positions_fn=_positions, now=NOW)
     assert out["triggers_queued"] == 0 and out["triggers_suppressed"] == 1
+
+
+def test_newer_failed_rows_do_not_hide_a_completed_trigger():
+    # The 50-row window must count completed triggers only: a burst of newer
+    # failed renders can't push the done row out and let a duplicate through.
+    client = _client()
+    _rendered_trigger(client, "AMGN", "falsifier_window",
+                      (NOW - timedelta(days=2)).isoformat(),
+                      within_days=watch.PRINT_WINDOW_DAYS, print_date="2026-11-12")
+    for i in range(55):
+        verdict_store.insert_trigger(client, {
+            "ticker": "AMGN", "kind": "falsifier_window",
+            "priority": watch.PRIORITY["falsifier_window"], "state": "failed",
+            "created_at": (NOW - timedelta(hours=40 - i // 2)).isoformat(),
+            "detail": {"within_days": watch.PRINT_WINDOW_DAYS, "print_date": "2026-11-12"}})
+    out = watch.compute_watch(client, _PrintDS("2026-11-12"), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0 and out["triggers_suppressed"] == 1
