@@ -17,9 +17,17 @@ from pathlib import Path
 
 import pandas as pd
 
+from tradehub.sec_ua import sec_user_agent
+
 from .cache import Cache
 
-_UA = {"User-Agent": "screening-lab research sigeykevin@gmail.com"}
+# The SEC's fair-access rules require a declared contact in the
+# User-Agent. Every SEC header in the hub is built by the one helper,
+# tradehub.sec_ua.sec_user_agent (imported below): the contact comes
+# from the environment (SEC_CONTACT_EMAIL, set in /opt/stack/.env and
+# forwarded by compose), never from code, and an unset contact fails
+# the fetch instead of degrading to a placeholder -- Claude's
+# cleanup, 2026-11-17, and his #559 fix round, 2026-11-18.
 import os
 
 # The house earnings panel lives on the VPS cache volume in production; absent
@@ -334,7 +342,7 @@ class DataStore:
         if hit is not None:
             return hit
         raw = json.loads(_http_get("https://www.sec.gov/files/company_tickers.json",
-                                   _UA))
+                                   sec_user_agent()))
         out = {v["ticker"].upper(): int(v["cik_str"]) for v in raw.values()}
         self.cache.set("cikmap", out)
         return out
@@ -356,7 +364,7 @@ class DataStore:
             return []
         url = (f"https://data.sec.gov/api/xbrl/companyconcept/"
                f"CIK{cik:010d}/us-gaap/{concept}.json")
-        data = json.loads(_http_get(url, _UA))
+        data = json.loads(_http_get(url, sec_user_agent()))
         time.sleep(0.15)  # EDGAR fair-use: stay well under 10 req/s
         rows = []
         for unit_rows in (data.get("units") or {}).values():
@@ -431,7 +439,8 @@ class DataStore:
         # the egress proxy stalls indefinitely on descriptive/bot UAs
         # ("Mozilla/5.0", "screening-lab research" both read-time-out) while
         # a plain curl UA answers in ~2s. SEC EDGAR is the opposite — it
-        # requires the descriptive UA in _UA and answers fine with it.
+        # requires the descriptive UA from sec_user_agent() and answers
+        # fine with it.
         last_err = None
         for _attempt in range(2):
             try:

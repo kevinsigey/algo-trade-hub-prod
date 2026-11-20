@@ -159,26 +159,6 @@ ENGINE_CATALOGUE: tuple[dict[str, Any], ...] = (
             "cannot be ranked beside the others on this page."
         ),
     },
-    {
-        "engine": "sports_nfl",
-        "label": "NFL game markets — winner, spread, total",
-        "cadence": "daily",
-        "claim": (
-            "The probability that one side of an NFL market resolves as claimed, for winner, "
-            "spread and total. The number is the predictor feed's own frozen pre-game snapshot and "
-            "an LLM reviewer judges it; the reviewer never changes the probability."
-        ),
-    },
-    {
-        "engine": "sports_cfb",
-        "label": "College football game markets — winner, spread, total",
-        "cadence": "daily",
-        "claim": (
-            "The probability that one side of a college-football market resolves as claimed, for "
-            "winner, spread and total. The number is the predictor feed's own frozen pre-game "
-            "snapshot and an LLM reviewer judges it; the reviewer never changes the probability."
-        ),
-    },
 )
 
 # The engine names the catalogue declares, for the membership tests.

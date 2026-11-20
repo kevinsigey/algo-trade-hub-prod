@@ -7,6 +7,8 @@ from the v1 record.
 """
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from tradehub import fifteen_shadow as shadow
 from tradehub import fifteen_tracking as tracking
 from tradehub import oil_fifteen_rule as rule
@@ -227,49 +229,42 @@ def _seed_evaluation(supa, *, n_trades=160, shadow_pnl=0.6853, live_buys=False):
             "outcome": 1, "pnl": shadow_pnl if live_buys else None})
 
 
-def test_evaluation_promotes_once_with_an_audit_row():
+def test_evaluation_is_closed_and_writes_nothing():
+    # The kill closed the evaluate path (Claude's review of the kill
+    # PR): even on a record that would have met the criterion,
+    # evaluate_promotion raises and no promotion row is ever written.
     supa = FakeSupa()
     _seed_evaluation(supa)
     now = datetime(2026, 11, 16, tzinfo=UTC)
-    out = shadow.evaluate_promotion(supa, now)
-    assert out["criterion_met"] and out["promoted"]
-    assert out["trades"] == 160 and out["paired_low95"] > 0
-    promos = supa.tables[shadow.PROMOTIONS_TABLE]
-    assert len(promos) == 1 and promos[0]["kind"] == "promotion"
-    assert promos[0]["to_version"] == "v2-oil" and promos[0]["evidence"]["trades"] == 160
-    assert shadow.current_state(supa) == "v2-oil"
-    # A later evaluation never promotes twice.
-    out2 = shadow.evaluate_promotion(supa, now + timedelta(days=1))
-    assert not out2["promoted"] and len(supa.tables[shadow.PROMOTIONS_TABLE]) == 1
+    with pytest.raises(RuntimeError, match="read-only"):
+        shadow.evaluate_promotion(supa, now)
+    assert shadow.PROMOTIONS_TABLE not in supa.tables
+    assert shadow.current_state(supa) == "v1"
 
 
-def test_evaluation_never_promotes_on_a_failing_leg():
-    for seed in ({"n_trades": 100}, {"shadow_pnl": -0.20}, {"live_buys": True}):
-        supa = FakeSupa()
-        _seed_evaluation(supa, **seed)
-        out = shadow.evaluate_promotion(supa, datetime(2026, 11, 16, tzinfo=UTC))
-        assert not out["criterion_met"] and not out["promoted"], seed
-        assert shadow.PROMOTIONS_TABLE not in supa.tables
-        assert shadow.current_state(supa) == "v1"
-
-
-def test_daily_evaluation_runs_once_a_day():
+def test_daily_evaluation_is_closed_too():
     supa = FakeSupa()
     _seed_evaluation(supa, n_trades=10)
     now = datetime(2026, 11, 16, 8, 0, tzinfo=UTC)
-    shadow.evaluate_daily(supa, now)
-    again = shadow.evaluate_daily(supa, now + timedelta(hours=3))
-    assert again.get("skipped") == "already_evaluated_today"
-    assert len(supa.tables[shadow.EVALS_TABLE]) == 1
-    shadow.evaluate_daily(supa, now + timedelta(days=1))
-    assert len(supa.tables[shadow.EVALS_TABLE]) == 2
+    with pytest.raises(RuntimeError, match="read-only"):
+        shadow.evaluate_daily(supa, now)
+    assert shadow.EVALS_TABLE not in supa.tables
+
+
+def test_the_cli_offers_only_revert():
+    with pytest.raises(SystemExit):
+        shadow.main(["evaluate"])
 
 
 def test_reversal_restores_v1_in_one_action():
     supa = FakeSupa()
     _seed_evaluation(supa)
     now = datetime(2026, 11, 16, tzinfo=UTC)
-    shadow.evaluate_promotion(supa, now)
+    # The promoted state is seeded as the audit row itself (the
+    # evaluate path that used to write it is closed by the kill).
+    supa.tables.setdefault(shadow.PROMOTIONS_TABLE, []).append({
+        "created_at": now.isoformat(), "kind": "promotion",
+        "from_version": "v1", "to_version": "v2-oil", "evidence": {}})
     assert shadow.current_state(supa) == "v2-oil"
     shadow.revert_promotion(supa, now + timedelta(days=2), reason="test")
     assert shadow.current_state(supa) == "v1"

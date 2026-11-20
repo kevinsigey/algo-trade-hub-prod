@@ -104,8 +104,16 @@ and its rows stay as they are.
 
 No other series (silver and WTI tied; Brent, gas and copper failed the
 gate). No change to v1, its tape or its record. No websocket feed — one
-REST klines fetch per record pass. No page or endpoint: the record is
-read from its tables until a surface is commissioned.
+REST klines fetch per record pass. **[Superseded 2026-11-16 by the
+amendment below: the transport is the websocket collector. Record
+check at the cleanup (2026-11-17): no decision rows predate the
+amendment — the REST transport never produced a read from the VPS
+(HTTP 451) and the first tape-backed decisions come from the
+collector's cache after its 2026-11-16 16:04Z start; of the three
+eval trail rows, the earliest (2026-11-16 14:33Z, after the #539
+grants repair) predates the merge but evaluated an empty record.]**
+No page or endpoint: the record is read from its tables until a
+surface is commissioned.
 
 ## Amendment 2026-11-16 — transport: websocket collector (Kevin's pick)
 

@@ -33,8 +33,11 @@ ENGINES = [
     ("cpi_nowcast", "monthly"),
     ("labor_nowcast", "monthly"),
     ("crypto", "daily"),
-    ("sports_nfl", "daily"),
-    ("sports_cfb", "daily"),
+    # The sports engines left with the sports removal (Claude's ruling
+    # on the removal PR): out of the catalogue, so out of this list --
+    # the catalogue test pins the two sets equal. Their stored
+    # predictions still settle in run_settlement_pass above; only the
+    # legacy track-record refresh stops naming them.
 ]
 
 

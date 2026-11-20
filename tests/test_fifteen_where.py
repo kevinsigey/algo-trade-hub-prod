@@ -85,6 +85,36 @@ def test_move_so_far_never_reads_the_60m_fields():
     assert trade["move_so_far"] == "up"
 
 
+def test_cross_move_reads_the_record_passed_in_not_a_cached_one():
+    # Claude's cleanup (2026-11-17): the (series, close) -> target index
+    # was a module global keyed by id(rows). CPython reuses ids after
+    # GC, so the replay pass could read the forward pass's index and
+    # cross_move / spread_move came out wrong or null (and the cache
+    # leaked). The index is built inside enrich() now; the global is
+    # gone.
+    import gc
+
+    from tradehub.research import fifteen_where
+
+    assert not hasattr(fifteen_where, "_target_cache")
+    close = datetime(2026, 11, 6, 12, 0, tzinfo=UTC)
+
+    def record(brent_price_at_5, tag):
+        rows = window("KXWTI15M", close, 1, trade_offset=5, price0=100.0,
+                      prices={5: 101.0})
+        rows += [row("KXBRENT15M", close, 0, price=100.0, target=f"{tag}-B"),
+                 row("KXBRENT15M", close, 5, price=brent_price_at_5,
+                     target=f"{tag}-B")]
+        return rows
+
+    rows_a = record(102.0, "A")
+    assert enrich(rows_a, "replay")[0]["cross_move"] == "up"
+    del rows_a
+    gc.collect()
+    rows_b = record(98.0, "B")
+    assert enrich(rows_b, "replay")[0]["cross_move"] == "down"
+
+
 def test_paired_table_uses_matched_windows_only():
     base = datetime(2026, 11, 6, 0, 0, tzinfo=UTC)
     rows = []

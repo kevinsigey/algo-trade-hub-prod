@@ -180,13 +180,16 @@ class TestTheJoin:
         """The absence-is-not-zero rule, at the join rather than at the rendering.
 
         An engine with no row is ABSENT from `backtest_runs`, and an absent engine reads as "this
-        engine has nothing to show" -- a claim about the engine that nobody made. So `crypto` and
-        both sports engines are in the response with `measured: false` and their own status word.
+        engine has nothing to show" -- a claim about the engine that nobody made. So `crypto` is
+        in the response with `measured: false` and its own status word. (The sports engines rode
+        here until the sports removal took them out of the catalogue entirely, Claude's ruling
+        on the removal PR: their historical labels live in the journal's retired pairs, not in
+        the live catalogue.)
         """
         catalogue = engine_catalogue([_row("gas")])
         by_engine = {e["engine"]: e for e in catalogue["entries"]}
 
-        for engine in ("crypto", "sports_nfl", "sports_cfb"):
+        for engine in ("crypto",):
             entry = by_engine[engine]
             assert entry["measured"] is False
             assert entry["status"] == STATUS_NOT_MEASURED

@@ -80,6 +80,33 @@ def test_ballast_definition():
     assert g["t_test"] is None
 
 
+def test_a_run_stores_its_unseen_series_for_the_critic():
+    """The ballast statistic changed in step 12, so the weekly critic must
+    be able to recompute a run's backtest value with the CURRENT statistic
+    rather than compare against the value the run stored under the old
+    one. That needs the unseen span's daily rows stored with the run --
+    and recomputing on them must reproduce the stored value while the
+    statistic is unchanged."""
+    from tradehub.workshop import engine
+
+    rng, spy, frame = market(4)
+    down = spy < 0
+    good = np.where(down, 0.0, 0.0004)
+    closes = pd.DataFrame({**frame, "GOOD": prices(good)}, index=IDX)
+    out = run_test(IdeaSpec(title="good ballast", hold=["GOOD"], claim="ballast"),
+                   closes, {}, variations=1, seed=1)
+    series = out["claim"]["unseen"]["series"]
+    assert series and all(set(row) == {"ret", "bench", "spy", "on"} for row in series)
+    holds, value, _ = engine._claim(
+        "ballast",
+        np.array([row["ret"] for row in series]),
+        np.array([row["bench"] for row in series]),
+        np.array([row["spy"] for row in series]),
+        np.array([row["on"] for row in series], dtype=bool))
+    assert value == pytest.approx(out["claim"]["unseen"]["value"])
+    assert holds == out["claim"]["unseen"]["holds"]
+
+
 def test_short_unseen_span_is_not_enough_data():
     rng, spy, frame = market(5)
     closes = pd.DataFrame({**frame, "AAA": frame["SPY"]}, index=IDX).iloc[-1300:]  # 30% of 1300 = 390 days
