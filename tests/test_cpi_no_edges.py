@@ -68,11 +68,10 @@ def test_the_prune_still_reaches_every_other_scan_owned_engine():
     ]
     client = _RecordingClient(rows=rows)
 
-    scan.remove_stale_edges(client, {e: set() for e in ("gas", "labor_nowcast",
-                                                        "sports_nfl", "sports_cfb", "cpi_nowcast")})
+    scan.remove_stale_edges(client, {e: set() for e in ("gas", "labor_nowcast", "cpi_nowcast")})
 
     assert sorted(c["engine"] for c in client.deleted) == [
-        "gas", "labor_nowcast", "sports_cfb", "sports_nfl",
+        "gas", "labor_nowcast",
     ], f"the prune must reach every engine except CPI, got {client.deleted}"
 
 
@@ -233,9 +232,7 @@ def _run_main(monkeypatch):
 
     monkeypatch.setattr(scan, "KalshiLive", lambda *a, **k: object())
     monkeypatch.setattr(scan, "scan_gas", lambda *a, **k: ([], []))
-    monkeypatch.setattr(scan, "sports_due", lambda now: False)
     monkeypatch.setattr(scan, "labor_scan_due", lambda now: False)
-    monkeypatch.setattr(scan, "remove_started_sports_edges", lambda *a, **k: [])
     monkeypatch.setattr(scan, "latest_gate_statuses", lambda *a, **k: {})
     monkeypatch.setattr(scan, "remove_stale_edges", prune)
     monkeypatch.setattr(supabase_client, "upsert_opportunities", lambda rows: upserted.extend(rows))

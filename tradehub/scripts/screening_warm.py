@@ -26,6 +26,7 @@ runs prefetch them concurrently on demand.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from tradehub.screening import edgar_bulk
@@ -36,6 +37,32 @@ _KINDS = {"info", "statements", "earnings"}
 _SLICE = int(os.environ.get("TRADEHUB_SCREENING_WARM_SLICE", "1200"))
 _UNIVERSE = {"type": "common_equity",
              "base": {"type": "index", "index": "nasdaq_all"}}
+# The companyfacts zip is ~1.4 GB: refuse the bulk pass rather than
+# fill the disk (Claude's cleanup, 2026-11-17).
+_MIN_FREE_BYTES = 2 * 1024**3
+
+
+def fetch_bulk_zip(store: DataStore) -> Path | None:
+    """Download the companyfacts zip for the bulk pass, hardened
+    (Claude's cleanup, 2026-11-17): stale .part files left by a killed
+    run are swept first, the download lands on a .part path and is
+    renamed into place only when complete (a partial never sits at the
+    real path), and the disk must hold the zip with headroom before a
+    byte is fetched. None (with the reason printed) when the pass
+    cannot run -- the caller still rotates."""
+    root = Path(store.cache.root)
+    for stale in root.glob("*.part"):
+        stale.unlink(missing_ok=True)
+    free = shutil.disk_usage(root).free
+    if free < _MIN_FREE_BYTES:
+        print(f"screening_warm: edgar bulk skipped: {free} bytes free "
+              f"on {root}, need {_MIN_FREE_BYTES}")
+        return None
+    zip_path = root / "companyfacts.zip"
+    part_path = root / "companyfacts.zip.part"
+    edgar_bulk.download(edgar_bulk.ZIP_URL, part_path)
+    part_path.replace(zip_path)
+    return zip_path
 
 
 def rotation_order(store: DataStore, tickers: list[str]) -> list[str]:
@@ -82,15 +109,18 @@ def main() -> None:
         return
     print(f"screening_warm: universe {len(universe)} names")
 
-    zip_path = Path(store.cache.root) / "companyfacts.zip"
+    zip_path = None
     try:
-        edgar_bulk.download(edgar_bulk.ZIP_URL, zip_path)
-        counts = edgar_bulk.load_bulk(store, universe, zip_path=zip_path)
-        print(f"screening_warm: edgar bulk {counts}")
+        zip_path = fetch_bulk_zip(store)
+        if zip_path is not None:
+            counts = edgar_bulk.load_bulk(store, universe, zip_path=zip_path)
+            print(f"screening_warm: edgar bulk {counts}")
     except Exception as e:  # fail-soft: the rotation still runs
         print(f"screening_warm: edgar bulk pass failed: {e}")
     finally:
-        zip_path.unlink(missing_ok=True)
+        if zip_path is not None:
+            zip_path.unlink(missing_ok=True)
+        (Path(store.cache.root) / "companyfacts.zip.part").unlink(missing_ok=True)
 
     ordered = rotation_order(store, universe)
     slice_ = ordered[:_SLICE]

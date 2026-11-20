@@ -37,7 +37,7 @@ from tradehub.scoreboard import (
     settled_distance,
     stated_settled_bar,
 )
-from tradehub.sports.scorecard import MIN_SETTLED
+from tradehub.scoreboard import MIN_SETTLED
 from tradehub.track_record import MIN_CONTRACTS, check_promotion_gate
 
 # The real strings `check_promotion_gate` emits. Copied from
@@ -388,7 +388,7 @@ class TestGateWording:
 
 class TestSettledFloor:
     """`MIN_SETTLED` is imported, never written out: it is the reviewer's number in
-    `tradehub/sports/scorecard.py`, and a second copy here is a second place to be wrong.
+    `tradehub/scoreboard.py`, and a second copy here is a second place to be wrong.
 
     The floor is reported on its own fields and is never the bar `met` is judged against --
     TestTwoBars covers that half. What is pinned here is that it is always present."""

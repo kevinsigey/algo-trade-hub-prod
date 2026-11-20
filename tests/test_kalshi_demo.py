@@ -453,6 +453,34 @@ def test_cross_places_inside_the_slippage_cap():
     assert db.db[kd.ORDERS][0]["limit_price"] == 0.42
 
 
+def test_cross_skips_a_no_side_run_past_the_slippage_cap():
+    # The NO mirror of the cap (Claude's cleanup ask, 2026-11-17): the
+    # frozen NO ask is 0.60 (model_prob 0.10 -> NO value 0.90). The live
+    # NO ask ran to 0.75 (the fake book's YES ask at 27c): the edge
+    # still clears the bar there (~14c), but the run is 15c -- past the
+    # 3c cap -- so the cross stands down with slippage_cap.
+    db = seed(DB(), open_=[decision(side="no", cost=0.60, model_prob=0.10)])
+    pf = FakePortfolio()
+    pf.live_ask_cents = 27.0
+    out = kd.run_once(db, pf, NOW)
+    assert pf.placed == [] and out["placed"] == 0
+    row = db.db[kd.ORDERS][0]
+    assert row["status"] == "skipped_no_depth"
+    assert row["skip_reason"] == "slippage_cap"
+
+
+def test_cross_places_a_no_side_move_inside_the_slippage_cap():
+    # The fake book's default (YES ask 40c) puts the live NO ask at
+    # 0.62 -- 2c above the frozen 0.60, inside the cap: the NO order
+    # crosses at 0.62.
+    db = seed(DB(), open_=[decision(side="no", cost=0.60, model_prob=0.10)])
+    pf = FakePortfolio()
+    out = kd.run_once(db, pf, NOW)
+    assert out["placed"] == 1
+    row = db.db[kd.ORDERS][0]
+    assert row["side"] == "no" and row["limit_price"] == 0.62
+
+
 def test_a_retried_claim_records_the_new_cross_price():
     # Pass one froze a claim at 0.40 and its create raised, leaving the
     # row pending. The retry crosses at the new live ask, and the row's

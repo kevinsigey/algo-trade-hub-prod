@@ -28,7 +28,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from .sources import _UA
+from tradehub.sec_ua import sec_user_agent
 
 ZIP_URL = "https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip"
 
@@ -66,14 +66,14 @@ def download(url: str, dest: Path) -> Path:
     except ImportError:
         requests = None
     if requests is not None:
-        with requests.get(url, headers=_UA, stream=True, timeout=300) as resp:
+        with requests.get(url, headers=sec_user_agent(), stream=True, timeout=300) as resp:
             resp.raise_for_status()
             with open(dest, "wb") as fh:
                 for chunk in resp.iter_content(1 << 20):
                     if chunk:
                         fh.write(chunk)
         return dest
-    req = urllib.request.Request(url, headers=_UA)
+    req = urllib.request.Request(url, headers=sec_user_agent())
     with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:
         while chunk := resp.read(1 << 20):
             fh.write(chunk)

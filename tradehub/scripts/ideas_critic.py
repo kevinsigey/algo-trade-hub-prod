@@ -92,6 +92,7 @@ def run(now: datetime, supa, *, closes=data.closes) -> tuple[dict, dict]:
             payload = critic.critique_payload(
                 idea_id=idea["id"], book=unit["book"], at=now.isoformat(),
                 kind=spec.get("claim"), backtest=backtest, rows=rows, regimes=regimes,
+                backtest_rows=unseen.get("series"),
                 paper=_paper_block(supa, idea["id"], unit["book"], str(unit["since"]))
                 if unit["live"] else None,
                 prior_dominant=(prior.get("conditions") or {}).get("dominant"))

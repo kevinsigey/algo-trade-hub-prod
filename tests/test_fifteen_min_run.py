@@ -25,3 +25,19 @@ def test_a_pass_freezes_the_live_window_and_a_second_pass_dedupes():
     again = run(db, built, now)
     assert again["oil_wti_15m"]["frozen"] == 0
     assert len([r for r in db.tables["journal_forecasts"] if r["forecaster"] == "oil_wti_15m"]) == 1
+
+
+def test_a_pass_no_longer_scores_the_killed_oil_shadow():
+    # v2-oil-shadow was killed on Kevin's ruling (2026-11-17): 246
+    # fresh trades, net -4.8c per contract, low95 -0.108, paired
+    # low95 -0.025, deteriorating. The runner must not register its
+    # record or evaluation steps again -- the kill is terminal, and
+    # its evaluate step is the one that could self-promote. The
+    # stored rows stay; only the writing stops.
+    now = T0 + timedelta(minutes=5)
+    live = _Live([_market(T0 + timedelta(minutes=15))])
+    built = build_fifteen_min(live, inputs=FifteenMinInputs(candles_fn=lambda c, s, e: _tape()))
+    db = FakeJournalDB(lambda: now)
+    summary = run(db, built, now)
+    assert "fifteen_shadow" not in summary
+    assert "fifteen_shadow_eval" not in summary
