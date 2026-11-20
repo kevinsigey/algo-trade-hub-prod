@@ -186,19 +186,27 @@ def test_own_multiple_fetches_back_to_the_earliest_fiscal_year_end():
     assert _own_multiple(ds, "ACME", NOW) == 25.0
 
 
-def test_own_multiple_uses_unadjusted_closes_against_as_reported_eps():
-    # EDGAR EPS is as reported, so a 2:1 split in mid-2024 halves EPS from
-    # then on; the year-end close must be the price that traded that day,
-    # not today's split-and-dividend-adjusted one (Kevin's ruling, :159).
-    series = [("2021-12-31", 4.0), ("2022-12-31", 5.0), ("2023-12-31", 6.0),
-              ("2024-12-31", 3.5), ("2025-12-31", 4.0)]
-    # split-adjusted closes, as yfinance serves them: pre-split days halved
+def test_own_multiple_is_peer_only_when_a_split_leaves_the_eps_basis_unknown():
+    # A 2:1 split in mid-2024: EDGAR's latest filing may report the earlier
+    # years as filed (4, 5, 6) or restated (2, 2.5, 3), so the share basis of
+    # the EPS cannot be known -- peer-only either way (CodeRabbit on #569).
     closes = [("2021-12-31", 50.0), ("2022-12-31", 60.0), ("2023-12-31", 75.0),
               ("2024-12-31", 70.0), ("2025-12-31", 100.0)]
-    ds = _FakeDS(series, closes, splits=[("2024-06-10", 2.0)])
-    # traded prices 100/120/150 pre-split, then 70/100: multiples 25, 24, 25, 20, 25
+    for eps in ([4.0, 5.0, 6.0, 3.5, 4.0], [2.0, 2.5, 3.0, 3.5, 4.0]):
+        series = list(zip(["2021-12-31", "2022-12-31", "2023-12-31", "2024-12-31", "2025-12-31"], eps))
+        ds = _FakeDS(series, closes, splits=[("2024-06-10", 2.0)])
+        assert _own_multiple(ds, "ACME", NOW) is None
+
+
+def test_own_multiple_reads_dividend_unadjusted_closes():
+    # Kevin's ruling: the year-end price that traded, not a dividend-adjusted one.
+    series = [("2021-12-31", 2.0), ("2022-12-31", 2.5), ("2023-12-31", 3.0),
+              ("2024-12-31", 3.5), ("2025-12-31", 4.0)]
+    closes = [("2021-12-31", 50.0), ("2022-12-31", 60.0), ("2023-12-31", 75.0),
+              ("2024-12-31", 70.0), ("2025-12-31", 100.0)]
+    ds = _FakeDS(series, closes, splits=[("2019-03-01", 3.0)])   # a split before the window is fine
     assert _own_multiple(ds, "ACME", NOW) == 25.0
-    assert all(c["adjusted"] is False for c in ds.calls)
+    assert ds.calls and all(c["adjusted"] is False for c in ds.calls)
 
 
 def test_yf_period_is_always_a_supported_range():

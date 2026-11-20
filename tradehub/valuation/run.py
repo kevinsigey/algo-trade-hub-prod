@@ -154,21 +154,23 @@ def _own_multiple(ds: DataStore, ticker: str, now: datetime) -> float | None:
         # Reach back past the oldest fiscal year-end: a flat five years from
         # today stops short of it for non-December fiscal years (#569 review).
         years = (now.date() - ends[0]).days // 365 + 2
-        # EDGAR EPS is as reported, so the year-end close must be the price
-        # that traded that day: dividend-unadjusted, with every later split
-        # multiplied back in (Kevin's ruling on #569).
+        # Kevin's ruling on #569: the year-end close is the price that traded
+        # that day, not a dividend-adjusted one. A split after the oldest
+        # selected year-end leaves the EPS share basis unknown -- EDGAR's
+        # latest filing may or may not restate earlier years for it
+        # (CodeRabbit) -- so such a name is peer-only. Without one, the
+        # dividend-unadjusted close IS the traded price on every year-end.
+        splits = ds.splits(ticker)
+        if len(splits[splits.index > pd.Timestamp(ends[0])]):
+            return None
         frame = ds.prices([ticker], years=years, adjusted=False)
         closes = frame[ticker].dropna()
-        splits = ds.splits(ticker)
         multiples = []
         for period_end, eps in recent:
             upto = closes[closes.index <= pd.Timestamp(_as_date(period_end))]
             if upto.empty:
                 return None
-            traded_on = upto.index[-1]
-            later = splits[splits.index > traded_on]
-            traded = float(upto.iloc[-1]) * float(later.prod() if len(later) else 1.0)
-            multiple = traded / float(eps)
+            multiple = float(upto.iloc[-1]) / float(eps)
             if not 0 < multiple < 500:
                 return None
             multiples.append(multiple)
