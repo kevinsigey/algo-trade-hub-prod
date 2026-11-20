@@ -996,6 +996,10 @@ class TestRegistration:
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "mount_frontend":
                 mount_at = node.lineno
+            # Since the router split (#575) the /api routes live in tradehub/api/routers and
+            # reach the app through include_router, so each include is a registration too.
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "include_router":
+                api_routes_at.append((node.lineno, "include_router"))
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in node.decorator_list:
                     if (isinstance(decorator, ast.Call)
@@ -1006,7 +1010,7 @@ class TestRegistration:
                         api_routes_at.append((decorator.lineno, decorator.args[0].value))
 
         assert mount_at is not None, "main.py no longer calls mount_frontend"
-        assert api_routes_at, "no /api route decorators found in main.py"
+        assert api_routes_at, "no /api routes or router includes found in main.py"
         below = [path for lineno, path in api_routes_at if lineno > mount_at]
         assert below == [], (
             f"these /api routes are registered after mount_frontend (line {mount_at}) and would "
