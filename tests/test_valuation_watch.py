@@ -276,3 +276,26 @@ def test_pending_twin_is_still_skipped():
     pending = [t for t in verdict_store.pending_triggers(client)
                if t["ticker"] == "AMGN" and t["kind"] == "crossing"]
     assert len(pending) == 1
+
+
+
+def test_a_failed_render_does_not_suppress_the_retry():
+    client = _client()
+    verdict_store.insert_trigger(client, {
+        "ticker": "AMGN", "kind": "falsifier_window",
+        "priority": watch.PRIORITY["falsifier_window"], "state": "failed",
+        "created_at": "2026-11-09T10:00:00+00:00",
+        "detail": {"within_days": watch.PRINT_WINDOW_DAYS, "print_date": "2026-11-12"}})
+    out = watch.compute_watch(client, _PrintDS("2026-11-12"), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 1 and out["triggers_suppressed"] == 0
+
+
+def test_a_legacy_falsifier_row_without_print_date_suppresses_inside_the_window():
+    # Rows rendered before this fix carry no print_date; one inside the print
+    # window must not let the first pass after deploy render the name again.
+    client = _client()
+    _rendered_trigger(client, "AMGN", "falsifier_window",
+                      (NOW - timedelta(days=1)).isoformat(),
+                      within_days=watch.PRINT_WINDOW_DAYS)
+    out = watch.compute_watch(client, _PrintDS("2026-11-12"), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0 and out["triggers_suppressed"] == 1

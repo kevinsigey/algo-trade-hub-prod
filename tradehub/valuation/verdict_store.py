@@ -101,11 +101,12 @@ def pending_triggers(client) -> list[dict]:
 
 def recent_triggers(client, ticker: str, kind: str,
                     limit: int = 50) -> list[dict]:
-    """Rendered/failed triggers for a ticker+kind, newest first, bounded."""
+    """Rendered triggers for a ticker+kind, newest first, bounded. A failed
+    render is not a call that was made, so it never suppresses a retry."""
     rows = (client.table(TRIGGERS).select("*").eq("ticker", ticker)
             .eq("kind", kind).order("created_at", desc=True)
             .limit(limit).execute().data) or []
-    return [r for r in rows if r.get("state") in ("done", "failed")]
+    return [r for r in rows if r.get("state") == "done"]
 
 
 def mark_trigger(client, trigger_id: int, state: str,

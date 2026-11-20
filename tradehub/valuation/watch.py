@@ -79,6 +79,14 @@ def _refire_reason(client, ticker: str, kind: str, detail: dict,
         if print_date and any((t.get("detail") or {}).get("print_date") ==
                               print_date for t in past):
             return "same print_date"
+        # Rows rendered before print_date was recorded: one inside the same
+        # print window is the same call (no extra repeat on the first pass).
+        cutoff = now - timedelta(days=PRINT_WINDOW_DAYS)
+        for t in past:
+            stamp = _created_at(t)
+            if not (t.get("detail") or {}).get("print_date") and stamp is not None \
+                    and stamp >= cutoff:
+                return "legacy row inside the print window"
     elif kind == "new_guidance":
         recorded_at = detail.get("recorded_at")
         if recorded_at and any((t.get("detail") or {}).get("recorded_at") ==
