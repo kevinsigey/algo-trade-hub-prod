@@ -61,6 +61,16 @@ export interface KalshiLane {
   pnl_per_contract: number | null;
 }
 
+export interface KalshiProdLane {
+  gate_version: string;
+  recorded: number;
+  would_fill: number;
+  fill_rate: number | null;
+  settled: number;
+  pnl_per_contract: number | null;
+  low95_cents: number | null;
+}
+
 export interface KalshiDemoNotConnected {
   state: "not_connected";
   demo: boolean;
@@ -81,6 +91,10 @@ export interface KalshiDemoLive {
   positions_unavailable: boolean;
   performance: KalshiPerformance;
   lanes: KalshiLane[];
+  /** Health lines for the tab (e.g. "demo book empty: KXNATGAS15M"). */
+  health: string[];
+  /** Would-have-filled record against the production book, per lane. */
+  prod_book: KalshiProdLane[];
   orders: KalshiOrder[];
   note: string;
 }
