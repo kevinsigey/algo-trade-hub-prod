@@ -5,7 +5,8 @@ one unbounded HTTP path is enough to overrun the hourly timer and overlap the ne
 step has three such paths:
 
 1. `scan_labor` runs in the engine phase, BEFORE the weather/gas/CPI writes. A hung ALFRED request
-   therefore delays those writes directly, which is the whole reason sports was moved to run last.
+   therefore delays those writes directly, which is the whole reason the labor step was moved
+   to run after them.
 2. `default_get_text` uses a flat 60s timeout with four unconditional retries: up to ~246s of
    predictor call inside a 15-minute scan, with no deadline anywhere in sight.
 3. It retries only transport errors, so an ALFRED edge returning 503 fails the whole step instead
@@ -20,7 +21,9 @@ from tradehub.data.kalshi_live import LiveMarket  # noqa: F401  (documents the s
 from tradehub.edges import Quote
 from tradehub.engine_config import load_engine_config
 from tradehub.scripts import scan as scan_mod
-from tradehub.sports.feed import FeedUnavailable
+class FeedUnavailable(Exception):
+    """Sentinel a stub raises to stop a call chain mid-flight (was
+    tradehub.sports.feed's exception until sports left the hub)."""
 
 NOW = datetime(2026, 9, 27, 12, 5, tzinfo=timezone.utc)   # 08:05 ET, a labor hour
 
@@ -133,39 +136,32 @@ def _stub_everything(monkeypatch, calls, labor_scan=None, *, labor_due=True):
     """Stub every engine and every write, recording the order they happen in."""
     from tradehub import predictions
     from tradehub.core import supabase_client
-    from tradehub.sports.scan import SportsRun
 
     mod = scan_mod
     monkeypatch.setattr(mod, "KalshiLive", lambda *a, **k: object())
     monkeypatch.setattr(mod, "scan_gas", lambda *a, **k: ([], []))
     monkeypatch.setattr(mod, "latest_gate_statuses", lambda *a: {})
     monkeypatch.setattr(mod, "remove_stale_edges", lambda *a, **k: None)
-    monkeypatch.setattr(mod, "remove_started_sports_edges", lambda *a, **k: [])
     monkeypatch.setattr(mod, "remove_closed_cpi_edges", lambda *a, **k: calls.append("cpi_cleanup"))
     monkeypatch.setattr(mod, "remove_closed_labor_edges", lambda *a, **k: None)
     monkeypatch.setattr(mod, "labor_scan_due", lambda now: labor_due)
-    monkeypatch.setattr(mod, "sports_due", lambda now: True)
-    monkeypatch.setattr(mod, "run_sports_for_cron",
-                        lambda *a, **k: (calls.append("sports"), SportsRun([], [], {}, {}))[1])
     monkeypatch.setattr(mod, "run_labor_step", labor_scan or (lambda *a, **k: ([], [], "ok")))
     monkeypatch.setattr(supabase_client, "get_client", lambda: "supa")
     monkeypatch.setattr(supabase_client, "upsert_opportunities",
-                        lambda rows: calls.append("sports_write" if rows and rows[0].get("edge_type") == "SPORTS"
-                                                  else "engine_write"))
+                        lambda rows: calls.append("engine_write"))
     monkeypatch.setattr(predictions, "record_predictions", lambda *a, **k: calls.append("pred_write"))
 
 
-def test_labor_runs_after_the_other_engines_have_written_and_before_sports(monkeypatch):
+def test_labor_runs_after_the_other_engines_have_written(monkeypatch):
     """The point of the item: an ALFRED hang must not delay or endanger the weather/gas/CPI
-    writes, so labor runs after them. Sports still runs last of all."""
+    writes, so labor runs after them."""
     calls: list[str] = []
     _stub_everything(monkeypatch, calls, labor_scan=lambda *a, **k: (calls.append("labor"), ([], [], "ok"))[1])
     scan_mod.main(now=NOW, live=object(), client=object())
-    for required in ("engine_write", "cpi_cleanup", "labor", "sports"):
+    for required in ("engine_write", "cpi_cleanup", "labor"):
         assert required in calls, f"{required} never happened: {calls}"
     assert calls.index("engine_write") < calls.index("labor"), calls
     assert calls.index("cpi_cleanup") < calls.index("labor"), calls
-    assert calls.index("labor") < calls.index("sports"), calls
 
 
 def test_an_exhausted_budget_skips_labor_without_failing_the_scan(monkeypatch, capsys):
@@ -198,7 +194,7 @@ def test_an_exhausted_budget_skips_labor_without_failing_the_scan(monkeypatch, c
 
 def test_main_reports_rather_than_crashes_without_a_supabase_client(monkeypatch, capsys):
     """get_client() raising must produce a summary and a non-zero exit, not an
-    UnboundLocalError: the sports summary variables were only bound inside the client branch."""
+    UnboundLocalError: the summary variables were only bound inside the client branch."""
     import json
 
     calls: list[str] = []
@@ -211,7 +207,6 @@ def test_main_reports_rather_than_crashes_without_a_supabase_client(monkeypatch,
     summary = json.loads(capsys.readouterr().out)
     assert summary["status"] == "partial_failure", summary["status"]
     assert any("client" in f for f in summary["failures"]), summary["failures"]
-    assert summary["sports"]["status"] == "skipped: no Supabase client", summary["sports"]
     assert summary["labor_nowcast"]["status"] == "skipped: no Supabase client", summary["labor_nowcast"]
     assert rc == 1
 

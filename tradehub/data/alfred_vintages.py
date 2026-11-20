@@ -33,7 +33,14 @@ from typing import Any, Callable
 
 import requests
 
-from tradehub.sports.deadline import remaining_seconds
+def remaining_seconds(deadline: float, clock: Callable[[], float]) -> float:
+    """Seconds left before `deadline` on the caller's clock; negative once passed.
+
+    This was tradehub.sports.deadline's helper until sports left the hub
+    (2026-11-18); this fetcher was its only non-sports caller, so it lives
+    here now. The clock is the caller's own, passed down for testability.
+    """
+    return deadline - clock()
 
 ALFRED_GRAPH_CSV = "https://alfred.stlouisfed.org/graph/alfredgraph.csv"
 FRED_SERIES_OBSERVATIONS = "https://api.stlouisfed.org/fred/series/observations"

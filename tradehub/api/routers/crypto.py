@@ -13,8 +13,6 @@ from fastapi import APIRouter, HTTPException
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-_EDGE_FIELDS = ("sport", "kind", "side", "entry_price", "maker", "home", "away", "start_utc", "game_id",
-                "tier", "candidate", "reject_reasons", "review", "engine_version")
 
 
 @router.get("/api/onchain", tags=["Crypto"])

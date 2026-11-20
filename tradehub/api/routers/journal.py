@@ -126,9 +126,12 @@ def _annotate_retired(rows: list[dict]) -> None:
     the registry won't load, rows keep no label at all -- an absent
     label is unknown, never a claim that nothing is retired."""
     try:
-        from tradehub.journal.registry import RETIRED
+        from tradehub.journal.registry import HISTORICAL_RETIRED_PAIRS, RETIRED
 
         pairs = {(f.name, str(getattr(f, "version", "") or "")) for f in RETIRED}
+        # Forecasters whose code has left the registry (sports, 2026-11-18) keep
+        # their label from the recorded pairs -- their rows stay on the board.
+        pairs |= HISTORICAL_RETIRED_PAIRS
     except Exception:  # noqa: BLE001
         log.exception("api: journal registry unreadable for retired labels")
         return

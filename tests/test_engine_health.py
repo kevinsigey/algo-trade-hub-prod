@@ -58,7 +58,7 @@ OFFENDING_READS = {
     "tradehub/engines/weather_engine.py:220": "market.get('yes_ask', 0)",
     "tradehub/engines/macro_engine.py:459": "market.get('yes_ask', 0)",
     "tradehub/engines/weather_maker.py:258": 'market.get("price", 50)',
-    "tradehub/core/kalshi_feed.py:362": "m.get('yes_ask', 0)",
+    "tradehub/core/kalshi_feed.py:282": "m.get('yes_ask', 0)",
 }
 
 # The read each REPAIRED site now contains, keyed the same way. The counterpart to the map above,
@@ -224,7 +224,7 @@ class TestRanAndFoundNothingIsStillQuiet:
         them publish to the SAME edge types as the stopped engines. Labelling one of those broken
         because its tab is empty would be a false claim about a working engine, and this is the
         test that says so."""
-        running = {"gas", "weather", "cpi_nowcast", "labor_nowcast", "crypto", "sports_nfl", "sports_cfb"}
+        running = {"gas", "weather", "cpi_nowcast", "labor_nowcast", "crypto"}
         for site in STOPPED_SITES:
             assert site.name not in running, (
                 f"{site.name} is stopped, and the catalogue measures it -- a stopped engine with a "

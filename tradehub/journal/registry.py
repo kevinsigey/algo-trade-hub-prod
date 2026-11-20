@@ -12,7 +12,6 @@ from tradehub.data.kalshi_live import KalshiLive
 from tradehub.journal.contract import Forecaster
 from tradehub.journal.daily import DailyCloses
 from tradehub.journal.forecasters.baselines import build_baselines
-from tradehub.journal.forecasters.calibrated import CalibratedForecaster
 from tradehub.journal.forecasters.claims import build_claims
 from tradehub.journal.forecasters.cpi import CpiForecaster
 from tradehub.journal.forecasters.daily_direction import build_wave2, wave2_closes
@@ -38,7 +37,6 @@ from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
 from tradehub.journal.forecasters.shrunk import MarketShrunk
-from tradehub.journal.forecasters.sports import SportsFeedForecaster, build_sports
 from tradehub.journal.forecasters.spy_quant import SpyQuant
 from tradehub.journal.forecasters.weather import build_weather
 from tradehub.journal.kalshi_linked import KalshiImplied
@@ -92,8 +90,6 @@ FORECASTERS: list[Forecaster] = [
                      {"xle": _XLE,
                       **{etf.lower(): _SECTOR_CLOSES[sector]
                          for sector, (_b, etf) in SECTORS.items() if sector != "energy"}}),
-    # wave 3 (spec §8): NFL and CFB feed consumers, each beside its Kalshi-implied baseline
-    *build_sports(),
     # daily weather (highs, lows, rain): NOAA/ECMWF ensembles beside the Kalshi mid and station climatology
     *build_weather(_LIVE, store=get_client),
     # ERCOT daily peak demand: a temperature regression beside the Kalshi mid and a weekday baseline
@@ -152,13 +148,7 @@ _SHRINKABLE = {"cpi_nowcast", "labor_nowcast", "claims_nowcast", "unrate_nowcast
 # frozen row already in the store (see forecasters/shrunk.py). The store is passed as a callable
 # because this module is imported with no credentials in hand.
 FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
-                if f.name in _SHRINKABLE or f.name.startswith("sports_")]
-
-# Model-improvement plan: calibrated versions of sports forecasters beside the originals.
-# Wraps the raw sports forecaster (not the MarketShrunk copy) and applies post-hoc calibration
-# fitted walk-forward on settled journal rows with earlier cutoffs. No change to scan.py.
-FORECASTERS += [CalibratedForecaster(f, get_client) for f in list(FORECASTERS)
-                if isinstance(f, SportsFeedForecaster)]
+                if f.name in _SHRINKABLE]
 
 # Phase-3 §3.2 step 3: the weather blend row -- MarketShrunk over the ens-v2
 # forecasters only, so each weather family gains a `weather_*_cautious` row at
@@ -212,9 +202,11 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 # live-feed v4. Their market and baseline rows go with them where the whole family is retired.
 # RETIRED rows are never frozen again; the journal job still settles and scores what they
 # already froze, so no record is cut off mid-flight. Journal history is untouched.
+# (The sports families left the registry entirely on 2026-11-18 when sports left the hub;
+# their pairs survive as data in HISTORICAL_RETIRED_PAIRS below so their frozen rows keep
+# the retired label on the scoreboard.)
 _RETIRED_FAMILIES = {"weather_high", "weather_low", "ercot_peak", "gas", "oil_wti", "oil", "oil_brent",
-                     "brent", "natgas_daily", "sports_nfl_spread", "sports_nfl_total",
-                     "sports_cfb_spread", "sports_cfb_total"}
+                     "brent", "natgas_daily"}
 _KEPT_HOURLY = "wti-hourly-v4-hl-shadow"
 
 
@@ -234,3 +226,20 @@ def _retired(f: Forecaster) -> bool:
 
 RETIRED: list[Forecaster] = [f for f in FORECASTERS if _retired(f)]
 FORECASTERS = [f for f in FORECASTERS if not _retired(f)]
+
+# (forecaster, version) pairs whose code has left the registry entirely, kept as data so
+# the journal scoreboard can still label their frozen rows retired (the labeler in
+# tradehub/api/main.py unions these in). Sports left the hub on 2026-11-18 (Kevin's call):
+# the feed rows, their market-implied baselines, and the cautious (+w25) and calibrated
+# (+cal) copies, for both sports and all three kinds -- the exact 24 pairs the registry
+# produced the day before the removal, verified against the live registry at the time.
+HISTORICAL_RETIRED_PAIRS: frozenset[tuple[str, str]] = frozenset(
+    (f"sports_{sport}{suffix}{copy}", version)
+    for sport in ("nfl", "cfb")
+    for suffix in ("", "_spread", "_total")
+    for copy, version in (("", "feed-v1"), ("_cautious", "feed-v1+w25"), ("_cal", "feed-v1+cal"))
+) | frozenset(
+    (f"kalshi_implied_sports_{sport}{suffix}", "v1")
+    for sport in ("nfl", "cfb")
+    for suffix in ("", "_spread", "_total")
+)

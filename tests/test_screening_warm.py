@@ -5,8 +5,12 @@ coverage read counts fresh entries per data kind."""
 from __future__ import annotations
 
 import os
+import shutil
 import time
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from tradehub.screening.cache import Cache
 from tradehub.scripts import screening_warm
@@ -55,3 +59,55 @@ def test_coverage_counts_fresh_entries_per_kind(tmp_path):
     assert cov["edgar"] == 1 / 3
     assert screening_warm.coverage(store, []) == {
         "names": 0, "info": 0.0, "statements": 0.0, "edgar": 0.0}
+
+
+def _fake_store(tmp_path):
+    store = DataStore(cache_dir=tmp_path / "cache")
+    return store
+
+
+def test_fetch_bulk_zip_renames_a_completed_part(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    root = store.cache.root
+    (root / "stale.zip.part").write_bytes(b"orphan")
+
+    def fake_download(url, dest):
+        Path(dest).write_bytes(b"zip-bytes")
+        return dest
+
+    monkeypatch.setattr(screening_warm.edgar_bulk, "download", fake_download)
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda p: SimpleNamespace(total=10**11, used=0, free=10**11))
+    out = screening_warm.fetch_bulk_zip(store)
+    assert out == root / "companyfacts.zip"
+    assert out.read_bytes() == b"zip-bytes"
+    assert not (root / "companyfacts.zip.part").exists()
+    assert not (root / "stale.zip.part").exists()  # the sweep ran first
+
+
+def test_fetch_bulk_zip_refuses_a_full_disk(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    called = []
+    monkeypatch.setattr(screening_warm.edgar_bulk, "download",
+                        lambda url, dest: called.append(dest))
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda p: SimpleNamespace(total=10**11, used=10**11, free=1024))
+    assert screening_warm.fetch_bulk_zip(store) is None
+    assert called == []  # nothing was fetched
+
+
+def test_fetch_bulk_zip_never_leaves_a_partial_at_the_real_path(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    root = store.cache.root
+
+    def dying_download(url, dest):
+        Path(dest).write_bytes(b"half a zip")
+        raise ConnectionError("cut mid-stream")
+
+    monkeypatch.setattr(screening_warm.edgar_bulk, "download", dying_download)
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda p: SimpleNamespace(total=10**11, used=0, free=10**11))
+    with pytest.raises(ConnectionError):
+        screening_warm.fetch_bulk_zip(store)
+    assert not (root / "companyfacts.zip").exists()
+    assert (root / "companyfacts.zip.part").read_bytes() == b"half a zip"

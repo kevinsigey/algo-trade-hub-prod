@@ -269,7 +269,6 @@ def _fetch_all(supa, table: str, build, *, page: int = POSTGREST_CAP, cap: int |
 
 # Sports edges (rollout step 7): candidate edges with review verdicts and links
 # ════════════════════════════════════════════════════════════════════════════
-_TIER_ORDER = {"top_pick": 0, "flagged": 1, "unreviewed": 2, "filtered": 3}
 
 
 

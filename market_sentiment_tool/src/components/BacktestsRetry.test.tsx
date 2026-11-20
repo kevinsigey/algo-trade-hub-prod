@@ -19,8 +19,7 @@ describe("Backtests retry", () => {
           headline_kind: "no_runs", caveat: null,
           catalogue: { entries: [], engines_not_measured: 0 }, promotion_lookup_failed: false }) });
       }
-      // SportsRecord fetch
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ sports: [] }) });
+      return Promise.reject(new Error("unexpected fetch: " + url));
     }));
     render(<BacktestsTab />);
     await waitFor(() => expect(screen.queryByText(/boom/)).toBeTruthy());
