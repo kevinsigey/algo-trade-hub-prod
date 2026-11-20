@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from tradehub.valuation import exhibit as exhibit_mod
+from tradehub.valuation.judge import PROBABILITY_MEANING
 
 DIGEST_CHAR_CAP = 32_000  # the frozen <=8k-token state digest, in chars
 RUBRIC_KEYS = ("guide_credibility", "gap_size", "direction_momentum",
@@ -60,7 +61,8 @@ STRUCTURER_SYSTEM = (
     "both at the current price, never a combined choice. The "
     "digest is the whole state (fact sheet + debate) in at most 6000 "
     "characters. Your proposer_pick is your own call — it is logged as a "
-    "grading control. Reply with JSON only, matching the schema."
+    "grading control. " + PROBABILITY_MEANING + " "
+    "Reply with JSON only, matching the schema."
 )
 
 
