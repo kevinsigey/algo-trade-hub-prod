@@ -628,7 +628,7 @@ export async function adminJson<T>(path: string, init: RequestInit = {}): Promis
 const CLAIMS: Record<Claim, string> = {
   beats_benchmark: "Beats the benchmark after costs",
   beats_benchmark_when: "Beats the benchmark while the rule has it in",
-  ballast: "Ballast: loses less than SPY on its down days and is up overall, or goes up when SPY falls",
+  ballast: "Ballast: loses less on SPY's down days than an equal-beta SPY-plus-cash mix and is up overall, or goes up when SPY falls",
   smoother_ride: "Smoother ride: a shallower worst drop at a similar return",
 };
 

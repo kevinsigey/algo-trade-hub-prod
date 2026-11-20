@@ -76,6 +76,101 @@ def test_a_payload_with_a_nan_live_value_is_json_safe():
     assert payload["live"]["value"] is None
 
 
+# ── ballast across the step-12 statistic change ────────────────────────────────
+
+def _ballast_series(n=120):
+    """The step-12 review's example: SPY alternating +1.2%/-1.0%, the idea a
+    fifth of SPY plus a hair. Under the OLD raw-SPY statistic the backtest
+    value reads ~0.85; under the current equal-beta statistic the same
+    returns read ~0.05. Comparing across the two rulers on identical
+    returns fabricated a -0.80 degradation and a PAUSE."""
+    from datetime import date, timedelta
+
+    rows = []
+    for i in range(n):
+        spy = 0.012 if i % 2 == 0 else -0.01
+        rows.append({"day": str(date(2026, 1, 5) + timedelta(days=i)),
+                     "ret": 0.2 * spy + 0.0005, "bench": spy, "spy": spy,
+                     "on": True, "exit": ""})
+    return rows
+
+
+_OLD_BALLAST_VALUE = 0.85  # (mean idea - mean SPY) * 100 on SPY's down days, pre-step-12
+
+
+def test_ballast_identical_returns_give_zero_degradation_when_recomputed():
+    rows = _ballast_series()
+    payload = critic.critique_payload(
+        idea_id=1, book="main", at="2026-11-09T23:00:00+00:00", kind="ballast",
+        backtest={"value": _OLD_BALLAST_VALUE, "label": "old ruler", "holds": True,
+                  "verdict": "PASS", "p": 0.01, "walk_forward": None},
+        rows=rows, regimes={}, paper=None, prior_dominant=None,
+        backtest_rows=rows)
+    assert payload["claim"]["comparison"] == "recomputed"
+    assert payload["degradation"] == pytest.approx(0.0, abs=1e-9)
+    assert payload["recommendation"] == "HOLD"  # the stale ruler read PAUSE here
+
+
+def test_ballast_without_a_stored_series_skips_the_comparison():
+    rows = _ballast_series()
+    payload = critic.critique_payload(
+        idea_id=1, book="main", at="2026-11-09T23:00:00+00:00", kind="ballast",
+        backtest={"value": _OLD_BALLAST_VALUE, "label": "old ruler", "holds": True,
+                  "verdict": "PASS", "p": 0.01, "walk_forward": None},
+        rows=rows, regimes={}, paper=None, prior_dominant=None)
+    assert payload["claim"]["comparison"] == "skipped"
+    assert "raw SPY" in payload["claim"]["comparison_note"]
+    assert payload["degradation"] is None
+    assert any("raw SPY" in r for r in payload["reasons"])
+
+
+def test_a_skipped_ballast_comparison_never_pauses_on_the_stale_value():
+    # The live record is genuinely bad (the idea falls MORE than SPY on down
+    # days) and old enough to pause on -- but with no stored series there is
+    # no honest bar to pause against, so the verdict is a WATCH, not a PAUSE.
+    from datetime import date, timedelta
+
+    rows = []
+    for i in range(90):
+        spy = 0.012 if i % 2 == 0 else -0.01
+        rows.append({"day": str(date(2026, 1, 5) + timedelta(days=i)),
+                     "ret": spy * 1.5, "bench": spy, "spy": spy,
+                     "on": True, "exit": ""})
+    payload = critic.critique_payload(
+        idea_id=1, book="main", at="2026-11-09T23:00:00+00:00", kind="ballast",
+        backtest={"value": _OLD_BALLAST_VALUE, "label": "old ruler", "holds": True,
+                  "verdict": "PASS", "p": 0.01, "walk_forward": None},
+        rows=rows, regimes={}, paper=None, prior_dominant=None)
+    assert payload["recommendation"] == "WATCH"
+    assert payload["degradation"] is None
+
+
+def test_the_weekly_run_recomputes_a_ballast_backtest_from_its_stored_series():
+    from tradehub.scripts import ideas_critic
+
+    db = DB()
+    idea = store.create_idea(db, "Ballast one", "x")
+    spec = {"claim": "ballast", "start": "2020-01-02", "rules": None,
+            "hold": [], "short": [], "benchmark": "SPY"}
+    rows = _ballast_series()
+    result = {"verdict": "PASS", "headline": "ok",
+              "claim": {"built": {"holds": True, "value": 0.9, "label": "built"},
+                        "unseen": {"holds": True, "value": _OLD_BALLAST_VALUE,
+                                   "label": "old ruler", "series": rows}},
+              "shuffle": {"p": 0.01}, "walk_forward": None}
+    run = store.insert_run(db, idea["id"], 0, spec, None, result)
+    store.publish(db, idea["id"])
+    store.go_live(db, idea["id"], run["id"], 5.0, {"status": "ready"})
+    for row in rows:
+        store.append_shadow(db, idea["id"], [row])
+    summary, failed = ideas_critic.run(datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc),
+                                       db, closes=_fake_closes)
+    assert failed == {}
+    payload = store.latest_critiques(db)[(idea["id"], "main")]["payload"]
+    assert payload["claim"]["comparison"] == "recomputed"
+    assert payload["degradation"] == pytest.approx(0.0, abs=1e-9)
+
+
 # ── losing entries cluster by the regime at entry ───────────────────────────────
 
 def test_losing_entries_cluster_by_regime_at_entry():
