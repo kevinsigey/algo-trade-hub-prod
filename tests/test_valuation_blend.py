@@ -61,14 +61,13 @@ def test_peer_only_when_no_own_multiple():
 
 
 class _FakeDS:
-    """yfinance semantics: `prices(adjusted=False)` closes are still
-    split-adjusted (only dividends are left in), and the window is
-    `years` back from today, so an old fiscal year-end can fall outside it."""
+    """yfinance semantics: closes are dividend-unadjusted but split-adjusted,
+    the window is `years` back from today, and the splits come from the same
+    read as the closes."""
 
     def __init__(self, series, closes, splits=(), today=None):
         self._series = series
-        idx = pd.DatetimeIndex([d for d, _ in closes])
-        self._frame = pd.DataFrame({"ACME": [c for _, c in closes]}, index=idx)
+        self._closes = pd.Series([c for _, c in closes], index=pd.DatetimeIndex([d for d, _ in closes]))
         self._splits = pd.Series([r for _, r in splits],
                                  index=pd.DatetimeIndex([d for d, _ in splits]), dtype=float)
         self._today = pd.Timestamp(today) if today else None
@@ -77,14 +76,12 @@ class _FakeDS:
     def edgar_annual_series(self, ticker, concept):
         return self._series
 
-    def prices(self, tickers, years=5, adjusted=True):
-        self.calls.append({"years": years, "adjusted": adjusted})
-        if self._today is None:
-            return self._frame
-        return self._frame[self._frame.index >= self._today - pd.DateOffset(years=years)]
-
-    def splits(self, ticker):
-        return self._splits
+    def closes_with_splits(self, ticker, years):
+        self.calls.append({"years": years})
+        closes = self._closes
+        if self._today is not None:
+            closes = closes[closes.index >= self._today - pd.DateOffset(years=years)]
+        return closes, self._splits
 
 
 def test_own_multiple_is_the_five_year_median():
@@ -206,7 +203,7 @@ def test_own_multiple_reads_dividend_unadjusted_closes():
               ("2024-12-31", 70.0), ("2025-12-31", 100.0)]
     ds = _FakeDS(series, closes, splits=[("2019-03-01", 3.0)])   # a split before the window is fine
     assert _own_multiple(ds, "ACME", NOW) == 25.0
-    assert ds.calls and all(c["adjusted"] is False for c in ds.calls)
+    assert ds.calls
 
 
 def test_yf_period_is_always_a_supported_range():
@@ -216,31 +213,37 @@ def test_yf_period_is_always_a_supported_range():
         ["1y", "2y", "5y", "5y", "10y", "10y", "10y", "max"]
 
 
-def test_a_failed_split_read_is_not_no_splits(monkeypatch, tmp_path):
-    # CodeRabbit on #569: an empty history must raise, not read as "no
-    # splits"; a real history with no split is an empty series.
+def test_closes_and_splits_come_from_one_cached_read(monkeypatch, tmp_path):
+    # CodeRabbit on #569: closes and splits are read in ONE history call and
+    # cached together, so a split can never be missing beside the closes it
+    # adjusts; an empty history raises instead of reading as "no splits".
     import sys
     import types
 
+    import pytest
+
     from tradehub.screening.sources import DataStore
 
+    reads = []
     frames = {"FAIL": pd.DataFrame(),
-              "NONE": pd.DataFrame({"Close": [1.0, 2.0], "Stock Splits": [0.0, 0.0]},
-                                   index=pd.to_datetime(["2024-01-02", "2024-01-03"])),
-              "SPLIT": pd.DataFrame({"Close": [1.0, 2.0], "Stock Splits": [0.0, 10.0]},
+              "SPLIT": pd.DataFrame({"Close": [100.0, 12.0], "Stock Splits": [0.0, 10.0]},
                                     index=pd.to_datetime(["2024-06-07", "2024-06-10"]))}
 
     class _T:
         def __init__(self, t):
             self.t = t
 
-        def history(self, **_k):
+        def history(self, **k):
+            reads.append((self.t, k))
             return frames[self.t]
 
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=_T))
     ds = DataStore(cache_dir=tmp_path)
-    import pytest
     with pytest.raises(RuntimeError):
-        ds.splits("FAIL")
-    assert ds.splits("NONE").empty
-    assert ds.splits("SPLIT").tolist() == [10.0]
+        ds.closes_with_splits("FAIL", 7)
+    closes, splits = ds.closes_with_splits("SPLIT", 7)
+    assert closes.tolist() == [100.0, 12.0] and splits.tolist() == [10.0]
+    assert reads[-1][1] == {"period": "10y", "auto_adjust": False, "actions": True}
+    frames["SPLIT"] = pd.DataFrame()                      # a later fetch would fail...
+    again = ds.closes_with_splits("SPLIT", 7)             # ...but the pair is cached together
+    assert again[1].tolist() == [10.0] and len([r for r in reads if r[0] == "SPLIT"]) == 1

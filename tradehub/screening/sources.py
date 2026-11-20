@@ -207,20 +207,17 @@ class DataStore:
         return out
 
     # -- yfinance: prices ------------------------------------------------------
-    def prices(self, tickers: list[str], years: int = 3, adjusted: bool = True) -> pd.DataFrame:
-        """Daily closes, wide frame (columns = tickers). Adjusted (splits and
-        dividends) by default; adjusted=False leaves dividends in but -- as
-        yfinance serves them -- the closes are still split-adjusted, so pair
-        it with splits() to recover the price that actually traded."""
+    def prices(self, tickers: list[str], years: int = 3) -> pd.DataFrame:
+        """Adjusted daily closes, wide frame (columns = tickers)."""
         import yfinance as yf
 
         tickers = sorted(set(tickers))
-        key = f"prices|{years}|{','.join(tickers)}" + ("" if adjusted else "|raw")
+        key = f"prices|{years}|{','.join(tickers)}"
         hit = self.cache.get(key, TTL["prices"])
         if hit is not None:
             self._note_asof("prices")
             return hit
-        raw = yf.download(tickers, period=_yf_period(years), auto_adjust=adjusted,
+        raw = yf.download(tickers, period=_yf_period(years), auto_adjust=True,
                           progress=False, threads=True)
         if raw is None or len(raw) == 0:
             raise RuntimeError("yfinance download returned no data")
@@ -234,25 +231,32 @@ class DataStore:
         self._note_asof("prices")
         return closes
 
-    def splits(self, ticker: str) -> pd.Series:
-        """Split ratios by date (2.0 = 2-for-1), tz-naive index; empty only
-        when the name's full price history came back and holds no split.
-        A failed read raises instead of looking like "no splits" -- callers
-        that need splits (the own multiple) then fall back, never mis-scale."""
+    def closes_with_splits(self, ticker: str, years: int) -> tuple[pd.Series, pd.Series]:
+        """Dividend-unadjusted daily closes (split-adjusted, as yfinance serves
+        them) and the split ratios (2.0 = 2-for-1), from ONE history call and
+        cached together, so the splits always describe the closes they sit
+        beside (CodeRabbit on #569: separately cached, a split landing between
+        two refreshes could slip past a guard). Raises when the history can't
+        be read -- an empty read never passes for "no splits"."""
         import yfinance as yf
 
-        key = f"splits|{ticker}"
-        hit = self.cache.get(key, TTL["info"])
+        key = f"closes_splits|{years}|{ticker}"
+        hit = self.cache.get(key, TTL["prices"])
         if hit is not None:
+            self._note_asof("prices")
             return hit
-        hist = yf.Ticker(ticker).history(period="max", actions=True, auto_adjust=False)
-        if hist is None or len(hist) == 0 or "Stock Splits" not in hist.columns:
-            raise RuntimeError(f"split history for {ticker} could not be read")
-        s = hist["Stock Splits"].astype(float)
-        s = s[s > 0]
-        s.index = pd.DatetimeIndex(s.index).tz_localize(None) if len(s) else pd.DatetimeIndex([])
-        self.cache.set(key, s)
-        return s
+        hist = yf.Ticker(ticker).history(period=_yf_period(years), auto_adjust=False, actions=True)
+        if hist is None or len(hist) == 0 or "Close" not in hist.columns \
+                or "Stock Splits" not in hist.columns:
+            raise RuntimeError(f"price history for {ticker} could not be read")
+        index = pd.DatetimeIndex(hist.index).tz_localize(None)
+        closes = pd.Series(hist["Close"].astype(float).values, index=index).dropna().sort_index()
+        splits = pd.Series(hist["Stock Splits"].astype(float).values, index=index)
+        splits = splits[splits > 0]
+        out = (closes, splits)
+        self.cache.set(key, out)
+        self._note_asof("prices")
+        return out
 
     # -- yfinance: info ---------------------------------------------------------
     def info(self, ticker: str) -> dict:

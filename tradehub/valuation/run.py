@@ -160,11 +160,9 @@ def _own_multiple(ds: DataStore, ticker: str, now: datetime) -> float | None:
         # latest filing may or may not restate earlier years for it
         # (CodeRabbit) -- so such a name is peer-only. Without one, the
         # dividend-unadjusted close IS the traded price on every year-end.
-        splits = ds.splits(ticker)
+        closes, splits = ds.closes_with_splits(ticker, years)
         if len(splits[splits.index > pd.Timestamp(ends[0])]):
             return None
-        frame = ds.prices([ticker], years=years, adjusted=False)
-        closes = frame[ticker].dropna()
         multiples = []
         for period_end, eps in recent:
             upto = closes[closes.index <= pd.Timestamp(_as_date(period_end))]
