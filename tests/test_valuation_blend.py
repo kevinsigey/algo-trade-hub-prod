@@ -199,3 +199,40 @@ def test_own_multiple_uses_unadjusted_closes_against_as_reported_eps():
     # traded prices 100/120/150 pre-split, then 70/100: multiples 25, 24, 25, 20, 25
     assert _own_multiple(ds, "ACME", NOW) == 25.0
     assert all(c["adjusted"] is False for c in ds.calls)
+
+
+def test_yf_period_is_always_a_supported_range():
+    # CodeRabbit on #569: yfinance has no "7y"; round up to a supported period.
+    from tradehub.screening.sources import _yf_period
+    assert [_yf_period(y) for y in (1, 2, 3, 5, 6, 7, 10, 11)] == \
+        ["1y", "2y", "5y", "5y", "10y", "10y", "10y", "max"]
+
+
+def test_a_failed_split_read_is_not_no_splits(monkeypatch, tmp_path):
+    # CodeRabbit on #569: an empty history must raise, not read as "no
+    # splits"; a real history with no split is an empty series.
+    import sys
+    import types
+
+    from tradehub.screening.sources import DataStore
+
+    frames = {"FAIL": pd.DataFrame(),
+              "NONE": pd.DataFrame({"Close": [1.0, 2.0], "Stock Splits": [0.0, 0.0]},
+                                   index=pd.to_datetime(["2024-01-02", "2024-01-03"])),
+              "SPLIT": pd.DataFrame({"Close": [1.0, 2.0], "Stock Splits": [0.0, 10.0]},
+                                    index=pd.to_datetime(["2024-06-07", "2024-06-10"]))}
+
+    class _T:
+        def __init__(self, t):
+            self.t = t
+
+        def history(self, **_k):
+            return frames[self.t]
+
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=_T))
+    ds = DataStore(cache_dir=tmp_path)
+    import pytest
+    with pytest.raises(RuntimeError):
+        ds.splits("FAIL")
+    assert ds.splits("NONE").empty
+    assert ds.splits("SPLIT").tolist() == [10.0]

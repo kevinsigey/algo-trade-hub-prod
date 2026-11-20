@@ -117,6 +117,12 @@ def _http_get(url: str, headers: dict, timeout: int = 30) -> bytes:
             return resp.read()
 
 
+def _yf_period(years: int) -> str:
+    """yfinance accepts only fixed history periods (1y, 2y, 5y, 10y, max):
+    the smallest one that covers `years`."""
+    return next((f"{p}y" for p in (1, 2, 5, 10) if years <= p), "max")
+
+
 class DataStore:
     def __init__(self, cache_dir: str | Path | None = None):
         root = Path(cache_dir) if cache_dir else Path(
@@ -214,7 +220,7 @@ class DataStore:
         if hit is not None:
             self._note_asof("prices")
             return hit
-        raw = yf.download(tickers, period=f"{years}y", auto_adjust=adjusted,
+        raw = yf.download(tickers, period=_yf_period(years), auto_adjust=adjusted,
                           progress=False, threads=True)
         if raw is None or len(raw) == 0:
             raise RuntimeError("yfinance download returned no data")
@@ -229,15 +235,21 @@ class DataStore:
         return closes
 
     def splits(self, ticker: str) -> pd.Series:
-        """Split ratios by date (2.0 = 2-for-1), tz-naive index; empty when none."""
+        """Split ratios by date (2.0 = 2-for-1), tz-naive index; empty only
+        when the name's full price history came back and holds no split.
+        A failed read raises instead of looking like "no splits" -- callers
+        that need splits (the own multiple) then fall back, never mis-scale."""
         import yfinance as yf
 
         key = f"splits|{ticker}"
         hit = self.cache.get(key, TTL["info"])
         if hit is not None:
             return hit
-        s = yf.Ticker(ticker).splits
-        s = pd.Series(dtype=float) if s is None else s.astype(float)
+        hist = yf.Ticker(ticker).history(period="max", actions=True, auto_adjust=False)
+        if hist is None or len(hist) == 0 or "Stock Splits" not in hist.columns:
+            raise RuntimeError(f"split history for {ticker} could not be read")
+        s = hist["Stock Splits"].astype(float)
+        s = s[s > 0]
         s.index = pd.DatetimeIndex(s.index).tz_localize(None) if len(s) else pd.DatetimeIndex([])
         self.cache.set(key, s)
         return s
