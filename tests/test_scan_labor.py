@@ -131,8 +131,6 @@ def _base(monkeypatch, *, labor_due=True, labor_scan=None, upserted=None, cleane
     monkeypatch.setattr(scan, "remove_closed_cpi_edges", lambda *a, **k: None)
     monkeypatch.setattr(scan, "remove_closed_labor_edges", lambda *a, **k: None)
     monkeypatch.setattr(scan, "remove_closed_labor_edges", lambda *a, **k: None)
-    monkeypatch.setattr(scan, "sports_due", lambda now: False)
-    monkeypatch.setattr(scan, "remove_started_sports_edges", lambda *a, **k: [])
     monkeypatch.setattr(scan, "latest_gate_statuses", gate or (lambda client, pairs: {}))
     monkeypatch.setattr(scan, "labor_scan_due", lambda now: labor_due)
     if labor_scan is not None:

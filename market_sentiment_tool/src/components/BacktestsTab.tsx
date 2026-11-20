@@ -4,7 +4,6 @@ import { Chip, type Tone } from "@/components/Chip";
 import { GateBadge } from "@/components/GateBadge";
 import { SettledBars } from "@/components/SettledBars";
 import { Stat } from "@/components/Stat";
-import SportsRecord from "@/components/SportsRecord";
 import { buildApiUrl } from "@/lib/api";
 import {
   brierPair,
@@ -33,7 +32,7 @@ import {
  * record, and the overlap confused more than it informed. One tab now holds the
  * whole backtest side: the scoreboard's summary and headline cards first (the
  * verdicts), then the catalogue of every engine -- measured, unmeasured and
- * retired -- then the sports record. The forward record stays the Tracker's
+ * retired. The forward record stays the Tracker's
  * other tabs. Both source pages' honesty rules ride along unchanged: every
  * engine renders, in order, with no filter or sort; the headline never renders
  * without the counts that qualify it; the two gates are never merged.
@@ -255,7 +254,6 @@ export default function BacktestsTab() {
     };
   }, [attempt]);
 
-  // The sports records come from their own endpoint, so they stay up when the scoreboard is slow or down.
   if (error) {
     return (
       <div className="space-y-10">
@@ -270,7 +268,6 @@ export default function BacktestsTab() {
             Retry
           </button>
         </div>
-        <SportsRecord />
       </div>
     );
   }
@@ -278,7 +275,6 @@ export default function BacktestsTab() {
     return (
       <div className="space-y-10">
         <div className="text-slate-400">Loading backtests…</div>
-        <SportsRecord />
       </div>
     );
   }
@@ -380,7 +376,6 @@ export default function BacktestsTab() {
         )}
       </section>
 
-      <SportsRecord />
     </div>
   );
 }

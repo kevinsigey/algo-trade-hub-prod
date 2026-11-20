@@ -27,13 +27,14 @@ class _FakeSupa:
 
 
 def test_engines_match_spec_engine_set_and_cadences():
+    # The sports engines left the set with the sports removal (Claude's
+    # ruling on the removal PR); the catalogue test pins ENGINES equal
+    # to CATALOGUE_ENGINES, which no longer names them either.
     assert dict(settle_predictions.ENGINES) == {
         "gas": "daily",
         "cpi_nowcast": "monthly",
         "labor_nowcast": "monthly",
         "crypto": "daily",
-        "sports_nfl": "daily",
-        "sports_cfb": "daily",
     }
 
 

@@ -41,7 +41,12 @@ from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
 
 from tradehub.gate_status import DEFAULT_GATE_STATUS
-from tradehub.sports.scorecard import MIN_SETTLED
+
+# The reviewer's settled-evidence floor: a flat 100 settled contracts. It was
+# tradehub.sports.scorecard's MIN_SETTLED until sports left the hub (2026-11-18);
+# this module was its only non-sports reader and is its keeper now. It stays a
+# named constant, never a bare 100 at a call site -- see the two-bars note below.
+MIN_SETTLED = 100
 
 # Any occurrence of the marker, NOT the anchored `-lead<number>h` form.
 #
@@ -392,7 +397,7 @@ def current_runs(runs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
             # §6.1 diagnostics ride through untouched (null = not measured). The page
             # renders their flags as annotations; nothing here interprets them.
             "diagnostics": run.get("diagnostics"),
-            # `MIN_SETTLED` is the reviewer's floor, imported and never written out. It rides
+            # `MIN_SETTLED` is the reviewer's floor, a named constant never written out. It rides
             # along on its own fields whether or not the gate states a bar, and is never the
             # bar `met` is judged against -- see `settled_distance`.
             "settled_distance": settled_distance(
