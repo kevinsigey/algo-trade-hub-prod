@@ -24,6 +24,18 @@ Segmentation is structural: the live rule module is never modified, the v1
 read paths never read these tables, and the 300-trade go-live bar keeps
 counting gate-v1 freeze trades only. A record only: nothing here places an
 order or changes a forecast.
+
+KILLED 2026-11-18 on Kevin's ruling of 2026-11-17: 246 fresh trades,
+net -4.8c per contract, low95 -0.108, paired low95 -0.025, and the
+record deteriorating. The runner no longer calls record_shadow or
+evaluate_daily, so nothing scores it, writes its decisions, or can
+promote it; the endpoint no longer serves its summary and the
+Strategies page no longer shows it. The module remains for its
+readers (the tracking gate-state reads, the blend's shared helpers)
+and the stored rows remain as the record. The kill is terminal.
+This module is read-only now: evaluate_promotion and evaluate_daily
+raise, the CLI keeps only revert, and nothing here writes a promotion,
+an evaluation or a decision again.
 """
 
 from __future__ import annotations
@@ -250,40 +262,25 @@ def promoted_at(supa) -> str | None:
 
 
 def evaluate_promotion(supa, now: datetime) -> dict[str, Any]:
-    """One evaluation of the frozen criterion on the fresh segment. When it
-    is met and the gate has not already flipped, this pass promotes: the
-    audit row is the flip -- the decisions pass reads its state from the
-    same log."""
-    ev = _evaluate(supa)
-    promoted = False
-    if ev["criterion_met"] and current_state(supa) != LIVE_VERSION:
-        evidence = {"trades": ev["trades"], "net_per_contract": ev["net_per_contract"],
-                    "low95": ev["low95"], "paired_windows": ev["paired_windows"],
-                    "paired_delta": ev["paired_delta"], "paired_low95": ev["paired_low95"],
-                    "closed_windows": ev["closed_windows"], "closed_delta": ev["closed_delta"],
-                    "closed_low95": ev["closed_low95"], "windows": ev["windows"]}
-        supa.table(PROMOTIONS_TABLE).insert({
-            "created_at": now.isoformat(), "kind": "promotion",
-            "from_version": "v1", "to_version": LIVE_VERSION, "evidence": evidence}).execute()
-        promoted = True
-    return {**ev, "promoted": promoted}
+    """CLOSED by the kill (Claude's review of the kill PR): this entry
+    point used to evaluate the frozen criterion and, when it was met,
+    write the promotion row that flipped the oil gate. The shadow is
+    killed and the module is read-only now, so the path raises rather
+    than ever writing a promotion again. The read-only computation
+    stays in `_evaluate` (summary() still reports the stored record's
+    numbers from it); `revert_promotion` below stays live, as the
+    one-action reversal."""
+    raise RuntimeError(
+        "v2-oil-shadow is killed and fifteen_shadow is read-only: "
+        "evaluate_promotion no longer runs")
 
 
 def evaluate_daily(supa, now: datetime) -> dict[str, Any]:
-    """The scheduled daily evaluation: the first pass of a UTC day runs it
-    and persists the trail row; later passes the same day stand down."""
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    if _read(supa, EVALS_TABLE, lambda q: q.gte("evaluated_at", day_start)):
-        return {"skipped": "already_evaluated_today"}
-    ev = evaluate_promotion(supa, now)
-    supa.table(EVALS_TABLE).insert({
-        "evaluated_at": now.isoformat(), "windows": ev["windows"], "trades": ev["trades"],
-        "net_per_contract": ev["net_per_contract"], "low95": ev["low95"],
-        "paired_windows": ev["paired_windows"], "paired_delta": ev["paired_delta"],
-        "paired_low95": ev["paired_low95"], "closed_windows": ev["closed_windows"],
-        "closed_delta": ev["closed_delta"], "closed_low95": ev["closed_low95"],
-        "criterion_met": ev["criterion_met"], "promoted": ev["promoted"]}).execute()
-    return ev
+    """CLOSED by the kill, like evaluate_promotion: the scheduled daily
+    evaluation no longer runs and persists no trail rows. Raises."""
+    raise RuntimeError(
+        "v2-oil-shadow is killed and fifteen_shadow is read-only: "
+        "evaluate_daily no longer runs")
 
 
 def revert_promotion(supa, now: datetime, *, reason: str = "") -> dict[str, Any]:
@@ -345,7 +342,8 @@ def summary(supa) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fifteen_shadow")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("evaluate", help="run one promotion evaluation now")
+    # The kill removed the "evaluate" subcommand (Claude's review):
+    # the CLI keeps only the one-action reversal.
     rev = sub.add_parser("revert", help="restore gate v1 for oil (one action)")
     rev.add_argument("--reason", default="")
     args = parser.parse_args(argv)
@@ -354,8 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     load_local_env()
     supa = get_client()
     now = datetime.now(UTC)
-    out = (evaluate_promotion(supa, now) if args.cmd == "evaluate"
-           else revert_promotion(supa, now, reason=args.reason))
+    out = revert_promotion(supa, now, reason=args.reason)
     print(json.dumps(out, default=str))
     return 0
 

@@ -1,5 +1,22 @@
 # 15-minute model v2: scoping (Claude, Nov 13; docs only)
 
+**CLOSED — Kevin, Nov 17, 2026 (per the kill rule below).** Recalibration
+(Platt) showed no paired low95 > 0 against the engine on the forward
+record in any series; logistic's only positive result (copper) failed
+direction agreement with the replay. The Nov 14 close-out numbers
+(rerun complete Nov 13; 316,533 offset rows, Binance tape, 1c haircut,
+day-clustered low95): pooled ≈ −1.77c/trade over 21,081 trades, and no
+series in any view (forward, replay golden, replay new) has a positive
+low95. Platt's paired delta was positive only in Brent replay
+(+5.18c, low95 +1.0, n=105) with forward agreeing in direction;
+logit's paired positive only in copper forward, contradicted by
+copper's replay. Platt does improve gold's Brier score in 14/14
+walk-forward years — calibration is not edge. No v2 forecaster is
+built and no LightGBM (stage c) follows. Not affected: the live rule,
+the blend, the volregime challenger, the four v4 candidates and the
+Binance gold shadow all keep running; the research code stays as a
+tool.
+
 Kevin (Nov 13): use long 1-minute history to train a better 15-minute model. This is the scope. It writes no code.
 **Sources (Kevin, Nov 13): Binance Vision for the Kalshi era, HistData for long history. No Dukascopy.**
 The bars are built in PR 2 (A0b).

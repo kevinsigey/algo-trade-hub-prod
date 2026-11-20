@@ -21,6 +21,15 @@ variant's grid and its once-a-day promotion evaluation
 docs/superpowers/specs/2026-11-09-fifteen-shadow-oil-minute1-prereg.md),
 under the same fail-soft rule.
 
+Amendment 2026-11-18: the oil shadow (v2-oil-shadow) is KILLED on
+Kevin's ruling of 2026-11-17 -- 246 fresh trades, net -4.8c per
+contract, low95 -0.108, paired low95 -0.025, and deteriorating. Its
+record and evaluation steps no longer run: nothing scores it, writes
+its decisions, or can promote it, from this amendment on. The stored
+rows stay as the record; the module stays for its readers (the
+tracking gate-state reads and the blend's shared helpers). The kill
+is terminal.
+
 Amendment 2026-11-09 (metals): the roster itself now carries the metals
 forecasters (gold/silver/copper-15m-v1, preregistration
 docs/superpowers/specs/2026-11-09-metals-fifteen-prereg.md), so the freeze
@@ -58,7 +67,6 @@ from typing import Any
 from tradehub import (
     fifteen_binance,
     fifteen_blend,
-    fifteen_shadow,
     fifteen_tracking,
     fifteen_volregime,
     metals_fifteen_rule,
@@ -74,8 +82,6 @@ def run(supa, forecasters, now: datetime) -> dict[str, Any]:
     summary = {f.name: run_forecaster(supa, f, now) for f in forecasters}
     for key, fn in (("fifteen_decisions", fifteen_tracking.record_decisions),
                     ("fifteen_offsets", fifteen_tracking.record_offsets),
-                    ("fifteen_shadow", fifteen_shadow.record_shadow),
-                    ("fifteen_shadow_eval", fifteen_shadow.evaluate_daily),
                     ("fifteen_blend", fifteen_blend.record_blend),
                     ("fifteen_blend_eval", fifteen_blend.evaluate_daily),
                     ("fifteen_volregime", fifteen_volregime.record_volregime),

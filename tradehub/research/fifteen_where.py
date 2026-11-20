@@ -96,11 +96,13 @@ def enrich(rows: list[dict], source: str) -> list[dict]:
     they carry the window outcomes the trend features read)."""
     rows = [r for r in rows if r.get("outcome") is not None]
     outcome_by_window: dict[tuple[str, datetime], int] = {}
+    target_by_close: dict[tuple[str, datetime], str] = {}
     open_price: dict[tuple[str, str], tuple[int, float]] = {}
     price_at: dict[tuple[str, datetime, int], float] = {}
     for r in rows:
         close = parse_ts(r["close_time"])
         outcome_by_window[(r["series"], close)] = int(r["outcome"])
+        target_by_close[(r["series"], close)] = r["target"]
         price = r.get("price")
         if price is not None:
             key = (r["series"], r["target"])
@@ -138,7 +140,7 @@ def enrich(rows: list[dict], source: str) -> list[dict]:
         own_move = move_bps(series, r["target"], close, offset)
         cross = None
         if own_move is not None:
-            others = [move_bps(s, _target_at(rows, s, close), close, offset)
+            others = [move_bps(s, target_by_close.get((s, close)), close, offset)
                       for s in SERIES if s != series]
             known = [o for o in others if o is not None]
             if known:
@@ -146,7 +148,7 @@ def enrich(rows: list[dict], source: str) -> list[dict]:
         spread = None
         if series in OILS and own_move is not None:
             other = OILS[1] if series == OILS[0] else OILS[0]
-            other_move = move_bps(other, _target_at(rows, other, close), close, offset)
+            other_move = move_bps(other, target_by_close.get((other, close)), close, offset)
             if other_move is not None:
                 brent = own_move if series == "KXBRENT15M" else other_move
                 wti = own_move if series == "KXWTI15M" else other_move
@@ -171,22 +173,6 @@ def enrich(rows: list[dict], source: str) -> list[dict]:
             "event_kind": ev["event_kind"],
         })
     return trades
-
-
-_target_cache: dict[int, dict[tuple[str, datetime], str]] = {}
-
-
-def _target_at(rows: list[dict], series: str, close: datetime) -> str | None:
-    """The target (window id) of `series` closing at `close`, from the
-    record itself -- windows are identified by their close time."""
-    key = id(rows)
-    index = _target_cache.get(key)
-    if index is None:
-        index = {}
-        for r in rows:
-            index[(r["series"], parse_ts(r["close_time"]))] = r["target"]
-        _target_cache[key] = index
-    return index.get((series, close))
 
 
 def cell(trades: list[dict]) -> dict | None:

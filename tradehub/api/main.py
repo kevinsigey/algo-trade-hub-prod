@@ -67,8 +67,6 @@ from tradehub.journal.standings import verdict_sentence as journal_verdict_sente
 from tradehub.quarantine import QUARANTINE_MARK, QUARANTINE_NOTE, quarantine_report
 from tradehub.scoreboard import current_runs, market_comparison
 from tradehub.scripts.shadow_performance import MissingCredentialError, build_shadow_timeline_response
-from tradehub.sports.scan import edge_row, edge_sigma_score
-from tradehub.sports.scorecard import reviewer_scorecard
 
 log = logging.getLogger(__name__)
 
@@ -1668,16 +1666,10 @@ def _fifteen_rule_payload(supabase, *, strict: bool = False) -> dict:
         payload = {"rule": RULE, "prereg_at": PREREG_AT, "ready_trades": READY_TRADES, **summarize([]),
                    "by_series": {}, "pending": 0, "recent": [], "unavailable": True,
                    "bar": go_live_bar(empty, empty)}
-    # The oil minute-1 shadow variant (preregistration 2026-11-09): one
-    # additive block -- its fresh record, the grid, and the promotion flag.
-    # Fail-soft like the rest of this endpoint: no shadow, no block.
-    try:
-        from tradehub import fifteen_shadow
-
-        payload["shadow"] = fifteen_shadow.summary(supabase)
-    except Exception:  # noqa: BLE001
-        if strict:
-            raise
+    # The oil minute-1 shadow variant used to ride here as an additive
+    # `shadow` block; v2-oil-shadow was killed on Kevin's ruling of
+    # 2026-11-17 and dropped from the page (its stored record stays in
+    # its tables, readable by hand, but nothing serves it here).
     # The self-weighting blend shadow (preregistration 2026-11-11): one
     # additive block -- its fresh record, the daily weights, and the
     # promotion flag. Fail-soft the same way.
@@ -3507,9 +3499,12 @@ def _annotate_retired(rows: list[dict]) -> None:
     the registry won't load, rows keep no label at all -- an absent
     label is unknown, never a claim that nothing is retired."""
     try:
-        from tradehub.journal.registry import RETIRED
+        from tradehub.journal.registry import HISTORICAL_RETIRED_PAIRS, RETIRED
 
         pairs = {(f.name, str(getattr(f, "version", "") or "")) for f in RETIRED}
+        # Forecasters whose code has left the registry (sports, 2026-11-18) keep
+        # their label from the recorded pairs -- their rows stay on the board.
+        pairs |= HISTORICAL_RETIRED_PAIRS
     except Exception:  # noqa: BLE001
         log.exception("api: journal registry unreadable for retired labels")
         return
@@ -3849,23 +3844,10 @@ def get_weather_panel(supabase=Depends(get_supabase)):
         "contracts": latest_contracts,
     }
 
-# Sports edges (rollout step 7): candidate edges with review verdicts and links
-# ════════════════════════════════════════════════════════════════════════════
-_TIER_ORDER = {"top_pick": 0, "flagged": 1, "unreviewed": 2, "filtered": 3}
-_EDGE_FIELDS = ("sport", "kind", "side", "entry_price", "maker", "home", "away", "start_utc", "game_id",
-                "tier", "candidate", "reject_reasons", "review", "engine_version")
-_SPORTS_ENGINES = {"nfl": "sports_nfl", "cfb": "sports_cfb"}
-SPORTS_PAGE_MAX = 200
-SPORTS_PAGE_DEFAULT = 100
-SPORTS_REVIEW_SCAN = 5000
-# PostgREST caps a single response at 1000 rows whatever `limit` says, so any read that must
-# see more has to page with .range() explicitly.
+# Paged table reads: PostgREST caps a single response at 1000 rows whatever
+# `limit` says, so any read that must see more has to page with .range()
+# explicitly (see _fetch_all below).
 POSTGREST_CAP = 1000
-
-def _page(limit: int, offset: int) -> tuple[int, int]:
-    if limit < 1 or limit > SPORTS_PAGE_MAX or offset < 0:
-        raise HTTPException(status_code=422, detail=f"limit must be 1..{SPORTS_PAGE_MAX} and offset >= 0")
-    return limit, offset
 
 
 def _fetch_all(supa, table: str, build, *, page: int = POSTGREST_CAP, cap: int | None = None,
@@ -3965,194 +3947,6 @@ def get_sniper_verdict():
                                         "the one-time re-grade (tradehub.scripts.sniper_regrade) has not been run")
     except (OSError, ValueError) as exc:
         raise HTTPException(503, detail=f"sniper verdict snapshot at {path} is unreadable: {exc}")
-
-
-@app.get("/api/sports-record", tags=["Sports"])
-def get_sports_record() -> dict[str, Any]:
-    """Each sports predictor's own published record, normalised. Display only: nothing here is scored.
-
-    Synchronous on purpose, like `/api/health`: `collect` fetches the five sites in parallel with a 6 s
-    timeout and a five-minute cache, and one sport being down only marks that sport `unavailable`.
-    """
-    from tradehub.sports_record import collect
-
-    return collect()
-
-
-@app.get("/api/sports-edges", tags=["Sports"])
-def get_sports_edges(
-    sport: str | None = None,
-    tier: str | None = None,
-    limit: int = SPORTS_PAGE_DEFAULT,
-    offset: int = 0,
-    supabase=Depends(get_supabase),
-):
-    """Upcoming SPORTS edges (Top Picks first) plus the reviewer keep-or-drop scorecard.
-
-    Three things matter here and each has bitten before:
-
-    1. Every read pages with an ORDERED `.range()`. PostgREST caps a response at 1000 rows, so a
-       single `.execute()` silently truncates and `total` would be a lie on a larger table — and
-       without `.order()` the pages are not guaranteed to line up at all.
-    2. Ranking is applied to ALL matching rows BEFORE offset/limit. Sorting after slicing ranks
-       each arbitrary offset window on its own, so a `top_pick` can be stranded on a later page
-       behind `filtered` rows.
-    3. `tier` lives inside raw_payload and cannot be filtered by the database, so that one
-       filter is applied in Python — but the upcoming/started test IS pushed into the query via
-       `expires_at`, and Python re-checks it because a malformed `start_utc` must never show.
-    """
-    if supabase is None:
-        raise HTTPException(status_code=503, detail="Supabase is not configured")
-    if sport is not None and sport not in _SPORTS_ENGINES:
-        raise HTTPException(status_code=422, detail=f"sport must be one of {sorted(_SPORTS_ENGINES)}")
-    if tier is not None and tier not in _TIER_ORDER:
-        raise HTTPException(status_code=422, detail=f"tier must be one of {sorted(_TIER_ORDER)}")
-    limit, offset = _page(limit, offset)
-
-    now = datetime.now(timezone.utc)
-
-    def build(q):
-        q = q.select("*").eq("edge_type", "SPORTS")
-        if sport is not None:
-            q = q.eq("engine", _SPORTS_ENGINES[sport])
-        # Not-started is the cheap, indexable half of "upcoming"; start_utc inside raw_payload
-        # is checked again below because it is what the reviewer/scan actually wrote.
-        return q.gte("expires_at", now.isoformat())
-
-    candidates = [r for r in _fetch_all(supabase, "kalshi_edges", build) if _is_upcoming(r, now)]
-    if tier is not None:
-        candidates = [r for r in candidates if _tier_of(r) == tier]
-
-    # Rank globally, THEN page. top_pick first, then any remaining candidate, then the rest;
-    # within a tier by edge_pct descending. Ranking after the slice would let each offset window
-    # order itself, stranding a top_pick behind filtered rows on a later page.
-    candidates.sort(key=_sports_rank)
-    total = len(candidates)
-    rows = candidates[offset:offset + limit]
-    # Counted over the whole filtered set, before slicing. The UI needs this because a page of
-    # rejects is not evidence that nothing passed: rows are ranked candidates-first, so page 2+ is
-    # always the reject tail, and a page-derived count reports "all rejected" on a board that has
-    # picks on page 1.
-    candidate_count = sum(1 for r in candidates if _tier_of(r) != "filtered")
-
-    # sports.scan.edge_row owns the row shape AND the honesty rules: edge_pct is the after-fee
-    # edge vs the entry price (not vs market_prob, the mid), it is withheld from any row the
-    # candidate filter rejected, quote_spread travels so a wide quote is visible, and a placeholder
-    # engine_version is blanked rather than printed as the word "unknown".
-    edges = [edge_row(row) for row in rows]
-
-    reviews = _fetch_all(supabase, "sports_reviews",
-                         lambda q: q.select("*").eq("status", "ok"), cap=SPORTS_REVIEW_SCAN)
-    settled = _fetch_all(supabase, "predictions",
-                         lambda q: q.select("market_ticker,result")
-                         .in_("engine", sorted(_SPORTS_ENGINES.values())).eq("status", "SETTLED"),
-                         cap=SPORTS_REVIEW_SCAN)
-    results = {r["market_ticker"]: r["result"] for r in settled}
-    return {
-        "as_of": now.isoformat(), "edges": edges, "total": total, "limit": limit, "offset": offset,
-        # Whole-set candidate count. A client cannot derive it from one page, and deriving it is
-        # what made the "everything was rejected" banner wrong on every page after the first.
-        "candidate_count": candidate_count,
-        # Which ranking produced the order above, over the WHOLE filtered set rather than this page:
-        # a sigma on page 3 is a sigma the sort used, and a page-local count would report `raw_edge`
-        # while rows were being scored. The page states it, because claiming a confidence ranking it
-        # is not applying is worse than never claiming one.
-        "ranking": _ranking_mode(candidates),
-        "reviewer_scorecard": reviewer_scorecard(reviews, results),
-    }
-
-
-def _tier_of(row: dict) -> str | None:
-    return ((row.get("raw_payload") or {}).get("tier"))
-
-
-def _sports_rank(row: dict) -> tuple[int, int, float]:
-    """Sort key: top_pick, then any other candidate, then the rest; then the confidence score.
-
-    A `filtered` row is one the candidate filter rejected, so it ranks below every candidate
-    regardless of its edge — a large gap the filter already refused should not lead the board. That
-    grouping is the outer key and the confidence score only ever orders rows WITHIN it.
-
-    Within a tier, the sort is on `edge_sigma_score` when the feed published a sigma, because two
-    equal edges at different confidences are not equal claims. The score is capped, floored and
-    `None` when there is no sigma, and the fallback is the raw edge: NOT 0.0, which would sort the
-    row last in its tier and read as "the least interesting pick here" — a claim, made by a
-    fallback, about a row whose confidence is merely unknown.
-
-    The stored column is `edge_pct` (this runs before `edge_row`); the same number is published to
-    clients as `rank_edge_pct`, which is why the fallback is that number.
-    """
-    tier = _tier_of(row)
-    if tier == "top_pick":
-        group = 0
-    elif (row.get("raw_payload") or {}).get("candidate"):
-        group = 1
-    else:
-        group = 2
-    score = edge_sigma_score(row.get("edge_pct"), (row.get("raw_payload") or {}).get("sigma"))
-    if score is None:
-        # A partly-publishing feed compares INCOMMENSURABLE UNITS in this one key, deliberately, and
-        # the ordering it produces can INVERT the board -- not merely bias it toward the scored rows
-        # at equal edge, which is how this used to be described and which undersells it. A scored
-        # row's key is a z-score; an unscored row's is its edge in decimal. So the comparison is
-        # score-vs-edge, not score-vs-score, and those are not two numbers on one scale: a scored
-        # 2pp edge at sigma 0.001 scores 20.0 and outranks an unscored 40pp edge outright, and the
-        # row that leads its tier is the one the 20.0 cap invented. The cap is the tell -- a
-        # saturated score is a value the feature refused to measure precisely, and here it is
-        # out-measuring a real 40pp disagreement.
-        #
-        # Every one of those terms is reachable: `sigma_floor` is 0.005, and a predictor publishing
-        # a width of 0.1pp on a genuine edge produces exactly 20.0. So this is a latent inversion
-        # that fires on the first run where one sport publishes a sigma and another row does not --
-        # which is the same run on which the page's sentence starts claiming a confidence ranking.
-        #
-        # The alternative is inventing a sigma for the row that has none, which is the one thing
-        # this feature must never do -- a made-up sigma ranks confidently off nothing, and
-        # 0.10 / 0.005 is the cap. So the bias stands, it is recorded here rather than left to be
-        # discovered, and the page's sentence says it out loud ("...wherever the feed publishes one,
-        # and by raw edge for the rest"), because a reader comparing a 4pp z-scored row against a
-        # 4pp unscored one is owed the reason one of them led. The disclosed sentence is what makes
-        # this acceptable rather than a defect: the page does not claim a total order it cannot
-        # deliver, it names the fallback and the fact that the two are not on one scale.
-        score = float(row.get("edge_pct") or 0)
-    return group, _TIER_ORDER.get(tier, 9), -score
-
-
-def _ranking_mode(rows: list[dict]) -> str:
-    """Which ranking the response actually used, so the page can say so.
-
-    Reads the STORED row, not the served one, and that is not incidental: `sports.scan._edge_row` is
-    what writes `raw_payload["sigma"]` at all, and `edge_row` deliberately withholds sigma from the
-    payload the page receives. So this is the only place the number exists, and it is also the only
-    place the ranking can honestly be described from.
-
-    Reporting the mode rather than implying sigma always applies is the whole point: a page that
-    claims to rank by confidence while ranking by raw edge is worse than one that never claimed it.
-
-    `edge_sigma` means the score was in play for at least one row — which is exactly the condition
-    under which the sort stopped being a pure raw-edge sort. A *published* sigma of zero counts,
-    because it was floored and scored like any other value and the sort did use it; a page reporting
-    `raw_edge` there would be describing a sort that did not happen. A *negative* sigma does not
-    count, because the score is `None` for it: a corrupt value is handled exactly as an absent one
-    is, so it is never the thing that put a row on the board, and a page must not claim the sort used
-    confidence because one broken predictor published a negative width. An empty set reports
-    `raw_edge`: nothing was ranked, so the answer that claims the least is the honest one.
-    """
-    for row in rows:
-        if edge_sigma_score(row.get("edge_pct"), (row.get("raw_payload") or {}).get("sigma")) is not None:
-            return "edge_sigma"
-    return "raw_edge"
-
-
-def _is_upcoming(row: dict, now: datetime) -> bool:
-    """A row with no parsable start_utc is not upcoming and is never shown."""
-    start = (row.get("raw_payload") or {}).get("start_utc")
-    if not start:
-        return False
-    try:
-        return datetime.fromisoformat(start) > now
-    except (TypeError, ValueError):
-        return False
 
 
 # ════════════════════════════════════════════════════════════════════════════

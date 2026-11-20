@@ -25,7 +25,6 @@ def _run_main(monkeypatch, *, closed_raises=False):
 
     monkeypatch.setattr(scan_mod, "KalshiLive", lambda *a, **k: object())
     monkeypatch.setattr(scan_mod, "scan_gas", lambda *a, **k: ([], []))
-    monkeypatch.setattr(scan_mod, "sports_due", lambda now: False)
     monkeypatch.setattr(scan_mod, "latest_gate_statuses", lambda client, pairs: {})
     monkeypatch.setattr(scan_mod, "remove_stale_edges", lambda client, produced: cleanups.append(produced))
     monkeypatch.setattr(supabase_client, "get_client", lambda: "supa")

@@ -73,7 +73,7 @@ describe("save-by-choice", () => {
 
 describe("workshop copy", () => {
   it("says each claim in plain words", () => {
-    expect(claimLabel("ballast")).toMatch(/loses less than SPY/);
+    expect(claimLabel("ballast")).toMatch(/equal-beta SPY-plus-cash mix/);
     expect(conditionText(SPEC.when as never)).toBe("DGS10 change over 63 trading days > 0.25");
     expect(conditionText(null)).toBe("always");
   });
@@ -198,6 +198,24 @@ const openIdea = () =>
   render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
 const posts = (f: ReturnType<typeof serve>) =>
   f.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([u, init]) => [String(u), (init as RequestInit).body]);
+
+describe("Workshop idea page split (step 11)", () => {
+  it("lays the page out as Draft, Verdict and Go live sections, in that order", async () => {
+    serve({
+      "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
+    });
+    openIdea();
+    await screen.findByRole("heading", { name: "Draft" });
+    const labels = [...document.querySelectorAll("section[aria-label]")].map((s) => s.getAttribute("aria-label"));
+    const order = ["Draft", "Verdict", "Go live"].map((n) => labels.indexOf(n));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // The gate lives in the Go live section, built once for both books.
+    const goLiveSection = document.querySelector('section[aria-label="Go live"]');
+    expect(goLiveSection?.querySelector("button")?.textContent).toBeDefined();
+    expect(screen.getByRole("button", { name: "Check the gate" })).toBeInTheDocument();
+  });
+});
 
 describe("Workshop live-paper gate", () => {
   it("shows why the gate is waiting and keeps Go live off", async () => {

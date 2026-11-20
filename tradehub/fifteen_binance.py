@@ -48,6 +48,11 @@ from tradehub.journal.forecasters.fifteen_min import read_window
 from tradehub.journal.kalshi_linked import ticker_of
 
 PREREG_AT = "2026-11-16T00:00:00+00:00"
+# The prereg's frozen stopping rule: retired as a record at 300 fresh
+# trades or 60 days after PREREG_AT (2027-01-15), whichever comes
+# first. Enforced in record_binance (Claude's cleanup, 2026-11-17).
+STOP_FRESH_TRADES = 300
+STOP_AT = datetime(2027, 1, 15, tzinfo=UTC)
 SHADOW_VERSION = "v5-binance-gold-shadow"
 DECISIONS_TABLE = "fifteen_binance_decisions"
 EVALS_TABLE = "fifteen_binance_evals"
@@ -95,6 +100,44 @@ def _market_prob(pay: dict) -> float | None:
     return round((float(bid) + float(ask)) / 2, 5)
 
 
+def _stopped(supa, now: datetime) -> str | None:
+    """The prereg's stopping rule, enforced: the reason the shadow has
+    retired as a record, or None while it still records. The date arm
+    needs no read; the trade arm counts the fresh segment's settled
+    trades (the same population the eval grades)."""
+    if now >= STOP_AT:
+        return "date_stop_2027-01-15"
+    # Read directly, not through blend._read (Claude's review of the
+    # cleanup PR): _read swallows a failed read to [], which here would
+    # count 0 trades and let the stopping rule fail OPEN -- the shadow
+    # would keep recording past its stop on a broken read. select_all
+    # raises instead, and the runner's fail-soft wrapper writes nothing
+    # that pass.
+    fresh = [r for r in store.select_all(
+        supa, DECISIONS_TABLE, lambda q: q.gte("window_open", PREREG_AT), ("id",))
+        if _dt(r["window_open"]) >= _PREREG_DT]
+    n = sum(1 for r in fresh if r["action"] == "buy" and r.get("outcome") is not None
+            and r.get("pnl") is not None)
+    if n >= STOP_FRESH_TRADES:
+        return f"fresh_trade_stop_{STOP_FRESH_TRADES}"
+    return None
+
+
+def _tape_gap_totals() -> dict[str, Any]:
+    """The collector's reconnect gaps, as the eval reports them
+    (Claude's cleanup, 2026-11-17): count and total minutes. The eval
+    table has no columns for them, so they ride the eval's returned
+    report (and summary) rather than the stored row."""
+    gaps = binance_tape.read_gaps()
+    minutes = 0.0
+    for g in gaps:
+        try:
+            minutes += max(0.0, (_dt(g["end"]) - _dt(g["start"])).total_seconds() / 60.0)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return {"count": len(gaps), "minutes": round(minutes, 1)}
+
+
 def record_binance(supa, now: datetime, *, klines_fn=None,
                    lookback: timedelta = blend.LOOKBACK) -> dict[str, Any]:
     """One shadow decision per fresh targeted gold window in the lookback,
@@ -102,6 +145,9 @@ def record_binance(supa, now: datetime, *, klines_fn=None,
     preregistration are never written. A failed tape fetch raises; the
     runner's fail-soft wrapper reports it and nothing is written that
     pass -- an outage never masquerades as a read."""
+    stopped = _stopped(supa, now)
+    if stopped is not None:
+        return {"windows": 0, "buy": 0, "stopped": stopped}
     targets = [t for t in tracking.fetch_targets(supa, NAME, now - lookback, now)
                if _dt(t["cutoff_at"]) - timedelta(minutes=WINDOW_MINUTES) >= _PREREG_DT]
     if not targets:
@@ -194,6 +240,7 @@ def _evaluate(supa) -> dict[str, Any]:
     pclow = clustered_low95(deltas)
     met = blend.criterion_met(n, low, plow)
     return {"windows": len(fresh), "trades": n,
+            "tape_gaps": _tape_gap_totals(),
             "net_per_contract": round(mean, 4) if mean is not None else None,
             "low95": round(low, 4) if low is not None else None,
             "win_rate": round(sum(float(r["pnl"]) > 0 for r in trades) / n, 3) if n else None,
@@ -231,6 +278,7 @@ def summary(supa) -> dict[str, Any]:
             "paired": {"windows": ev["paired_windows"], "delta_per_window": ev["paired_delta"],
                        "low95": ev["paired_low95"],
                        "clustered_low95": ev["paired_low95_clustered"]},
+            "tape_gaps": ev["tape_gaps"],
             "promotion": {"met": ev["criterion_met"], "eligible": ev["eligible"],
                           "path_built": False,
                           "criterion": {"min_trades": blend.PROMOTION_MIN_TRADES,

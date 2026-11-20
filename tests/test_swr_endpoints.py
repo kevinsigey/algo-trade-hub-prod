@@ -41,7 +41,6 @@ def fifteen_builds(monkeypatch):
         return {"record_build": calls["record"]}
 
     monkeypatch.setattr("tradehub.oil_fifteen_rule.record", record)
-    monkeypatch.setattr("tradehub.fifteen_shadow.summary", lambda _s: {"shadow": True})
     monkeypatch.setattr("tradehub.fifteen_blend.summary", lambda _s: {"blend": True})
     monkeypatch.setattr("tradehub.fifteen_volregime.summary", lambda _s: {"volregime": True})
     monkeypatch.setattr("tradehub.fifteen_volregime.decline_monitor", lambda _s, _n: [])
@@ -55,7 +54,7 @@ def test_fifteen_rule_composes_once_per_ttl(fifteen_builds):
     fake = object()
     first = main.oil_fifteen_rule(supabase=fake)
     second = main.oil_fifteen_rule(supabase=fake)
-    assert first == second == {"record_build": 1, "shadow": {"shadow": True},
+    assert first == second == {"record_build": 1,
                                "blend": {"blend": True}, "volregime": {"volregime": True},
                                "decline": [], "metals": {"metals": True}, "board": {"board": True}}
     assert fifteen_builds["record"] == 1
