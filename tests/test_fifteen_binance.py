@@ -10,6 +10,8 @@ injected everywhere.
 import math
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from tests.test_fifteen_blend import FakeSupa, _patch
 from tradehub import fifteen_binance as fb
 from tradehub import oil_fifteen_rule as rule
@@ -233,8 +235,6 @@ def test_runner_hook_is_fail_soft(monkeypatch):
     ok = {"ran": True}
     for mod, fn in ((fifteen_min_run.fifteen_tracking, "record_decisions"),
                     (fifteen_min_run.fifteen_tracking, "record_offsets"),
-                    (fifteen_min_run.fifteen_shadow, "record_shadow"),
-                    (fifteen_min_run.fifteen_shadow, "evaluate_daily"),
                     (fifteen_min_run.fifteen_blend, "record_blend"),
                     (fifteen_min_run.fifteen_blend, "evaluate_daily"),
                     (fifteen_min_run.fifteen_volregime, "record_volregime"),
@@ -244,3 +244,61 @@ def test_runner_hook_is_fail_soft(monkeypatch):
     assert "binance exploded" in summary["fifteen_binance"]["error"]
     assert "binance exploded" in summary["fifteen_binance_eval"]["error"]
     assert summary["fifteen_blend"] == ok and summary["fifteen_decisions"] == ok
+
+
+# -- the prereg stopping rule + eval gap report (Claude's cleanup) -----------
+
+def _settled_buy(i: int) -> dict:
+    return {"series": fb.SERIES, "target": f"kalshi:T{i}",
+            "window_open": "2026-11-16T15:15:00+00:00",
+            "action": "buy", "outcome": 1, "pnl": 0.10}
+
+
+def test_record_stops_at_300_fresh_trades(monkeypatch):
+    supa = FakeSupa()
+    supa.tables[fb.DECISIONS_TABLE] = [_settled_buy(i) for i in range(300)]
+    _use(monkeypatch, _world())
+    out = fb.record_binance(supa, NOW, klines_fn=lambda *_a: _tape(OPEN, 60))
+    assert out == {"windows": 0, "buy": 0, "stopped": "fresh_trade_stop_300"}
+    assert len(_rows(supa)) == 300  # nothing new was written
+
+
+def test_record_still_runs_at_299_fresh_trades(monkeypatch):
+    supa = FakeSupa()
+    supa.tables[fb.DECISIONS_TABLE] = [_settled_buy(i) for i in range(299)]
+    _use(monkeypatch, _world())
+    out = fb.record_binance(supa, NOW, klines_fn=lambda *_a: _tape(OPEN, 60))
+    assert "stopped" not in out
+
+
+def test_a_failed_decisions_read_fails_closed(monkeypatch):
+    # Claude's review: _stopped must not read through blend._read, which
+    # swallows a failed read to [] -- that counts 0 trades and the
+    # stopping rule fails open, so the shadow would keep recording past
+    # its stop on a broken read. The read now raises, record_binance
+    # propagates it, and the runner's fail-soft wrapper writes nothing.
+    def boom(*_a, **_k):
+        raise RuntimeError("decisions read failed")
+    monkeypatch.setattr(fb.store, "select_all", boom)
+    supa = FakeSupa()
+    with pytest.raises(RuntimeError, match="decisions read failed"):
+        fb.record_binance(supa, NOW, klines_fn=lambda *_a: _tape(OPEN, 60))
+    assert _rows(supa) == []
+
+
+def test_record_stops_at_the_prereg_date():
+    supa = FakeSupa()
+    out = fb.record_binance(supa, datetime(2027, 1, 15, tzinfo=UTC),
+                            klines_fn=lambda *_a: _tape(OPEN, 60))
+    assert out == {"windows": 0, "buy": 0, "stopped": "date_stop_2027-01-15"}
+
+
+def test_eval_reports_the_collectors_tape_gaps(monkeypatch):
+    supa = FakeSupa()
+    _seed_eval(supa)
+    monkeypatch.setattr(fb.binance_tape, "read_gaps", lambda: [
+        {"start": "2026-11-17T12:00:00+00:00", "end": "2026-11-17T12:10:00+00:00"},
+        {"start": "2026-11-17T13:00:00+00:00", "end": "2026-11-17T13:05:30+00:00"}])
+    ev = fb._evaluate(supa)
+    assert ev["tape_gaps"] == {"count": 2, "minutes": 15.5}
+    assert fb.summary(supa)["tape_gaps"] == {"count": 2, "minutes": 15.5}

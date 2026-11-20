@@ -23,8 +23,6 @@ reviews:
         no look-ahead (nothing after the decision time reaches a forecast); timezone-aware datetimes; a missing
         input is a gap (return None), never a guess; scorecards compare against a market or naive baseline on the
         same targets; counts are never double-counted across a model and the copy that shadows it.
-    - path: "tradehub/sports/**"
-      instructions: "Check orientation (which side YES points) is carried in the payload and never sign-flipped."
     - path: "tradehub/data/**"
       instructions: "Keyless public sources only. Check retries, timeouts, partial responses and that no secret is read or logged."
     - path: "tests/**"

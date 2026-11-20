@@ -17,8 +17,15 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+
 CACHE = Path(os.environ.get("TRADEHUB_SCREENING_CACHE", "/cache/screening"))
-UA = {"User-Agent": "tradehub-screening sigeykevin@gmail.com"}
+
+# These pulls go to Wikipedia and Nasdaq Trader, not the SEC: a plain
+# product UA is the right header there (Claude's cleanup note) -- the
+# SEC UA carries the contact the SEC asks for and refuses to build at
+# all when SEC_CONTACT_EMAIL is unset, which should never gate a
+# Wikipedia pull.
+_PLAIN_UA = {"User-Agent": "algo-trade-hub screening universe refresh"}
 
 
 def _write(name: str, tickers: list[str], source: str) -> None:
@@ -48,7 +55,7 @@ def _wiki_pull(url: str, column: str) -> tuple[list[str], dict[str, str]]:
     # page's constituents table reads "Symbol" now, not "Ticker"): accept
     # either header, on any table on the page. The company name rides along
     # when the table carries one (Security / Company).
-    html = requests.get(url, headers=UA, timeout=30).text
+    html = requests.get(url, headers=_PLAIN_UA, timeout=30).text
     tables = pd.read_html(io.StringIO(html))
     for want in (column, "Symbol", "Ticker"):
         for t in tables:
@@ -99,7 +106,7 @@ def main() -> int:
         tickers = []
         for fname, sym_col in (("nasdaqlisted.txt", "Symbol"), ("otherlisted.txt", "ACT Symbol")):
             text = requests.get(f"https://www.nasdaqtrader.com/dynamic/symdir/{fname}",
-                                headers=UA, timeout=60).text
+                                headers=_PLAIN_UA, timeout=60).text
             frame = pd.read_csv(io.StringIO(text), sep="|")
             frame = frame[frame["Test Issue"] == "N"]
             tickers += [_norm(x) for x in frame[sym_col]

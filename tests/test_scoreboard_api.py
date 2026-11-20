@@ -44,7 +44,7 @@ from tradehub.scoreboard import (
     SOURCE_ENGINE,
     SOURCE_GATE,
 )
-from tradehub.sports.scorecard import MIN_SETTLED
+from tradehub.scoreboard import MIN_SETTLED
 
 MAIN_PY = Path(__file__).resolve().parents[1] / "tradehub" / "api" / "main.py"
 # The real strings `check_promotion_gate` emits, and the gas figures from the 12h experiment that
@@ -818,7 +818,7 @@ class TestTheSummary:
         assert {row["mode"] for row in body["rows"] if row["engine"] == "weather"} == {"taker", "maker"}
 
     def test_the_floor_travels_as_min_settled_and_is_not_hardcoded(self):
-        """`MIN_SETTLED` is imported from `tradehub/sports/scorecard.py` and asserted, never
+        """`MIN_SETTLED` is imported from `tradehub/scoreboard.py` and asserted, never
         written out here — a hardcoded 100 in the endpoint would be a second place to be wrong.
         """
         body = _get_body([_run("gas", "gas-v1")])
@@ -853,7 +853,9 @@ class TestTheCatalogue:
 
         engines = {entry["engine"] for entry in body["catalogue"]["entries"]}
         assert "gas" in engines
-        for unmeasured in ("crypto", "sports_nfl", "sports_cfb"):
+        # The sports engines rode here until the sports removal took them
+        # out of the catalogue entirely (Claude's ruling on that PR).
+        for unmeasured in ("crypto",):
             assert unmeasured in engines
 
     def test_an_unmeasured_engine_says_not_measured_and_carries_no_number(self):

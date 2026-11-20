@@ -43,8 +43,6 @@ def test_main_gates_edges_per_engine_version_pair(monkeypatch):
         {"market_ticker": "G", "engine": "gas", "engine_version": scan.GAS_ENGINE_VERSION},
     ]))
     monkeypatch.setattr(scan, "remove_stale_edges", lambda *a, **k: None)
-    monkeypatch.setattr(scan, "sports_due", lambda now: False)
-    monkeypatch.setattr(scan, "remove_started_sports_edges", lambda *a, **k: [])
     monkeypatch.setattr(scan, "remove_closed_cpi_edges", lambda *a, **k: None)
     monkeypatch.setattr(scan, "remove_closed_labor_edges", lambda *a, **k: None)
     # A PROMOTED verdict exists only for this exact pair.
