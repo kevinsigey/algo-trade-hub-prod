@@ -289,13 +289,19 @@ def _observe_prod(supa, lane: dict, d: dict, base_row: dict,
     measurement). One record per (series, target, gate_version): the
     first observation stands, so later passes skip it via prod_keys."""
     key = (SERIES, base_row["target"], lane["gate_version"])
-    if key in prod_keys:
+    if prod_keys is None or key in prod_keys:
         return
     try:
         market = kalshi_prod_book.read_market(base_row["ticker"])
         if market is None:
             return
         quotes = quote_cents(market)
+        if all(v is None for v in quotes.values()):
+            # An incomplete response (no readable quote at all) is not a
+            # measured book: record nothing, the same as an unreadable book,
+            # rather than a no_cross row claiming an empty side. A readable
+            # book with an empty side is still no_cross below.
+            return
 
         def dollars(field: str) -> float | None:
             cents = quotes.get(field)
@@ -336,13 +342,17 @@ def _observe_prod(supa, lane: dict, d: dict, base_row: dict,
             else:
                 size = kalshi_prod_book.read_ask_size(
                     base_row["ticker"], d["side"], price)
+                if size is None:
+                    # Unmeasured depth is not an observation: no row, the
+                    # same as an unreadable book, so it neither takes the key
+                    # as a rejection nor counts in the fill rate (CodeRabbit
+                    # on #560). A pass that re-reads the decision (a pending
+                    # claim) can still record it.
+                    return
                 row["ask_size"] = size
-                # Unknown depth must not count as a fill (Claude's
-                # review): an unmeasured book is depth_unknown, a
-                # measured-but-small one is thin, only a measured book
-                # that covers the size is would_fill.
-                row["status"] = ("depth_unknown" if size is None
-                                 else "thin" if size < contracts
+                # A measured-but-small book is thin, only a measured book
+                # that covers the size is would_fill (unmeasured returned above).
+                row["status"] = ("thin" if size < contracts
                                  else "would_fill")
         supa.table(PROD_FILLS).insert(row).execute()
         prod_keys.add(key)
@@ -448,11 +458,21 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     tracked = _tracked_decisions(supa)
     summary["decision_mismatch"] = len(decision_mismatches(rows, tracked))
     _reconcile(supa, portfolio, rows, now, summary, tracked)
-    _settle_prod_fills(supa, tracked, now, summary)
-    prod_keys = {(r["series"], r["target"], r.get("gate_version"))
-                 for r in _select(supa, PROD_FILLS, {},
-                                  order="created_at", desc=True,
-                                  limit=1000)}
+    # The production-book record is observation only: a failure here must
+    # never stop the demo lanes below (CodeRabbit on #560). Unsettled rows
+    # keep outcome NULL and are picked up again next pass.
+    try:
+        _settle_prod_fills(supa, tracked, now, summary)
+    except Exception as exc:  # noqa: BLE001
+        summary["errors"].append(f"prod settle: {exc}")
+    try:
+        prod_keys = {(r["series"], r["target"], r.get("gate_version"))
+                     for r in _select(supa, PROD_FILLS, {},
+                                      order="created_at", desc=True,
+                                      limit=1000)}
+    except Exception as exc:  # noqa: BLE001
+        summary["errors"].append(f"prod keys: {exc}")
+        prod_keys = None  # unknown: skip observing this pass rather than double-record
 
     # Fresh gated gas buys for windows still open, decided now exactly as
     # the record pass will record them after the close, stamped with the

@@ -124,15 +124,14 @@ def test_a_thin_production_book_is_thin_not_a_fill(prod):
     assert row["ask_size"] == 5 and row["contracts"] == 13
 
 
-def test_unknown_depth_is_depth_unknown_not_a_fill(prod):
-    # Claude's review: when the ask size cannot be measured the row
-    # must not read as a fill -- unknown depth is its own status.
+def test_unknown_depth_records_nothing(prod):
+    # CodeRabbit on #560: an unmeasured book is not an observation -- no
+    # row that takes the key or reads as a fill -- like an unreadable book.
     prod["size"] = None
     db = _seeded(DB(), open_=[decision()])
-    kd.run_once(db, FakePortfolio(), NOW)
-    row = _fills(db)[0]
-    assert row["status"] == "depth_unknown"
-    assert row["ask_size"] is None and row["contracts"] == 13
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert _fills(db) == []
+    assert out["placed"] == 1  # the demo placement is unaffected
 
 
 def test_an_empty_side_is_no_cross_not_no_edge(prod):
@@ -315,3 +314,27 @@ def test_low95_uses_the_same_contract_weighted_mean_as_the_headline():
     unweighted = clustered_low95([((kd.SERIES, d), c) for d, c in [(0, 50.0), (1, -10.0), (2, 5.0)]])
     assert lane["low95_cents"] != round(unweighted, 2)
     assert lane["low95_cents"] < headline_cents
+
+
+
+def test_an_incomplete_market_response_records_nothing(prod):
+    # CodeRabbit on #560: a market object with no readable quote is not a
+    # measured empty side; it must not take the key as no_cross.
+    prod["market"] = {"ticker": TICKER}
+    db = _seeded(DB(), open_=[decision()])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert _fills(db) == []
+    assert out["placed"] == 1
+
+
+def test_a_settlement_failure_does_not_stop_demo_placement(prod, monkeypatch):
+    # CodeRabbit on #560: the observation-only settle step must not take
+    # the demo lanes down with it.
+    def boom(*_a, **_k):
+        raise RuntimeError("settle read failed")
+
+    monkeypatch.setattr(kd, "_settle_prod_fills", boom)
+    db = _seeded(DB(), open_=[decision()])
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert out["placed"] == 1
+    assert any("prod settle" in e for e in out["errors"])
