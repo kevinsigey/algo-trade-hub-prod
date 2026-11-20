@@ -75,8 +75,53 @@ def test_the_route_is_registered_before_the_spa_catch_all():
         main.app.dependency_overrides.pop(get_supabase, None)
     # A shadowed /api path never falls back to the shell: the static mount refuses it
     # with a 404. Reaching the handler is anything else (it may fail without a DB).
-    assert resp.status_code != 404, (
-        "/api/jobs-scorecard is shadowed by the SPA catch-all")
+    assert resp.status_code != 404, "/api/jobs-scorecard is shadowed by the SPA catch-all"
+
+
+# ── Kevin's decision: the page shows the engine's gate status next to the nowcast ──
+
+class _GateSupa:
+    """A Supabase stand-in that serves the scorecard rows AND answers the gate tables."""
+
+    def __init__(self, rows, *, backtest=None, track=None):
+        self.rows = rows
+        self.backtest = backtest or []
+        self.track = track or []
+        self.queries: list[tuple[str, dict]] = []
+
+    def table(self, name):
+        supa = self
+
+        class _Q:
+            def __init__(self):
+                self.filters: dict = {}
+                self.ordered: list = []
+
+            def select(self, *cols):
+                return self
+
+            def eq(self, col, val):
+                self.filters[col] = val
+                return self
+
+            def order(self, col, **kw):
+                self.ordered.append(col)
+                return self
+
+            def limit(self, n):
+                return self
+
+            def execute(self):
+                supa.queries.append((name, dict(self.filters)))
+                if name == "jobs_scorecard":
+                    return type("R", (), {"data": supa.rows})()
+                if name == "backtest_runs":
+                    return type("R", (), {"data": supa.backtest})()
+                if name == "track_record":
+                    return type("R", (), {"data": supa.track})()
+                return type("R", (), {"data": []})()
+
+        return _Q()
 
 
 def _client(supa):

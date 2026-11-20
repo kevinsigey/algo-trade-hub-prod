@@ -172,8 +172,7 @@ def test_the_route_is_registered_before_the_spa_catch_all():
         main.app.dependency_overrides.pop(get_supabase, None)
     # A shadowed /api path never falls back to the shell: the static mount refuses it
     # with a 404. Reaching the handler is anything else (it may fail without a DB).
-    assert resp.status_code != 404, (
-        "/api/health is shadowed by the SPA catch-all")
+    assert resp.status_code != 404, "/api/health is shadowed by the SPA catch-all"
 
 
 def test_every_response_carries_security_headers():
