@@ -651,7 +651,7 @@ export default function Screening() {
                 return (
                   <span className="block text-xs text-slate-600">
                     {r ? `refreshed ${ctDateTimeYear(r.as_of)} · ${r.source} · ${r.count} names`
-                        : "bundled proxy — not yet refreshed"}
+                        : "bundled list — not refreshed yet"}
                   </span>
                 );
               })()}

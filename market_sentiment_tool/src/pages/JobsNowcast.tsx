@@ -33,7 +33,7 @@ export default function JobsNowcast() {
   return (
     <div className="mx-auto max-w-[1200px] space-y-8 p-6 md:p-10">
       <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight text-white">Jobs nowcast vs Kalshi</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Jobs nowcast vs Kalshi</h1>
         <p className="max-w-[680px] text-sm leading-relaxed text-slate-400">Our nowcast vs Kalshi's, one report at a time.</p>
         {series === "payrolls" && summary.kalshiMae !== null && summary.nowcastMae !== null && summary.kalshiBrier !== null && summary.nowcastBrier !== null && summary.kalshiMae < summary.nowcastMae && summary.kalshiBrier < summary.nowcastBrier && (
           <p className="text-sm font-medium text-amber-300">Kalshi was closer: typical miss {Math.round(summary.kalshiMae)}k vs ours {Math.round(summary.nowcastMae)}k</p>

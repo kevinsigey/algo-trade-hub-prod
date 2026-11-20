@@ -191,6 +191,19 @@ describe("the rail's own controls", () => {
   });
 });
 
+describe("the Admin group behind its lock (step 14)", () => {
+  it("shows a signed-out viewer the lock entry and none of the Admin pages", () => {
+    renderShell();
+    const rail = screen.getByTestId("sidebar-rail");
+    expect(within(rail).getByRole("link", { name: /sign in/i })).toHaveAttribute("href", "/login");
+    expect(within(rail).queryByRole("link", { name: /machine keys/i })).toBeNull();
+    expect(within(rail).queryByRole("link", { name: /^screening$/i })).toBeNull();
+    expect(within(rail).queryByRole("link", { name: /^health$/i })).toBeNull();
+    // The public groups are untouched by the lock.
+    expect(within(rail).getByRole("link", { name: /^strategies$/i })).toHaveAttribute("href", "/strategies");
+  });
+});
+
 describe("the rail's stored preferences", () => {
   it("ignores a stored value of the wrong shape", () => {
     try { window.localStorage.setItem("atr:nav-closed-groups", "null"); window.localStorage.setItem("atr:nav-collapsed", "\"yes\""); } catch { /* blocked */ }

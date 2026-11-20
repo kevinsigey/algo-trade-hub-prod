@@ -943,9 +943,7 @@ export default function Strategies() {
     <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
       <h1 className="text-2xl font-bold tracking-tight text-white">Strategies</h1>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-400">
-        Every rule that trades or paper-trades, one market per line: what it does in one sentence, where it
-        stands, and its record. The market pages keep the live reads; the Track record says whether the reads
-        are right; this page says whether trading on them pays.
+        Every rule that trades or paper-trades, one market per line: what it does, where it stands, and whether trading on its reads pays.
       </p>
 
       <ul aria-label="Strategies at a glance" className="mt-5 grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">

@@ -35,7 +35,7 @@ export default function Cpi() {
   return (
     <div className="mx-auto max-w-5xl space-y-8 p-6 md:p-8">
       <header>
-        <h1 className="text-3xl font-bold text-white">Inflation (CPI)</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Inflation (CPI)</h1>
         <p className="mt-2 text-slate-400">Our forecast, locked in 24 hours before each report, beside the Kalshi price.</p>
       </header>
 
