@@ -25,16 +25,18 @@ router = APIRouter()
 
 @router.get("/api/ideas/{idea_id}/play-check", tags=["Ideas"])
 def public_play_check(idea_id: int, size_pct: float = Query(10, gt=0, le=100),
-                      book: str = Query("main"), supabase=Depends(get_supabase)):
+                      supabase=Depends(get_supabase)):
     """Play check on the published record: the newest SAVED run's spec, and only
-    for published ideas (private and missing look the same, as everywhere here)."""
+    for published ideas (private and missing look the same, as everywhere here).
+    Sized against a nominal all-cash book, never a paper account: this route is
+    unauthenticated (#579). The live-book check is the admin workshop route."""
     found = workshop_store.get_idea(supabase, idea_id)
     if found is None or not found["idea"].get("published_at"):
         raise HTTPException(status_code=404, detail="no such idea")
     saved = workshop_store.saved_only(found["runs"])
     if not saved:
         raise HTTPException(status_code=409, detail="no saved run to check")
-    return _play_check(supabase, found["idea"], saved[-1]["spec"], size_pct, book)
+    return _play_check(supabase, found["idea"], saved[-1]["spec"], size_pct, nominal=True)
 
 
 # ── Trading HQ Ideas record (step 3): public, published ideas only, fails and kills included. ──

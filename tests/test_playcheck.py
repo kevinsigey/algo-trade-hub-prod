@@ -170,3 +170,30 @@ def test_play_check_without_a_book(api, monkeypatch):
     monkeypatch.setattr(portfolio_service, "portfolio", lambda supa, **k: {"state": "not_connected", "positions": []})
     out = c.get(f"/api/workshop/ideas/{idea['id']}/play-check").json()
     assert out["available"] is False and "No paper account" in out["note"]
+
+
+def test_public_play_check_never_reads_the_paper_book(api, monkeypatch):
+    # #579: the public, unauthenticated route used to read the live paper book
+    # (caller-chosen book and size) and return account-derived sizing. It now
+    # runs against a nominal all-cash book; the live check stays admin-only.
+    c, _ = api
+    idea, run = _idea_with_run(c)
+    c.post(f"/api/workshop/ideas/{idea['id']}/publish")
+    c.post(f"/api/workshop/ideas/{idea['id']}/runs/{run['id']}/save")
+
+    def no_live_read(*_a, **_k):
+        raise AssertionError("the public play check read the paper book")
+
+    monkeypatch.setattr(portfolio_service, "portfolio", no_live_read)
+    for params in ({}, {"book": "big"}, {"book": "main", "size_pct": 25}):
+        out = c.get(f"/api/ideas/{idea['id']}/play-check", params=params).json()
+        assert out["available"] is True and out["book"] == "nominal"
+        assert out["cash"] == 100_000 and out["as_of"] is None
+        rows = {r["ticker"]: r for r in out["rows"]}
+        assert rows["GLD"]["held_value"] == 0          # nothing of the real book leaks
+        size = params.get("size_pct", 10)
+        assert rows["GLD"]["target_value"] == 100_000 * size / 100
+    # The admin route still checks the live book.
+    monkeypatch.setattr(portfolio_service, "portfolio", lambda supa, now=None, book_name=None: BOOK)
+    live = c.get(f"/api/workshop/ideas/{idea['id']}/play-check").json()
+    assert live["book"] == "main" and live["cash"] == 60_000

@@ -42,7 +42,7 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
     try {
       const path = source === "workshop"
         ? `/api/workshop/ideas/${ideaId}/play-check?size_pct=${pct}&book=${book}`
-        : `/api/ideas/${ideaId}/play-check?size_pct=${pct}&book=${book}`;
+        : `/api/ideas/${ideaId}/play-check?size_pct=${pct}`;
       if (source === "workshop") {
         setResult(await adminJson<PlayCheckResult>(path));
       } else {
@@ -76,6 +76,13 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
             <input value={size} onChange={(e) => setSize(e.target.value)} inputMode="decimal"
                    className="mt-1 block w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white" />
           </label>
+          {source === "public" ? (
+            // The public check never reads a paper account (#579): it sizes the
+            // play against a nominal all-cash book, so there is no book to pick.
+            <p className="text-sm text-slate-400" data-testid="playcheck-nominal">
+              Sized against a nominal $100,000 all-cash book.
+            </p>
+          ) : (
           <div className="text-sm text-slate-300">
             Book
             <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-700">
@@ -87,6 +94,7 @@ function PlayCheckSheet({ ideaId, source, title, onClose }: {
               ))}
             </div>
           </div>
+          )}
           <button type="button" onClick={run} disabled={busy}
                   className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-60">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} Check

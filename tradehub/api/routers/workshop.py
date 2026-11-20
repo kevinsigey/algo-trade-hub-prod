@@ -723,10 +723,19 @@ def workshop_save_run(idea_id: int, run_id: int, _admin: dict = Depends(admin.re
     return workshop_store.save_run(supabase, run_id)
 
 
-def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: str = "main") -> dict:
+NOMINAL_BOOK_EQUITY = 100_000.0
+
+
+def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: str = "main",
+                *, nominal: bool = False) -> dict:
     """The one-click play check (Kevin, 2026-11-02): read-only. The idea's target
     book at `size_pct` against the chosen paper book, with a cash verdict.
-    Never stages or places anything."""
+    Never stages or places anything.
+
+    `nominal=True` (the public route, #579) never reads an account: the play is
+    sized against a nominal all-cash book of NOMINAL_BOOK_EQUITY, so nothing
+    about the paper accounts' equity, cash or holdings reaches an anonymous
+    caller. The live-book check stays on the admin route."""
     if spec_dict.get("kind") == "event":
         raise HTTPException(status_code=409, detail="event studies are research only: there is no book to run")
     try:
@@ -746,14 +755,20 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: st
     from tradehub.portfolio import service
     from tradehub.portfolio.books import BOOKS, resolve
 
-    try:
-        book_name = resolve(book)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    book = service.portfolio(supabase, book_name=book_name)
+    if nominal:
+        book_name, book_label = "nominal", f"Nominal ${NOMINAL_BOOK_EQUITY:,.0f} cash book"
+        book = {"as_of": None, "scoreboard": {"equity": NOMINAL_BOOK_EQUITY},
+                "positions": [{"symbol": "Cash", "qty": None, "market_value": NOMINAL_BOOK_EQUITY, "idea": None}]}
+    else:
+        try:
+            book_name = resolve(book)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        book_label = BOOKS[book_name]["label"]
+        book = service.portfolio(supabase, book_name=book_name)
     if book.get("state") == "not_connected" or not book.get("positions"):
         return {"available": False, "size_pct": size_pct, "book": book_name,
-                "book_label": BOOKS[book_name]["label"],
+                "book_label": book_label,
                 "note": "No paper account is connected, so there is no book to check the play against."}
     equity = float(book["scoreboard"]["equity"])
     cash_row = next((r for r in book["positions"] if r["symbol"] == "Cash"), None)
@@ -762,7 +777,7 @@ def _play_check(supabase, idea: dict, spec_dict: dict, size_pct: float, book: st
                            equity=equity, cash=cash, positions=book["positions"], size_pct=size_pct,
                            own_title=idea["title"], otherwise=spec.otherwise,
                            legs=list(spec.hold) + list(spec.short))
-    out.update({"available": True, "book": book_name, "book_label": BOOKS[book_name]["label"],
+    out.update({"available": True, "book": book_name, "book_label": book_label,
                 "as_of": book.get("as_of"), "idea_id": idea["id"], "title": idea["title"],
                 "options_legs": [leg.model_dump(mode="json") for leg in spec.options],
                 "notes": ["Prices are latest closes, not live quotes."]})
