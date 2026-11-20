@@ -73,11 +73,11 @@ describe("Strategies", () => {
     expect(within(list).getByText(/1 idea trading/)).toBeInTheDocument();
     expect(await within(list).findByText(/9 of 24 hit/)).toBeInTheDocument();
     expect(await within(list).findByText(/18,602 graded/)).toBeInTheDocument();
-    for (const stage of ["Live paper account", "Paper record", "Picks only", "Retired"]) {
+    for (const stage of ["Live paper account", "Paper record", "Retired"]) {
       expect(within(list).getAllByText(stage).length).toBeGreaterThan(0);
     }
     for (const name of ["Stock ideas", "15-minute rules — oil & gas", "WTI hourly best strike",
-                        "Kalshi gap tracker", "Sports picks", "Crypto sniper"]) {
+                        "Kalshi gap tracker", "Crypto sniper"]) {
       expect(within(list).getByText(name)).toBeInTheDocument();
     }
   });

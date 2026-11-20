@@ -848,21 +848,6 @@ export default function Strategies() {
       ),
     },
     {
-      id: "sports-picks", name: "Sports picks", stage: "Picks only", muted: true,
-      visual: null,
-      stats: <RecordLine text="Graded in the Track record" />,
-      children: (
-        <section aria-label="Sports picks">
-          <p className="text-sm text-slate-400">
-            Games where the model and the market disagree, after the grading desk's review. No paper ledger yet.
-          </p>
-          <div className="mt-2 text-sm">
-            <Link to="/sports" className="inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200">Sports <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
-          </div>
-        </section>
-      ),
-    },
-    {
       id: "sniper", name: "Crypto sniper", stage: "Retired", muted: true,
       visual: (
         <div className="flex items-center gap-2">

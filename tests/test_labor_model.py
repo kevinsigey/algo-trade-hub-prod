@@ -136,8 +136,6 @@ def test_a_missing_jolts_vintage_is_reported_rather_than_silently_zeroed(caplog)
     facts, and the values dict is where the difference disappears, so it is logged."""
     import logging
 
-    from tradehub.sports import deadline as _deadline  # noqa: F401  (import kept out of the way)
-
     month = date(2025, 1, 1)
     end = month_end(month)
     icsa = {end: _weekly(date(2024, 11, 2), 16, lambda i: 200000.0 + 1000 * i)}

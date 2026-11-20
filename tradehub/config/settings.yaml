@@ -68,20 +68,6 @@ dashboard:
   sentiment_expanded: false  # collapsed by default in Edge Finder tab
 
 # --- Sports Analytics Engines ---
-sports:
-  nba:
-    enabled: true
-    balldontlie_base_url: "https://www.balldontlie.io/api/v1"
-    min_edge_pct: 12          # Min model vs Kalshi edge to flag a signal
-    rolling_games: 5          # Rolling game window for usage/pts averages
-    injury_poll_interval: 300 # Seconds between injury report checks
-  f1:
-    enabled: true
-    cache_dir: "f1_cache"
-    openf1_base_url: "https://api.openf1.org/v1"
-    min_edge_pct: 10
-    live_poll_interval: 60    # Seconds between live lap polls during race weekend
-
 # --- Crypto Microstructure ---
 crypto:
   enabled: true

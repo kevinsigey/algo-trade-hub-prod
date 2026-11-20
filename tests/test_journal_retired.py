@@ -7,21 +7,28 @@ from tradehub.journal.contract import Settlement
 
 
 def test_retired_and_live_are_disjoint_and_keep_the_right_rows():
-    from tradehub.journal.registry import FORECASTERS, RETIRED
+    from tradehub.journal.registry import FORECASTERS, HISTORICAL_RETIRED_PAIRS, RETIRED
 
     live = {(f.name, f.version) for f in FORECASTERS}
     retired = {(f.name, f.version) for f in RETIRED}
     assert not live & retired
     for key in (("oil_wti", "wti-v1"), ("oil_brent", "brent-v1"), ("natgas_daily", "natgas-v1"), ("gas", "v2"),
                 ("weather_high", "ens-v2.1"), ("weather_low_nbm", "nbm-v1"), ("ercot_peak", "ls-v1"),
-                ("sports_cfb_spread", "feed-v1"), ("sports_nfl_cal", "feed-v1+cal"),
                 ("oil_wti_hourly", "wti-hourly-v1"), ("oil_wti_hourly", "wti-hourly-v6-hl-geo2-shadow"),
                 ("kalshi_implied_oil", "v1"), ("baseline_climatology_weather_high", "v1")):
         assert key in retired, key
     for key in (("oil_wti_hourly", "wti-hourly-v4-hl-shadow"), ("kalshi_implied_oil_hourly", "v1"),
-                ("natgas_15m", "natgas-15m-v2"), ("weather_rain", "ens-v2.1"), ("sports_nfl", "feed-v1"),
+                ("natgas_15m", "natgas-15m-v2"), ("weather_rain", "ens-v2.1"),
                 ("kalshi_implied_weather_rain", "v1"), ("crypto_btc_hourly", "btc-hourly-v1")):
         assert key in live, key
+    # Sports left the registry entirely on 2026-11-18: none of its pairs is live or
+    # retired any more -- they survive only as historical label data, so the rows it
+    # already froze still read retired on the scoreboard.
+    for key in (("sports_nfl", "feed-v1"), ("sports_cfb_spread", "feed-v1"),
+                ("sports_nfl_cal", "feed-v1+cal"), ("kalshi_implied_sports_cfb_total", "v1")):
+        assert key not in live and key not in retired, key
+        assert key in HISTORICAL_RETIRED_PAIRS, key
+    assert len(HISTORICAL_RETIRED_PAIRS) == 24
 
 
 def test_a_retired_forecaster_takes_no_new_targets_but_still_settles_and_scores(monkeypatch):

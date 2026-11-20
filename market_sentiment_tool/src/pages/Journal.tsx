@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 import BacktestsTab from "@/components/BacktestsTab";
-import JournalSports from "@/components/JournalSports";
 import { LeagueTable } from "@/components/LeagueTable";
 import { ModelCards } from "@/components/ModelCards";
 import { SkillOverTime } from "@/components/SkillOverTime";
@@ -42,7 +41,7 @@ function writeShowAll(value: boolean): void {
  * Nothing here computes a score: the server does, and `lib/league.ts` only changes the sign of the gap.
  */
 
-type Tab = "models" | "league" | "time" | "weather" | "sports" | "waiting" | "backtests";
+type Tab = "models" | "league" | "time" | "weather" | "waiting" | "backtests";
 
 function Number_({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
@@ -90,7 +89,7 @@ export default function Journal() {
   const allRows = viewRows(data.forecasters);
   const fullCount = allRows.length;
 
-  // Filter only for Models and Journal tabs; Waiting, Over time, Weather, Sports, Backtests
+  // Filter only for Models and Journal tabs; Waiting, Over time, Weather, Backtests
   // and header numbers use all rows.
   const filteredRows = showAll
     ? allRows
@@ -122,7 +121,6 @@ export default function Journal() {
     ["league", "Journal"],
     ["time", "Over time"],
     ["weather", "Weather"],
-    ["sports", "Sports"],
     ["waiting", `Waiting (${waiting.length})`],
     ["backtests", "Backtests"],
   ];
@@ -192,7 +190,6 @@ export default function Journal() {
 
       <div className={tab === "weather" ? "" : "hidden"}><WeatherPanel /></div>
 
-      <div className={tab === "sports" ? "" : "hidden"}><JournalSports scores={data.forecasters} /></div>
 
       {/* Mounted only when open: its text is a second board, and the page's word
           budget counts what is mounted. */}
