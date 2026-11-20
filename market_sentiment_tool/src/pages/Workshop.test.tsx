@@ -73,7 +73,7 @@ describe("save-by-choice", () => {
 
 describe("workshop copy", () => {
   it("says each claim in plain words", () => {
-    expect(claimLabel("ballast")).toMatch(/loses less than SPY/);
+    expect(claimLabel("ballast")).toMatch(/equal-beta SPY-plus-cash mix/);
     expect(conditionText(SPEC.when as never)).toBe("DGS10 change over 63 trading days > 0.25");
     expect(conditionText(null)).toBe("always");
   });
