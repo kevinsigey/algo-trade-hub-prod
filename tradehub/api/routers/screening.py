@@ -149,8 +149,15 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
     row = screen_store.get_screen(supabase, screen_id)
     if row is None:
         raise HTTPException(status_code=404, detail="no such screen")
+    # The marker is written right after the idea is created, so an interrupted
+    # handoff (a write failing midway) resumes that same idea on retry instead
+    # of creating a second one (CodeRabbit on #575). Only a finished handoff --
+    # the idea tracking -- is "already promoted".
+    resumed = None
     if row.get("promoted_idea_id"):
-        raise HTTPException(status_code=409, detail="this screen already promoted to an idea")
+        resumed = workshop_store.get_idea(supabase, row["promoted_idea_id"])
+        if resumed is None or resumed["idea"].get("tracked_at"):
+            raise HTTPException(status_code=409, detail="this screen already promoted to an idea")
     last_run = row.get("last_run") or {}
     survivors = last_run.get("survivors") or []
     if not survivors:
@@ -161,10 +168,18 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
              f"its {len(survivors)} survivors as a fixed equal-weight basket -- {', '.join(survivors)}. "
              f"The screen's exact spec is preserved on the screen record; any re-screen is a new idea. "
              f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))}")
-    idea = workshop_store.create_idea(supabase, title, plain)
-    idea_id = idea["id"]
+    if resumed is None:
+        idea_id = workshop_store.create_idea(supabase, title, plain)["id"]
+        screen_store.set_promoted(supabase, screen_id, idea_id)
+        saved = []
+    else:
+        idea_id = resumed["idea"]["id"]
+        saved = workshop_store.saved_only(resumed["runs"])
     spec = IdeaSpec.model_validate({"title": title, "hold": survivors,
                                     "claim": "beats_benchmark", "benchmark": "SPY"})
+    if saved:  # the earlier attempt already ran and saved: reuse it, never a second run
+        run, result = saved[-1], saved[-1]["result"]
+        return _finish_promotion(supabase, resumed["idea"], idea_id, run, result, survivors)
     try:
         prices = _api.with_rule_bars(spec, _api.workshop_closes(tickers_for(spec), spec.start), spec.start,
                                 bars_fn=_api.workshop_bars)
@@ -175,9 +190,16 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
                       div_yields=_api.workshop_div_yields(spec, prices))
     run = workshop_store.insert_run(supabase, idea_id, 1, spec.model_dump(mode="json"), None, result)
     workshop_store.save_run(supabase, run["id"])
-    workshop_store.publish(supabase, idea_id)
-    workshop_store.track(supabase, idea_id, run["id"])
-    screen_store.set_promoted(supabase, screen_id, idea_id)
+    return _finish_promotion(supabase, (resumed or {}).get("idea") or {}, idea_id, run, result, survivors)
+
+
+def _finish_promotion(supabase, idea: dict, idea_id: int, run: dict, result: dict,
+                      survivors: list[str]) -> dict:
+    """Publish and track, skipping whichever an interrupted attempt already did."""
+    if not idea.get("published_at"):
+        workshop_store.publish(supabase, idea_id)
+    if not idea.get("tracked_at"):
+        workshop_store.track(supabase, idea_id, run["id"])
     return {"idea_id": idea_id, "run_id": run["id"], "verdict": result["verdict"],
             "survivors": survivors}
 

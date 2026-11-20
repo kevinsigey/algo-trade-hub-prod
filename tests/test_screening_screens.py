@@ -129,3 +129,38 @@ def test_promote_builds_a_tracking_basket_idea(client, monkeypatch):
     assert fake.store["screens"][0]["promoted_idea_id"] == body["idea_id"]
     again = c.post(f"/api/screening/screens/{screen['id']}/promote")
     assert again.status_code == 409  # set-once
+
+
+def test_an_interrupted_promotion_resumes_the_same_idea(client, monkeypatch):
+    # CodeRabbit on #575: if a write fails midway (here: tracking), a retry
+    # must finish the original handoff, not create a second idea.
+    from tradehub.workshop import store as workshop_store
+
+    c, fake = client
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: object())
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, closes, start, bars_fn=None: closes)
+    monkeypatch.setattr(main, "rule_series", lambda spec, start, fred=None, analyst_fn=None: {})
+    monkeypatch.setattr(main, "workshop_div_yields", lambda spec, prices: {})
+    runs = []
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: runs.append(1) or {"verdict": "PASS", "data_end": "2026-10-29"})
+    real_track = workshop_store.track
+
+    def flaky_track(*a, **k):
+        raise RuntimeError("database hiccup")
+
+    monkeypatch.setattr(workshop_store, "track", flaky_track)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass  # TestClient re-raises the server error
+    assert len(fake.store["ideas"]) == 1 and not fake.store["ideas"][0].get("tracked_at")
+    assert fake.store["screens"][0]["promoted_idea_id"] == fake.store["ideas"][0]["id"]
+
+    monkeypatch.setattr(workshop_store, "track", real_track)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert len(fake.store["ideas"]) == 1                 # no second idea
+    assert len(fake.store["idea_runs"]) == 1 and len(runs) == 1  # no second run
+    assert fake.store["ideas"][0]["tracked_at"] and fake.store["ideas"][0]["published_at"]
+    assert c.post(f"/api/screening/screens/{screen['id']}/promote").status_code == 409
