@@ -195,13 +195,10 @@ def _lanes(live_version: str) -> list[dict]:
 # -- reads --------------------------------------------------------------------
 
 def _select(supa, table: str, filters: dict, order: str | None = None,
-            desc: bool = False, limit: int = 1000,
-            null: tuple[str, ...] = ()) -> list[dict]:
+            desc: bool = False, limit: int = 1000) -> list[dict]:
     query = supa.table(table).select("*")
     for col, val in filters.items():
         query = query.eq(col, val)
-    for col in null:  # in the query, so the limit applies after the filter
-        query = query.is_(col, "null")
     if order:
         query = query.order(order, desc=desc)
     rows = query.limit(limit).execute().data or []
@@ -362,14 +359,27 @@ def _observe_prod(supa, lane: dict, d: dict, base_row: dict,
             f"prod observe {base_row['target']}: {exc}")
 
 
+def _unsettled_would_fills(supa, page: int = 1000) -> list[dict]:
+    """Every would_fill row still without an outcome, newest first, read in
+    pages: settled rows are excluded in the query, and paging means a run of
+    1,000 newer rows that cannot settle yet never hides an older one
+    (CodeRabbit on #560)."""
+    out: list[dict] = []
+    while True:
+        rows = (supa.table(PROD_FILLS).select("*").eq("status", "would_fill")
+                .is_("outcome", "null").order("created_at", desc=True)
+                .range(len(out), len(out) + page - 1).execute().data) or []
+        out.extend(rows)
+        if len(rows) < page:
+            return out
+
+
 def _settle_prod_fills(supa, tracked: dict, now: datetime,
                        summary: dict) -> None:
     """Settle would_fill rows whose window outcome has landed, at the
     recorded would-have price, through the rule's own fee-netted pnl --
     the same settlement the shadow record gets."""
-    for r in _select(supa, PROD_FILLS, {"status": "would_fill"},
-                     order="created_at", desc=True, limit=1000,
-                     null=("outcome",)):
+    for r in _unsettled_would_fills(supa):
         if r.get("outcome") is not None or r.get("would_price") is None:
             continue
         d = tracked.get(r["target"])

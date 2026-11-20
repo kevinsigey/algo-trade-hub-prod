@@ -338,3 +338,23 @@ def test_a_settlement_failure_does_not_stop_demo_placement(prod, monkeypatch):
     out = kd.run_once(db, FakePortfolio(), NOW)
     assert out["placed"] == 1
     assert any("prod settle" in e for e in out["errors"])
+
+
+def test_settle_pages_past_1000_newer_rows_that_cannot_settle_yet(prod):
+    # CodeRabbit on #560: 1,000 newer unsettled rows whose windows have not
+    # resolved must not hide an older row that can settle.
+    pending = [{"id": i + 2, "series": kd.SERIES, "target": f"kalshi:WAIT-{i}",
+                "gate_version": "v1", "ticker": "WAIT", "side": "yes",
+                "would_price": 0.38, "contracts": 1, "status": "would_fill",
+                "outcome": None, "created_at": (NOW + timedelta(minutes=1)).isoformat()}
+               for i in range(1000)]
+    older = {"id": 1, "series": kd.SERIES, "target": TARGET,
+             "gate_version": "v1", "ticker": TICKER, "side": "yes",
+             "would_price": 0.38, "contracts": 13, "status": "would_fill",
+             "outcome": None, "created_at": (NOW - timedelta(days=1)).isoformat()}
+    db = _seeded(DB())
+    db.db[kd.PROD_FILLS] = [older] + pending
+    db.db[kd.DECISIONS] = [decision(outcome=1)]
+    out = kd.run_once(db, FakePortfolio(), NOW)
+    assert out["prod_settled"] == 1
+    assert _fills(db)[0]["outcome"] == 1
