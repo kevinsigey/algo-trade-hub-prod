@@ -34,6 +34,7 @@ from tradehub.journal.forecasters.oil_geo import build_oil_geo_shadow
 from tradehub.journal.forecasters.oil_geo2 import build_oil_geo2
 from tradehub.journal.forecasters.fifteen_min import build_fifteen_min
 from tradehub.journal.forecasters.oil_hl import build_oil_hl_shadow
+from tradehub.journal.forecasters.oil_v7 import build_oil_v7_shadow
 from tradehub.journal.forecasters.ppi import build_ppi
 from tradehub.journal.forecasters.unrate_level import build_unrate
 from tradehub.journal.forecasters.sentiment import SentimentMeter
@@ -120,6 +121,10 @@ FORECASTERS: list[Forecaster] = [
     # v1 with only the anchor swapped for the live perp, to test whether the delayed CL=F price is why v1
     # trails the market. It's why: on the same rows v4 matches Kalshi and v1 doesn't (2026-11-05).
     *build_oil_hl_shadow(_LIVE),
+    # v7 (2026-11-19, action plan step 16): v4 with the spread from 1-minute realised
+    # volatility instead of the trailing settled-changes sigma, preregistered as a
+    # shadow (docs/superpowers/specs/2026-11-19-oil-hourly-v7-rv-shadow-prereg.md).
+    *build_oil_v7_shadow(_LIVE),
     # 15-minute direction (2026-11-04, Kevin's queue): KXWTI15M / KXBRENT15M /
     # KXNATGAS15M shadows on the Hyperliquid tape -- the drift-scaled walk in
     # engines/fifteen_min.py, preregistered; the journal's hourly phase samples
@@ -215,7 +220,7 @@ FORECASTERS += [MarketShrunk(f, get_client) for f in list(FORECASTERS)
 _RETIRED_FAMILIES = {"weather_high", "weather_low", "ercot_peak", "gas", "oil_wti", "oil", "oil_brent",
                      "brent", "natgas_daily", "sports_nfl_spread", "sports_nfl_total",
                      "sports_cfb_spread", "sports_cfb_total"}
-_KEPT_HOURLY = "wti-hourly-v4-hl-shadow"
+_KEPT_HOURLY = {"wti-hourly-v4-hl-shadow", "wti-hourly-v7-rv-shadow"}
 
 
 def _retired(f: Forecaster) -> bool:
@@ -223,7 +228,7 @@ def _retired(f: Forecaster) -> bool:
     if name.endswith("_cal") or name == "oil_wti_hourly_cautious":
         return True
     if name == "oil_wti_hourly":
-        return getattr(f, "version", None) != _KEPT_HOURLY
+        return getattr(f, "version", None) not in _KEPT_HOURLY
     core = name
     for prefix in ("kalshi_implied_", "baseline_climatology_", "baseline_persistence_"):
         core = core.removeprefix(prefix)
