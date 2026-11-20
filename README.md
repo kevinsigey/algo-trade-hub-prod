@@ -71,8 +71,14 @@ Secrets live in `.env` files and in the VPS stack's environment — never in
 git. The API needs the Supabase URL and service-role key, plus provider
 keys for the data sources a runner uses (Kalshi, Alpaca paper, FRED, …).
 SEC EDGAR access requires `SEC_CONTACT_EMAIL` to be set; the code refuses
-to call EDGAR without it. The frontend needs no secrets: it reads
-everything from the API.
+to call EDGAR without it.
+
+The frontend reads application data from the API, but signs in through
+Supabase Auth in the browser, so its client needs the project's public
+settings in `market_sentiment_tool/.env`: `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` (or `VITE_SUPABASE_PUBLISHABLE_KEY`). Both are
+public by design. The service-role key stays server-side and never goes in
+a `VITE_` variable.
 
 ## VPS deployment
 
