@@ -13,6 +13,12 @@ cold start begins with history instead of an empty cache; the stream
 then owns every minute from connect time forward. Seeding is
 fail-soft: an unreachable archive never blocks the stream.
 
+Reconnect gaps are lost minutes, and they are said out loud: each one
+is logged with its start and end and recorded in the cache payload
+(`gaps`) for the shadow's eval to report. The reconnect backoff
+carries jitter and resets only after a stream has stayed up for
+STABLE_SECONDS -- a connect that dies instantly earns no reset.
+
 Run: python -m tradehub.scripts.binance_ws_collect
 """
 
@@ -24,6 +30,7 @@ import fcntl
 import io
 import json
 import os
+import random
 import urllib.request
 import zipfile
 from datetime import UTC, datetime, timedelta
@@ -69,15 +76,62 @@ def _restored_klines(path: str) -> dict:
         return {}
 
 
+STABLE_SECONDS = 60  # a stream that lives this long earns a backoff reset
+_GAP_CAP = 200  # recorded reconnect gaps kept in the cache payload
+
+
+def _restored_gaps(path: str) -> list[dict]:
+    """The gap record a previous run saved in the cache payload, or []
+    -- the same fail-soft shape as _restored_klines."""
+    if not os.path.exists(path):
+        return []
+    try:
+        payload = json.loads(open(path).read())
+        if not isinstance(payload, dict) or payload.get("symbol") != tape.SYMBOL:
+            return []
+        return [g for g in payload.get("gaps") or [] if isinstance(g, dict)]
+    except (ValueError, OSError, TypeError):
+        return []
+
+
+def _note_gap(state: dict, start: datetime, end: datetime) -> float:
+    """Record one reconnect gap (Claude's cleanup, 2026-11-17): the
+    minutes the stream was down are minutes the tape does not have, so
+    each gap is logged with its start and end and kept in the state
+    (and thus the cache payload) for the shadow's eval to report.
+    Returns the gap's minutes."""
+    minutes = max(0.0, (end - start).total_seconds() / 60.0)
+    gaps = state.setdefault("gaps", [])
+    gaps.append({"start": start.isoformat(), "end": end.isoformat()})
+    del gaps[:-_GAP_CAP]
+    print(f"binance_ws_collect: gap {start.isoformat()} .. "
+          f"{end.isoformat()} ({minutes:.1f} min)", flush=True)
+    return minutes
+
+
+def _next_backoff(current: float, *, stable: bool) -> float:
+    """The backoff after a drop: reset only when the stream proved
+    stable (Claude's cleanup, 2026-11-17) -- a connect that dies
+    instantly must not earn the reset the old code granted on connect."""
+    return 5 if stable else min(current * 2, 60)
+
+
+def _sleep_seconds(backoff: float) -> float:
+    """Backoff with jitter, so a fleet of drops never resynchronizes."""
+    return backoff * random.uniform(0.75, 1.25)
+
+
 async def run(path: str) -> None:
     state = tape.empty_state()
     state["klines"] = _restored_klines(path)
+    state["gaps"] = _restored_gaps(path)
     _seed_from_vision(state, datetime.now(UTC))
     backoff = 5
+    down_since: datetime | None = None
     while True:
+        connected_at = datetime.now(UTC)
         try:
             async with websockets.connect(STREAM, max_size=2**22) as ws:
-                backoff = 5
                 last_flush = asyncio.get_event_loop().time()
                 while True:
                     try:
@@ -86,6 +140,10 @@ async def run(path: str) -> None:
                         raw = None
                     now = datetime.now(UTC)
                     if raw is not None:
+                        if down_since is not None:
+                            _note_gap(state, down_since, now)
+                            down_since = None
+                            tape.write_cache(path, state, now)
                         try:
                             tape.apply_kline(state, json.loads(raw), now)
                         except (ValueError, TypeError):
@@ -95,8 +153,11 @@ async def run(path: str) -> None:
                         tape.write_cache(path, state, now)
                         last_flush = tick
         except Exception:  # noqa: BLE001 -- reconnect forever; staleness shows in the reader
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+            if down_since is None:
+                down_since = datetime.now(UTC)
+            stable = (datetime.now(UTC) - connected_at).total_seconds() >= STABLE_SECONDS
+            await asyncio.sleep(_sleep_seconds(backoff))
+            backoff = _next_backoff(backoff, stable=stable)
 
 
 def main() -> int:

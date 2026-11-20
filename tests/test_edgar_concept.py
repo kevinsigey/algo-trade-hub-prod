@@ -65,6 +65,10 @@ def test_duration_concept_takes_the_full_year_row_latest_filed():
 
 
 def test_edgar_concept_end_to_end_on_the_sbux_payload(tmp_path, monkeypatch):
+    # The SEC header is built from SEC_CONTACT_EMAIL (tradehub.sec_ua);
+    # without it the fetch fails soft to None and the end-to-end value
+    # never lands -- the stubbed transport still needs the config.
+    monkeypatch.setenv("SEC_CONTACT_EMAIL", "sec-contact@example.com")
     payloads = {
         "company_tickers.json": {"0": {"ticker": "SBUX", "cik_str": 829224}},
         "CashAndCashEquivalentsAtCarryingValue.json": {
