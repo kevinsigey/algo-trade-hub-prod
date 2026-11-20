@@ -85,15 +85,17 @@ from zoneinfo import ZoneInfo
 
 import time
 
-from tradehub import fifteen_candidates, fifteen_tracking
+from tradehub import fifteen_candidates, fifteen_tracking, kalshi_prod_book
 from tradehub import oil_fifteen_rule as rule
 from tradehub.core.kalshi_portfolio import NotDemoHostError
+from tradehub.fifteen_volregime import clustered_low95
 from tradehub.journal.kalshi_linked import ticker_of
 from tradehub.markets import quote_cents
 
 SERIES = "KXNATGAS15M"
 GAS_SERIES = tuple(s for s in rule.SERIES if s[0] == "natgas_15m")
 ORDERS = "kalshi_demo_orders"
+PROD_FILLS = "kalshi_prod_paper_fills"
 DECISIONS = rule.DECISIONS_TABLE
 TICKS = fifteen_tracking.TICKS_TABLE
 ALERTS_TABLE = "watcher_alerts"
@@ -258,6 +260,171 @@ def _live_cross(portfolio, ticker: str, side: str,
     return no_ask, edges[1]
 
 
+class _ProdBook:
+    """The `_live_cross` surface over one production market read: the
+    cross rule, the edge recomputation and the quote mapping are the
+    demo's own; only the book differs. `get_market_data` is a pure
+    function of the frozen read -- this adapter has no order surface
+    at all, and the reader behind it (kalshi_prod_book) can only GET."""
+
+    def __init__(self, market: dict):
+        self._market = market
+
+    def get_market_data(self, ticker: str) -> dict:
+        return {"market": self._market}
+
+
+def _observe_prod(supa, lane: dict, d: dict, base_row: dict,
+                  balance: float, prod_keys: set, summary: dict) -> None:
+    """The would-have-filled record for one decision (Kevin's ruling,
+    2026-11-17): read the PRODUCTION book for the decision's ticker and
+    record what the real book would have done -- the same cross rule,
+    edge bar and slippage cap as the demo cross, the same 1% sizing at
+    the lane's pct, settled later from the window's outcome.
+    Observation only: nothing here places, and a failed or empty
+    production read records nothing (an unreadable book is no
+    measurement). One record per (series, target, gate_version): the
+    first observation stands, so later passes skip it via prod_keys."""
+    key = (SERIES, base_row["target"], lane["gate_version"])
+    if prod_keys is None or key in prod_keys:
+        return
+    try:
+        market = kalshi_prod_book.read_market(base_row["ticker"])
+        if market is None:
+            return
+        quotes = quote_cents(market)
+        if all(v is None for v in quotes.values()):
+            # An incomplete response (no readable quote at all) is not a
+            # measured book: record nothing, the same as an unreadable book,
+            # rather than a no_cross row claiming an empty side. A readable
+            # book with an empty side is still no_cross below.
+            return
+
+        def dollars(field: str) -> float | None:
+            cents = quotes.get(field)
+            return None if cents is None else cents / 100.0
+
+        row: dict[str, Any] = {
+            "series": SERIES, "target": base_row["target"],
+            "gate_version": lane["gate_version"],
+            "ticker": base_row["ticker"], "side": d["side"],
+            "model_prob": d.get("model_prob"),
+            "frozen_quote": base_row.get("frozen_quote"),
+            "prod_yes_bid": dollars("yes_bid"),
+            "prod_yes_ask": dollars("yes_ask"),
+            "prod_no_bid": dollars("no_bid"),
+            "prod_no_ask": dollars("no_ask"),
+            "ask_size": None, "would_price": None, "contracts": None,
+            # Claude's review of the prod-book PR: an empty side (the
+            # cross finds nothing) is its own status, not a no-edge --
+            # "no_edge_at_ask" is reserved for a real cross whose edge
+            # falls under the bar (set below).
+            "status": "no_cross",
+            "window_close": base_row["window_close"],
+        }
+        cross = _live_cross(_ProdBook(market), base_row["ticker"],
+                            d["side"], d.get("model_prob"))
+        if cross is not None:
+            price, edge = cross
+            row["would_price"] = price
+            contracts = size_contracts(balance, price, lane["pct"])
+            row["contracts"] = contracts
+            bar = (lane["min_edge"] if lane["min_edge"] is not None
+                   else rule.MIN_EDGE)
+            frozen = base_row.get("frozen_quote")
+            if edge < bar - 1e-9:
+                row["status"] = "no_edge_at_ask"
+            elif frozen is not None and price - float(frozen) > max_slippage():
+                row["status"] = "slippage_cap"
+            else:
+                size = kalshi_prod_book.read_ask_size(
+                    base_row["ticker"], d["side"], price)
+                if size is None:
+                    # Unmeasured depth is not an observation: no row, the
+                    # same as an unreadable book, so it neither takes the key
+                    # as a rejection nor counts in the fill rate (CodeRabbit
+                    # on #560). A pass that re-reads the decision (a pending
+                    # claim) can still record it.
+                    return
+                row["ask_size"] = size
+                # A measured-but-small book is thin, only a measured book
+                # that covers the size is would_fill (unmeasured returned above).
+                row["status"] = ("thin" if size < contracts
+                                 else "would_fill")
+        supa.table(PROD_FILLS).insert(row).execute()
+        prod_keys.add(key)
+        summary["prod_recorded"] += 1
+    except Exception as exc:  # noqa: BLE001 -- observation never breaks the pass
+        summary["errors"].append(
+            f"prod observe {base_row['target']}: {exc}")
+
+
+def _unsettled_would_fills(supa, page: int = 1000) -> list[dict]:
+    """Every would_fill row still without an outcome, newest first, read in
+    pages: settled rows are excluded in the query, and paging means a run of
+    1,000 newer rows that cannot settle yet never hides an older one
+    (CodeRabbit on #560)."""
+    out: list[dict] = []
+    while True:
+        rows = (supa.table(PROD_FILLS).select("*").eq("status", "would_fill")
+                .is_("outcome", "null").order("created_at", desc=True)
+                .range(len(out), len(out) + page - 1).execute().data) or []
+        out.extend(rows)
+        if len(rows) < page:
+            return out
+
+
+def _settle_prod_fills(supa, tracked: dict, now: datetime,
+                       summary: dict) -> None:
+    """Settle would_fill rows whose window outcome has landed, at the
+    recorded would-have price, through the rule's own fee-netted pnl --
+    the same settlement the shadow record gets."""
+    for r in _unsettled_would_fills(supa):
+        if r.get("outcome") is not None or r.get("would_price") is None:
+            continue
+        d = tracked.get(r["target"])
+        outcome = d.get("outcome") if d else None
+        if outcome is None:
+            continue
+        pnl = round(int(r.get("contracts") or 0)
+                    * rule.pnl(r["side"], float(r["would_price"]),
+                               int(outcome)), 4)
+        (supa.table(PROD_FILLS)
+         .update({"outcome": int(outcome), "pnl": pnl,
+                  "settled_at": _iso(now)})
+         .eq("id", r["id"]).execute())
+        summary["prod_settled"] += 1
+
+
+def _dead_book_series(rows: list[dict],
+                      now: datetime) -> tuple[str, int] | None:
+    """(series, count) when every demo decision outcome recorded in
+    today's ET session for the series is a live_ask_unavailable skip:
+    the demo exchange's book read as empty all session (Kevin's ruling,
+    2026-11-17). Any other terminal outcome -- a placement, a cap, a
+    different skip -- breaks the read: the book was reachable then."""
+    day = now.astimezone(ET).date()
+
+    def created_day(r: dict):
+        try:
+            return _dt(r["created_at"]).astimezone(ET).date()
+        except Exception:  # noqa: BLE001 -- an unstamped row is not today's
+            return None
+
+    todays = [r for r in rows if r.get("series") == SERIES
+              and created_day(r) == day]
+    unavail = [r for r in todays if r["status"] == "skipped_no_depth"
+               and r.get("skip_reason") == "live_ask_unavailable"]
+    if not unavail:
+        return None
+    unavail_ids = {r.get("id") for r in unavail}
+    others = [r for r in todays if r.get("id") not in unavail_ids
+              and r["status"] != "pending"]
+    if others:
+        return None
+    return SERIES, len(unavail)
+
+
 def _order_count(order: dict, key: str) -> int | None:
     """A V2 order count (fixed-point string or number), or None when
     the response does not carry it."""
@@ -283,6 +450,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         "gate_version": None, "candidates": 0, "other_gate_versions": 0,
         "placed": 0, "adopted": 0, "skipped_cap": 0, "skipped_no_depth": 0,
         "failed": 0, "cancelled": 0, "settled": 0, "decision_mismatch": 0,
+        "prod_recorded": 0, "prod_settled": 0,
         "errors": [],
     }
     try:
@@ -300,6 +468,21 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     tracked = _tracked_decisions(supa)
     summary["decision_mismatch"] = len(decision_mismatches(rows, tracked))
     _reconcile(supa, portfolio, rows, now, summary, tracked)
+    # The production-book record is observation only: a failure here must
+    # never stop the demo lanes below (CodeRabbit on #560). Unsettled rows
+    # keep outcome NULL and are picked up again next pass.
+    try:
+        _settle_prod_fills(supa, tracked, now, summary)
+    except Exception as exc:  # noqa: BLE001
+        summary["errors"].append(f"prod settle: {exc}")
+    try:
+        prod_keys = {(r["series"], r["target"], r.get("gate_version"))
+                     for r in _select(supa, PROD_FILLS, {},
+                                      order="created_at", desc=True,
+                                      limit=1000)}
+    except Exception as exc:  # noqa: BLE001
+        summary["errors"].append(f"prod keys: {exc}")
+        prod_keys = None  # unknown: skip observing this pass rather than double-record
 
     # Fresh gated gas buys for windows still open, decided now exactly as
     # the record pass will record them after the close, stamped with the
@@ -333,14 +516,41 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                         "skipped_cap": 0, "skipped_no_depth": 0, "failed": 0}
         summary["lanes"][lane["gate_version"]] = lane_summary
         _trade_lane(supa, portfolio, now, lane, lane_fresh, rows, by_key,
-                    day_start, summary, lane_summary)
+                    day_start, summary, lane_summary, prod_keys)
+
+    # Dead-book alert (Kevin's ruling, 2026-11-17): if the whole ET
+    # session's decisions for the series skipped on an unavailable live
+    # ask, the demo book is empty -- say so once per series per session
+    # (the alert's dedupe key carries the session date). Read fresh:
+    # this pass's own skips count.
+    rows_after = _select(supa, ORDERS, {}, order="created_at",
+                         desc=True, limit=500)
+    dead = _dead_book_series(rows_after, now)
+    if dead is not None:
+        series_name, count = dead
+        session = now.astimezone(ET).date().isoformat()
+        _alert_drop(
+            supa, target=f"dead-book:{series_name}:{session}",
+            version=None, event="dead_book",
+            title=f"Kalshi demo book empty: {series_name}",
+            body=(f"Every demo decision so far in the {session} ET "
+                  f"session for {series_name} ({count}) skipped with "
+                  "live_ask_unavailable: the demo exchange's book for "
+                  "the series is empty, while production quotes "
+                  "normally. The lane keeps deciding and skipping "
+                  "cleanly, and the would-have-filled record against "
+                  "the production book carries the measurement until "
+                  "the demo book returns. Demo account; nothing was "
+                  "placed."),
+            evidence={"series": series_name, "session_date": session,
+                      "count": count})
     return summary
 
 
 def _trade_lane(supa, portfolio, now: datetime, lane: dict,
                 fresh: list[dict], rows: list[dict], by_key: dict,
                 day_start: datetime, summary: dict,
-                lane_summary: dict) -> None:
+                lane_summary: dict, prod_keys: set) -> None:
     """One lane's placements for this pass. Daily-cap state is the
     lane's own: only rows stamped with the lane's gate_version count
     toward its caps, tracked in memory as this pass places."""
@@ -401,6 +611,9 @@ def _trade_lane(supa, portfolio, now: datetime, lane: dict,
             summary["errors"].append("balance unavailable; placements paused this pass")
             _balance_failure(supa, existing, base_row, summary, lane_summary, now)
             continue
+        # The would-have-filled observation rides the same moment and
+        # the same balance read; it never affects the placement below.
+        _observe_prod(supa, lane, d, base_row, balance, prod_keys, summary)
         # Cross-at-placement (Kevin's call, 2026-11-14): never rest at
         # the frozen quote. Re-read the live book, re-validate the
         # decision's edge at the live ask against the lane's bar, and
@@ -1073,6 +1286,48 @@ def _lane_summaries(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _prod_lane_summaries(supa) -> list[dict]:
+    """Per-lane would-have-filled record against the production book:
+    how many decisions were observed, how many the real book would
+    have filled, and the settled fills' per-contract P&L with its
+    day-clustered low95 in cents (the house estimator, clusters keyed
+    by series + ET settlement day)."""
+    rows = _select(supa, PROD_FILLS, {}, order="created_at",
+                   desc=True, limit=1000)
+    by_version: dict[str, list[dict]] = {}
+    for r in rows:
+        by_version.setdefault(r.get("gate_version") or "unstamped",
+                              []).append(r)
+    out = []
+    for version, lane_rows in by_version.items():
+        fills = [r for r in lane_rows if r["status"] == "would_fill"]
+        settled = [r for r in fills if r.get("pnl") is not None]
+        contracts = sum(int(r.get("contracts") or 0) for r in settled)
+        pnl = sum(float(r["pnl"]) for r in settled)
+        # One item per contract, so the low95's mean is the contract-weighted
+        # pnl_per_contract the headline shows (Claude's #560 review, :1277).
+        items = [((r["series"], _dt(r["window_close"]).astimezone(ET)
+                   .date().isoformat()),
+                  float(r["pnl"]) / int(r["contracts"]) * 100.0)
+                 for r in settled if int(r.get("contracts") or 0) > 0
+                 for _ in range(int(r["contracts"]))]
+        low = clustered_low95(items) if items else None
+        out.append({
+            "gate_version": version,
+            "recorded": len(lane_rows),
+            "would_fill": len(fills),
+            "fill_rate": (round(len(fills) / len(lane_rows), 4)
+                          if lane_rows else None),
+            "settled": len(settled),
+            "pnl_per_contract": (round(pnl / contracts, 4)
+                                 if contracts else None),
+            "low95_cents": None if low is None else round(low, 2),
+        })
+    out.sort(key=lambda lane: (lane["gate_version"] == LANE_VERSION,
+                               lane["gate_version"]))
+    return out
+
+
 def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
     rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=500)
     rows_by_ticker = {r["ticker"]: r for r in rows
@@ -1125,6 +1380,9 @@ def build_report(supa, portfolio, now: datetime, clock=time.monotonic) -> dict:
         "positions": live["positions"],
         "positions_unavailable": bool(live.get("positions_unavailable")),
         "lanes": _lane_summaries(rows),
+        "health": ([f"demo book empty: {_dead_book_series(rows, now)[0]}"]
+                   if _dead_book_series(rows, now) else []),
+        "prod_book": _prod_lane_summaries(supa),
         "performance": {
             "demo_curve": demo_curve,
             "shadow_curve": shadow_curve,

@@ -182,6 +182,14 @@ export default function KalshiDemoBook() {
         <p className="text-xs text-slate-400">{data.note}</p>
       </div>
 
+      {data.health && data.health.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {data.health.map((line) => (
+            <p key={line} className="text-xs font-medium text-amber-300">{line}</p>
+          ))}
+        </div>
+      ) : null}
+
       {error ? (
         <p className="mt-2 text-sm text-rose-300">
           Refresh failed: {error} — showing the last report, as of {ctDateTime(data.as_of)}.
@@ -273,6 +281,39 @@ export default function KalshiDemoBook() {
               ))}
             </dl>
           ) : null}
+        </DashCard>
+
+        <DashCard title="Would have filled (real book)"
+                  value={data.prod_book ? data.prod_book.reduce((a, l) => a + l.would_fill, 0) : 0}
+                  hint="The same decisions crossed against the production Kalshi book at the decision moment — observation only, no orders"
+                  detail={data.prod_book && data.prod_book.length ? (
+                    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {data.prod_book.map((lane) => (
+                        <div key={lane.gate_version}>
+                          <dt className="truncate text-[11px] text-slate-500">{lane.gate_version}</dt>
+                          <dd className="text-xs text-slate-300">
+                            {lane.recorded} recorded · {lane.would_fill} would fill ({pct(lane.fill_rate)})<br />
+                            {lane.settled} settled · per contract {signed(lane.pnl_per_contract)}<br />
+                            low95 {lane.low95_cents == null ? "—" : `${lane.low95_cents.toFixed(1)}¢`}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : undefined}>
+          {data.prod_book && data.prod_book.length ? (
+            <dl className="space-y-1">
+              {data.prod_book.map((lane) => (
+                <div key={lane.gate_version} className="flex items-baseline justify-between gap-2 text-xs">
+                  <dt className="truncate text-slate-400">{lane.gate_version}</dt>
+                  <dd className="tabular-nums text-slate-200">
+                    {lane.would_fill}/{lane.recorded} · {pct(lane.fill_rate)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="text-xs text-slate-400">No production-book observations yet</p>
+          )}
         </DashCard>
       </div>
     </div>
