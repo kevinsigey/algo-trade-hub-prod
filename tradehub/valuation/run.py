@@ -15,6 +15,8 @@ import argparse
 import statistics
 from datetime import date, datetime, timezone
 
+import pandas as pd
+
 from tradehub.core.supabase_client import get_client
 from tradehub.screening.sources import DataStore
 from tradehub.valuation import engine, peers, store
@@ -117,6 +119,62 @@ def _peer_sales_multiple(ds: DataStore, ticker: str,
     if len(vals) < engine.MIN_PEERS:
         return None, len(vals), basis, group
     return round(statistics.median(vals), 4), len(vals), basis, group
+
+
+def _as_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _own_multiple(ds: DataStore, ticker: str, now: datetime) -> float | None:
+    """The name's own 5-year median multiple (step 10): for each of the
+    last five fiscal years, the trailing P/E at the fiscal year-end --
+    the last close on or before the period end over that year's diluted
+    EPS (EDGAR annual series). Five clean years or None: a missing,
+    non-positive or out-of-range year makes the name peer-only, as does
+    any read failure. The five years must be CONSECUTIVE (each period
+    end ~365 days after the last -- a skipped fiscal year would blend
+    two regimes into one median) and the newest must be under ~18
+    months old, or the name is peer-only (Claude's review)."""
+    try:
+        series = ds.edgar_annual_series(ticker, EDGAR_CONCEPTS["eps_diluted"])
+        if not series or len(series) < 5:
+            return None
+        recent = series[-5:]
+        ends = [_as_date(end) for end, _eps in recent]
+        if any(not 300 <= (b - a).days <= 440 for a, b in zip(ends, ends[1:])):
+            return None
+        if (now.date() - ends[-1]).days > 548:
+            return None
+        if any(float(eps) <= 0 for _end, eps in recent):
+            return None
+        # Reach back past the oldest fiscal year-end: a flat five years from
+        # today stops short of it for non-December fiscal years (#569 review).
+        years = (now.date() - ends[0]).days // 365 + 2
+        # Kevin's ruling on #569: the year-end close is the price that traded
+        # that day, not a dividend-adjusted one. A split after the oldest
+        # selected year-end leaves the EPS share basis unknown -- EDGAR's
+        # latest filing may or may not restate earlier years for it
+        # (CodeRabbit) -- so such a name is peer-only. Without one, the
+        # dividend-unadjusted close IS the traded price on every year-end.
+        closes, splits = ds.closes_with_splits(ticker, years)
+        if len(splits[splits.index > pd.Timestamp(ends[0])]):
+            return None
+        multiples = []
+        for period_end, eps in recent:
+            upto = closes[closes.index <= pd.Timestamp(_as_date(period_end))]
+            if upto.empty:
+                return None
+            multiple = float(upto.iloc[-1]) / float(eps)
+            if not 0 < multiple < 500:
+                return None
+            multiples.append(multiple)
+        return round(statistics.median(multiples), 4)
+    except Exception:
+        return None
 
 
 def _fundamentals(ds: DataStore, ticker: str) -> dict:
@@ -382,7 +440,8 @@ def compute(client, ds: DataStore, *, only: str | None = None,
             guided_peers=mates, fundamentals=fundamentals,
             now=now, tier="watch" if peers.in_watch_tier(ticker) else "open",
             sales_multiple=sales_mult, sales_count=sales_cnt,
-            sales_basis=sales_basis)
+            sales_basis=sales_basis,
+            own_multiple=_own_multiple(ds, ticker, now) if eps_anchor is not None else None)
         sheet["peer_group"] = group
         sheet["inputs"]["peer_members_basis"] = basis
         sheet["price_vendor"] = "Yahoo Finance"

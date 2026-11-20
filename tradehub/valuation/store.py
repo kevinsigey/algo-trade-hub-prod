@@ -35,7 +35,24 @@ def all_records(client) -> dict[str, list[dict]]:
     return out
 
 
+def _lift_multiple_fields(row: dict) -> dict:
+    """Step 10's own_multiple / multiple_basis have no columns of their
+    own; insert_sheet folds them into the inputs jsonb and every read
+    lifts them back to the sheet's top level, so served rows match the
+    engine's in-memory shape. Pre-step-10 rows lift to None."""
+    inputs = row.get("inputs")
+    if isinstance(inputs, dict):
+        if row.get("own_multiple") is None:
+            row["own_multiple"] = inputs.get("own_multiple")
+        if row.get("multiple_basis") is None:
+            row["multiple_basis"] = inputs.get("multiple_basis")
+    return row
+
+
 def insert_sheet(client, sheet: dict) -> None:
+    inputs = dict(sheet.get("inputs") or {})
+    inputs["own_multiple"] = sheet.get("own_multiple")
+    inputs["multiple_basis"] = sheet.get("multiple_basis")
     row = {
         "ticker": sheet["ticker"],
         "tier": sheet.get("tier", "open"),
@@ -58,7 +75,7 @@ def insert_sheet(client, sheet: dict) -> None:
         "falsifier": sheet.get("falsifier"),
         "directions": sheet.get("directions"),
         "fundamentals": sheet.get("fundamentals"),
-        "inputs": sheet.get("inputs"),
+        "inputs": inputs,
         "snapshot_id": sheet.get("snapshot_id"),
         "guard_rejections": sheet.get("guard_rejections") or [],
         "stale_reasons": sheet.get("stale_reasons") or [],
@@ -73,7 +90,7 @@ def latest_sheets(client) -> list[dict]:
             .order("computed_at", desc=True).execute().data) or []
     seen: dict[str, dict] = {}
     for r in rows:
-        seen.setdefault(r["ticker"], r)
+        seen.setdefault(r["ticker"], _lift_multiple_fields(r))
     return [seen[t] for t in sorted(seen)]
 
 
@@ -81,7 +98,7 @@ def latest_sheet(client, ticker: str) -> dict | None:
     rows = (client.table("valuation_fact_sheets").select("*")
             .eq("ticker", ticker).order("computed_at", desc=True)
             .limit(1).execute().data) or []
-    return rows[0] if rows else None
+    return _lift_multiple_fields(rows[0]) if rows else None
 
 
 # ── snapshots ────────────────────────────────────────────────────────────────
@@ -134,7 +151,8 @@ def latest_snapshot(client) -> dict | None:
 def snapshot_sheets(client, snapshot_id) -> list[dict]:
     rows = (client.table("valuation_fact_sheets").select("*")
             .eq("snapshot_id", snapshot_id).execute().data) or []
-    return sorted(rows, key=lambda r: r.get("ticker") or "")
+    return sorted((_lift_multiple_fields(r) for r in rows),
+                  key=lambda r: r.get("ticker") or "")
 
 
 def latest_snapshot_sheets(client) -> tuple[dict | None, list[dict]]:
@@ -152,7 +170,7 @@ def snapshot_sheet(client, snapshot_id, ticker: str) -> dict | None:
     rows = (client.table("valuation_fact_sheets").select("*")
             .eq("snapshot_id", snapshot_id).eq("ticker", ticker)
             .execute().data) or []
-    return rows[0] if rows else None
+    return _lift_multiple_fields(rows[0]) if rows else None
 
 
 # ── band history ─────────────────────────────────────────────────────────────

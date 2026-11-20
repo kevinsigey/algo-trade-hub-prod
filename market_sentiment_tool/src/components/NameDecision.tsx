@@ -79,7 +79,7 @@ export default function NameDecision({ ticker }: { ticker: string }) {
                   Peer group {know.peer.group} · multiple {know.peer.multiple ?? "—"}× · {know.peer.count ?? "—"} peers
                 </p>
               )}
-              {know.stale && <p className="text-amber-300">This sheet is stale — the zone is held.</p>}
+              {know.stale && <p className="text-amber-300">This fact sheet is stale — the zone is held.</p>}
             </>
           ) : (
             <p className="text-slate-400">No guidance fact sheet on record for this name.</p>
@@ -140,7 +140,7 @@ export default function NameDecision({ ticker }: { ticker: string }) {
               {view.missing.map((m, i) => <li key={i}>{m}</li>)}
             </ul>
           ) : (
-            <p className="text-slate-400">Nothing named — sheet, systems, and judgment are all on record.</p>
+            <p className="text-slate-400">Nothing named — fact sheet, systems, and judgment are all on record.</p>
           )}
         </Block>
       </div>
