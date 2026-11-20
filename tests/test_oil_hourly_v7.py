@@ -31,11 +31,8 @@ def _candles(diffs, start=None):
     return out
 
 
-def _horizon(entry, now=NOW):
-    return max(0, int((entry.cutoff_at - now).total_seconds()))
 
-
-def _fc(candles, price=101.20, anchor_at=None, live_price=999.0, v4_offset_s=0, v4_horizon="same"):
+def _fc(candles, price=101.20, anchor_at=None, live_price=999.0, v4_offset_s=0.0, v4_decided="same"):
     # The anchor is v4's frozen observation (Claude's review: the pair
     # must share one anchor). The forecaster's own live read is a
     # different number on purpose -- v7 must never price off it.
@@ -48,8 +45,8 @@ def _fc(candles, price=101.20, anchor_at=None, live_price=999.0, v4_offset_s=0, 
                               anchor_fn=lambda target: None)
     entries = fc.targets(NOW)
     assert len(entries) == 1
-    h = None if v4_horizon is None else _horizon(entries[0]) + v4_offset_s
-    fc._anchor_fn = lambda target: (anchor, h)
+    d = None if v4_decided is None else (NOW + timedelta(seconds=v4_offset_s)).isoformat()
+    fc._anchor_fn = lambda target: (anchor, d)
     return fc, entries[0]
 
 
@@ -118,7 +115,7 @@ def test_forecast_is_a_gap_when_the_tape_is_dead_or_thin():
                               candles_fn=boom,
                               anchor_fn=lambda target: None)
     entries = fc.targets(NOW)
-    fc._anchor_fn = lambda target: (anchor, _horizon(entries[0]))
+    fc._anchor_fn = lambda target: (anchor, NOW.isoformat())
     assert fc.forecast(entries[0], NOW) is None
 
     fc2, entry2 = _fc(_candles([0.02] * 60))         # 60 diffs < the 120 floor
@@ -172,12 +169,12 @@ def test_v7_pairs_only_with_a_v4_row_frozen_on_the_same_pass():
     # CodeRabbit on #564: v7 could freeze on a later pass than v4, so the pair
     # would mix decision times (minutes-to-close, RV window, horizon).
     candles = _candles([0.01] * 200)
-    fc, entry = _fc(candles)                            # same pass: same `now`, same horizon
+    fc, entry = _fc(candles)                            # same pass: the same `now`
     out = fc.forecast(entry, NOW)
-    assert out is not None and out.payload["v4_horizon_seconds"] == _horizon(entry)
-    fc, entry = _fc(candles, v4_offset_s=20)            # a retry pass 20 s later (CodeRabbit)
-    assert fc.forecast(entry, NOW) is None
-    fc, entry = _fc(candles, v4_offset_s=600)           # v4 froze ten minutes earlier
-    assert fc.forecast(entry, NOW) is None
-    fc, entry = _fc(candles, v4_horizon=None)           # v4 row without a recorded horizon
+    assert out is not None and out.payload["v4_decided_at"] == NOW.isoformat()
+    assert out.payload["decided_at"] == NOW.isoformat()
+    for offset in (0.4, 20, 600):                       # sub-second retry, retry, earlier pass
+        fc, entry = _fc(candles, v4_offset_s=offset)
+        assert fc.forecast(entry, NOW) is None, offset
+    fc, entry = _fc(candles, v4_decided=None)           # v4 row frozen before decided_at existed
     assert fc.forecast(entry, NOW) is None

@@ -18,8 +18,9 @@ time per pair. The runner skips a target only when that forecaster has frozen it
 v7 could freeze on a later pass than v4 -- a later `now` changes minutes-to-close,
 the RV window and the recorded horizon. v7 now freezes only when v4's row for the
 target was frozen on the same pass: run_journal hands every forecaster in a pass the
-same `now`, so v4's recorded horizon_seconds must EQUAL v7's own. Otherwise no v7 row (no pair), and the payload records
-`v4_horizon_seconds` so the pairing can be audited from frozen rows alone.
+same `now`, and every hourly payload records it at full precision as `decided_at`, so
+v4's `decided_at` must EQUAL v7's own. Otherwise no v7 row (no pair), and the payload
+records `v4_decided_at` so the pairing can be audited from frozen rows alone.
 """
 
 from __future__ import annotations
@@ -40,9 +41,6 @@ from tradehub.journal.forecasters.oil_hourly import HourlyInputs, OilWtiHourly
 log = logging.getLogger(__name__)
 
 RV_VERSION = "wti-hourly-v7-rv-shadow"
-# run_journal passes one `now` to every forecaster in a pass, so a same-pass pair has
-# identical horizons; any difference is a different decision time (CodeRabbit, #564).
-PAIR_TOLERANCE_S = 0
 
 
 def _hl_candles_or_none(now: datetime):
@@ -56,10 +54,10 @@ def _hl_candles_or_none(now: datetime):
     return [(t, v) for t, v in candles if t + timedelta(minutes=1) <= now]
 
 
-def _v4_frozen_anchor(target: str) -> tuple[Observation, int | None] | None:
-    """v4's frozen anchor observation for this target and the horizon its row
-    recorded, from its journal row, or None when v4 has not frozen one -- v7
-    then has no pair to score against and stays a gap."""
+def _v4_frozen_anchor(target: str) -> tuple[Observation, str | None] | None:
+    """v4's frozen anchor observation for this target and the decision time its
+    row recorded (payload `decided_at`), or None when v4 has not frozen one --
+    v7 then has no pair to score against and stays a gap."""
     from tradehub.core.supabase_client import get_client
     from tradehub.journal.store import fetch_forecasts
 
@@ -71,7 +69,7 @@ def _v4_frozen_anchor(target: str) -> tuple[Observation, int | None] | None:
     if value is None or at is None:
         return None
     return (Observation("xyz:CL", float(value), datetime.fromisoformat(str(at))),
-            rows[0].get("horizon_seconds"))
+            payload.get("decided_at"))
 
 
 class OilWtiHourlyRvShadow(OilWtiHourly):
@@ -90,15 +88,14 @@ class OilWtiHourlyRvShadow(OilWtiHourly):
         pair = self._anchor_fn(entry.target)
         if pair is None:
             return None
-        anchor, v4_horizon = pair
-        own_horizon = max(0, int((entry.cutoff_at - now).total_seconds()))
-        if v4_horizon is None or abs(own_horizon - int(v4_horizon)) > PAIR_TOLERANCE_S:
-            # v4 froze this target on another pass (or its horizon is unknown): a v7
-            # row now would pair two decision times. No pair, no row.
-            log.info("oil v7 rv shadow: %s v4 horizon %s vs own %s -- not the same pass, gap",
-                     entry.target, v4_horizon, own_horizon)
+        anchor, v4_decided_at = pair
+        if v4_decided_at != now.isoformat():
+            # v4 froze this target on another pass (or recorded no decision time): a
+            # v7 row now would pair two decision times. No pair, no row.
+            log.info("oil v7 rv shadow: %s v4 decided_at %s vs own %s -- not the same pass, gap",
+                     entry.target, v4_decided_at, now.isoformat())
             return None
-        self._pair_extra = {"v4_horizon_seconds": int(v4_horizon)}
+        self._pair_extra = {"v4_decided_at": v4_decided_at}
         return anchor
 
     def _sigma(self, entry: CalendarEntry, now: datetime) -> tuple[float, int] | None:

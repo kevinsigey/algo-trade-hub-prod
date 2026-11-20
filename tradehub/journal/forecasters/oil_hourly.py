@@ -151,7 +151,11 @@ class OilWtiHourly(_HourlyBase):
                                  "price_at": price.published_at.isoformat(),
                                  "sigma_h": sigma_h, "sigma_eff": sigma_for(sigma_h, minutes),
                                  "minutes_to_close": round(minutes, 1),
-                                 "changes_used": changes_used, **(extra or {})})
+                                 "changes_used": changes_used,
+                                 # Full-precision decision time: run_journal hands every
+                                 # forecaster in a pass the same `now`, so this is the pass
+                                 # identity paired shadows match on (oil v7, #564).
+                                 "decided_at": now.isoformat(), **(extra or {})})
 
 
 class OilHourlyPersistence(_HourlyBase):

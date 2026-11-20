@@ -92,10 +92,10 @@ Two more method points, tightened before any row froze:
    v4, and a later `now` changes minutes-to-close, the RV window and the
    recorded horizon. v7 freezes a target only when v4's row for it was frozen
    on the same pass. The runner hands every forecaster in a pass the same
-   `now`, so the two rows' `horizon_seconds` are then identical: v7 requires
-   v4's recorded horizon to equal its own, else there is no v7 row. Each v7
-   payload carries `v4_horizon_seconds`, and grading counts a pair only when
-   the two horizons are equal.
+   `now`, and every hourly payload records it at full precision as
+   `decided_at`: v7 requires v4's `decided_at` to equal its own, else there is
+   no v7 row. Each v7 payload carries `v4_decided_at`, and grading counts a
+   pair only when the two rows' `decided_at` are equal.
 4. **Coverage on the pairs, for both models.** Grading point 2 above is
    computed for v4 and for v7 from their frozen payloads over the same set of
    eligible pairs, and the two are compared with each other on that set. v4's
