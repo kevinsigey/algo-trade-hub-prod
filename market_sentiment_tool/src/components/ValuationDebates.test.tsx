@@ -73,14 +73,14 @@ describe("ValuationDebates", () => {
     render(<ValuationDebates />);
 
     expect(await screen.findByText("AMGN")).toBeInTheDocument();
-    expect(screen.getByText("Strong short zone")).toBeInTheDocument();
+    expect(screen.getByText("Above guidance value")).toBeInTheDocument();
     expect(screen.getByText("Act at the mid band")).toBeInTheDocument();
     expect(screen.getByText(/short · 62%/)).toBeInTheDocument();
     expect(screen.getByText("Judge: free AI (proposer) — Jev seat pending credits")).toBeInTheDocument();
     expect(screen.getByText(/price implies far more than the guide supports/)).toBeInTheDocument();
 
     // Both controls, side by side: the band rule's zone and the proposer's own pick.
-    expect(screen.getByText("Band rule: Strong short zone")).toBeInTheDocument();
+    expect(screen.getByText("Band rule: Above guidance value")).toBeInTheDocument();
     expect(screen.getByText("Proposer's own pick: Watch")).toBeInTheDocument();
 
     // The price-vs-bands bar states every level as chips, so labels never collide.

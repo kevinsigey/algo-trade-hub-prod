@@ -193,8 +193,8 @@ function FreshnessBar({ board, snapshot }: {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  below_bear: "Below bear", buy_zone: "In buy zone", between: "Between base and bull",
-  above_bull: "Above bull", no_band: "No band",
+  below_bear: "Below bear band", buy_zone: "Below guidance value", between: "In line",
+  above_bull: "Above guidance value", no_band: "No band",
 };
 
 function pctText(v: number | null | undefined): string {
@@ -306,7 +306,7 @@ type GridSort = "distance" | "revision" | "cap";
 type GridFilter = "all" | "buy" | "below_bear" | "between" | "above_bull";
 
 /** Rebuild — the football-field grid: every banded name as one row —
- * the band bar with its price marker, the distance to the buy zone as
+ * the band bar with its price marker, the distance to the guidance value as
  * the headline number, held pinned first, then classified (watchlist),
  * then the rest; sortable by distance / guide revision / market cap
  * and filterable by zone status. Prices are the snapshot's, labelled
@@ -367,13 +367,13 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
       ? "bg-slate-100 text-slate-900" : "border border-slate-700 text-slate-300 hover:border-slate-500"}`;
   const filters: { id: string; label: string; value: GridFilter }[] = [
     { id: "grid-filter-all", label: "All banded", value: "all" },
-    { id: "grid-filter-buy", label: "In buy zone", value: "buy" },
+    { id: "grid-filter-buy", label: "Below guidance value", value: "buy" },
     { id: "grid-filter-below-bear", label: "Below bear", value: "below_bear" },
     { id: "grid-filter-between", label: "Between", value: "between" },
     { id: "grid-filter-above-bull", label: "Above bull", value: "above_bull" },
   ];
   const sorts: { id: string; label: string; value: GridSort }[] = [
-    { id: "grid-sort-distance", label: "Distance to buy zone", value: "distance" },
+    { id: "grid-sort-distance", label: "Distance to guidance value", value: "distance" },
     { id: "grid-sort-revision", label: "Guide revision", value: "revision" },
     { id: "grid-sort-cap", label: "Market cap", value: "cap" },
   ];
@@ -382,7 +382,7 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
       <h2 className="text-lg font-semibold text-white">Football-field grid</h2>
       <p className="mt-0.5 text-sm text-slate-400">
         Every banded name, one row: bear / base / bull as the field, the snapshot
-        price as the marker, and the distance to the buy zone (the base band) as
+        price as the marker, and the distance to the guidance value (the base band) as
         the headline number. Held names pin first, then classified prints. The
         first eight rows under the current sort carry the full field; the rest
         ride compact and expand in place. Selecting a full row opens its fact
@@ -426,7 +426,7 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
                   )}
                   <span data-testid={`distance-${r.ticker}`}
                         className="text-sm font-semibold text-white">
-                    {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to buy zone`}
+                    {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to guidance value`}
                   </span>
                   <span className="text-xs text-slate-400">{STATUS_LABELS[r.status] ?? r.status}</span>
                   <span className="block w-44 shrink-0">
@@ -452,7 +452,7 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
               )}
               <span data-testid={`distance-${r.ticker}`}
                     className="text-base font-semibold text-white">
-                {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to buy zone`}
+                {r.distance_pct == null ? "—" : `${pctText(r.distance_pct)} to guidance value`}
               </span>
               <span className="text-xs text-slate-400">{STATUS_LABELS[r.status] ?? r.status}</span>
               <span className="text-xs text-slate-400">
@@ -871,7 +871,7 @@ function BandedTable({ sheets, basis, expanded, onToggle, members, chips }: {
             <th className="px-3 py-2 font-medium">Name</th>
             <th className="px-3 py-2 font-medium">Guide</th>
             <th className="px-3 py-2 font-medium">Direction</th>
-            <th className="px-3 py-2 font-medium">Peer multiple</th>
+            <th className="px-3 py-2 font-medium">Multiple</th>
             <th className="px-3 py-2 font-medium">Bear</th>
             <th className="px-3 py-2 font-medium">Base</th>
             <th className="px-3 py-2 font-medium">Bull</th>
@@ -1010,7 +1010,7 @@ export default function Valuation() {
         setPageSummary(env.summary ?? null);
         setBoard(env.board ?? null);
       })
-      .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The valuation sheets could not be loaded"); });
+      .catch((e) => { if (live) setError(e instanceof Error ? e.message : "The fact sheets could not be loaded"); });
     // The verdict chips ride beside the sheets: a name with no rendered
     // verdict is simply absent from the map, and its cell says so.
     adminJson<ChipsPayload>("/api/verdict-chips")
@@ -1091,20 +1091,21 @@ export default function Valuation() {
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Guidance</h1>
       <p className="mt-1 max-w-3xl text-sm text-slate-400">
-        Each company's own recorded full-year guidance, valued at its peer group's median
-        multiple, as bear / base / bull bands — with the zone the current price sits in.
-        The guide is what the company itself filed; the multiple is the frozen peer median.
+        Each company's own recorded full-year guidance, valued at a 50/50 blend of its own
+        5-year median multiple and its peer group's median (the peer median alone, flagged
+        "peer only", without 5 years of history), as bear / base / bull bands — with the
+        zone the current price sits in. The guide is what the company itself filed.
       </p>
       <p className="mt-3 max-w-3xl rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">
         Display only — not trade recommendations. A zone says where the price sits against the
-        company's own guidance at peer multiples. Nothing on this page places, sizes, or
+        company's own guidance value. Nothing on this page places, sizes, or
         recommends a trade.
       </p>
 
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
       {!sheets && !error && (
         <p className="mt-6 inline-flex items-center gap-2 text-sm text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading valuation sheets…
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading fact sheets…
         </p>
       )}
 
@@ -1115,9 +1116,9 @@ export default function Valuation() {
             {" "}— one for every name with recorded guidance ·{" "}
             <span className="font-medium text-white">{summary.banded} banded</span>
             {` (${summary.epsBanded} EPS basis · ${summary.revenueBanded} revenue basis)`} ·{" "}
-            {summary.buyZones} {summary.buyZones === 1 ? "in a buy zone" : "in buy zones"} ·{" "}
-            {summary.shortZones} {summary.shortZones === 1 ? "in a short zone" : "in short zones"}
-            {summary.flatZones > 0 && ` · ${summary.flatZones} neutral or no-chase`}
+            {summary.buyZones} below guidance value ·{" "}
+            {summary.shortZones} above guidance value
+            {summary.flatZones > 0 && ` · ${summary.flatZones} in line`}
             {summary.stale > 0 && ` · ${summary.stale} stale (zone held)`}
             {` · ${summary.unbanded} not banded`}
           </p>
