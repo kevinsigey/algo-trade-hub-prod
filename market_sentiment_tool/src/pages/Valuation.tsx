@@ -5,6 +5,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { adminJson } from "@/lib/workshop";
 import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
+import { DebatesSection } from "@/pages/Debates";
 import LevelWatcher from "@/pages/LevelWatcher";
 import DebateQueue from "@/components/DebateQueue";
 import NameDecision from "@/components/NameDecision";
@@ -1091,9 +1092,7 @@ export default function Valuation() {
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
       <h1 className="text-2xl font-bold tracking-tight text-white">Guidance</h1>
       <p className="mt-1 max-w-3xl text-sm text-slate-400">
-        Each company's own recorded full-year guidance, valued at its peer group's median
-        multiple, as bear / base / bull bands — with the zone the current price sits in.
-        The guide is what the company itself filed; the multiple is the frozen peer median.
+        Each company's own recorded full-year guidance, valued at a 50/50 blend of its own multiple and its peer group's median, as bear / base / bull bands — with the zone the current price sits in.
       </p>
       <p className="mt-3 max-w-3xl rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">
         Display only — not trade recommendations. A zone says where the price sits against the
@@ -1283,6 +1282,7 @@ export default function Valuation() {
           )}
         </>
       )}
+      <DebatesSection />
     </div>
   );
 }

@@ -304,8 +304,8 @@ export default function Workshop() {
       )}
 
       <p className="mt-12 text-sm text-slate-400">
-        Looking for the TradingAgents panel? It has its own tab now:{" "}
-        <Link to="/debates" className="text-violet-300 hover:underline">Agent debates</Link>{" "}
+        Looking for the TradingAgents panel? It now closes the Guidance page:{" "}
+        <Link to="/valuation" className="text-violet-300 hover:underline">Agent debates</Link>{" "}
         — an opinion panel with a graded record, kept out of the idea pipeline on purpose.
       </p>
     </div>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-import Debates from "@/pages/Debates";
+import { DebatesSection } from "@/pages/Debates";
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
@@ -42,13 +42,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Agent debates page", () => {
+describe("Agent debates section (folded into Guidance, step 14)", () => {
   it("renders a failed run as one compact line, not a full card of 'not recorded'", async () => {
     const failed = { ...FEED, cards: [{ ...FEED.cards[0], run_id: "nvda-9", ticker: "NVDA", status: "failed_error",
       decision: "not recorded", error: "Gemini free-tier daily quota exhausted (20 requests/day for this model; the Workshop drafter shares it) -- debates resume after Google's daily reset",
       bull_case: "not recorded", bear_case: "not recorded" }] };
     serve({ "/api/agent-debates": { body: failed } });
-    render(<MemoryRouter><Debates /></MemoryRouter>);
+    render(<MemoryRouter><DebatesSection /></MemoryRouter>);
     expect(await screen.findByText("NVDA")).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
     expect(screen.getByText(/quota exhausted/)).toBeInTheDocument();
@@ -59,8 +59,8 @@ describe("Agent debates page", () => {
 
   it("explains itself and renders cards with the fence labels and the separate record", async () => {
     serve({ "/api/agent-debates": { body: FEED } });
-    render(<MemoryRouter><Debates /></MemoryRouter>);
-    expect(screen.getByText(/It is not a model/)).toBeInTheDocument();
+    render(<MemoryRouter><DebatesSection /></MemoryRouter>);
+    expect(screen.getByText(/it is not a model/)).toBeInTheDocument();
     expect(screen.getByText(/about one full debate a day/)).toBeInTheDocument();
     expect(await screen.findByText("LLM agent debate — not a model signal")).toBeInTheDocument();
     expect(screen.getByText("PLTR")).toBeInTheDocument();
@@ -86,7 +86,7 @@ describe("Agent debates page", () => {
       "/api/agent-debates": { body: { ...FEED, cards: [] } },
       "/api/agent-debates/run": { status: 202, body: { started: "NVDA" } },
     });
-    render(<MemoryRouter><Debates /></MemoryRouter>);
+    render(<MemoryRouter><DebatesSection /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Run a debate on a ticker"), { target: { value: "nvda" } });
     fireEvent.click(screen.getByRole("button", { name: "Start the debate" }));
     expect(await screen.findByText(/Debating NVDA/)).toBeInTheDocument();

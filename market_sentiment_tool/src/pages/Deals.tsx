@@ -579,10 +579,9 @@ export default function Deals() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
-      <h1 className="text-3xl font-bold tracking-tight text-white">Deals and IPOs</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-white">Deals and IPOs</h1>
       <p className="mt-1.5 max-w-3xl text-[15px] leading-relaxed text-slate-300">
-        Draft a deal through the paper apparatus — the Tesla–SpaceX merger bridge on one side, the Anthropic IPO entry
-        test on the other. Our own fair-value estimate sits next to every offer; every run saves as a draft.
+        Draft a deal through the paper apparatus — the Tesla–SpaceX merger bridge on one side, the Anthropic IPO entry test on the other — with our own fair-value estimate next to every offer and every run saved as a draft.
       </p>
 
       <div className="mt-6 flex gap-1 border-b border-slate-800" role="tablist" aria-label="Deals sections">

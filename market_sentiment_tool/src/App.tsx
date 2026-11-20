@@ -28,7 +28,6 @@ import Workshop from "@/pages/Workshop";
 import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
-import Debates from "@/pages/Debates";
 import Strategies from "@/pages/Strategies";
 import Valuation from "@/pages/Valuation";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -58,7 +57,6 @@ import {
   Lock,
   LogOut,
   Menu,
-  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Scale,
@@ -105,7 +103,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
   { label: "Admin", items: [
     { to: "/screening", label: "Screening", icon: ListFilter },
     { to: "/deals", label: "Deals and IPOs", icon: Handshake },
-    { to: "/debates", label: "Agent debates", icon: MessagesSquare },
     { to: "/health", label: "Health", icon: HeartPulse },
     { to: "/machine-keys", label: "Machine keys", icon: KeyRound },
   ] },
@@ -212,7 +209,10 @@ const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
               )}
               {open && (
                 <div id={id} className={collapsed ? "contents" : "space-y-0.5"}>
-                  {group.items.map((item) => <NavEntry key={item.to} item={item} collapsed={collapsed} />)}
+                  {/* Step 14: the Admin pages sit behind the lock in the menu itself --
+                      a signed-out (or still-checking) viewer sees only the Sign in
+                      lock entry, never the page list. */}
+                  {(group.label !== "Admin" || admin === "admin") && group.items.map((item) => <NavEntry key={item.to} item={item} collapsed={collapsed} />)}
                   {group.label === "Admin" && (admin === "admin" ? (
                     <button type="button" onClick={() => void supabase.auth.signOut()}
                             className={`${itemClass(collapsed)({ isActive: false })} ${collapsed ? "" : "w-full"}`} title={collapsed ? "Sign out" : undefined}>
@@ -395,7 +395,7 @@ function App() {
           <Route path="/agent" element={<Navigate to="/ideas" replace />} />
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
-          <Route path="/debates" element={<RequireAdmin><Debates /></RequireAdmin>} />
+          <Route path="/debates" element={<RequireAdmin><Navigate to="/valuation" replace /></RequireAdmin>} />
           <Route path="/valuation" element={<RequireAdmin><Valuation /></RequireAdmin>} />
           <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so

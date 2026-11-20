@@ -254,7 +254,7 @@ describe("Screening page (cards)", () => {
     expect(screen.getByText("Saved")).toBeInTheDocument();
     // Universe refresh stamps come from the catalog.
     expect(screen.getByText(/refreshed .* · wikipedia · 503 names/)).toBeInTheDocument();
-    expect(screen.getAllByText(/bundled proxy — not yet refreshed/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/bundled list — not refreshed yet/).length).toBeGreaterThan(0);
   });
 
   it("translate fills the cards, including on the rules fallback", async () => {
