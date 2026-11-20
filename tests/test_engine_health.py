@@ -590,5 +590,12 @@ class TestEngineHealthEndpoint:
         """
         from tradehub.api import main
 
-        paths = [getattr(route, "path", None) for route in main.app.routes]
+        # Step 20: expand FastAPI 0.162's lazy included-router entries (see
+        # test_api_route_order.py) so router-registered paths are counted.
+        paths = []
+        for route in main.app.routes:
+            if getattr(route, "path", None):
+                paths.append(route.path)
+            for sub in getattr(getattr(route, "original_router", None), "routes", []):
+                paths.append(getattr(sub, "path", None))
         assert "/api/engine-health" in paths, paths

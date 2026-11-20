@@ -62,11 +62,20 @@ def test_the_route_is_registered_before_the_spa_catch_all():
                            str(Path(main.__file__).resolve().parents[2] / "market_sentiment_tool" / "dist")))
     if not (dist / "index.html").is_file():
         return   # the SPA is not built in this environment; the order cannot bite here
-    paths = [getattr(route, "path", None) for route in main.app.routes]
-    assert "/api/jobs-scorecard" in paths, paths
-    assert paths.index("/api/jobs-scorecard") < paths.index(""), (
-        "the endpoint is registered after the SPA catch-all mount and would be shadowed"
-    )
+    # Since the router split (#575) FastAPI keeps each included router as one entry
+    # in app.routes, so the route's path is not listed there; check what a request
+    # actually gets instead: the handler, not the static mount's 404.
+    from fastapi.testclient import TestClient
+
+    from tradehub.api.dependencies import get_supabase
+    main.app.dependency_overrides[get_supabase] = lambda: None
+    try:
+        resp = TestClient(main.app, raise_server_exceptions=False).get("/api/jobs-scorecard")
+    finally:
+        main.app.dependency_overrides.pop(get_supabase, None)
+    # A shadowed /api path never falls back to the shell: the static mount refuses it
+    # with a 404. Reaching the handler is anything else (it may fail without a DB).
+    assert resp.status_code != 404, "/api/jobs-scorecard is shadowed by the SPA catch-all"
 
 
 # ── Kevin's decision: the page shows the engine's gate status next to the nowcast ──

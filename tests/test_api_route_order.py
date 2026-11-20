@@ -27,7 +27,18 @@ def _routes_with_a_spa_mounted(tmp_path):
         else:
             os.environ["FRONTEND_DIST"] = previous
         sys.modules.pop(spec.name, None)
-    return [getattr(route, "path", None) for route in module.app.routes]
+    # Step 20: routes live in per-area routers now, and FastAPI 0.162 stores
+    # each included router as one lazy entry in app.routes — expand those
+    # entries in place (their original routers' paths, in order) so the
+    # registration order against the SPA mount is still what is measured.
+    paths = []
+    for route in module.app.routes:
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            paths.extend(getattr(sub, "path", None) for sub in original.routes)
+        else:
+            paths.append(getattr(route, "path", None))
+    return paths
 
 
 def test_every_api_route_is_registered_before_the_spa_catch_all(tmp_path):

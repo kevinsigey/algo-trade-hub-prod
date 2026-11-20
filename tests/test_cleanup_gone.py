@@ -45,5 +45,12 @@ def test_the_weather_scan_branch_is_gone():
 def test_the_cache_backed_endpoints_are_gone():
     from tradehub.api.main import app
 
-    paths = {route.path for route in app.routes}
+    # Step 20: expand FastAPI 0.162's lazy included-router entries (see
+    # test_api_route_order.py) so every registered path is in the set.
+    paths = set()
+    for route in app.routes:
+        if getattr(route, "path", None):
+            paths.add(route.path)
+        for sub in getattr(getattr(route, "original_router", None), "routes", []):
+            paths.add(getattr(sub, "path", None))
     assert "/api/opportunities" not in paths and "/api/nws_weather" not in paths
