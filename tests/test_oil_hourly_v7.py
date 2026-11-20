@@ -172,9 +172,11 @@ def test_v7_pairs_only_with_a_v4_row_frozen_on_the_same_pass():
     # CodeRabbit on #564: v7 could freeze on a later pass than v4, so the pair
     # would mix decision times (minutes-to-close, RV window, horizon).
     candles = _candles([0.01] * 200)
-    fc, entry = _fc(candles, v4_offset_s=20)            # same pass, a few seconds apart
+    fc, entry = _fc(candles)                            # same pass: same `now`, same horizon
     out = fc.forecast(entry, NOW)
-    assert out is not None and out.payload["v4_horizon_seconds"] == _horizon(entry) + 20
+    assert out is not None and out.payload["v4_horizon_seconds"] == _horizon(entry)
+    fc, entry = _fc(candles, v4_offset_s=20)            # a retry pass 20 s later (CodeRabbit)
+    assert fc.forecast(entry, NOW) is None
     fc, entry = _fc(candles, v4_offset_s=600)           # v4 froze ten minutes earlier
     assert fc.forecast(entry, NOW) is None
     fc, entry = _fc(candles, v4_horizon=None)           # v4 row without a recorded horizon

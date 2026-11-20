@@ -17,8 +17,8 @@ Amendment 2 (CodeRabbit on the merged head, before the first freeze): one decisi
 time per pair. The runner skips a target only when that forecaster has frozen it, so
 v7 could freeze on a later pass than v4 -- a later `now` changes minutes-to-close,
 the RV window and the recorded horizon. v7 now freezes only when v4's row for the
-target was frozen on the same pass: v4's recorded horizon_seconds within
-PAIR_TOLERANCE_S of v7's own. Otherwise no v7 row (no pair), and the payload records
+target was frozen on the same pass: run_journal hands every forecaster in a pass the
+same `now`, so v4's recorded horizon_seconds must EQUAL v7's own. Otherwise no v7 row (no pair), and the payload records
 `v4_horizon_seconds` so the pairing can be audited from frozen rows alone.
 """
 
@@ -40,8 +40,9 @@ from tradehub.journal.forecasters.oil_hourly import HourlyInputs, OilWtiHourly
 log = logging.getLogger(__name__)
 
 RV_VERSION = "wti-hourly-v7-rv-shadow"
-# Same runner pass: v4 freezes the target first in the pass, v7 a few seconds later.
-PAIR_TOLERANCE_S = 60
+# run_journal passes one `now` to every forecaster in a pass, so a same-pass pair has
+# identical horizons; any difference is a different decision time (CodeRabbit, #564).
+PAIR_TOLERANCE_S = 0
 
 
 def _hl_candles_or_none(now: datetime):
