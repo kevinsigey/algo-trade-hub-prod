@@ -42,25 +42,73 @@ _DIRECTIONS = ("long", "short", "none")
 _ACT_CHOICES = ("act_at_band_low", "act_at_band_mid")
 _NO_ACT_CHOICES = ("watch", "pass")
 
+# The probability an act carries is graded as a Brier against relative_pass
+# in grading.grade_call -- it means beating the FROZEN peers' median return,
+# not an absolute or index-relative outcome. Keep the prompt wording and the
+# validator's meaning in sync with that function.
+PROBABILITY_MEANING = (
+    "probability: the chance, from 0 to 1, that over the grading horizon "
+    "the name beats its frozen peers' median return in the verdict's "
+    "direction (long: outperforms, short: underperforms); only an act "
+    "choice carries one."
+)
+
+
+class SeatUnavailable(Exception):
+    """The configured seat cannot render (e.g. Jev without credits wired)."""
+
+
+class DecisionInvalid(Exception):
+    """The rendered decision is void (empty/contradictory), stored with its
+    reason -- distinct from a seat outage, which stores nothing."""
+
 
 def _consistent_direction(choice_id: str, direction: str) -> str:
     """Kev answers the choice and the direction as two independent
     questions, so the pair can contradict itself. A watch or pass
     carries no position: its direction is forced to none. An act
     choice with direction none is the contradiction the other way --
-    acting needs a side -- so the seat abstains (SeatUnavailable)
+    acting needs a side -- so the decision is void (DecisionInvalid)
     rather than storing a directionless act."""
     if choice_id in _NO_ACT_CHOICES:
         return "none"
     if choice_id in _ACT_CHOICES and direction == "none":
-        raise SeatUnavailable(
+        raise DecisionInvalid(
             f"Kev answered {choice_id} with direction none; an act "
-            "without a direction is not a verdict, so the seat abstains")
+            "without a direction is not a verdict, so the decision is void")
     return direction
 
 
-class SeatUnavailable(Exception):
-    """The configured seat cannot render (e.g. Jev without credits wired)."""
+def validate_decision(decision: dict) -> dict:
+    """Clean a seat's decision or void it. Applied to EVERY seat's output so
+    the same rules bind the free AI seat, Jev and Kev: a rationale that says
+    nothing, an unknown choice/direction, or an act that carries no usable
+    confidence is not a verdict. Returns a cleaned copy; never mutates the
+    seat's dict."""
+    rationale = decision.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise DecisionInvalid("empty rationale")
+    choice = decision.get("choice_id")
+    direction = decision.get("direction")
+    if choice not in _ACT_CHOICES + _NO_ACT_CHOICES \
+            or direction not in _DIRECTIONS:
+        raise DecisionInvalid("unknown choice/direction")
+    cleaned = dict(decision)
+    if choice in _NO_ACT_CHOICES:
+        # No position, nothing to grade.
+        cleaned["direction"] = "none"
+        cleaned["probability"] = None
+        return cleaned
+    if direction == "none":
+        raise DecisionInvalid("act without a direction")
+    probability = decision.get("probability")
+    # Acting on a call you think is likelier wrong than right is a
+    # contradiction; the Brier would reward a sub-0.5 probability.
+    if not isinstance(probability, (int, float)) \
+            or not 0.5 < probability <= 1:
+        raise DecisionInvalid(
+            f"act needs probability above 0.5 (got {probability})")
+    return cleaned
 
 
 class DecisionSeat(Protocol):
@@ -160,7 +208,8 @@ class SystemOneClient:
                 "decision": {
                     "type": "choice",
                     "instructions": "Which choice should the decision "
-                                    "be for this debate packet?",
+                                    "be for this debate packet? "
+                                    + PROBABILITY_MEANING,
                     "criteria": criteria},
                 "direction": {
                     "type": "choice",

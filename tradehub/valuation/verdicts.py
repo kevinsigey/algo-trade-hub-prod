@@ -208,8 +208,26 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
     seat = seat or judge.seat_for_env()
     try:
         decision = seat.render(packet)
+        decision = judge.validate_decision(decision)
     except judge.SeatUnavailable as exc:
         return {"status": "seat_unavailable", "ticker": ticker,
+                "reason": str(exc)}
+    except judge.DecisionInvalid as exc:
+        # An empty or self-contradictory decision is void, stored with its
+        # reason. Keep what the debate/packet already established; only the
+        # verdict and its target are unknowable.
+        row = verdict_store.insert_verdict(client, {
+            **base_row, "status": "void", "judge": seat.judge_id,
+            "proposer_model": debate.get("proposer_model"),
+            "verdict": None,
+            "proposer_pick": packet["proposer_pick"],
+            "choices": packet["choices"],
+            "rubric_weights": packet["rubric_weights"],
+            "digest": packet["digest"],
+            "bull_case": debate["bull_case"],
+            "bear_case": debate["bear_case"],
+            "target_price": None, "void_reason": str(exc)})
+        return {"status": "void", "ticker": ticker, "verdict_row": row,
                 "reason": str(exc)}
     row = verdict_store.insert_verdict(client, {
         **base_row,

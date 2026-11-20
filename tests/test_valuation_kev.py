@@ -158,15 +158,15 @@ def test_kev_pass_with_a_direction_is_forced_to_none():
     assert decision["direction"] == "none"
 
 
-def test_kev_act_without_a_direction_abstains():
+def test_kev_act_without_a_direction_is_void():
     # An act choice with direction none is a contradiction the other
-    # way: acting needs a side. The seat abstains (SeatUnavailable)
+    # way: acting needs a side. The decision is void (DecisionInvalid)
     # rather than storing a directionless act.
     seat = _kev_seat(_Post(_Resp(200, _answers("act_at_band_low", "none"))))
-    with pytest.raises(judge.SeatUnavailable):
+    with pytest.raises(judge.DecisionInvalid):
         seat.render(PACKET)
     seat = _kev_seat(_Post(_Resp(200, _answers("act_at_band_mid", "none"))))
-    with pytest.raises(judge.SeatUnavailable):
+    with pytest.raises(judge.DecisionInvalid):
         seat.render(PACKET)
 
 
