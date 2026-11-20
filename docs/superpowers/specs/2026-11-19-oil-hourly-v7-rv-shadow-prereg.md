@@ -82,3 +82,21 @@ reads with them:
 2. **Completed minutes only.** The 24h candle read drops the in-progress
    minute, the way `read_window` does: a candle counts only once its minute
    has fully elapsed.
+
+## Amendment 2 (2026-11-20, CodeRabbit on the merged build head, before the first freeze)
+
+Two more method points, tightened before any row froze:
+
+3. **One decision time per pair.** The runner skips a target only when that
+   forecaster has already frozen it, so v7 could freeze on a later pass than
+   v4, and a later `now` changes minutes-to-close, the RV window and the
+   recorded horizon. v7 freezes a target only when v4's row for it was frozen
+   on the same pass: v4's recorded `horizon_seconds` within 60 s of v7's own.
+   Otherwise there is no v7 row. Each v7 payload carries `v4_horizon_seconds`,
+   and grading counts a pair only when the two rows' horizons sit within 60 s.
+4. **Coverage on the pairs, for both models.** Grading point 2 above is
+   computed for v4 and for v7 from their frozen payloads over the same set of
+   eligible pairs, and the two are compared with each other on that set. v4's
+   recorded 73 / 83 / 93% are context, reported separately: v7 sitting closer
+   to those historical figures is not evidence that it covers better than v4
+   on the paired targets.

@@ -31,7 +31,11 @@ def _candles(diffs, start=None):
     return out
 
 
-def _fc(candles, price=101.20, anchor_at=None, live_price=999.0):
+def _horizon(entry, now=NOW):
+    return max(0, int((entry.cutoff_at - now).total_seconds()))
+
+
+def _fc(candles, price=101.20, anchor_at=None, live_price=999.0, v4_offset_s=0, v4_horizon="same"):
     # The anchor is v4's frozen observation (Claude's review: the pair
     # must share one anchor). The forecaster's own live read is a
     # different number on purpose -- v7 must never price off it.
@@ -41,9 +45,11 @@ def _fc(candles, price=101.20, anchor_at=None, live_price=999.0):
     fc = OilWtiHourlyRvShadow(live, lambda ticker: None,
                               HourlyInputs(live, price_fn=lambda: own),
                               candles_fn=lambda now: candles,
-                              anchor_fn=lambda target: anchor)
+                              anchor_fn=lambda target: None)
     entries = fc.targets(NOW)
     assert len(entries) == 1
+    h = None if v4_horizon is None else _horizon(entries[0]) + v4_offset_s
+    fc._anchor_fn = lambda target: (anchor, h)
     return fc, entries[0]
 
 
@@ -110,8 +116,9 @@ def test_forecast_is_a_gap_when_the_tape_is_dead_or_thin():
     fc = OilWtiHourlyRvShadow(live, lambda ticker: None,
                               HourlyInputs(live, price_fn=lambda: anchor),
                               candles_fn=boom,
-                              anchor_fn=lambda target: anchor)
+                              anchor_fn=lambda target: None)
     entries = fc.targets(NOW)
+    fc._anchor_fn = lambda target: (anchor, _horizon(entries[0]))
     assert fc.forecast(entries[0], NOW) is None
 
     fc2, entry2 = _fc(_candles([0.02] * 60))         # 60 diffs < the 120 floor
@@ -158,3 +165,17 @@ def test_registry_carries_v7_live_beside_v4():
     assert ("oil_wti_hourly", "wti-hourly-v7-rv-shadow") not in retired
     built = build_oil_v7_shadow(FakeLive([]))
     assert [f.version for f in built] == ["wti-hourly-v7-rv-shadow"]
+
+
+
+def test_v7_pairs_only_with_a_v4_row_frozen_on_the_same_pass():
+    # CodeRabbit on #564: v7 could freeze on a later pass than v4, so the pair
+    # would mix decision times (minutes-to-close, RV window, horizon).
+    candles = _candles([0.01] * 200)
+    fc, entry = _fc(candles, v4_offset_s=20)            # same pass, a few seconds apart
+    out = fc.forecast(entry, NOW)
+    assert out is not None and out.payload["v4_horizon_seconds"] == _horizon(entry) + 20
+    fc, entry = _fc(candles, v4_offset_s=600)           # v4 froze ten minutes earlier
+    assert fc.forecast(entry, NOW) is None
+    fc, entry = _fc(candles, v4_horizon=None)           # v4 row without a recorded horizon
+    assert fc.forecast(entry, NOW) is None
