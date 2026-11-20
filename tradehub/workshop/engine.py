@@ -198,19 +198,63 @@ def _claim(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray, mask: np.ndar
             return False, math.nan, "no SPY down days"
         mine, spy = float(np.mean(r[down])), float(np.mean(s[down]))
         total = float(np.prod(1 + r) - 1)
-        holds = (mine > spy and total > 0) or mine > 0
-        v = (mine - spy) * 100
-        return holds, v, f"{mine * 100:+.2f}% vs SPY {spy * 100:+.2f}% on SPY's down days; {total * 100:+.0f}% overall"
+        # Step 12 (product item 4): judged against an equal-beta
+        # SPY-plus-cash mix, not SPY itself -- "loses less than SPY on
+        # down days" passes by definition for any low-beta asset, so the
+        # old bar could not fail. The mix cushions exactly beta's share;
+        # the claim must cushion more than that.
+        beta = _beta(r, s)
+        mix = beta * spy
+        # Claude's review of the step-12 PR: the comparison must clear
+        # float noise -- a mechanical mix series can land a few ulps
+        # above its own mix and "hold" on rounding alone (171 of 500
+        # random rising 20/80 series held). The epsilon is in return
+        # units, far below any real cushion.
+        holds = (mine > mix + 1e-12 and total > 0) or mine > 0
+        v = (mine - mix) * 100
+        return holds, v, f"{mine * 100:+.2f}% vs SPY {spy * 100:+.2f}% on SPY's down days; equal-beta SPY+cash mix {mix * 100:+.2f}% (beta {beta:.2f}); {total * 100:+.0f}% overall"
     dd_r, dd_b, gap = _max_dd(r), _max_dd(b), _cagr(r) - _cagr(b)  # smoother_ride
     v = dd_r - dd_b
     return (v > 0 and gap >= -2), v, f"worst drop {dd_r:.0f}% vs {dd_b:.0f}%; return {gap:+.1f} pts/yr"
+
+
+def _beta(r: np.ndarray, s: np.ndarray) -> float:
+    """Beta of the idea's returns to SPY over the span, clipped to
+    [0, 1] -- the SPY weight of the equal-beta SPY-plus-cash mix (the
+    cash leg earns 0; a levered or inverse idea gets the nearest mix
+    that exists without leverage). A span where SPY never moves has no
+    measurable beta and reads as the market itself."""
+    if len(s) < 2:
+        return 1.0
+    var = float(np.mean((s - s.mean()) ** 2))
+    if var <= 0:
+        return 1.0
+    cov = float(np.mean((r - r.mean()) * (s - s.mean())))
+    return min(1.0, max(0.0, cov / var))
+
+
+def _unseen_series(r: np.ndarray, b: np.ndarray, s: np.ndarray,
+                   mask: np.ndarray, unseen: slice) -> list[dict] | None:
+    """The unseen span's daily rows, stored with the run so a later reader
+    (the weekly critic) can recompute the claim under a CHANGED statistic
+    instead of comparing a live value against one measured with the old
+    statistic. Stored only when every value is finite -- a series with
+    holes in it is no series, and the reader falls back to no comparison."""
+    rows = []
+    for i in range(unseen.start or 0, unseen.stop if unseen.stop is not None else len(r)):
+        vals = (float(r[i]), float(b[i]), float(s[i]))
+        if not all(math.isfinite(v) for v in vals):
+            return None
+        rows.append({"ret": vals[0], "bench": vals[1], "spy": vals[2],
+                     "on": bool(mask[i])})
+    return rows
 
 
 def _signflip_terms(kind: str, r: np.ndarray, b: np.ndarray, s: np.ndarray) -> np.ndarray:
     """Per-day terms whose mean is the claim's test statistic; under the null each term is symmetric about 0."""
     if kind == "ballast":
         down = s < 0
-        return (r - s)[down]
+        return (r - _beta(r, s) * s)[down]
     if kind == "smoother_ride":
         return np.minimum(b, 0) ** 2 - np.minimum(r, 0) ** 2
     return np.log1p(r) - np.log1p(b)  # beats_benchmark
@@ -782,7 +826,8 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
             **base, "verdict": bat["verdict"], "headline": headline, "reason": None,
             "claim_type": "basket",
             "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
-                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
+                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2],
+                      "series": _unseen_series(r, b, s, mask, unseen)}},
             "shuffle": None, "t_test": None, "battery": bat,
             "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
             "notes": notes + ["Graded with the basket battery (spec 2026-11-08): relative-Sharpe "
@@ -811,7 +856,8 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
             **base, "verdict": bat["verdict"], "headline": headline, "reason": None,
             "claim_type": "overlay",
             "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
-                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
+                      "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2],
+                      "series": _unseen_series(r, b, s, mask, unseen)}},
             "shuffle": None, "t_test": None, "battery": bat,
             "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,
             "notes": notes + ["Graded with the overlay battery (spec 2026-11-08): the benchmark "
@@ -867,7 +913,8 @@ def run_test(spec: IdeaSpec, closes: pd.DataFrame, fred: dict[str, pd.Series], *
     return _clean({
         **base, "verdict": verdict, "headline": headline, "reason": None,
         "claim": {"built": {"holds": bool(on_b[0]), "value": on_b[1], "label": on_b[2]},
-                  "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2]}},
+                  "unseen": {"holds": bool(on_u[0]), "value": on_u[1], "label": on_u[2],
+                      "series": _unseen_series(r, b, s, mask, unseen)}},
         "shuffle": {"beats_pct": beats, "p": p, "bar": bar, "permutations": permutations, "seed": seed,
                     "method": "random timing" if spec.rules is not None else "sign-flip vs comparison"},
         "t_test": t_test, "periods": {"held": held_periods, "of": 5}, "context": context, "curve": curve,

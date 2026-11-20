@@ -1,4 +1,4 @@
-"""One-shot scan (suggest-only): predict every open gas/payrolls/sports market, flag trade-worthy edges.
+"""One-shot scan (suggest-only): predict every open gas/payrolls market, flag trade-worthy edges.
 
 Writes every prediction to the predictions ledger and upserts edges (with Kalshi deep links)
 into kalshi_edges. Never places orders. Cron-ready: runs once and exits.
@@ -40,10 +40,6 @@ from tradehub.engines.labor import (
 )
 from tradehub.markets import KalshiMarket, event_date, event_month, market_url
 from tradehub.predictions import build_prediction_row
-from tradehub.sports.scan import (
-    prune_sports_if_healthy, remove_started_sports_edges, run_sports_for_cron, sports_due,
-    sports_run_summary,
-)
 
 
 # Engines whose forecasts live in the prediction journal do not get a second per-scan copy: the journal
@@ -226,7 +222,7 @@ def remove_closed_labor_edges(client, now: datetime) -> None:
 
 
 def remove_stale_edges(client, produced_by_engine: dict[str, set[str]]) -> None:
-    """Delete stale rows only for the scan-owned gas/payrolls/sports engines.
+    """Delete stale rows only for the scan-owned gas/payrolls engines.
 
     `cpi_nowcast` is deliberately NOT in the allowlist. CPI was approved display-only on 2026-09-27
     (spec 5a, section 9 approval 3, quoted verbatim from the spec: "DISPLAY ONLY. Show the nowcast
@@ -249,7 +245,7 @@ def remove_stale_edges(client, produced_by_engine: dict[str, set[str]]) -> None:
     is not a permanent archive, and no copy on screen may say it is.
     """
     for engine, produced in produced_by_engine.items():
-        if engine not in {"gas", "labor_nowcast", "sports_nfl", "sports_cfb"}:
+        if engine not in {"gas", "labor_nowcast"}:
             continue
         current_market_ids = {str(market_id)[:50] for market_id in produced}
         result = client.table("kalshi_edges").select("market_id").eq("engine", engine).execute()
@@ -459,8 +455,7 @@ def main(
 
     # labor_nowcast is declared here but RUNS LATER, after the gas writes: its failure
     # mode is an ALFRED outage, and a hung predictor request must not delay or endanger another
-    # engine's writes. Its own gated write and cleanup live in the labor block below, ahead of
-    # sports (which still runs last of all).
+    # engine's writes. Its own gated write and cleanup live in the labor block below.
     labor_predictions: list[dict] = []
     labor_edges: list[dict] = []
     labor_status = "skipped: not due (07, 12, 17 ET)"
@@ -532,9 +527,9 @@ def main(
 
         # ── labor_nowcast ────────────────────────────────────────────────────────────────
         # After the gas gate lookup, upserts and cleanups, so an ALFRED hang cannot
-        # push those back; before sports, which still runs last. Gated and written separately
-        # for the same reason sports is: its edges are keyed on their own (engine,
-        # engine_version) pair, and its inputs are a third-party HTTP service.
+        # push those back. Gated and written separately because its edges are keyed
+        # on their own (engine, engine_version) pair, and its inputs are a
+        # third-party HTTP service.
         # Closed markets are cleaned up on EVERY scan, due hour or not: a payroll ladder closes on
         # its own schedule, so a not-due hour still has dead rows to remove.
         try:
@@ -609,69 +604,11 @@ def main(
                     log.exception("scan labor step failed")
 
 
-        # ── Sports LAST ────────────────────────────────────────────────────────────────
-        # The gas gate lookup, upserts and cleanups above are already done, so a
-        # slow sports run can no longer delay them or put them at risk. Sports is gated and
-        # written separately because its edges are keyed on their own (engine, engine_version)
-        # pairs and it has its own pruning rules.
-        sports_predictions: list[dict] = []
-        sports_edges: list[dict] = []
-        sports_per_sport: dict[str, dict[str, Any]] = {}
-        sports_summary: dict[str, Any] = {"status": "skipped: not due (every third UTC hour)"}
-        if not sports_due(now):
-            writes["predictions"]["sports"] = "skipped"
-            writes["edges"]["sports"] = "skipped"
-        else:
-            try:
-                run = run_sports_for_cron(now, client, deadline=deadline)
-                # `sports_run_summary`, not `run.reports`: the per-sport diagnostics (`too_far`,
-                # `unrecognised_kinds`) live in `run.per_sport`, and the print below is the only
-                # thing an operator ever reads. Taking the reports directly left the run's own
-                # diagnostic keys recorded and unreadable.
-                sports_predictions, sports_summary = run.predictions, sports_run_summary(run)
-                sports_per_sport = run.per_sport
-                try:
-                    sports_pairs = {(row["engine"], row.get("engine_version", "v0"))
-                                    for row in run.edges}
-                    sports_statuses = latest_gate_statuses(client, sports_pairs)
-                except Exception as exc:
-                    failures.append(f"sports.gate_status: {type(exc).__name__}: {exc}")
-                    log.exception("scan sports gate-status lookup failed")
-                    sports_statuses = {}
-                apply_gate_statuses(run.edges, sports_statuses)
-                sports_edges = run.edges
-                try:
-                    record_predictions(client, sports_predictions)
-                    writes["predictions"]["sports"] = "ok"
-                except Exception as exc:
-                    failures.append(f"sports.predictions: {type(exc).__name__}: {exc}")
-                    writes["predictions"]["sports"] = "failed"
-                try:
-                    upsert_opportunities(sports_edges)
-                    writes["edges"]["sports"] = "ok"
-                except Exception as exc:
-                    failures.append(f"sports.edges: {type(exc).__name__}: {exc}")
-                    writes["edges"]["sports"] = "failed"
-                # A sport prunes only when its feed fetch AND its edge write both succeeded, so
-                # neither a feed outage nor a failed upsert can be read as "produced nothing".
-                # Pruning a zero-edge run is the point: that is when the previous rows must go.
-                for state in sports_per_sport.values():
-                    state["write_ok"] = writes["edges"].get("sports") == "ok"
-                failures.extend(remove_started_sports_edges(client, now))
-                failures.extend(prune_sports_if_healthy(client, sports_per_sport,
-                                                        remove=remove_stale_edges, now=now))
-            except Exception as exc:  # a predictor/Kalshi outage must not cost gas/labor
-                sports_summary = {"error": repr(exc)}
-                writes["predictions"]["sports"] = "failed"
-                writes["edges"]["sports"] = "failed"
-                failures.append(f"sports: {type(exc).__name__}: {exc}")
-                log.exception("scan sports step failed")
     else:
         writes = {"predictions": {}, "edges": {}}
         # No Supabase client (get_client raised), so nothing below ran. These are read by the
         # summary, and leaving them unbound made main() die with an UnboundLocalError in the one
         # situation where a clear report matters most.
-        sports_summary = {"status": "skipped: no Supabase client"}
         labor_status = "skipped: no Supabase client"
 
     summary = {
@@ -695,12 +632,11 @@ def main(
             # this run did not prune.
             "months_without_nowcast": engine_states["labor_nowcast"].get("months_without_nowcast", []),
         },
-        "sports": sports_summary,
         "writes": writes,
         "failures": failures,
     }
     try:
-        total_opps = len(gas_edges) + len(labor_edges) + len(sports_edges)
+        total_opps = len(gas_edges) + len(labor_edges)
     except Exception:  # noqa: BLE001
         total_opps = 0
     if client is not None:

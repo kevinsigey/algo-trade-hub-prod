@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } fr
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
-import SportsEdges from "@/pages/SportsEdges";
 import Macro from "@/pages/Macro";
 import JobsNowcast from "@/pages/JobsNowcast";
 import Cpi from "@/pages/Cpi";
@@ -61,7 +60,6 @@ import {
   PanelLeftOpen,
   Scale,
   Target,
-  Trophy,
   Wallet,
   X,
   type LucideIcon,
@@ -93,7 +91,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/crypto", label: "Crypto", icon: LineChart },
     { to: "/macro", label: "Macro predictions", icon: Landmark },
     { to: "/weather", label: "Weather", icon: CloudSun },
-    { to: "/sports", label: "Sports", icon: Trophy },
   ] },
   { label: "Track record", items: [
     { to: "/journal", label: "Model Tracker", icon: BookOpen },
@@ -434,7 +431,6 @@ function App() {
               label, where it is expensive to change. It is a redirect here and nothing else.
               Same component, same /api/scoreboard read, address bar updated to the real path. */}
           <Route path="/shadow-scoreboard" element={<Navigate to="/journal?view=backtests" replace />} />
-          <Route path="/sports" element={<SportsEdges />} />
           <Route path="/macro" element={<Macro />} />
           <Route path="/jobs" element={<JobsNowcast />} />
           <Route path="/cpi" element={<Cpi />} />

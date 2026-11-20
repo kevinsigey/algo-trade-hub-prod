@@ -54,13 +54,6 @@ interface FifteenTrade { series: string; target: string; frozen_at: string; side
                          cost: number; model: number; outcome: number; pnl: number }
 interface OffsetStat { offset_min: number; windows: number; priced: number; mean_edge_net: number | null;
                        n: number; net_per_contract: number | null; win_rate: number | null }
-interface ShadowBlock {
-  variant?: { rule: string };
-  fresh?: { windows: number; trades: number; net_per_contract: number | null; low95: number | null; win_rate: number | null };
-  paired?: { windows: number; delta_per_window: number | null; low95: number | null };
-  grid?: { offset_min: number; bar: number; windows: number; trades: number; net_per_contract: number | null; low95: number | null }[];
-  promotion?: { state: string; met: boolean; criterion: { min_trades: number }; promoted_at: string | null };
-}
 interface FifteenPayload {
   prereg_at?: string; ready_trades?: number;
   forward?: SeriesStats; replay?: SeriesStats; pending?: number; recent?: FifteenTrade[];
@@ -70,7 +63,6 @@ interface FifteenPayload {
   bar?: { basis: string; trades: number; ready_trades: number; ready: boolean; low95: number | null; windows?: number; pending?: number };
   decisions?: { recorded: number; buy: number; skip: number; by_reason: Record<string, number> };
   offsets?: { by_offset: OffsetStat[] };
-  shadow?: ShadowBlock;
   // Per ET day and market, all six series: live rule, blend, vol-regime challenger.
   decline?: DeclineRow[];
   volregime?: { fresh?: { trades: number; net_per_contract: number | null; low95: number | null; clustered_low95: number | null };
@@ -505,7 +497,7 @@ export default function Strategies() {
           tone: toneOf(oilAgg.net_per_contract) }
       : { record: `${oilAgg ? "0 gated trades · " : ""}raw ${oilRaw?.n ?? 0} trade${oilRaw?.n === 1 ? "" : "s"} · ${oilRaw?.net_per_contract == null ? "—" : cents(oilRaw.net_per_contract)}`, tone: toneOf(oilRaw?.net_per_contract) };
   // The oil tile's detail blocks, all read from the same payload: the gated record leads,
-  // the raw record is its control, and the shadow keeps its own block apart from both.
+  // the raw record is its control.
   const gateFwd = fifteen?.gate?.forward ?? null;
   const rawFwd = fifteen?.forward ?? null;
   const liveBar = fifteen?.bar ?? null;
@@ -515,7 +507,6 @@ export default function Strategies() {
   const bestOffset = pricedOffsets
     .filter((o) => o.n >= 10 && o.net_per_contract != null)
     .sort((a, b) => (b.net_per_contract ?? 0) - (a.net_per_contract ?? 0))[0];
-  const shadow = fifteen?.shadow ?? null;
   // The metals headline prefers the block's own served aggregate (gate.forward);
   // the fold over its per-series stats is only the fallback for a payload without one.
   // Before the first settled trade the headline says accruing, like its per-market lines.
@@ -742,57 +733,6 @@ export default function Strategies() {
               <p className="mt-1 text-xs text-slate-400">A real edge should hold while futures trade; wins only in closed hours can come from stale prices.</p>
             </SubDetails>
           )}
-          {shadow && (
-            <SubDetails title="Oil shadow — the minute-1 variant">
-              {shadow.variant && <p className="text-sm text-slate-400">{shadow.variant.rule}</p>}
-              {shadow.fresh && (
-                <p className="mt-2 text-sm font-medium tabular-nums text-slate-200">
-                  {shadow.fresh.trades > 0
-                    ? <>{shadow.fresh.trades} fresh trades · {shadow.fresh.net_per_contract == null ? "—" : cents(shadow.fresh.net_per_contract)} · win rate {shadow.fresh.win_rate == null ? "—" : `${Math.round(shadow.fresh.win_rate * 100)}%`} · low end {shadow.fresh.low95 == null ? "—" : cent1(shadow.fresh.low95)}</>
-                    : "No fresh shadow trades yet."}
-                </p>
-              )}
-              {shadow.paired && shadow.paired.windows > 0 && (
-                <p className="mt-1 text-xs text-slate-400">
-                  Against the live rule on the same {shadow.paired.windows} windows: {shadow.paired.delta_per_window == null ? "—" : cent1(shadow.paired.delta_per_window)} a window (low end {shadow.paired.low95 == null ? "—" : cent1(shadow.paired.low95)}).
-                </p>
-              )}
-              {shadow.promotion && (
-                <p className="mt-1 text-xs text-slate-400">
-                  {shadow.promotion.state === "v2-oil"
-                    ? <>Promotion state: live — the variant promoted{shadow.promotion.promoted_at ? ` ${etShort(shadow.promotion.promoted_at)} ET` : ""} and the live oil gate now runs it; the v1 record above stays its own segment.</>
-                    : <>Promotion state: shadow — the live oil gate still runs v1. It promotes itself at {shadow.promotion.criterion.min_trades} fresh trades with both low ends above zero ({shadow.fresh?.trades ?? 0}/{shadow.promotion.criterion.min_trades} so far).</>}
-                </p>
-              )}
-              {(shadow.grid ?? []).length > 0 && (
-                <table aria-label="Oil shadow grid" className="mt-3 w-full max-w-xl text-xs tabular-nums">
-                  <thead><tr className="text-left text-slate-500">
-                    <th className="pb-1 pr-3 font-medium">Minute</th>
-                    <th className="pb-1 pr-3 font-medium text-right">Bar</th>
-                    <th className="pb-1 pr-3 font-medium text-right">Windows</th>
-                    <th className="pb-1 pr-3 font-medium text-right">Trades</th>
-                    <th className="pb-1 pr-3 font-medium text-right">Per contract</th>
-                    <th className="pb-1 font-medium text-right">Low end</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-slate-800/70 text-slate-300">
-                    {(shadow.grid ?? []).map((g) => (
-                      <tr key={`${g.offset_min}-${g.bar}`} className={g.offset_min === 1 && g.bar === 0.05 ? "text-slate-100" : undefined}>
-                        <td className="py-1 pr-3 text-slate-200">
-                          {g.offset_min}
-                          {g.offset_min === 1 && g.bar === 0.05 ? <span className="text-emerald-300"> · the variant</span> : null}
-                        </td>
-                        <td className="py-1 pr-3 text-right">{Math.round(g.bar * 100)} pts</td>
-                        <td className="py-1 pr-3 text-right">{g.windows}</td>
-                        <td className="py-1 pr-3 text-right">{g.trades}</td>
-                        <td className="py-1 pr-3 text-right">{g.net_per_contract == null ? "—" : cent1(g.net_per_contract)}</td>
-                        <td className="py-1 text-right">{g.low95 == null ? "—" : cent1(g.low95)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </SubDetails>
-          )}
         </section>
       ),
     },
@@ -844,21 +784,6 @@ export default function Strategies() {
             </p>
           )}
           <StrikeRecordLine />
-        </section>
-      ),
-    },
-    {
-      id: "sports-picks", name: "Sports picks", stage: "Picks only", muted: true,
-      visual: null,
-      stats: <RecordLine text="Graded in the Track record" />,
-      children: (
-        <section aria-label="Sports picks">
-          <p className="text-sm text-slate-400">
-            Games where the model and the market disagree, after the grading desk's review. No paper ledger yet.
-          </p>
-          <div className="mt-2 text-sm">
-            <Link to="/sports" className="inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200">Sports <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
-          </div>
         </section>
       ),
     },

@@ -937,6 +937,93 @@ const button = "rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slat
 
 /** The lifecycle steps, in order, with the state of each. The path is the page's point:
  * test it, publish it, track it, then -- once the gate clears -- let it trade on paper. */
+/** The live-paper gate, built once for both books (product step 11):
+ * size, gate check, result, override and the Go live button. The gate
+ * itself reads the idea's forward record, which is book-independent —
+ * both books check the same endpoint; the book is chosen at go-live,
+ * where the size lands. Each book passes its own words. */
+function GatePanel({ id, book, heading, intro, sizeLabel, sizeAriaLabel, goLiveLabel, readyLine, overrideConfirm, onChange }: {
+  id: string;
+  book?: "big";
+  heading?: string;
+  intro: string;
+  sizeLabel: string;
+  sizeAriaLabel?: string;
+  goLiveLabel: string;
+  readyLine: string;
+  overrideConfirm: string;
+  onChange: () => void;
+}) {
+  const [size, setSize] = useState("");
+  const [gate, setGate] = useState<GateResult | null>(null);
+  const [override, setOverride] = useState(false);
+  const [overrideNote, setOverrideNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That didn't work");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
+  const goLive = () => {
+    if (override && !window.confirm(overrideConfirm)) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/live`, {
+      method: "POST",
+      body: JSON.stringify({ size_pct: Number(size), ...(book ? { book } : {}), ...(override ? { override: true, override_note: overrideNote || undefined } : {}) }),
+    }));
+  };
+
+  return (
+    <div>
+      {heading && <h2 className="text-sm font-semibold text-white">{heading}</h2>}
+      <p className="mt-1 text-xs text-slate-400">{intro}</p>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="text-xs text-slate-300">
+          {sizeLabel}
+          <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} aria-label={sizeAriaLabel} />
+        </label>
+        <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
+        <button type="button" disabled={busy || (gate?.status !== "ready" && !override)} onClick={goLive}
+          className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
+          {goLiveLabel}
+        </button>
+      </div>
+      {gate && (
+        <ul className="mt-2 space-y-1 text-sm">
+          {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
+          {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
+          {gate.status === "ready" && <li className="text-emerald-300">{readyLine}</li>}
+        </ul>
+      )}
+      {gate && gate.status !== "ready" && (
+        <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+          <label className="flex items-start gap-2 text-sm text-amber-200">
+            <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5" />
+            <span>
+              Override the gate — my deliberate call. Bypasses only the 63-day wait; the server still refuses
+              a claim that failed on new data or a position over 25%. The override is recorded on the idea.
+            </span>
+          </label>
+          {override && (
+            <input type="text" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
+              placeholder="Why (recorded with the override)" className={`${field} mt-2 w-full`} maxLength={500} />
+          )}
+        </div>
+      )}
+      {error && <p role="alert" className="mt-2 text-sm text-rose-300">{error}</p>}
+    </div>
+  );
+}
+
 function LifecycleSteps({ idea, runs, passed }: { idea: IdeaDetail["idea"]; runs: IdeaDetail["runs"]; passed: boolean }) {
   const steps = [
     { label: "Tested", done: runs.length > 0, note: runs.length > 0 ? (passed ? "latest run passed" : "latest run did not pass") : "no runs yet" },
@@ -975,10 +1062,6 @@ function LifecycleSteps({ idea, runs, passed }: { idea: IdeaDetail["idea"]; runs
 /** Publish, tracking, the live-paper gate, the order tag and the kill button (spec §4.5-4.6). Each step happens once. */
 export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: IdeaDetail; onChange: () => void }) {
   const { idea, runs, tag, shadow } = detail;
-  const [size, setSize] = useState("");
-  const [gate, setGate] = useState<GateResult | null>(null);
-  const [override, setOverride] = useState(false);
-  const [overrideNote, setOverrideNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The lifecycle reads the latest SAVED run: a preview changes nothing here
@@ -1001,14 +1084,6 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
     }
   };
   const startTracking = () => act(() => adminJson(`/api/workshop/ideas/${id}/track`, { method: "POST", body: JSON.stringify({}) }));
-  const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
-  const goLive = () => {
-    if (override && !window.confirm("Override the 63-day gate? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse.")) return;
-    act(() => adminJson(`/api/workshop/ideas/${id}/live`, {
-      method: "POST",
-      body: JSON.stringify({ size_pct: Number(size), ...(override ? { override: true, override_note: overrideNote || undefined } : {}) }),
-    }));
-  };
   const toggleAuto = () => {
     const on = !idea.auto_orders;
     if (on && !window.confirm(`Turn on automatic paper orders? Each weekday morning the hub trades this idea's rule in the paper account at ${idea.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
@@ -1057,43 +1132,13 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
       )}
 
       {passed && !idea.live_at && (
-        <div>
-          <h2 className="text-sm font-semibold text-white">Live-paper gate</h2>
-          <p className="mt-1 text-xs text-slate-400">The claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of the account or less.</p>
-          <div className="mt-3 flex flex-wrap items-end gap-2">
-            <label className="text-xs text-slate-300">
-              Size (% of account)
-              <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} />
-            </label>
-            <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
-            <button type="button" disabled={busy || (gate?.status !== "ready" && !override)} onClick={goLive}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
-              Go live on paper
-            </button>
-          </div>
-          {gate && (
-            <ul className="mt-2 space-y-1 text-sm">
-              {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
-              {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
-              {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the paper record.</li>}
-            </ul>
-          )}
-          {gate && gate.status !== "ready" && (
-            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-              <label className="flex items-start gap-2 text-sm text-amber-200">
-                <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5" />
-                <span>
-                  Override the gate — my deliberate call. Bypasses only the 63-day wait; the server still refuses
-                  a claim that failed on new data or a position over 25%. The override is recorded on the idea.
-                </span>
-              </label>
-              {override && (
-                <input type="text" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
-                  placeholder="Why (recorded with the override)" className={`${field} mt-2 w-full`} maxLength={500} />
-              )}
-            </div>
-          )}
-        </div>
+        <GatePanel id={id} onChange={onChange}
+          heading="Live-paper gate"
+          intro="The claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of the account or less."
+          sizeLabel="Size (% of account)"
+          goLiveLabel="Go live on paper"
+          readyLine="Clear. Press Go live to start the paper record."
+          overrideConfirm="Override the 63-day gate? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse." />
       )}
 
       {(passed || idea.live_at) && (latestSaved?.spec.options?.length ?? 0) > 0 && (
@@ -1164,17 +1209,13 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   );
 }
 
-/** The $1M book's live block (second book, 2026-11-02): the same gate, size,
- * auto-orders switch and kill button as the main book above, driven by the
- * idea's own activation on that book -- the books are independent, so this
- * block has its own size, its own gate check and its own record. */
+/** The $1M book's live block (second book, 2026-11-02): the shared
+ * GatePanel (built once, step 11) with this book's own words and size,
+ * plus its own auto-orders switch and kill button, driven by the idea's
+ * own activation on that book -- the books are independent. */
 function BigBookPanel({ id, state, passed, onChange }: {
   id: string; state: BookLiveState; passed: boolean; onChange: () => void;
 }) {
-  const [size, setSize] = useState("");
-  const [gate, setGate] = useState<GateResult | null>(null);
-  const [override, setOverride] = useState(false);
-  const [overrideNote, setOverrideNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1190,14 +1231,6 @@ function BigBookPanel({ id, state, passed, onChange }: {
       setBusy(false);
     }
   };
-  const check = () => act(async () => setGate(await adminJson<GateResult>(`/api/workshop/ideas/${id}/gate?size_pct=${encodeURIComponent(size)}`)));
-  const goLive = () => {
-    if (override && !window.confirm("Override the 63-day gate for the $1M book? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse.")) return;
-    act(() => adminJson(`/api/workshop/ideas/${id}/live`, {
-      method: "POST",
-      body: JSON.stringify({ size_pct: Number(size), book: "big", ...(override ? { override: true, override_note: overrideNote || undefined } : {}) }),
-    }));
-  };
   const toggleAuto = () => {
     const on = !state.auto_orders;
     if (on && !window.confirm(`Turn on automatic paper orders on the $1M book? Each weekday morning the hub trades this idea's rule in that account at ${state.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
@@ -1212,42 +1245,13 @@ function BigBookPanel({ id, state, passed, onChange }: {
     <div className="border-t border-slate-800 pt-4">
       <h2 className="text-sm font-semibold text-white">$1M book</h2>
       {passed && !state.live_at && (
-        <div>
-          <p className="mt-1 text-xs text-slate-400">The same live-paper gate as the main book: the claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of that account or less. The size is this book's own.</p>
-          <div className="mt-3 flex flex-wrap items-end gap-2">
-            <label className="text-xs text-slate-300">
-              Size (% of the $1M account)
-              <input type="number" min={1} max={100} value={size} onChange={(e) => { setSize(e.target.value); setGate(null); }} className={`${field} w-28`} aria-label="Size on the $1M book" />
-            </label>
-            <button type="button" className={button} disabled={busy || !size} onClick={check}>Check the gate</button>
-            <button type="button" disabled={busy || (gate?.status !== "ready" && !override)} onClick={goLive}
-              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:opacity-50">
-              Go live on the $1M book
-            </button>
-          </div>
-          {gate && (
-            <ul className="mt-2 space-y-1 text-sm">
-              {gate.claim && <li className={gate.claim.holds === true ? "text-emerald-300" : gate.claim.holds === false ? "text-rose-300" : "text-slate-300"}>New data: {gate.claim.label}</li>}
-              {gate.reasons.map((r) => <li key={r} className="text-slate-300">{r}</li>)}
-              {gate.status === "ready" && <li className="text-emerald-300">Clear. Press Go live to start the $1M book's record.</li>}
-            </ul>
-          )}
-          {gate && gate.status !== "ready" && (
-            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-              <label className="flex items-start gap-2 text-sm text-amber-200">
-                <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="mt-0.5" />
-                <span>
-                  Override the gate — my deliberate call. Bypasses only the 63-day wait; the server still refuses
-                  a claim that failed on new data or a position over 25%. The override is recorded on the idea.
-                </span>
-              </label>
-              {override && (
-                <input type="text" value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)}
-                  placeholder="Why (recorded with the override)" className={`${field} mt-2 w-full`} maxLength={500} />
-              )}
-            </div>
-          )}
-        </div>
+        <GatePanel id={id} book="big" onChange={onChange}
+          intro="The same live-paper gate as the main book: the claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of that account or less. The size is this book's own."
+          sizeLabel="Size (% of the $1M account)"
+          sizeAriaLabel="Size on the $1M book"
+          goLiveLabel="Go live on the $1M book"
+          readyLine="Clear. Press Go live to start the $1M book's record."
+          overrideConfirm="Override the 63-day gate for the $1M book? This is recorded on the idea as your deliberate call. It bypasses only the waiting period — a failed claim or an oversize position still refuse." />
       )}
 
       {state.live_at && (
@@ -1549,18 +1553,9 @@ export default function WorkshopIdea() {
       {data && <SummaryHeader data={data} />}
       {data && id && <div className="mt-3"><TagEditor key={id} ideaId={Number(id)} initial={data.idea.tags ?? []} /></div>}
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
-      {data && id && data.runs.length > 0 && !isEvent(data.runs[data.runs.length - 1].spec) && (
-        <div className="mt-6">
-          <PlayCheckButton ideaId={Number(id)} source="workshop" title={data.idea.title} />
-        </div>
-      )}
-      {data && id && (
-        <section className="mt-6" aria-label="Lifecycle">
-          <h2 className="text-sm font-semibold text-white">Lifecycle — publish, track, go live</h2>
-          <LifecyclePanel id={id} detail={data} onChange={load} />
-        </section>
-      )}
-      {data?.leaps && <LeapsTrialPanel data={data.leaps} />}
+      {data && (
+        <section className="mt-8" aria-label="Draft">
+          <h2 className="text-base font-semibold text-white">Draft</h2>
       {drafting && (
         <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
@@ -1623,6 +1618,16 @@ export default function WorkshopIdea() {
           Draft the test
         </button>
       )}
+        </section>
+      )}
+      {data && data.runs.length > 0 && (
+        <section className="mt-8" aria-label="Verdict">
+          <h2 className="text-base font-semibold text-white">Verdict</h2>
+          {id && !isEvent(data.runs[data.runs.length - 1].spec) && (
+            <div className="mt-4">
+              <PlayCheckButton ideaId={Number(id)} source="workshop" title={data.idea.title} />
+            </div>
+          )}
       {data && [...data.runs].reverse().map((r, idx) =>
         idx === 0 ? (
           <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
@@ -1634,6 +1639,15 @@ export default function WorkshopIdea() {
             <VerdictCard ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
           </details>
         ),
+      )}
+        </section>
+      )}
+      {data && id && (
+        <section className="mt-8" aria-label="Go live">
+          <h2 className="text-base font-semibold text-white">Go live</h2>
+          <LifecyclePanel id={id} detail={data} onChange={load} />
+          {data.leaps && <LeapsTrialPanel data={data.leaps} />}
+        </section>
       )}
     </div>
   );

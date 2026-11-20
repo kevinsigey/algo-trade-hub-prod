@@ -9,7 +9,12 @@ idea stays Kevin's call or the existing kill paths'.
 The live number is the claim's OWN statistic recomputed on the live record
 (engine._claim over the shadow days), so the degradation is always in the
 claim's own units -- pts/yr vs benchmark for beats_benchmark, % per down day
-for ballast -- never an invented metric. The shadow record is the strategy's
+for ballast -- never an invented metric. One exception in kind, not in
+units: the ballast statistic itself changed in step 12, so for ballast the
+backtest side is recomputed with the current statistic from the run's
+stored unseen series; a run saved before the series was stored cannot be
+recomputed, and its comparison is skipped with the reason in the payload
+rather than measured across two different rulers. The shadow record is the strategy's
 live record (real days, real prices, the confirmed rules); the paper block
 alongside it is the execution record (what the broker actually filled), kept
 separate on purpose: a strategy can hold live while its fills leak, and the
@@ -123,9 +128,28 @@ def _spans(rows: list[dict]) -> list[dict]:
     return spans
 
 
+def _usable_series(rows: list[dict] | None) -> list[dict] | None:
+    """A stored backtest series the claim can be recomputed on: a non-empty
+    list of rows whose ret/bench/spy are all finite numbers. Anything else
+    (absent, partial, carrying holes) is treated as not stored."""
+    if not rows:
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        for key in ("ret", "bench", "spy"):
+            value = row.get(key)
+            if not isinstance(value, (int, float)) or not math.isfinite(value):
+                return None
+        if "on" not in row:
+            return None
+    return rows
+
+
 def critique_payload(*, idea_id: int, book: str, at: str, kind: str, backtest: dict,
                      rows: list[dict], regimes: dict[str, dict], paper: dict | None,
-                     prior_dominant: str | None) -> dict:
+                     prior_dominant: str | None,
+                     backtest_rows: list[dict] | None = None) -> dict:
     """One critique: the comparison, the conditions, the flags, the verdict."""
     days = len(rows)
     if days:
@@ -133,9 +157,33 @@ def critique_payload(*, idea_id: int, book: str, at: str, kind: str, backtest: d
     else:
         holds, live_value, live_label = False, None, "no live days yet"
     backtest_value = backtest.get("value")
-    degradation = (live_value - backtest_value
-                   if live_value is not None and backtest_value is not None
-                   and math.isfinite(live_value) and math.isfinite(backtest_value) else None)
+    backtest_label = backtest.get("label")
+    backtest_holds = backtest.get("holds")
+    comparison, comparison_note = "stored", None
+    if kind == "ballast":
+        # The ballast statistic changed in step 12 (raw SPY -> the equal-beta
+        # mix), so a value stored by an older run is measured with a
+        # different ruler than the live value and the two must never be
+        # compared directly. When the run stored its unseen series the
+        # backtest value is recomputed with the current statistic; when it
+        # did not (every run saved before the series was stored), the
+        # comparison is skipped and the payload says why.
+        series = _usable_series(backtest_rows)
+        if series is not None:
+            backtest_holds, backtest_value, backtest_label = live_claim(kind, series)
+            comparison = "recomputed"
+            comparison_note = ("backtest value recomputed with the current ballast "
+                               "statistic from the run's stored unseen series")
+        else:
+            comparison = "skipped"
+            comparison_note = ("the saved run predates the equal-beta ballast statistic "
+                               "(step 12) and did not store its daily series, so its "
+                               "stored value was measured against raw SPY and cannot be "
+                               "compared with the live value; no degradation is computed")
+    compare_value = backtest_value if comparison != "skipped" else None
+    degradation = (live_value - compare_value
+                   if live_value is not None and compare_value is not None
+                   and math.isfinite(live_value) and math.isfinite(compare_value) else None)
 
     spans = _spans(rows)
     losing = [s for s in spans if s["excess_pct"] < 0]
@@ -155,11 +203,14 @@ def critique_payload(*, idea_id: int, book: str, at: str, kind: str, backtest: d
         flags.append(f"the same losing conditions as the last critique ({dominant}) "
                      "-- a repeated pattern, not new information")
 
-    rec, reasons = recommend(days=days, live_value=live_value, backtest_value=backtest_value)
+    rec, reasons = recommend(days=days, live_value=live_value, backtest_value=compare_value)
+    if comparison == "skipped":
+        reasons = reasons + [comparison_note]
     return {
         "idea_id": idea_id, "book": book, "at": at,
         "claim": {"kind": kind, "backtest_value": _num(backtest_value),
-                  "backtest_label": backtest.get("label"), "backtest_holds": backtest.get("holds"),
+                  "backtest_label": backtest_label, "backtest_holds": backtest_holds,
+                  "comparison": comparison, "comparison_note": comparison_note,
                   "verdict": backtest.get("verdict"), "p": _num(backtest.get("p")),
                   "walk_forward": backtest.get("walk_forward")},
         "live": {"days": days,

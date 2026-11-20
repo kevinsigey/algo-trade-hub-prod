@@ -8,6 +8,9 @@ from tradehub.scripts import screening_universe_refresh as refresh
 
 
 def test_wiki_tickers_accepts_either_header(monkeypatch):
+    # The pull builds its header from SEC_CONTACT_EMAIL
+    # (tradehub.sec_ua); the stubbed transport still needs the config.
+    monkeypatch.setenv("SEC_CONTACT_EMAIL", "sec-contact@example.com")
     frame = pd.DataFrame({"Symbol": ["AAA", "BRK.B"], "Name": ["A Co", "B Co"]})
     monkeypatch.setattr(refresh.requests, "get",
                         lambda url, headers=None, timeout=None: type("R", (), {"text": "<html/>"})())

@@ -110,9 +110,11 @@ def test_the_registry_wraps_every_market_linked_model_and_no_pseudo_forecaster()
     FORECASTERS = _live + RETIRED  # retired rows are still built; they just stop freezing
 
     names = [f.name for f in FORECASTERS]
-    for expected in ("cpi_nowcast_cautious", "labor_nowcast_cautious",
-                     "sports_nfl_cautious", "sports_cfb_spread_cautious", "sports_nfl_total_cautious"):
+    for expected in ("cpi_nowcast_cautious", "labor_nowcast_cautious"):
         assert expected in names
+    # Sports forecasters were wrapped too until sports left the hub (2026-11-18);
+    # no sports name is built any more, raw or cautious.
+    assert not any(n.startswith("sports_") for n in names)
     assert "fomc_mapped" not in names and "fomc_mapped_cautious" not in names  # retired 2026-11-01
     assert not any(n.startswith("kalshi_implied_") and n.endswith("_cautious") for n in names)
     assert not any(n in names for n in ("spy_quant_cautious", "housing_direction_cautious"))  # no market price

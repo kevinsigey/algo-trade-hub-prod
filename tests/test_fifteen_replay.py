@@ -182,6 +182,44 @@ def test_haircut_fills_at_ask_plus_a_cent_and_drops_thin_edges():
     assert cut5["side"] is None and cut5["pnl"] is None
 
 
+def test_replay_pnl_carries_the_haircut_on_both_sides():
+    # Claude's cleanup ask (2026-11-17): pin that the stored replay pnl
+    # itself is a cent worse under the haircut, not just the side_cost --
+    # on the NO side too, where the cost rides on the shifted bid.
+    import pytest
+
+    from tradehub.backtest.fifteen_replay import REPLAY_HAIRCUT
+
+    from tradehub import oil_fifteen_rule as rule
+
+    def pair(tp, cs):
+        raw = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                            close_time=CLOSE, outcome=1, tape=tp, candles=cs)
+        cut = replay_window(series="KXNATGAS15M", target="kalshi:X-1", ticker="X-1",
+                            close_time=CLOSE, outcome=1, tape=tp, candles=cs,
+                            haircut=REPLAY_HAIRCUT)
+        return [(r, c) for r, c in zip(raw, cut)
+                if r["side"] is not None and c["side"] == r["side"]]
+
+    # The pnl is the rule's pnl AT the haircut cost: a cent worse on
+    # cost, modulo the fee the rule computes on that cost (the fee moves
+    # a fraction of a mil when the cost moves, so the pnl delta is a
+    # cent less that fee change -- never the raw-cost pnl).
+    yes_pairs = pair(tape(drift=0.001), candles())
+    assert yes_pairs and all(r["side"] == "yes" for r, _ in yes_pairs)
+    for r, c in yes_pairs:
+        assert c["side_cost"] == pytest.approx(r["side_cost"] + 0.01)
+        assert c["pnl"] == rule.pnl("yes", c["side_cost"], 1)
+        assert r["pnl"] - 0.011 < c["pnl"] < r["pnl"] - 0.009
+
+    no_pairs = pair(tape(drift=-0.001), candles())
+    assert no_pairs and all(r["side"] == "no" for r, _ in no_pairs)
+    for r, c in no_pairs:
+        assert c["side_cost"] == pytest.approx(r["side_cost"] + 0.01)
+        assert c["pnl"] == rule.pnl("no", c["side_cost"], 1)
+        assert r["pnl"] - 0.011 < c["pnl"] < r["pnl"] - 0.009
+
+
 def test_golden_gate_passes_when_all_three_parts_pass():
     replay = [{"series": "S", "target": "T", "offset_min": 5, "prob_up": 0.500001,
                "side": None, "side_cost": None, "edge_net": None,
