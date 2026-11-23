@@ -8,7 +8,10 @@ into the fact sheet. Frozen method (implementation plan, Phase 0):
   full-year periods only; latest recorded guide for the latest guided FY wins.
 - Sanity guards reject recorder noise (recorded on the sheet, never silent).
 - Bands: bull = guide high x M, base = guide mid x M, bear = guide low x
-  0.90 (the frozen 10% haircut) x M, M = industry peer-group median forward P/E.
+  0.90 (the frozen 10% haircut) x M. M was the industry peer-group median
+  forward P/E; since step 10 (2026-11-19) M is a 50/50 blend of the
+  name's own 5-year median multiple and that peer median, or the peer
+  median alone (sheet flagged "peer only") without 5 years of history.
 - Gap = (implied EPS - guide mid) / guide range width, in range widths.
 - Baseline verdict = the zone the price sits in vs the bands (mirrored for
   shorts). Staleness suppresses the verdict, never the record.
@@ -20,6 +23,18 @@ from datetime import date, datetime, timezone
 
 HAIRCUT = 0.90          # bear band: low-end guide x 0.90 (Kevin, frozen)
 MIN_PEERS = 3           # peer multiple needs >= 3 valid members
+
+
+def blend_multiple(own: float | None, peer: float | None) -> tuple[float | None, str]:
+    """Step 10 method (Claude's ruling, 2026-11-19): the multiple a name
+    is valued at is a 50/50 blend of its own 5-year median multiple and
+    the peer median. Without the own history the peer median stands
+    alone and the sheet is flagged "peer_only"."""
+    if peer is None:
+        return None, "peer_only"
+    if own is None:
+        return float(peer), "peer_only"
+    return round(0.5 * float(own) + 0.5 * float(peer), 4), "blend"
 PRICE_STALE_DAYS = 5
 GUIDE_STALE_DAYS = 135
 FUND_STALE_DAYS = 550
@@ -363,6 +378,7 @@ def _revenue_sheet(sheet: dict, *, anchor: dict, price: float | None,
     m = float(sales_multiple)
     sh = float(shares)
     sheet["peer_multiple"] = sales_multiple
+    sheet["multiple_basis"] = "peer_only"   # the revenue basis has no own-multiple blend
     sheet["peer_count"] = sales_count
     if sales_basis:
         sheet["peer_basis"] = sales_basis
@@ -419,7 +435,8 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
                      tier: str = "open",
                      sales_multiple: float | None = None,
                      sales_count: int = 0,
-                     sales_basis: str | None = None) -> dict:
+                     sales_basis: str | None = None,
+                     own_multiple: float | None = None) -> dict:
     sheet: dict = {
         "ticker": ticker,
         "tier": tier,
@@ -430,6 +447,8 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
         "price_as_of": price_date.isoformat() if price_date else None,
         "peer_group": None,
         "peer_multiple": peer_multiple,
+        "own_multiple": own_multiple,
+        "multiple_basis": None,
         "peer_count": peer_count,
         "peer_basis": peer_basis,
         "peer_median_fwd_eps": peer_median_fwd_eps,
@@ -504,7 +523,8 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
             f"{MIN_PEERS} members with a usable forward P/E.")
         return sheet
 
-    m = float(peer_multiple)
+    m, multiple_basis = blend_multiple(own_multiple, peer_multiple)
+    sheet["multiple_basis"] = multiple_basis
     sheet["bands"] = {"bear": round(low * HAIRCUT * m, 2),
                       "base": round(mid * m, 2),
                       "bull": round(high * m, 2)}

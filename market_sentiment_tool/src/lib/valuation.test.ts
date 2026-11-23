@@ -36,12 +36,12 @@ describe("num", () => {
 
 describe("zoneInfo", () => {
   it("labels every verdict in plain words", () => {
-    expect(zoneInfo("buy_zone_strong").label).toBe("Strong buy zone");
-    expect(zoneInfo("buy_zone").label).toBe("Buy zone");
-    expect(zoneInfo("neutral").label).toBe("Neutral");
-    expect(zoneInfo("short_zone").label).toBe("Short zone");
-    expect(zoneInfo("short_zone_strong").label).toBe("Strong short zone");
-    expect(zoneInfo("no_chase_long").label).toBe("No-chase");
+    expect(zoneInfo("buy_zone_strong").label).toBe("Below guidance value");
+    expect(zoneInfo("buy_zone").label).toBe("Below guidance value");
+    expect(zoneInfo("neutral").label).toBe("In line");
+    expect(zoneInfo("short_zone").label).toBe("Above guidance value");
+    expect(zoneInfo("short_zone_strong").label).toBe("Above guidance value");
+    expect(zoneInfo("no_chase_long").label).toBe("In line");
     expect(zoneInfo("stale").label).toMatch(/stale/i);
     expect(zoneInfo("no_bands").label).toBe("No bands");
     expect(zoneInfo(null).label).toBe("—");

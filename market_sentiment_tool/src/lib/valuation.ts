@@ -72,6 +72,8 @@ export interface FactSheet {
   ingest_notes?: string[] | null;
   peer_group: string | null;
   peer_multiple: number | string | null;
+  own_multiple?: number | string | null;
+  multiple_basis?: string | null; // blend | peer_only (step 10 method)
   peer_count: number | null;
   peer_basis: string | null;
   anchor: GuideAnchor | null;
@@ -227,15 +229,13 @@ export interface GuidanceBoard {
 }
 
 /** The zone board's columns, in display order. Every banded name lands
- * in exactly one column: the five zone columns the build names, plus a
+ * in exactly one column: the three zone columns the build names, plus a
  * held/other column that exists so a stale or unpriced banded name is
  * never dropped from the board to make the columns tidy. */
 export const BOARD_COLUMNS: { key: string; label: string; zones: string[] }[] = [
-  { key: "strong_buy", label: "Strong buy", zones: ["buy_zone_strong"] },
-  { key: "buy", label: "Buy", zones: ["buy_zone"] },
-  { key: "neutral", label: "Neutral", zones: ["neutral", "no_chase_long"] },
-  { key: "short", label: "Short", zones: ["short_zone"] },
-  { key: "strong_short", label: "Strong short", zones: ["short_zone_strong"] },
+  { key: "below", label: "Below guidance value", zones: ["buy_zone_strong", "buy_zone"] },
+  { key: "in_line", label: "In line", zones: ["neutral", "no_chase_long"] },
+  { key: "above", label: "Above guidance value", zones: ["short_zone", "short_zone_strong"] },
   { key: "held_other", label: "Zone held / other", zones: ["stale", "no_price"] },
 ];
 
@@ -278,17 +278,17 @@ export type ZoneTone = "buy" | "short" | "flat" | "muted";
 export interface ZoneInfo { label: string; tone: ZoneTone; blurb: string }
 
 const ZONES: Record<string, ZoneInfo> = {
-  buy_zone_strong: { label: "Strong buy zone", tone: "buy",
+  buy_zone_strong: { label: "Below guidance value", tone: "buy",
     blurb: "Price is below the bear band — the market prices in less than the low end of guidance, with the 10% haircut." },
-  buy_zone: { label: "Buy zone", tone: "buy",
+  buy_zone: { label: "Below guidance value", tone: "buy",
     blurb: "Price is at or below the base band — the market prices in less than the midpoint of guidance." },
-  neutral: { label: "Neutral", tone: "flat",
+  neutral: { label: "In line", tone: "flat",
     blurb: "Price is inside the bull band and the implied figure sits inside the guide range." },
-  short_zone: { label: "Short zone", tone: "short",
+  short_zone: { label: "Above guidance value", tone: "short",
     blurb: "Price is above the base band — the market prices in more than the guide midpoint supports." },
-  short_zone_strong: { label: "Strong short zone", tone: "short",
+  short_zone_strong: { label: "Above guidance value", tone: "short",
     blurb: "Price is above the bull band and the implied figure is above the guide midpoint." },
-  no_chase_long: { label: "No-chase", tone: "flat",
+  no_chase_long: { label: "In line", tone: "flat",
     blurb: "Price is above the bull band, but the implied figure still trails the guide midpoint — rich price, cheap guide; no signal either way." },
   stale: { label: "Stale — zone held", tone: "muted",
     blurb: "The price or the guide is too old to grade; the sheet stands, the zone is not shown." },
@@ -415,5 +415,14 @@ export function multipleText(sheet: FactSheet): string {
   const m = num(sheet.peer_multiple);
   if (m == null) return "—";
   const kind = sheet.band_basis === "revenue" ? "P/S" : "fwd P/E";
+  const own = num(sheet.own_multiple);
+  if (sheet.band_basis !== "revenue" && sheet.multiple_basis === "blend" && own != null) {
+    // Trailing own P/E blended with the forward peer P/E: it is neither a
+    // forward nor a trailing multiple, so it is labelled for what it is (#569).
+    return `${((own + m) / 2).toFixed(2)}× blended P/E (50/50 own ${own.toFixed(2)} / peer ${m.toFixed(2)})`;
+  }
+  if (sheet.band_basis !== "revenue" && sheet.multiple_basis === "peer_only") {
+    return `${m.toFixed(2)}× ${kind} (peer only)`;
+  }
   return `${m.toFixed(2)}× ${kind}`;
 }
