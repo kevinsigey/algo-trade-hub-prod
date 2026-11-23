@@ -99,6 +99,18 @@ def pending_triggers(client) -> list[dict]:
             .order("priority").order("created_at").execute().data) or []
 
 
+def recent_triggers(client, ticker: str, kind: str,
+                    limit: int = 50) -> list[dict]:
+    """Rendered triggers for a ticker+kind, newest first, bounded. A failed
+    render is not a call that was made, so it never suppresses a retry."""
+    # Filter on state BEFORE the limit, so newer failed rows can't push a
+    # completed trigger out of the window.
+    return (client.table(TRIGGERS).select("*").eq("ticker", ticker)
+            .eq("kind", kind).eq("state", "done")
+            .order("created_at", desc=True)
+            .limit(limit).execute().data) or []
+
+
 def mark_trigger(client, trigger_id: int, state: str,
                  verdict_id: int | None = None) -> None:
     update = {"state": state}

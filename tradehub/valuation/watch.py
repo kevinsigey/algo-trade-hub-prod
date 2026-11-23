@@ -11,11 +11,14 @@ queue entirely and are not triggers).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 
 from tradehub.portfolio.options import parse_occ
 from tradehub.valuation import store as val_store
 from tradehub.valuation import verdict_store, verdicts
+
+logger = logging.getLogger(__name__)
 
 BOOKS = ("main", "big")
 PRIORITY = {"crossing": 1, "falsifier_window": 1, "new_guidance": 2,
@@ -23,6 +26,9 @@ PRIORITY = {"crossing": 1, "falsifier_window": 1, "new_guidance": 2,
 _DIRECTIONAL = ("buy_zone", "buy_zone_strong", "short_zone",
                 "short_zone_strong")
 PRINT_WINDOW_DAYS = 5
+# One debate per ticker per window: a rendered crossing/refresh re-fire inside
+# this window is the same call, not a new one (no new state column/migration).
+TRIGGER_COOLDOWN_HOURS = 24
 
 
 def underlying(symbol: str) -> str:
@@ -55,16 +61,62 @@ def _default_positions(book: str) -> dict:
     return positions_map(book)
 
 
+def _created_at(trigger: dict) -> datetime | None:
+    """Parse a trigger's created_at, assuming UTC when the stamp is naive."""
+    try:
+        stamp = datetime.fromisoformat(trigger["created_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
+
+
+def _refire_reason(client, ticker: str, kind: str, detail: dict,
+                   now: datetime) -> str | None:
+    """Why this re-fire is the same call as an already-rendered trigger."""
+    past = verdict_store.recent_triggers(client, ticker, kind)
+    if kind == "falsifier_window":
+        print_date = detail.get("print_date")
+        if print_date and any((t.get("detail") or {}).get("print_date") ==
+                              print_date for t in past):
+            return "same print_date"
+        # Rows rendered before print_date was recorded: one inside the same
+        # print window is the same call (no extra repeat on the first pass).
+        cutoff = now - timedelta(days=PRINT_WINDOW_DAYS)
+        for t in past:
+            stamp = _created_at(t)
+            if not (t.get("detail") or {}).get("print_date") and stamp is not None \
+                    and stamp >= cutoff:
+                return "legacy row inside the print window"
+    elif kind == "new_guidance":
+        recorded_at = detail.get("recorded_at")
+        if recorded_at and any((t.get("detail") or {}).get("recorded_at") ==
+                               recorded_at for t in past):
+            return "same recorded_at"
+    elif kind in ("crossing", "refresh"):
+        cutoff = now - timedelta(hours=TRIGGER_COOLDOWN_HOURS)
+        for t in past:
+            stamp = _created_at(t)
+            if stamp is not None and stamp >= cutoff:
+                return f"within {TRIGGER_COOLDOWN_HOURS}h cooldown"
+    return None
+
+
 def _queue_trigger(client, ticker: str, kind: str, detail: dict,
-                   now: datetime) -> bool:
-    """Queue a trigger unless an identical one is already pending."""
+                   now: datetime) -> str:
+    """Queue a trigger unless a pending twin exists or a rendered one already
+    covers this window. Returns 'queued', 'suppressed' or 'skipped'."""
     for pending in verdict_store.pending_triggers(client):
         if pending["ticker"] == ticker and pending["kind"] == kind:
-            return False
+            return "skipped"
+    reason = _refire_reason(client, ticker, kind, detail, now)
+    if reason:
+        logger.info("valuation watch: suppressed %s re-fire for %s (%s)",
+                    kind, ticker, reason)
+        return "suppressed"
     verdict_store.insert_trigger(client, {
         "ticker": ticker, "kind": kind, "priority": PRIORITY[kind],
         "state": "pending", "created_at": now.isoformat(), "detail": detail})
-    return True
+    return "queued"
 
 
 def _crossed_band(prev_price: float, price: float, bands: dict) -> str | None:
@@ -76,21 +128,28 @@ def _crossed_band(prev_price: float, price: float, bands: dict) -> str | None:
     return None
 
 
-def _print_within(ds, ticker: str, now: datetime, days: int) -> bool:
-    """True when the name's next earnings print lands inside the window —
-    the falsifier's calendar proxy (the falsifier itself is prose)."""
+def _next_print_in_window(ds, ticker: str, now: datetime, days: int
+                          ) -> date | None:
+    """The next earnings print date inside the window, or None — the
+    falsifier's calendar proxy (the falsifier itself is prose)."""
     try:
         frame = ds.earnings_dates(ticker)
         if frame is None or not len(frame):
-            return False
+            return None
         today = now.date()
+        hits = []
         for stamp in frame.index:
             day = stamp.date() if hasattr(stamp, "date") else stamp
             if today <= day and (day - today).days <= days:
-                return True
+                hits.append(day)
+        return min(hits) if hits else None
     except Exception:  # noqa: BLE001 -- no calendar is no trigger, not a crash
-        return False
-    return False
+        return None
+
+
+def _print_within(ds, ticker: str, now: datetime, days: int) -> bool:
+    """True when the name's next earnings print lands inside the window."""
+    return _next_print_in_window(ds, ticker, now, days) is not None
 
 
 def compute_watch(client, ds, *, positions_fn=None, now: datetime | None = None
@@ -133,6 +192,16 @@ def compute_watch(client, ds, *, positions_fn=None, now: datetime | None = None
     latest_guide = {t: max((r.get("created_at") or "") for r in rows)
                     for t, rows in records.items() if rows}
     queued = 0
+    suppressed = 0
+
+    def _enqueue(ticker, kind, detail):
+        nonlocal queued, suppressed
+        outcome = _queue_trigger(client, ticker, kind, detail, now)
+        if outcome == "queued":
+            queued += 1
+        elif outcome == "suppressed":
+            suppressed += 1
+
     for ticker, sheet in sorted(sheets.items()):
         key = f"ticker:{ticker}"
         prev = verdict_store.watch_state(client, key)
@@ -144,26 +213,24 @@ def compute_watch(client, ds, *, positions_fn=None, now: datetime | None = None
                        if prev_price is not None else None)
             zone_entry = zone in _DIRECTIONAL and prev.get("zone") != zone
             if crossed or zone_entry:
-                if _queue_trigger(client, ticker, "crossing",
-                                  {"band": crossed, "from_zone":
-                                   prev.get("zone"), "to_zone": zone,
-                                   "price": price}, now):
-                    queued += 1
+                _enqueue(ticker, "crossing",
+                         {"band": crossed, "from_zone": prev.get("zone"),
+                          "to_zone": zone, "price": price})
             guide_at = latest_guide.get(ticker)
             if guide_at and prev.get("last_guide_at") and \
                     guide_at > prev["last_guide_at"]:
-                if _queue_trigger(client, ticker, "new_guidance",
-                                  {"recorded_at": guide_at}, now):
-                    queued += 1
-        if _print_within(ds, ticker, now, PRINT_WINDOW_DAYS):
-            if _queue_trigger(client, ticker, "falsifier_window",
-                              {"within_days": PRINT_WINDOW_DAYS}, now):
-                queued += 1
+                _enqueue(ticker, "new_guidance", {"recorded_at": guide_at})
+        print_date = _next_print_in_window(ds, ticker, now, PRINT_WINDOW_DAYS)
+        if print_date is not None:
+            _enqueue(ticker, "falsifier_window",
+                     {"within_days": PRINT_WINDOW_DAYS,
+                      "print_date": print_date.isoformat()})
         verdict_store.set_watch_state(client, {
             "key": key, "kind": "ticker", "ticker": ticker, "zone": zone,
             "price": price, "last_guide_at": latest_guide.get(ticker),
             "updated_at": now.isoformat()})
-    return {"flags": flags, "triggers_queued": queued}
+    return {"flags": flags, "triggers_queued": queued,
+            "triggers_suppressed": suppressed}
 
 
 def drain_triggers(client, ds, *, chat=None, seat=None,

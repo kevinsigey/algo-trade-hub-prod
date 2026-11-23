@@ -137,8 +137,8 @@ describe("Guidance tab", () => {
     expect(strip).toHaveTextContent("3 banded");
     expect(strip).toHaveTextContent("2 EPS basis");
     expect(strip).toHaveTextContent("1 revenue basis");
-    expect(strip).toHaveTextContent("1 in a buy zone");
-    expect(strip).toHaveTextContent("2 in short zones");
+    expect(strip).toHaveTextContent("1 below guidance value");
+    expect(strip).toHaveTextContent("2 above guidance value");
     expect(strip).toHaveTextContent("2 not banded");
   });
 
@@ -159,8 +159,8 @@ describe("Guidance tab", () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
     const eps = await screen.findByTestId("basis-eps");
-    expect(within(eps).getByText("Strong short zone")).toBeInTheDocument();
-    expect(within(eps).getByText("Buy zone")).toBeInTheDocument();
+    expect(within(eps).getByText("Above guidance value")).toBeInTheDocument();
+    expect(within(eps).getByText("Below guidance value")).toBeInTheDocument();
     expect(within(eps).getByText("Raised")).toBeInTheDocument();
   });
 
@@ -168,8 +168,8 @@ describe("Guidance tab", () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
     const legend = await screen.findByTestId("zone-legend");
-    expect(legend).toHaveTextContent("Strong buy zone");
-    expect(legend).toHaveTextContent("No-chase");
+    expect(legend).toHaveTextContent("Below guidance value");
+    expect(legend).toHaveTextContent("In line");
     expect(legend).toHaveTextContent("guide midpoint");
   });
 
@@ -275,8 +275,8 @@ describe("Guidance tab (Round 2 hygiene)", () => {
     serveSheets([CVS, hum]);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
     const strip = await screen.findByTestId("valuation-summary");
-    expect(strip).toHaveTextContent("2 in buy zones");
-    expect(strip).not.toHaveTextContent("in a buy zones");
+    expect(strip).toHaveTextContent("2 below guidance value");
+    expect(strip).not.toHaveTextContent("in buy zones");
   });
 
   it("moves the band-chart price label off the axis row when it would collide", async () => {

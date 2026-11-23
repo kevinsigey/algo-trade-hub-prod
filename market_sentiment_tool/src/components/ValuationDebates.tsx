@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { adminJson, ApiError } from "@/lib/workshop";
-import { priceText } from "@/lib/valuation";
+import { priceText, zoneInfo } from "@/lib/valuation";
 
 /**
  * Valuation debates (Phase 1): a second debate panel on the Debates page, under
@@ -87,21 +87,13 @@ export interface ValuationVerdictFeed {
   watch: { flags: ValuationWatchFlag[]; pending_triggers: ValuationPendingTrigger[] };
 }
 
-const ZONE_LABELS: Record<string, string> = {
-  buy_zone_strong: "Strong buy zone",
-  buy_zone: "Buy zone",
-  neutral: "Neutral",
-  short_zone: "Short zone",
-  short_zone_strong: "Strong short zone",
-  no_chase_long: "No-chase (rich price, cheap guide)",
-  stale: "Stale",
-  no_bands: "No bands",
-  no_price: "No price",
-};
-
 export function zoneLabel(zone: string | null | undefined): string {
   if (!zone) return "—";
-  return ZONE_LABELS[zone] ?? zone;
+  // The one zone vocabulary is ZONES in lib/valuation (step 10's naming:
+  // below / in line / above guidance value). This file used to carry its
+  // own copy with the old words ("Strong buy zone", "Short zone") --
+  // Claude's review of the step-10 PR: use ZONES[verdict].label.
+  return zoneInfo(zone).label;
 }
 
 function zoneBadgeClass(zone: string): string {

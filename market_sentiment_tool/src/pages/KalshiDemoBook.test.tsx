@@ -49,6 +49,10 @@ const LIVE = {
     filled_at: "2026-11-12T15:52:00Z", window_close: "2026-11-12T16:00:00Z",
     outcome: 1, settlement_pnl: 6.6,
   }],
+  health: [],
+  prod_book: [
+    { gate_version: "v1", recorded: 3, would_fill: 2, fill_rate: 0.6667, settled: 1, pnl_per_contract: 0.55, low95_cents: 12.3 },
+  ],
   note: NOTE,
 };
 
@@ -200,6 +204,17 @@ describe("Kalshi (demo) Portfolio tab", () => {
     expect(await screen.findByText("$505.00")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Positions" })).getByText("—")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Open positions" })).getByText("—")).toBeInTheDocument();
+  });
+});
+
+describe("Kalshi production-book record", () => {
+  it("shows the would-have-filled card and the dead-book health line", async () => {
+    serveKalshi({ ...LIVE, health: ["demo book empty: KXNATGAS15M"] });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("demo book empty: KXNATGAS15M")).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "Would have filled (real book)" });
+    expect(within(card).getByText("v1")).toBeInTheDocument();
+    expect(within(card).getByText(/2\/3 · 67%/)).toBeInTheDocument();
   });
 });
 

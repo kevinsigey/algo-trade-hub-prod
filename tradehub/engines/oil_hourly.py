@@ -67,6 +67,25 @@ def hourly_sigma(changes: list[float]) -> float:
     return max(MIN_HOURLY_SIGMA, statistics.stdev(window))
 
 
+RV_WINDOW = timedelta(hours=24)   # the realised-volatility lookback (v7's preregistration)
+RV_MIN_DIFFS = 120                # usable 1-minute differences before the RV sigma may speak
+
+
+def realised_sigma(candles: list[tuple[datetime, float]]) -> tuple[float, int, float] | None:
+    """(hourly sigma, differences used, 1-minute sigma) from 1-minute realised
+    volatility: the stdev of the differences of consecutive closes exactly one
+    minute apart (a missing minute breaks the pair, `hourly_changes`' adjacency
+    rule), scaled by sqrt(60) and floored like `hourly_sigma`. None when the
+    tape carries fewer than RV_MIN_DIFFS usable differences -- a gap, never a
+    quiet-market zero dressed as a measurement."""
+    diffs = [cur - prev for (t0, prev), (t1, cur) in zip(candles, candles[1:])
+             if t1 - t0 == timedelta(minutes=1)]
+    if len(diffs) < RV_MIN_DIFFS:
+        return None
+    sigma_1m = statistics.stdev(diffs)
+    return max(MIN_HOURLY_SIGMA, sigma_1m * math.sqrt(60.0)), len(diffs), sigma_1m
+
+
 def sigma_for(sigma_h: float, minutes: float) -> float:
     """Sigma for a settlement `minutes` away: random-walk scaling from the hourly sigma."""
     return sigma_h * math.sqrt(max(minutes, MIN_SIGMA_MINUTES) / 60.0)

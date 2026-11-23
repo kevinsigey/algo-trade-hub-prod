@@ -1009,7 +1009,12 @@ class ClaimRacedDB(DB):
             if (q.row is not None and not isinstance(q.row, list)
                     and q.row.get("status") == "pending" and self.raced == 0):
                 self.raced += 1
-                self.db.setdefault(name, []).append(dict(q.row))
+                row = dict(q.row)
+                # The real row is stamped by the created_at column
+                # default when the racing pass's insert lands; the
+                # ordered reads downstream rely on that stamp.
+                row.setdefault("created_at", NOW.isoformat())
+                self.db.setdefault(name, []).append(row)
                 raise RuntimeError(
                     "duplicate key value violates unique constraint "
                     "\"kalshi_demo_orders_series_target_gate_version_key\"")

@@ -72,7 +72,20 @@ interface FifteenPayload {
   metals?: { prereg_at?: string; ready_trades?: number;
              by_series?: Record<string, SeriesStats>;
              gate?: { forward?: SeriesStats; by_series?: Record<string, SeriesStats> } };
+  // The redesign board (2026-11-19): the fifteen family grouped by
+  // commodity, every model ranked, a simulated account under each.
+  board?: { commodities: BoardCard[]; account_start: number };
 }
+
+interface BoardAccount { start: number; balance: number; drawdown: number; bust: boolean;
+                         curve: number[]; trades_taken: number }
+interface BoardModel { version: string; label: string; series: string; trades: number;
+                       net_cents: number | null; low95: number | null; paired_low95: number | null;
+                       fill_short: number; too_few: boolean; weight?: number;
+                       progress: { n: number; needed: number;
+                                   legs: { n: boolean; low95: boolean; paired: boolean } };
+                       account: BoardAccount }
+interface BoardCard { series: string; commodity: string; models: BoardModel[] }
 
 const REASON_LABELS: [string, string][] = [
   ["no_edge", "no edge"], ["no_quote", "no quote"], ["no_prediction", "no prediction"],
@@ -208,6 +221,85 @@ function FifteenWhereBlock() {
         </table>
       )}
     </SubDetails>
+  );
+}
+
+/** The simulated account's balance curve as a small sparkline. */
+function Sparkline({ curve }: { curve: number[] }) {
+  if (curve.length < 2) return null;
+  const min = Math.min(...curve), max = Math.max(...curve), span = Math.max(max - min, 1e-9);
+  const pts = curve.map((v, i) => `${(i / (curve.length - 1)) * 118 + 1},${26 - ((v - min) / span) * 24}`).join(" ");
+  const up = curve[curve.length - 1] >= curve[0];
+  return (
+    <svg width="120" height="28" className="shrink-0" aria-hidden="true">
+      <polyline points={pts} fill="none" strokeWidth="1.5"
+                className={up ? "stroke-emerald-400/80" : "stroke-rose-400/80"} />
+    </svg>
+  );
+}
+
+/** One model on a commodity card: its record, its promotion progress,
+ * and the simulated account below. */
+function BoardModelRow({ m }: { m: BoardModel }) {
+  const leg = (ok: boolean, name: string) => (
+    <span className={ok ? "text-emerald-300" : "text-slate-500"}>{name} {ok ? "✓" : "✗"}</span>
+  );
+  const pct = Math.min(100, (m.progress.n / Math.max(m.progress.needed, 1)) * 100);
+  return (
+    <div className={`border-t border-slate-800/70 py-2 ${m.too_few ? "opacity-70" : ""}`}>
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs tabular-nums">
+        <span className="text-sm font-medium text-slate-100">{m.label === m.version ? m.version : m.label}</span>
+        {m.label !== m.version && <span className="text-slate-500">{m.version}</span>}
+        {m.weight != null && <span className="text-slate-400">weight {m.weight.toFixed(2)}</span>}
+        {m.too_few && <span className="rounded border border-slate-700 px-1 text-slate-400">too few trades</span>}
+        <span className="text-slate-300">{m.trades} trades</span>
+        <span className={toneOf(m.net_cents)}>{m.net_cents == null ? "—" : `${signed(m.net_cents)}¢`} a contract</span>
+        <span className="text-slate-400">low95 {m.low95 == null ? "—" : `${signed(m.low95)}¢`}</span>
+        <span className="text-slate-400">paired vs live {m.paired_low95 == null ? "—" : `${signed(m.paired_low95)}¢`}</span>
+        <span className="text-slate-400">fill-short {m.fill_short}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-slate-400">
+        <div className="h-1.5 w-36 rounded-full bg-slate-800" role="img"
+             aria-label={`${m.progress.n} of ${m.progress.needed} trades toward the promotion bar`}>
+          <div className="h-full rounded-full bg-sky-400/70" style={{ width: `${pct}%` }} />
+        </div>
+        <span>{m.progress.n}/{m.progress.needed}</span>
+        {leg(m.progress.legs.n, "trades")}
+        {leg(m.progress.legs.low95, "low95")}
+        {leg(m.progress.legs.paired, "paired (display only)")}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-4 text-xs tabular-nums text-slate-400">
+        <span>Simulated account: <span className={toneOf(m.account.balance - m.account.start)}>{usdPlain(m.account.balance)}</span>
+          {" "}from {usdPlain(m.account.start)} · drawdown {usdPlain(m.account.drawdown)}
+          {m.account.bust && <span className="ml-1 rounded border border-rose-500/50 px-1 text-rose-300">bust</span>}
+        </span>
+        <Sparkline curve={m.account.curve} />
+      </div>
+    </div>
+  );
+}
+
+/** The redesign board: one wide card per commodity, its models ranked
+ * best to worst, cards ordered by their best proven model. */
+function FifteenBoard({ board }: { board: NonNullable<FifteenPayload["board"]> }) {
+  if (!board.commodities?.length) return null;
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-400">
+        Every model scored on each market, ranked by fresh net cents a contract; models under 10 trades
+        sit last. The simulated account starts at $20 and stakes 10% of its balance a trade, capped at
+        the depth on offer where the tape measured it; it stops when it cannot buy one contract.
+        Fees on multi-contract trades are approximate. The board's paired check is display-only —
+        the promotion leg pairs on the offset-5 row.
+      </p>
+      {board.commodities.map((card) => (
+        <section key={card.series} aria-label={`${card.commodity} models`}
+                 className="rounded-md border border-slate-800 px-3 py-2">
+          <h4 className="text-sm font-semibold text-slate-100">{card.commodity}</h4>
+          {card.models.map((m) => <BoardModelRow key={m.version} m={m} />)}
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -574,6 +666,11 @@ export default function Strategies() {
               Kalshi's fee; hold to the close. Nothing trades around the 4:45–6:30 PM ET futures halt.
             </p>
           </SubDetails>
+          {fifteen?.board && (
+            <SubDetails title="By commodity — every model, ranked">
+              <FifteenBoard board={fifteen.board} />
+            </SubDetails>
+          )}
           <SubDetails title="Settlements scoring — the forecasts vs Kalshi's price">
             <FifteenSettlements />
           </SubDetails>
@@ -643,18 +740,9 @@ export default function Strategies() {
               <p className="mt-1 text-xs text-slate-400">
                 All six 15-minute markets, the last two weeks of whole ET days: settled trades and P&amp;L per trade after
                 fees. The v1 rule is the live gate for oil and gas and a record only for metals; the blend and the
-                vol-regime challenger are paper shadows.
+                vol-regime challenger are paper shadows. Each model's own record now sits on its commodity
+                card above.
               </p>
-              {fifteen.volregime?.fresh && fifteen.volregime.fresh.trades > 0 && (
-                <p className="mt-1 text-xs tabular-nums text-slate-400">
-                  Vol-regime challenger: {fifteen.volregime.fresh.trades} fresh trades, {fifteen.volregime.fresh.net_per_contract == null ? "—" : cent1(fifteen.volregime.fresh.net_per_contract)} a trade,
-                  low95 {fifteen.volregime.fresh.low95 == null ? "—" : cent1(fifteen.volregime.fresh.low95)}, day-clustered low95 {fifteen.volregime.fresh.clustered_low95 == null ? "—" : cent1(fifteen.volregime.fresh.clustered_low95)}
-                  {fifteen.volregime.paired && fifteen.volregime.paired.windows > 0 && (
-                    <> · against the blend on {fifteen.volregime.paired.windows} windows {fifteen.volregime.paired.delta_per_window == null ? "—" : cent1(fifteen.volregime.paired.delta_per_window)} a window,
-                      low95 {fifteen.volregime.paired.low95 == null ? "—" : cent1(fifteen.volregime.paired.low95)}, day-clustered low95 {fifteen.volregime.paired.clustered_low95 == null ? "—" : cent1(fifteen.volregime.paired.clustered_low95)}</>
-                  )}. The day-clustered figure is informational; the promotion bar is the preregistered one.
-                </p>
-              )}
             </SubDetails>
           )}
           {fifteen?.decisions && fifteen.decisions.recorded > 0 && (

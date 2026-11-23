@@ -117,6 +117,12 @@ def _http_get(url: str, headers: dict, timeout: int = 30) -> bytes:
             return resp.read()
 
 
+def _yf_period(years: int) -> str:
+    """yfinance accepts only fixed history periods (1y, 2y, 5y, 10y, max):
+    the smallest one that covers `years`."""
+    return next((f"{p}y" for p in (1, 2, 5, 10) if years <= p), "max")
+
+
 class DataStore:
     def __init__(self, cache_dir: str | Path | None = None):
         root = Path(cache_dir) if cache_dir else Path(
@@ -211,7 +217,7 @@ class DataStore:
         if hit is not None:
             self._note_asof("prices")
             return hit
-        raw = yf.download(tickers, period=f"{years}y", auto_adjust=True,
+        raw = yf.download(tickers, period=_yf_period(years), auto_adjust=True,
                           progress=False, threads=True)
         if raw is None or len(raw) == 0:
             raise RuntimeError("yfinance download returned no data")
@@ -224,6 +230,33 @@ class DataStore:
         self.cache.set(key, closes)
         self._note_asof("prices")
         return closes
+
+    def closes_with_splits(self, ticker: str, years: int) -> tuple[pd.Series, pd.Series]:
+        """Dividend-unadjusted daily closes (split-adjusted, as yfinance serves
+        them) and the split ratios (2.0 = 2-for-1), from ONE history call and
+        cached together, so the splits always describe the closes they sit
+        beside (CodeRabbit on #569: separately cached, a split landing between
+        two refreshes could slip past a guard). Raises when the history can't
+        be read -- an empty read never passes for "no splits"."""
+        import yfinance as yf
+
+        key = f"closes_splits|{years}|{ticker}"
+        hit = self.cache.get(key, TTL["prices"])
+        if hit is not None:
+            self._note_asof("prices")
+            return hit
+        hist = yf.Ticker(ticker).history(period=_yf_period(years), auto_adjust=False, actions=True)
+        if hist is None or len(hist) == 0 or "Close" not in hist.columns \
+                or "Stock Splits" not in hist.columns:
+            raise RuntimeError(f"price history for {ticker} could not be read")
+        index = pd.DatetimeIndex(hist.index).tz_localize(None)
+        closes = pd.Series(hist["Close"].astype(float).values, index=index).dropna().sort_index()
+        splits = pd.Series(hist["Stock Splits"].astype(float).values, index=index)
+        splits = splits[splits > 0]
+        out = (closes, splits)
+        self.cache.set(key, out)
+        self._note_asof("prices")
+        return out
 
     # -- yfinance: info ---------------------------------------------------------
     def info(self, ticker: str) -> dict:
