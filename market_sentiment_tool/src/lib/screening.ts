@@ -250,7 +250,7 @@ export const PRESETS: Preset[] = [
     items: [{ card: "ddhigh", op: "ge", value: -5 }, { card: "ret3m", op: "gt", value: 10 },
             { card: "vol63", op: "le", value: 60 }] },
   { id: "oversold-quality", name: "Oversold quality",
-    blurb: "RSI-washed-out names that still run a real operating margin — self-funding businesses only.",
+    blurb: "RSI-washed-out names that still run an operating margin above 10%.",
     items: [{ card: "rsi", op: "le", value: 35 }, { card: "op_m", op: "gt", value: 10 }] },
 ];
 
