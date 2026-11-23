@@ -114,8 +114,10 @@ def test_only_paper_orders_module_writes_to_alpaca():
     # Step 4: exactly one module may send anything but a GET to Alpaca, and it is the paper-only order path.
     # A file that can reach Alpaca names its host (or imports PAPER_BASE / the paper helpers).
     reaches = re.compile(r"alpaca\.markets|PAPER_BASE|DATA_BASE|alpaca_paper")
+    # Step 20: route decorators read @router.post now that main.py is split;
+    # a decorator is a registration, not a send, so it stays excluded.
     writers = [p for p in Path("tradehub").rglob("*.py")
-               if reaches.search(p.read_text()) and re.search(r"(?<!@app)\.(post|patch|put|delete)\(", p.read_text())]
+               if reaches.search(p.read_text()) and re.search(r"(?<!@app)(?<!@router)\.(post|patch|put|delete)\(", p.read_text())]
     assert [str(p) for p in writers] == ["tradehub/portfolio/paper_orders.py"]
 
 

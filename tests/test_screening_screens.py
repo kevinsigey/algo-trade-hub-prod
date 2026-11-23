@@ -129,3 +129,204 @@ def test_promote_builds_a_tracking_basket_idea(client, monkeypatch):
     assert fake.store["screens"][0]["promoted_idea_id"] == body["idea_id"]
     again = c.post(f"/api/screening/screens/{screen['id']}/promote")
     assert again.status_code == 409  # set-once
+
+
+def test_an_interrupted_promotion_resumes_the_same_idea(client, monkeypatch):
+    # CodeRabbit on #575: if a write fails midway (here: tracking), a retry
+    # must finish the original handoff, not create a second idea.
+    from tradehub.workshop import store as workshop_store
+
+    c, fake = client
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: object())
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, closes, start, bars_fn=None: closes)
+    monkeypatch.setattr(main, "rule_series", lambda spec, start, fred=None, analyst_fn=None: {})
+    monkeypatch.setattr(main, "workshop_div_yields", lambda spec, prices: {})
+    runs = []
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: runs.append(1) or {"verdict": "PASS", "data_end": "2026-10-29"})
+    real_track = workshop_store.track
+
+    def flaky_track(*a, **k):
+        raise RuntimeError("database hiccup")
+
+    monkeypatch.setattr(workshop_store, "track", flaky_track)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass  # TestClient re-raises the server error
+    assert len(fake.store["ideas"]) == 1 and not fake.store["ideas"][0].get("tracked_at")
+    assert fake.store["screens"][0]["promoted_idea_id"] == fake.store["ideas"][0]["id"]
+
+    monkeypatch.setattr(workshop_store, "track", real_track)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert len(fake.store["ideas"]) == 1                 # no second idea
+    assert len(fake.store["idea_runs"]) == 1 and len(runs) == 1  # no second run
+    assert fake.store["ideas"][0]["tracked_at"] and fake.store["ideas"][0]["published_at"]
+    assert c.post(f"/api/screening/screens/{screen['id']}/promote").status_code == 409
+
+
+
+def test_a_failed_marker_write_is_recovered_by_the_idea_key(client, monkeypatch):
+    # CodeRabbit on #575: if the screen's marker write fails right after the
+    # idea is created, the retry finds the idea by its durable key, links it
+    # and finishes -- never a second idea.
+    from tradehub.screening import store as screen_store
+
+    c, fake = client
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: object())
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, closes, start, bars_fn=None: closes)
+    monkeypatch.setattr(main, "rule_series", lambda spec, start, fred=None, analyst_fn=None: {})
+    monkeypatch.setattr(main, "workshop_div_yields", lambda spec, prices: {})
+    monkeypatch.setattr(main, "run_test", lambda *a, **k: {"verdict": "PASS", "data_end": "2026-10-29"})
+    real_set = screen_store.set_promoted
+
+    def failing_set(*a, **k):
+        raise RuntimeError("marker write failed")
+
+    monkeypatch.setattr(screen_store, "set_promoted", failing_set)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    assert len(fake.store["ideas"]) == 1 and not fake.store["screens"][0].get("promoted_idea_id")
+
+    monkeypatch.setattr(screen_store, "set_promoted", real_set)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert len(fake.store["ideas"]) == 1
+    assert fake.store["screens"][0]["promoted_idea_id"] == fake.store["ideas"][0]["id"]
+    assert fake.store["ideas"][0]["tracked_at"]
+
+
+def _stub_backtest(monkeypatch, run_test=None):
+    monkeypatch.setattr(main, "workshop_closes", lambda tickers, start: object())
+    monkeypatch.setattr(main, "with_rule_bars", lambda spec, closes, start, bars_fn=None: closes)
+    monkeypatch.setattr(main, "rule_series", lambda spec, start, fred=None, analyst_fn=None: {})
+    monkeypatch.setattr(main, "workshop_div_yields", lambda spec, prices: {})
+    monkeypatch.setattr(main, "run_test", run_test or
+                        (lambda *a, **k: {"verdict": "PASS", "data_end": "2026-10-29"}))
+
+
+def test_promotion_ignores_an_unrelated_idea_holding_the_key(client, monkeypatch):
+    # CodeRabbit on #575: the promotion marker is metadata, not something to
+    # hunt for in editable idea prose. A note that happens to mention the key
+    # must never turn an unrelated idea into the screen's basket.
+    from tradehub.workshop import store as workshop_store
+
+    c, fake = client
+    _stub_backtest(monkeypatch)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    key = f"[screen-promotion:{screen['id']}]"
+    decoy = workshop_store.create_idea(fake, "Unrelated", f"my notes mention {key} by accident")
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert r.json()["idea_id"] != decoy["id"]
+    assert fake.store["screens"][0]["promoted_idea_id"] != decoy["id"]
+    basket = fake.store["ideas"][-1]
+    assert key not in basket["plain_words"]  # marker lives in dedicated metadata
+
+
+def test_screen_list_carries_the_promoted_ideas_tracked_state(client, monkeypatch):
+    # CodeRabbit on #575: the page must keep the retry available while the
+    # linked idea is not yet tracked, so it needs that state from the API.
+    from tradehub.workshop import store as workshop_store
+
+    c, _ = client
+    _stub_backtest(monkeypatch)
+    real_track = workshop_store.track
+    monkeypatch.setattr(workshop_store, "track", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("tracking hiccup")))
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    row = [s for s in c.get("/api/screening/screens").json() if s["id"] == screen["id"]][0]
+    assert row["promoted_idea_id"] is not None
+    assert row["promoted_tracked_at"] is None  # linked but untracked: retry still offered
+    monkeypatch.setattr(workshop_store, "track", real_track)
+    assert c.post(f"/api/screening/screens/{screen['id']}/promote").status_code == 200
+    row = [s for s in c.get("/api/screening/screens").json() if s["id"] == screen["id"]][0]
+    assert row["promoted_tracked_at"] is not None  # finished: link reads "tracked"
+
+
+def test_resume_reports_the_original_basket_after_a_rerun(client, monkeypatch):
+    # CodeRabbit on #575: a re-screen between attempts replaces last_run; the
+    # retry must resume AAA/BBB and report AAA/BBB, not the new survivors.
+    from tradehub.screening import store as screen_store
+    from tradehub.workshop import store as workshop_store
+
+    c, fake = client
+    _stub_backtest(monkeypatch)
+    real_track = workshop_store.track
+    monkeypatch.setattr(workshop_store, "track", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("tracking hiccup")))
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    assert fake.store["idea_runs"][0]["spec"]["hold"] == ["AAA", "BBB"]
+    screen_store.record_run(fake, screen["id"], {"footer": {}, "columns": [],
+                                                 "survivors": ["CCC", "DDD"]})
+    monkeypatch.setattr(workshop_store, "track", real_track)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert r.json()["survivors"] == ["AAA", "BBB"]
+    tracked_id = fake.store["ideas"][0]["tracked_run_id"]
+    run = [x for x in fake.store["idea_runs"] if x["id"] == tracked_id][0]
+    assert run["spec"]["hold"] == ["AAA", "BBB"]
+
+
+def test_resume_keeps_the_original_input_when_the_backtest_failed(client, monkeypatch):
+    # CodeRabbit on #575: before a run is saved the original survivors must be
+    # persisted, or a re-run with no survivors blocks the retry with a 409.
+    from tradehub.screening import store as screen_store
+
+    c, _ = client
+    calls = []
+
+    def flaky_run_test(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("backtest hiccup")
+        return {"verdict": "PASS", "data_end": "2026-10-29"}
+
+    _stub_backtest(monkeypatch, flaky_run_test)
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    screen_store.record_run(client[1], screen["id"], {"footer": {}, "columns": [], "survivors": []})
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert r.json()["survivors"] == ["AAA", "BBB"]
+
+
+def test_resume_saves_the_unsaved_variation_one_run(client, monkeypatch):
+    # CodeRabbit on #575: insert succeeded but save failed. The retry must save
+    # that run and finish -- never backtest and insert a second variation 1.
+    from tradehub.workshop import store as workshop_store
+
+    c, fake = client
+    calls = []
+    _stub_backtest(monkeypatch, lambda *a, **k: calls.append(1) or
+                   {"verdict": "PASS", "data_end": "2026-10-29"})
+    real_save = workshop_store.save_run
+    monkeypatch.setattr(workshop_store, "save_run", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("save hiccup")))
+    screen = c.post("/api/screening/screens", json={"spec": SPEC, "last_run": RUN}).json()
+    try:
+        c.post(f"/api/screening/screens/{screen['id']}/promote")
+    except RuntimeError:
+        pass
+    assert len(fake.store["idea_runs"]) == 1 and not fake.store.get("idea_run_saves")
+    monkeypatch.setattr(workshop_store, "save_run", real_save)
+    r = c.post(f"/api/screening/screens/{screen['id']}/promote")
+    assert r.status_code == 200, r.text
+    assert len(fake.store["idea_runs"]) == 1 and len(calls) == 1  # no second run
+    assert len(fake.store.get("idea_run_saves", [])) == 1
+    assert fake.store["ideas"][0]["tracked_at"]

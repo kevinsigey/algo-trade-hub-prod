@@ -92,8 +92,13 @@ def get_screen(supa, screen_id: int) -> dict | None:
 
 
 def record_run(supa, screen_id: int, last_run: dict) -> dict:
-    values = {"last_run": last_run, "updated_at": datetime.now(UTC).isoformat()}
     existing = get_screen(supa, screen_id)
+    # An interrupted handoff keeps its original key/input across re-screens:
+    # the run is replaced, the promotion metadata is not.
+    promotion = ((existing or {}).get("last_run") or {}).get("promotion")
+    if promotion is not None:
+        last_run = {**last_run, "promotion": promotion}
+    values = {"last_run": last_run, "updated_at": datetime.now(UTC).isoformat()}
     if existing and (existing.get("spec") or {}).get("membership_diff"):
         # Watchlist diffing (classic three): the refresh is diffed against
         # the stored membership; entrances/exits append dated events, the
@@ -115,6 +120,18 @@ def set_promoted(supa, screen_id: int, idea_id: int) -> dict:
     rows = supa.table(SCREENS).update(
         {"promoted_idea_id": idea_id, "promoted_at": datetime.now(UTC).isoformat(),
          "updated_at": datetime.now(UTC).isoformat()}
+    ).eq("id", screen_id).execute().data
+    return rows[0] if rows else None
+
+
+def set_promotion(supa, screen_id: int, meta: dict) -> dict:
+    """Dedicated promotion metadata on the screen row: the key and the ORIGINAL
+    survivors, written before the backtest. Recovery reads this field instead
+    of scanning the ideas table's editable plain_words for a marker."""
+    existing = get_screen(supa, screen_id)
+    last_run = {**((existing or {}).get("last_run") or {}), "promotion": meta}
+    rows = supa.table(SCREENS).update(
+        {"last_run": last_run, "updated_at": datetime.now(UTC).isoformat()}
     ).eq("id", screen_id).execute().data
     return rows[0] if rows else None
 

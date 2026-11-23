@@ -25,7 +25,13 @@ debates; verdicts never feed ideas, books, or orders.
 """
 from __future__ import annotations
 
+import fcntl
+import logging
+import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from tradehub.valuation import store as val_store
 
@@ -385,8 +391,51 @@ def _mark(client, candidate_id: int, state: str, *,
 
 # ── the drain: candidates become debates ────────────────────────────────────
 
+log = logging.getLogger(__name__)
+
+
+def _lock_dir() -> Path:
+    # /cache is the host volume every tradehub container mounts (compose), so the
+    # API and a cron run inside any tradehub container see the same lock file.
+    # ponytail: file lock on one host; a second VPS would need a database claim.
+    return Path(os.getenv("TRADEHUB_LOCK_DIR")
+                or ("/cache" if os.path.isdir("/cache") else tempfile.gettempdir()))
+
+
+@contextmanager
+def drain_lock():
+    """Yield True when this process holds the candidate-drain lock, False when
+    another drain (API thread or cron script) is already running."""
+    handle = open(_lock_dir() / "tradehub-candidate-drain.lock", "a+")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
 def run_candidate_debates(client, ds, *, chat=None, seat=None,
                           now: datetime | None = None) -> list[dict]:
+    """One drain at a time across every entrypoint (CodeRabbit on #575): two
+    overlapping drains could both read the same pending candidate and render
+    its debate twice. A drain that finds the lock held does nothing -- the
+    running drain works the same pending queue."""
+    with drain_lock() as held:
+        if not held:
+            log.info("debate candidates: another drain is running; skipped")
+            return []
+        return _run_candidate_debates(client, ds, chat=chat, seat=seat, now=now)
+
+
+def _run_candidate_debates(client, ds, *, chat=None, seat=None,
+                           now: datetime | None = None) -> list[dict]:
     """Render pending candidates in priority order through the existing
     verdict path (shared daily budget, Exhibit A discipline, fail-closed
     LLM chain). A capacity decline (llm/seat unavailable) leaves the

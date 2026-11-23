@@ -35,7 +35,11 @@ describe("the play check sheet", () => {
     expect(screen.getByText(/The rule is IN today/)).toBeInTheDocument();
     expect(screen.getByText("GLD")).toBeInTheDocument();
     expect(screen.getByText(/already in place/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "$1M book" })).toBeInTheDocument();
+    // #579: the public sheet has no book picker and never asks for a book.
+    expect(screen.queryByRole("button", { name: "$1M book" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("playcheck-nominal")).toHaveTextContent(/nominal \$100,000 all-cash book/);
+    const url = String((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]);
+    expect(url).not.toContain("book=");
     expect(screen.getByText(/Prices are latest closes/)).toBeInTheDocument();
   });
 

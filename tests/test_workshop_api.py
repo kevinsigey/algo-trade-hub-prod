@@ -232,6 +232,12 @@ def test_override_refuses_a_failed_claim_or_oversize(passed):
     gate.update({"status": "waiting", "claim": None, "size_ok": False})
     assert c.post(f"/api/workshop/ideas/{i}/live",
                   json={"size_pct": 20, "override": True}).status_code == 409
+    # A saved PASS that no longer meets the hub-wide standard: _gate says
+    # "fails" with the claim and size checks unset. Not waivable (#575).
+    gate.update({"status": "fails", "claim": None, "size_ok": None,
+                 "reasons": ["its PASS no longer stands under the hub-wide standard"]})
+    assert c.post(f"/api/workshop/ideas/{i}/live",
+                  json={"size_pct": 20, "override": True}).status_code == 409
     assert db.db["ideas"][0].get("live_at") is None
 
 
