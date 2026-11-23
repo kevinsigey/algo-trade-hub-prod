@@ -132,8 +132,8 @@ def fetch_closing_price(series: str, ticker: str, close_time: str,
     """Last public 60m candle ending at or before the market close.
 
     Kalshi's public candlesticks give the yes bid/ask closes; their midpoint is
-    the last price anyone could see. `KalshiHistoryClient.parse_candle` already
-    falls back to `price.close` when the bid/ask blocks are absent. Returns the
+    the last price anyone could see. Without a two-sided quote, the candle's
+    last trade (`price.close`) stands in. Returns the
     JSON-safe close record, or None when there is no usable candle.
     """
     close_dt = parse_ts(close_time)
@@ -147,9 +147,12 @@ def fetch_closing_price(series: str, ticker: str, close_time: str,
         return None
     last = max(eligible, key=lambda c: c.end_ts)
     bid, ask = last.yes_bid, last.yes_ask
-    if bid is None and ask is None:
+    if bid is not None and ask is not None:
+        yes_prob = (bid + ask) / 2.0
+    elif last.last_price is not None:  # no two-sided quote: the last trade
+        yes_prob = last.last_price
+    else:
         return None
-    yes_prob = (bid + ask) / 2.0 if bid is not None and ask is not None else (bid if bid is not None else ask)
     return {"yes_prob": round(yes_prob, 5), "source": "candle_60m", "at": last.end_ts.isoformat()}
 
 

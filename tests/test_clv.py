@@ -301,3 +301,13 @@ def test_track_record_endpoint_surfaces_clv_fields():
     assert body[0]["clv_n"] == 1
     assert body[0]["clv_mean"] == pytest.approx(0.1)
     assert body[0]["clv_positive_share"] == pytest.approx(1.0)
+
+
+def test_parse_candle_keeps_quoteless_bid_ask_none_for_backtests():
+    """The last trade feeds CLV only; mid/spread consumers (labor backtest,
+    jobs scorecard, ERCOT replay) must still see a quote-less candle as unusable."""
+    from tradehub.backtest.kalshi_history import parse_candle
+
+    c = parse_candle({"end_period_ts": 1_700_000_000, "price": {"close_dollars": "0.42"}})
+    assert c.yes_bid is None and c.yes_ask is None
+    assert c.last_price == 0.42

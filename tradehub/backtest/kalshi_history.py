@@ -24,6 +24,9 @@ class Candle:
     yes_bid: float | None
     yes_ask: float | None
     volume: float
+    # Last traded YES price in the period. Kept apart from bid/ask so a
+    # quote-less candle stays unusable for every mid/spread consumer.
+    last_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -62,15 +65,12 @@ def _candle_field(raw: dict[str, Any], block_name: str, *field_names: str) -> An
 
 
 def parse_candle(raw: dict[str, Any]) -> Candle:
-    # A quote-less candle still carries a YES price under `price.close`.
-    price_close = _dollars((raw.get("price") or {}).get("close"))
-    yes_bid = _dollars(_candle_field(raw, "yes_bid", "close_dollars", "close"))
-    yes_ask = _dollars(_candle_field(raw, "yes_ask", "close_dollars", "close"))
     return Candle(
         end_ts=datetime.fromtimestamp(int(raw["end_period_ts"]), tz=timezone.utc),
-        yes_bid=yes_bid if yes_bid is not None else price_close,
-        yes_ask=yes_ask if yes_ask is not None else price_close,
+        yes_bid=_dollars(_candle_field(raw, "yes_bid", "close_dollars", "close")),
+        yes_ask=_dollars(_candle_field(raw, "yes_ask", "close_dollars", "close")),
         volume=float(raw.get("volume_fp", raw.get("volume", 0.0)) or 0.0),
+        last_price=_dollars(_candle_field(raw, "price", "close_dollars", "close")),
     )
 
 
