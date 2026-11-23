@@ -39,13 +39,19 @@ def _lift_multiple_fields(row: dict) -> dict:
     """Step 10's own_multiple / multiple_basis have no columns of their
     own; insert_sheet folds them into the inputs jsonb and every read
     lifts them back to the sheet's top level, so served rows match the
-    engine's in-memory shape. Pre-step-10 rows lift to None."""
+    engine's in-memory shape. Pre-step-10 rows lift to None. The band
+    sanity fields (band_suspect / band_widths_outside, debate fix 3)
+    ride the same fold."""
     inputs = row.get("inputs")
     if isinstance(inputs, dict):
         if row.get("own_multiple") is None:
             row["own_multiple"] = inputs.get("own_multiple")
         if row.get("multiple_basis") is None:
             row["multiple_basis"] = inputs.get("multiple_basis")
+        if row.get("band_suspect") is None:
+            row["band_suspect"] = inputs.get("band_suspect")
+        if row.get("band_widths_outside") is None:
+            row["band_widths_outside"] = inputs.get("band_widths_outside")
     return row
 
 
@@ -53,6 +59,8 @@ def insert_sheet(client, sheet: dict) -> None:
     inputs = dict(sheet.get("inputs") or {})
     inputs["own_multiple"] = sheet.get("own_multiple")
     inputs["multiple_basis"] = sheet.get("multiple_basis")
+    inputs["band_suspect"] = sheet.get("band_suspect")
+    inputs["band_widths_outside"] = sheet.get("band_widths_outside")
     row = {
         "ticker": sheet["ticker"],
         "tier": sheet.get("tier", "open"),

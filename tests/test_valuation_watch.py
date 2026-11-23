@@ -301,6 +301,85 @@ def test_a_legacy_falsifier_row_without_print_date_suppresses_inside_the_window(
     assert out["triggers_queued"] == 0 and out["triggers_suppressed"] == 1
 
 
+def test_cooldown_runs_from_the_render_not_the_queue():
+    # A budget-delayed trigger queued 32h ago but rendered 2h ago: a
+    # re-fire now is the same call. By queue time the cooldown would
+    # have expired and let a duplicate debate through.
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    verdict = client.table("valuation_verdicts").insert({
+        "ticker": "AMGN", "status": "rendered",
+        "rendered_at": (NOW - timedelta(hours=2)).isoformat()}).execute()
+    verdict_store.insert_trigger(client, {
+        "ticker": "AMGN", "kind": "crossing", "priority": 1,
+        "state": "done",
+        "created_at": (NOW - timedelta(hours=32)).isoformat(),
+        "verdict_id": verdict.data[0]["id"],
+        "detail": {"band": "base", "to_zone": "short_zone_strong"}})
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 1
+
+
+def test_cooldown_expires_from_the_render_not_the_queue():
+    # Queued 30h ago, rendered 26h ago: outside the 24h render cooldown,
+    # so a fresh crossing queues even though the queue stamp is older.
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    verdict = client.table("valuation_verdicts").insert({
+        "ticker": "AMGN", "status": "rendered",
+        "rendered_at": (NOW - timedelta(hours=26)).isoformat()}).execute()
+    verdict_store.insert_trigger(client, {
+        "ticker": "AMGN", "kind": "crossing", "priority": 1,
+        "state": "done",
+        "created_at": (NOW - timedelta(hours=30)).isoformat(),
+        "verdict_id": verdict.data[0]["id"],
+        "detail": {"band": "base", "to_zone": "short_zone_strong"}})
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 1
+    assert out["triggers_suppressed"] == 0
+
+
+def test_crossing_cooldown_is_keyed_on_the_destination_zone():
+    # A flip into the opposite zone inside 24h is a new call: the prior
+    # debate argued the buy zone, this one argues the short zone.
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    _rendered_trigger(client, "AMGN", "crossing",
+                      (NOW - timedelta(hours=2)).isoformat(),
+                      band="base", to_zone="buy_zone")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 1
+    assert out["triggers_suppressed"] == 0
+    pending = [t for t in verdict_store.pending_triggers(client)
+               if t["ticker"] == "AMGN" and t["kind"] == "crossing"]
+    assert len(pending) == 1
+    assert pending[0]["detail"]["to_zone"] == "short_zone_strong"
+
+
+def test_crossing_cooldown_same_zone_still_suppresses():
+    client = _client()
+    _prior_ticker_state(client, "AMGN")
+    _rendered_trigger(client, "AMGN", "crossing",
+                      (NOW - timedelta(hours=2)).isoformat(),
+                      band="base", to_zone="short_zone_strong")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert out["triggers_suppressed"] == 1
+
+
+def test_band_suspect_sheet_queues_nothing_and_flags_nothing():
+    client = _client()
+    client.tables["valuation_fact_sheets"][0]["band_suspect"] = True
+    client.tables["valuation_fact_sheets"][0]["band_widths_outside"] = 292.0
+    _prior_ticker_state(client, "AMGN")
+    out = watch.compute_watch(client, _DS(), positions_fn=_positions, now=NOW)
+    assert out["triggers_queued"] == 0
+    assert all(f["underlying"] != "AMGN" for f in out["flags"])
+    # The healthy sheet still flags.
+    assert any(f["underlying"] == "GILD" for f in out["flags"])
+
+
 def test_newer_failed_rows_do_not_hide_a_completed_trigger():
     # The 50-row window must count completed triggers only: a burst of newer
     # failed renders can't push the done row out and let a duplicate through.
