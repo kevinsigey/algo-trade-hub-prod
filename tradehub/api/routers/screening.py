@@ -77,7 +77,14 @@ def screening_create_screen(body: _ScreenIn, _admin: dict = Depends(admin.requir
 def screening_list_screens(_admin: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     from tradehub.screening import store as screen_store
 
-    return screen_store.list_screens(supabase)
+    rows = screen_store.list_screens(supabase)
+    # The saved-screens page keeps the promote/retry action while the linked
+    # idea is untracked, so the screen list carries that state too.
+    tracked = {i["id"]: i.get("tracked_at")
+               for i in supabase.table(workshop_store.IDEAS).select("id,tracked_at").execute().data or []}
+    for row in rows:
+        row["promoted_tracked_at"] = tracked.get(row.get("promoted_idea_id"))
+    return rows
 
 
 @router.get("/api/screening/screens/{screen_id}", tags=["Screening"])
@@ -149,47 +156,65 @@ def screening_promote_screen(screen_id: int, _admin: dict = Depends(admin.requir
     row = screen_store.get_screen(supabase, screen_id)
     if row is None:
         raise HTTPException(status_code=404, detail="no such screen")
-    # The marker is written right after the idea is created, so an interrupted
-    # handoff (a write failing midway) resumes that same idea on retry instead
-    # of creating a second one (CodeRabbit on #575). Only a finished handoff --
-    # the idea tracking -- is "already promoted".
-    # The idea's text carries a durable key, so even a failed marker write is
-    # recoverable: the retry finds the idea by its key and links it.
+    # Recovery lives in a dedicated field on the SCREEN (last_run.promotion),
+    # never in the idea's editable plain_words: a note mentioning the key on an
+    # unrelated idea must never be treated as this screen's basket. Only a
+    # finished handoff -- the idea tracking -- is "already promoted".
+    last_run = row.get("last_run") or {}
     key = f"[screen-promotion:{screen_id}]"
+    promotion = last_run.get("promotion") or {}
+    if promotion.get("key") != key:  # metadata from another screen is never identity here
+        promotion = {}
+    idea_id = row.get("promoted_idea_id") or promotion.get("idea_id")
     resumed = None
-    if row.get("promoted_idea_id"):
-        resumed = workshop_store.get_idea(supabase, row["promoted_idea_id"])
+    if idea_id is not None:
+        resumed = workshop_store.get_idea(supabase, idea_id)
         if resumed is None or resumed["idea"].get("tracked_at"):
             raise HTTPException(status_code=409, detail="this screen already promoted to an idea")
-    else:
-        # ponytail: whole-table id/text read; ideas number in the dozens
-        ideas = supabase.table(workshop_store.IDEAS).select("id,plain_words").execute().data or []
-        orphan = next((i for i in ideas if key in (i.get("plain_words") or "")), None)
-        if orphan is not None:
-            screen_store.set_promoted(supabase, screen_id, orphan["id"])
-            resumed = workshop_store.get_idea(supabase, orphan["id"])
-    last_run = row.get("last_run") or {}
     survivors = last_run.get("survivors") or []
-    if not survivors:
+    if resumed is None and not survivors:
         raise HTTPException(status_code=409, detail="run the screen first -- promotion converts a run's survivors")
     footer = last_run.get("footer") or {}
     title = f"Screen basket: {row['name']}"
     plain = (f"Promoted from the screen '{row['name']}' (run {footer.get('run_at') or 'unknown'}): "
              f"its {len(survivors)} survivors as a fixed equal-weight basket -- {', '.join(survivors)}. "
              f"The screen's exact spec is preserved on the screen record; any re-screen is a new idea. "
-             f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))} {key}")
+             f"Screen spec: {_json.dumps(row['spec'], separators=(',', ':'))}")
     if resumed is None:
         idea_id = workshop_store.create_idea(supabase, title, plain)["id"]
+        # Persist the ORIGINAL input before the backtest: a retry resumes this
+        # basket even if the screen is re-run while the handoff is incomplete.
+        screen_store.set_promotion(supabase, screen_id,
+                                   {"key": key, "idea_id": idea_id, "survivors": survivors})
         screen_store.set_promoted(supabase, screen_id, idea_id)
-        saved = []
+        runs = []
     else:
         idea_id = resumed["idea"]["id"]
-        saved = workshop_store.saved_only(resumed["runs"])
+        if row.get("promoted_idea_id") is None:  # recovered from the dedicated field: re-link the marker
+            screen_store.set_promoted(supabase, screen_id, idea_id)
+        runs = resumed["runs"]
+
+    saved = workshop_store.saved_only(runs)
+    if saved:  # an earlier attempt already ran and saved: resume that run, never a second one
+        run = saved[-1]
+        # The original basket is in the saved run's spec, not the screen's
+        # current last_run, which a re-screen may have replaced.
+        survivors = (run.get("spec") or {}).get("hold") or promotion.get("survivors") or []
+        return _finish_promotion(supabase, (resumed or {}).get("idea") or {}, idea_id,
+                                 run, run["result"], survivors)
+    unsaved = next((r for r in runs if r.get("variation") == 1), None)
+    if unsaved is not None:
+        # insert succeeded, save failed: save this run and finish. No backtest,
+        # no second variation-1 row (the (idea_id, variation) unique constraint).
+        run = workshop_store.save_run(supabase, unsaved["id"])
+        survivors = (unsaved.get("spec") or {}).get("hold") or promotion.get("survivors") or []
+        return _finish_promotion(supabase, (resumed or {}).get("idea") or {}, idea_id,
+                                 run, unsaved["result"], survivors)
+    survivors = promotion.get("survivors") or survivors
+    if not survivors:
+        raise HTTPException(status_code=409, detail="run the screen first -- promotion converts a run's survivors")
     spec = IdeaSpec.model_validate({"title": title, "hold": survivors,
                                     "claim": "beats_benchmark", "benchmark": "SPY"})
-    if saved:  # the earlier attempt already ran and saved: reuse it, never a second run
-        run, result = saved[-1], saved[-1]["result"]
-        return _finish_promotion(supabase, resumed["idea"], idea_id, run, result, survivors)
     try:
         prices = _api.with_rule_bars(spec, _api.workshop_closes(tickers_for(spec), spec.start), spec.start,
                                 bars_fn=_api.workshop_bars)

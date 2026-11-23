@@ -231,15 +231,19 @@ def get_critic_summary(supabase=Depends(get_supabase)):
     recommendation and the worst degraders. Per-idea detail lives on each
     idea's own record (the critic block of /api/ideas), not in this summary."""
     latest = workshop_store.latest_critiques(supabase)
-    titles = {i["id"]: i["title"] for i in workshop_store.list_ideas(supabase)}
+    # This route is public: only published ideas may appear, the same rule the
+    # detail and play-check routes enforce (404 for everything unpublished).
+    titles = {i["id"]: i["title"] for i in workshop_store.published_ideas(supabase)}
     counts = {"PAUSE": 0, "WATCH": 0, "HOLD": 0}
     rows = []
     for (idea_id, book), row in latest.items():
+        if idea_id not in titles:
+            continue
         payload = row.get("payload") or {}
         rec = payload.get("recommendation")
         if rec in counts:
             counts[rec] += 1
-        rows.append({"idea_id": idea_id, "title": titles.get(idea_id), "book": book,
+        rows.append({"idea_id": idea_id, "title": titles[idea_id], "book": book,
                      "recommendation": rec, "degradation": payload.get("degradation"),
                      "days": (payload.get("live") or {}).get("days"),
                      "at": payload.get("at")})

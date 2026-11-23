@@ -866,7 +866,7 @@ export default function Screening() {
                   <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">Saved</span>
                 </span>
                 {sc.promoted_idea_id
-                  ? <Link to={`/workshop/${sc.promoted_idea_id}`} className="text-xs text-emerald-300 hover:underline">tracked idea →</Link>
+                  ? <Link to={`/workshop/${sc.promoted_idea_id}`} className="text-xs text-emerald-300 hover:underline">{sc.promoted_tracked_at ? "tracked idea →" : "promotion started →"}</Link>
                   : <span className="text-xs text-slate-500">not promoted</span>}
               </div>
               <div className="mt-1 text-xs text-slate-500">
@@ -945,7 +945,7 @@ export default function Screening() {
                   <button type="button" onClick={() => toggleRecorded(sc)}
                     className="rounded-md border border-slate-700 px-2 py-1 text-slate-300 hover:border-slate-500">Recorded results</button>
                 )}
-                {!sc.promoted_idea_id && sc.last_run && (
+                {(!sc.promoted_idea_id || !sc.promoted_tracked_at) && sc.last_run && (
                   <button type="button" onClick={() => promote(sc)} disabled={!!busy}
                     className="rounded-md border border-emerald-600/60 px-2 py-1 text-emerald-300 hover:border-emerald-400 disabled:opacity-50">Promote to tracked idea</button>
                 )}

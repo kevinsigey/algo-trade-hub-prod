@@ -301,6 +301,7 @@ def test_critic_summary_aggregates_counts_and_worst_first(api):
     store.add_critique(db, idea["id"], "main", _critique(idea["id"], "main", "PAUSE", -12.5))
     store.add_critique(db, idea["id"], "big", _critique(idea["id"], "big", "HOLD", 3.0))
     other = store.create_idea(db, "Beta", "x")
+    store.publish(db, other["id"])  # the summary is public: only published ideas count
     store.add_critique(db, other["id"], "main", _critique(other["id"], "main", "WATCH", -4.0))
 
     body = c.get("/api/ideas/critic-summary").json()
@@ -310,11 +311,32 @@ def test_critic_summary_aggregates_counts_and_worst_first(api):
     assert body["worst"][0]["title"] == "Alpha"
 
 
+def test_critic_summary_counts_only_published_ideas(api):
+    # CodeRabbit on #575: this is a public route; an unpublished idea's title
+    # and recommendation must not leak through counts/units/worst/at.
+    c, db = api
+    public = store.create_idea(db, "Public", "x")
+    store.publish(db, public["id"])
+    store.add_critique(db, public["id"], "main",
+                       _critique(public["id"], "main", "PAUSE", -8.0,
+                                 at="2026-11-10T23:00:00+00:00"))
+    hidden = store.create_idea(db, "Secret", "x")
+    store.add_critique(db, hidden["id"], "main",
+                       _critique(hidden["id"], "main", "WATCH", -50.0,
+                                 at="2026-11-11T23:00:00+00:00"))
+    body = c.get("/api/ideas/critic-summary").json()
+    assert body["counts"] == {"PAUSE": 1, "WATCH": 0, "HOLD": 0}
+    assert body["units"] == 1
+    assert [w["title"] for w in body["worst"]] == ["Public"]
+    assert body["at"] == "2026-11-10T23:00:00+00:00"
+
+
 def test_the_worst_list_needs_a_real_record_behind_the_number(api):
     """A 3-day-old idea's -999 degradation is two days annualized, not a
     verdict: it counts in the totals but never ranks as a worst degrader."""
     c, db = api
     young = store.create_idea(db, "Young", "x")
+    store.publish(db, young["id"])  # the summary is public: only published ideas count
     crit = _critique(young["id"], "main", "WATCH", -999.0)
     crit["live"]["days"] = 3
     store.add_critique(db, young["id"], "main", crit)

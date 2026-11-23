@@ -833,4 +833,6 @@ export interface ScreenRow {
                  members: Record<string, string> } | null;
   membership_events?: ScreenMembershipEvent[] | null;
   promoted_idea_id: number | null;
+  /** Set once the promoted idea is tracking; null while a handoff is unfinished. */
+  promoted_tracked_at?: string | null;
 }
