@@ -31,6 +31,8 @@ from typing import Protocol
 
 import requests
 
+from tradehub.valuation import figures
+
 SYSTEMONE_URL = "https://openrouter.ai/api/v1/systemone"
 KEV_MODEL = "jaredpalmer/kev-4b"
 # Kev-4B's context is 8,192 tokens (Jev's is 32k). The packet state is
@@ -79,15 +81,19 @@ def _consistent_direction(choice_id: str, direction: str) -> str:
     return direction
 
 
-def validate_decision(decision: dict) -> dict:
+def validate_decision(decision: dict, *, sources=None) -> dict:
     """Clean a seat's decision or void it. Applied to EVERY seat's output so
     the same rules bind the free AI seat, Jev and Kev: a rationale that says
-    nothing, an unknown choice/direction, or an act that carries no usable
-    confidence is not a verdict. Returns a cleaned copy; never mutates the
-    seat's dict."""
+    nothing or cites a figure no input supports, an unknown choice/direction,
+    or an act that carries no usable confidence is not a verdict. `sources`
+    are the debate's number sources (exhibit, options, frozen peers, context,
+    packet). Returns a cleaned copy; never mutates the seat's dict."""
     rationale = decision.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
         raise DecisionInvalid("empty rationale")
+    bad = figures.unsupported(rationale, sources)
+    if bad:
+        raise DecisionInvalid(f"unsupported figures: {bad}")
     choice = decision.get("choice_id")
     direction = decision.get("direction")
     if choice not in _ACT_CHOICES + _NO_ACT_CHOICES \
