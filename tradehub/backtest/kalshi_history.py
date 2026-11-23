@@ -62,10 +62,14 @@ def _candle_field(raw: dict[str, Any], block_name: str, *field_names: str) -> An
 
 
 def parse_candle(raw: dict[str, Any]) -> Candle:
+    # A quote-less candle still carries a YES price under `price.close`.
+    price_close = _dollars((raw.get("price") or {}).get("close"))
+    yes_bid = _dollars(_candle_field(raw, "yes_bid", "close_dollars", "close"))
+    yes_ask = _dollars(_candle_field(raw, "yes_ask", "close_dollars", "close"))
     return Candle(
         end_ts=datetime.fromtimestamp(int(raw["end_period_ts"]), tz=timezone.utc),
-        yes_bid=_dollars(_candle_field(raw, "yes_bid", "close_dollars", "close")),
-        yes_ask=_dollars(_candle_field(raw, "yes_ask", "close_dollars", "close")),
+        yes_bid=yes_bid if yes_bid is not None else price_close,
+        yes_ask=yes_ask if yes_ask is not None else price_close,
         volume=float(raw.get("volume_fp", raw.get("volume", 0.0)) or 0.0),
     )
 

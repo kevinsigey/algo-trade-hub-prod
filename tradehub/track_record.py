@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from tradehub.settlement import clv_points
+
 BUCKETS = ["50-60", "60-70", "70-80", "80-90", "90-100"]
 MIN_CONTRACTS = {"daily": 200, "monthly": 50}
 MAX_CALIBRATION_MISS = 0.10
@@ -114,12 +116,24 @@ def compute_engine_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ours = _weighted_mean([(float(r["brier"]), w) for r, w in zip(settled, weights) if r.get("brier") is not None])
     market_pairs = [(float(r["market_brier"]), w) for r, w in zip(settled, weights) if r.get("market_brier") is not None]
     market = _weighted_mean(market_pairs) if settled and len(market_pairs) == len(settled) else None
+    # CLV is evidence about edge long before enough contracts settle for a Brier
+    # verdict. Only rows carrying a good close count; missing is omitted, not 0.
+    clvs = []
+    for r in settled:
+        payload = r.get("settlement_payload")
+        close = payload.get("close") if isinstance(payload, dict) else None
+        value = clv_points(r, close)
+        if value is not None:
+            clvs.append(value)
     return {
         "n_settled": len({_contract_key(r) for r in settled}),
         "n_rows": len(settled),
         "n_unquoted": n_unquoted,
         "brier_ours": round(ours, 5) if ours is not None else None,
         "brier_market": round(market, 5) if market is not None else None,
+        "clv_mean": round(sum(clvs) / len(clvs), 5) if clvs else None,
+        "clv_positive_share": round(sum(v > 0 for v in clvs) / len(clvs), 5) if clvs else None,
+        "clv_n": len(clvs),
     }
 
 
