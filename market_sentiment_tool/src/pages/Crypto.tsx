@@ -265,7 +265,7 @@ export default function Crypto() {
   return (
     <div className="mx-auto max-w-7xl space-y-3 px-4 py-5 md:px-6">
       <header>
-        <h1 className="text-2xl font-bold text-white">Crypto</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Crypto</h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           What is moving BTC and ETH right now, from free market data: who is paying to hold leverage, how hard
           the price is moving, what options charge for protection, and whether money is arriving or leaving.

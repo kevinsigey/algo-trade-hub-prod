@@ -6,12 +6,13 @@ import { DebateFeed } from "@/components/AgentDebates";
 import ValuationDebates from "@/components/ValuationDebates";
 
 /**
- * Agent debates (TradingAgents), its own tab next to the Workshop (Kevin, 2026-11-02).
- * The page explains itself: what the panel is, the fence around it, how its record is
- * graded, and what a run costs -- then lets Kevin start one from here instead of a CLI.
- * Admin only (wrapped in RequireAdmin).
+ * Agent debates (TradingAgents) -- a section of the Guidance page since
+ * step 14 folded the standalone page in (it began as its own tab next to
+ * the Workshop, Kevin, 2026-11-02). One intro sentence carries the fence;
+ * the run form, the feed and the valuation-debate panel follow.
+ * Admin only (the Guidance route is wrapped in RequireAdmin).
  */
-export default function Debates() {
+export function DebatesSection() {
   const [ticker, setTicker] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [lastTicker, setLastTicker] = useState("");
@@ -63,26 +64,11 @@ export default function Debates() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Agent debates</h1>
-      <div className="mt-3 space-y-2 text-sm text-slate-400">
-        <p>
-          TradingAgents is an open-source panel of AI agents that debates <strong className="text-slate-200">one stock at a time</strong>:
-          four analysts (technicals, sentiment, news, fundamentals) write reports, a bull and a bear researcher argue over them,
-          a trader proposes a plan, and a risk panel rules. The hub runs it on your Gemini key and stores the whole debate.
-        </p>
-        <p>
-          <strong className="text-slate-200">It is not a model.</strong> No debate feeds any score, gate, or order on this site — the
-          violet chip on every card says so. It is a second opinion with a memory: every call is graded against the market
-          at +5 and +20 trading days, in a record kept separate from every model statistic, and if the graded hit rate ever
-          says the panel is a coin flip, a banner here says that too.
-        </p>
-        <p>
-          A debate takes a few minutes (about 20 model calls). The hub caps debates at 10 a day; the Gemini free tier allows
-          roughly 20 calls a day in total, shared with the Workshop drafter — so in practice expect about one full debate a
-          day unless billing is on. A failed run is shown once with its reason, then cleared.
-        </p>
-      </div>
+    <section aria-label="Agent debates" className="mt-12 border-t border-slate-800 pt-8">
+      <h2 className="text-lg font-semibold text-white">Agent debates</h2>
+      <p className="mt-1 max-w-3xl text-sm text-slate-400">
+        TradingAgents, an open-source panel of AI agents, debates <strong className="text-slate-200">one stock at a time</strong> — and <strong className="text-slate-200">it is not a model</strong>: no debate feeds any score, gate, or order on this site, and every call is graded against the market at +5 and +20 trading days in a record kept separate from every model statistic.
+      </p>
 
       <div className="mt-8">
         <label htmlFor="ticker" className="block text-sm font-medium text-slate-300">
@@ -122,23 +108,20 @@ export default function Debates() {
           </p>
         )}
         {error && <p role="alert" className="mt-2 text-sm text-rose-300">{error}</p>}
+        <p className="mt-2 text-xs text-slate-500">
+          A debate takes a few minutes (about 20 model calls); the hub caps debates at 10 a day, and the Gemini free tier's roughly 20 calls a day are shared with the Workshop drafter — so in practice expect about one full debate a day unless billing is on.
+        </p>
       </div>
 
       <DebateFeed refreshKey={refreshKey} />
 
       <div className="mt-12 space-y-2 text-sm text-slate-400">
         <p>
-          Below that sits a second panel with a narrower brief. A valuation debate does not range over the whole
-          stock: it debates <strong className="text-slate-200">the guidance file</strong> — the deterministic fact
-          sheet behind the Valuation tab's bear / base / bull bands is Exhibit A, fixed for every side — and a judge
-          renders a verdict against those bands. Every verdict is graded at +20 and +60 trading days on a
-          peer-relative basis, against both the plain band rule and the proposer's own pick, so the panel has to beat
-          its own controls, not just the market. It is display-only until roughly 40 graded verdicts pass that bar:
-          nothing below feeds a score, an idea, or an order either.
+          A second panel debates only <strong className="text-slate-200">the guidance file</strong> — the fact sheet behind the bands above is Exhibit A, fixed for every side — and every verdict is graded at +20 and +60 trading days against both the plain band rule and the proposer's own pick; it is display-only until roughly 40 graded verdicts pass that bar.
         </p>
       </div>
 
       <ValuationDebates />
-    </div>
+    </section>
   );
 }

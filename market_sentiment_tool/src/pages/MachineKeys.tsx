@@ -112,7 +112,7 @@ export default function MachineKeys() {
     <div className="mx-auto max-w-3xl space-y-6 p-4">
       <div className="flex items-center gap-2">
         <KeyRound className="h-6 w-6 text-muted-foreground" />
-        <h1 className="text-xl font-semibold">Machine keys</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Machine keys</h1>
       </div>
       <p className="text-sm text-muted-foreground">
         Keys let your own scripts place paper orders through the machine API. A key is shown

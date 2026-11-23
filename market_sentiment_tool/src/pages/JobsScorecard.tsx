@@ -30,7 +30,7 @@ export default function JobsScorecard() {
       <div className="mx-auto flex max-w-[1600px] flex-col gap-8">
         <div className="flex flex-col gap-4 border-b border-slate-900 pb-8 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <h1 className="text-4xl font-black uppercase italic tracking-tight text-white">Jobs Scorecard</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-white">Jobs Scorecard</h1>
             <p className="max-w-3xl text-sm text-slate-400">
               Our nowcast and Kalshi&apos;s estimate, against the first number the BLS prints.
             </p>

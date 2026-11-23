@@ -51,7 +51,7 @@ export default function Thesis() {
     <div className="min-h-screen bg-slate-950 px-8 py-10 text-slate-100">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-8">
         <div className="space-y-2 border-b border-slate-900 pb-8">
-          <h1 className="text-4xl font-black uppercase italic tracking-tight text-white">Thesis Tracker</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Thesis Tracker</h1>
           <p className="max-w-3xl text-sm text-slate-400">
             Forecast cards frozen before each print — the whisper and the money flow recorded as
             separate signals, graded separately once the print lands. A card can never be edited

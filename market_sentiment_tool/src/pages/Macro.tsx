@@ -225,7 +225,7 @@ export default function Macro() {
     <div className="mx-auto w-full max-w-6xl">
       <div className="flex items-center gap-2">
         <Landmark className="h-6 w-6 text-muted-foreground" />
-        <h1 className="text-3xl font-bold tracking-tight">Macro predictions</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Macro predictions</h1>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">Jobs, CPI and PPI — each engine's call and record on one screen. Click a card for the full page.</p>
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">Macro dashboard unavailable: {error}</p>}
