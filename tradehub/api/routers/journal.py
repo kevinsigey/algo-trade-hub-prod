@@ -21,6 +21,7 @@ from tradehub.journal.scoring import headline as journal_headline
 from tradehub.journal.standings import standings as journal_standings
 from tradehub.journal.standings import verdict_sentence as journal_verdict_sentence
 from tradehub.scoreboard import current_runs, market_comparison
+from tradehub.track_record import compute_engine_summary, fetch_settled_rows
 
 
 from tradehub.api.shared import (
@@ -67,7 +68,25 @@ async def get_track_record(supabase=Depends(get_supabase)):
     result = supabase.table("track_record").select("*").order("engine").execute()
     # One record per engine (v2 spec §4): an engine graded by the journal is served from its journal
     # scorecard, tagged `source: "journal"`; the rest keep their legacy rollup, tagged `source: "legacy"`.
-    return merge_track_record(result.data or [], journal_scores(supabase))
+    rows = merge_track_record(result.data or [], journal_scores(supabase))
+    # CLV lives in each row's settlement_payload (no schema change), so it is
+    # computed on read instead of stored in the track_record rollup. Journal
+    # rows are graded by the journal and deliberately get no second headline.
+    for row in rows:
+        if row.get("source") != "legacy":
+            continue
+        try:
+            settled = fetch_settled_rows(supabase, str(row["engine"]))
+        except Exception as exc:  # noqa: BLE001 - a missing predictions table is not a reason to fail the page
+            log.warning("CLV unavailable for %s: %s", row.get("engine"), exc)
+            continue
+        if row.get("engine_version"):
+            version = row["engine_version"]
+            settled = [r for r in settled if (r.get("engine_version") or "v0") == version]
+        summary = compute_engine_summary(settled)
+        for key in ("clv_mean", "clv_positive_share", "clv_n"):
+            row[key] = summary[key]
+    return rows
 
 
 # ════════════════════════════════════════════════════════════════════════════
