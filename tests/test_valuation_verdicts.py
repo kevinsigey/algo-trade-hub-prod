@@ -277,6 +277,38 @@ def test_kev_act_without_a_direction_logs_a_void_not_seat_unavailable():
     assert "without a direction" in row["void_reason"]
 
 
+def test_an_invented_figure_in_the_bear_case_logs_a_void_with_its_reason():
+    def bad_chat(system, user, *, schema=None):
+        if "BEAR RESEARCHER" in system:
+            return "Fair value is 999.99.", "qwen-fake"
+        return _chat(system, user, schema=schema)
+
+    client = _client_with_sheet()
+    result = verdicts.render_verdict(client, _DS(), "AMGN", trigger="on_demand",
+                                     chat=bad_chat, now=NOW)
+    assert result["status"] == "void"
+    [row] = client.tables["valuation_verdicts"]
+    assert row["status"] == "void" and row["verdict"] is None
+    assert "unsupported figures" in row["void_reason"]
+    assert "999.99" in row["void_reason"]
+
+
+def test_an_invented_figure_in_the_rationale_logs_a_void_with_its_reason():
+    def bad_chat(system, user, *, schema=None):
+        out = _chat(system, user, schema=schema)
+        if isinstance(out[0], dict):
+            return {**out[0], "rationale": "worth 999.99"}, out[1]
+        return out
+
+    client = _client_with_sheet()
+    result = verdicts.render_verdict(client, _DS(), "AMGN", trigger="on_demand",
+                                     chat=bad_chat, now=NOW)
+    assert result["status"] == "void"
+    [row] = client.tables["valuation_verdicts"]
+    assert row["status"] == "void" and row["verdict"] is None
+    assert "unsupported figures" in row["void_reason"]
+
+
 def test_daily_cap_stops_renders():
     client = _client_with_sheet()
     for _ in range(verdicts.DAILY_CAP):

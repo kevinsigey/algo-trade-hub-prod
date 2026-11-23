@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from tradehub.valuation import exhibit as exhibit_mod
+from tradehub.valuation import figures
 from tradehub.valuation.judge import PROBABILITY_MEANING
 
 DIGEST_CHAR_CAP = 32_000  # the frozen <=8k-token state digest, in chars
@@ -276,7 +277,8 @@ def validate_packet(raw, ex: dict) -> dict:
     }
 
 
-def run_debate(ex: dict, *, chat, context_md: str | None = None) -> dict:
+def run_debate(ex: dict, *, chat, context_md: str | None = None,
+               options: dict | None = None, frozen: dict | None = None) -> dict:
     """One forked debate over Exhibit A. chat(system, user, schema=None) ->
     (content, model_id), the valuation llm module's contract. Returns the
     bull/bear prose and the validated packet. PacketInvalid propagates (the
@@ -287,7 +289,10 @@ def run_debate(ex: dict, *, chat, context_md: str | None = None) -> dict:
     classification — appended after Exhibit A under its own heading. It
     is context, not exhibit: packet validation still checks every choice
     price against Exhibit A alone, so context can inform the argument but
-    can never mint a number the verdict is priced on."""
+    can never mint a number the verdict is priced on. The options inputs
+    and frozen peers are number sources for the prose only (issue #586);
+    every figure in the bull case, bear case or digest must come from one
+    of the four, or the packet voids."""
     exhibit_md = exhibit_mod.render_markdown(ex)
     if context_md:
         exhibit_md = f"{exhibit_md}\n\n{context_md}"
@@ -302,5 +307,10 @@ def run_debate(ex: dict, *, chat, context_md: str | None = None) -> dict:
         "Build the decision packet.",
         schema=DecisionPacket.model_json_schema())
     packet = validate_packet(raw, ex)
+    sources = [ex, options, frozen, context_md]
+    bad = sorted({tok for text in (bull, bear, packet["digest"])
+                  for tok in figures.unsupported(text, sources)})
+    if bad:
+        raise PacketInvalid(f"unsupported figures: {bad}")
     return {"bull_case": bull, "bear_case": bear, "packet": packet,
             "proposer_model": model}

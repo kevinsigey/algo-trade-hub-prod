@@ -165,6 +165,8 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
     frozen = exhibit.freeze_peer_states(
         sheet, prices_fn=lambda members: _peer_prices(ds, members))
     options = options_layer.gather(ds, ticker, sheet)
+    ctx_md = context_markdown(candidate_sources)
+    sources = [ex, options, frozen, ctx_md]
     base_row = {
         "ticker": ticker,
         "rendered_at": now.isoformat(),
@@ -190,7 +192,7 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
     }
     try:
         debate = debate_fork.run_debate(
-            ex, chat=chat, context_md=context_markdown(candidate_sources))
+            ex, chat=chat, context_md=ctx_md, options=options, frozen=frozen)
     except debate_fork.PacketInvalid as exc:
         row = verdict_store.insert_verdict(client, {
             **base_row, "status": "void", "judge": None,
@@ -208,7 +210,7 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
     seat = seat or judge.seat_for_env()
     try:
         decision = seat.render(packet)
-        decision = judge.validate_decision(decision)
+        decision = judge.validate_decision(decision, sources=[*sources, packet])
     except judge.SeatUnavailable as exc:
         return {"status": "seat_unavailable", "ticker": ticker,
                 "reason": str(exc)}

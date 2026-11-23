@@ -102,3 +102,17 @@ def test_validate_decision_passes_a_coherent_act_unchanged():
 def test_consistent_direction_voids_an_act_without_a_direction():
     with pytest.raises(judge.DecisionInvalid):
         judge._consistent_direction("act_at_band_low", "none")
+
+
+# --- issue #586: the rationale may cite the packet, but invent nothing --------
+def test_validate_decision_rejects_an_invented_figure_in_the_rationale():
+    with pytest.raises(judge.DecisionInvalid,
+                       match="unsupported figures") as exc:
+        judge.validate_decision(_decision(rationale="worth 999.99"),
+                                sources=[PACKET])
+    assert "999.99" in str(exc.value)
+
+
+def test_validate_decision_allows_figures_from_the_debate_packet():
+    decision = _decision(rationale="the 310.17 band and 0.62 chance justify it")
+    assert judge.validate_decision(decision, sources=[PACKET]) == decision
