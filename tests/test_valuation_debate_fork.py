@@ -204,3 +204,45 @@ def test_fork_caps_the_digest_at_the_frozen_token_budget():
     out = debate_fork.run_debate(_ex(), chat=_chat(big))
     assert len(out["packet"]["digest"]) <= debate_fork.DIGEST_CHAR_CAP
     assert out["packet"]["digest_truncated"] is True
+
+
+# --- issue #586: figures in the prose must come from its inputs ---------------
+def _say(*, bull=None, bear=None, packet=None):
+    def chat(system, user, *, schema=None):
+        if "BULL RESEARCHER" in system:
+            return (bull or "The guide was raised and the file is "
+                    "conservative."), "fake-qwen"
+        if "BEAR RESEARCHER" in system:
+            return (bear or "The price implies 27.92 against a 19.28 "
+                    "guide high."), "fake-qwen"
+        return packet or _packet(), "fake-qwen"
+    return chat
+
+
+def test_fork_voids_an_invented_bull_figure():
+    with pytest.raises(debate_fork.PacketInvalid,
+                       match="unsupported figures") as exc:
+        debate_fork.run_debate(_ex(), chat=_say(bull="Fair value is 999.99."))
+    assert "999.99" in str(exc.value)
+
+
+def test_fork_voids_an_invented_bear_percent():
+    with pytest.raises(debate_fork.PacketInvalid, match="unsupported figures"):
+        debate_fork.run_debate(
+            _ex(), chat=_say(bear="The price implies 87% upside."))
+
+
+def test_fork_accepts_a_rounded_figure_in_the_digest():
+    pkt = _packet(digest="Price is 9.7 widths above the guide mid.")
+    out = debate_fork.run_debate(_ex(), chat=_say(packet=pkt))
+    assert out["packet"]["digest"] == pkt["digest"]
+
+
+def test_fork_accepts_options_peers_and_context_as_figure_sources():
+    pkt = _packet(digest="31 peers and a 12.5 move.")
+    out = debate_fork.run_debate(
+        _ex(), chat=_say(packet=pkt),
+        context_md="Recorded context: 31 names, a 12.5 move on file.",
+        options={"distance_to_target_pct": 12.5},
+        frozen={"members": [{"price": 31.0}]})
+    assert out["packet"]["digest"] == pkt["digest"]
