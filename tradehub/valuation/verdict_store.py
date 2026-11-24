@@ -5,6 +5,7 @@ valuation_watch_state (the band watch's memory) and valuation_triggers
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
 VERDICTS = "valuation_verdicts"
 GRADES = "valuation_verdict_grades"
@@ -55,6 +56,21 @@ def latest_verdicts(client) -> list[dict]:
 def verdicts_since(client, since_iso: str) -> list[dict]:
     return (client.table(VERDICTS).select("*")
             .gte("rendered_at", since_iso).execute().data) or []
+
+
+def verdict_rendered_at(client, verdict_id: int) -> datetime | None:
+    """When a stored verdict (rendered or void) was rendered, or None
+    when the row or its stamp is missing/unreadable."""
+    rows = (client.table(VERDICTS).select("rendered_at")
+            .eq("id", verdict_id).limit(1).execute().data) or []
+    if not rows or not rows[0].get("rendered_at"):
+        return None
+    try:
+        stamp = datetime.fromisoformat(rows[0]["rendered_at"])
+    except (TypeError, ValueError):
+        return None
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None \
+        else stamp
 
 
 # -- grades -----------------------------------------------------------------

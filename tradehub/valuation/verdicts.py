@@ -7,7 +7,9 @@ options-layer inputs, and the falsifier — everything grading needs, frozen.
 
 Display-only (spec section 6 authority): this module has no path to ideas,
 books, or orders. A stale sheet does not debate and does not render a
-verdict; an unbanded sheet has nothing to debate. A packet that fails
+verdict; an unbanded sheet has nothing to debate; a band_suspect sheet
+(price implausibly far outside its band — the band reads as broken) does
+not debate either. A packet that fails
 validation against the sheet logs a VOID verdict — the failure is on the
 record, never silently dropped and never repaired by guessing.
 """
@@ -139,8 +141,9 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
                    candidate_sources: dict | None = None) -> dict:
     """Render (or decline to render) one verdict. Returns a status dict:
     rendered / void carry the stored row under 'verdict_row'; the declines
-    (no_sheet, not_banded, stale_sheet, cap_reached, llm_unavailable,
-    seat_unavailable) carry a 'reason' and store nothing."""
+    (no_sheet, not_banded, stale_sheet, band_suspect, cap_reached,
+    llm_unavailable, seat_unavailable) carry a 'reason' and store
+    nothing."""
     now = now or datetime.now(timezone.utc)
     ticker = ticker.strip().upper()
     chat = chat or val_llm.chat
@@ -156,6 +159,13 @@ def render_verdict(client, ds, ticker: str, *, trigger: str,
         return {"status": "stale_sheet", "ticker": ticker,
                 "reason": f"{ticker}'s fact sheet is stale — a stale sheet "
                           "does not debate and does not render a verdict"}
+    if sheet.get("band_suspect"):
+        return {"status": "band_suspect", "ticker": ticker,
+                "reason": f"{ticker}'s price sits "
+                          f"{sheet.get('band_widths_outside')} band widths "
+                          "outside its guidance band — the band reads as "
+                          "broken, so it does not debate and does not "
+                          "render a verdict"}
     if cap_reached(client, now):
         return {"status": "cap_reached", "ticker": ticker,
                 "reason": f"the daily debate budget ({DAILY_CAP}/day) is "

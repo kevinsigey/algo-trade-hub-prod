@@ -38,6 +38,49 @@ def blend_multiple(own: float | None, peer: float | None) -> tuple[float | None,
 PRICE_STALE_DAYS = 5
 GUIDE_STALE_DAYS = 135
 FUND_STALE_DAYS = 550
+# Band sanity (debate fix 3, #580): a price more than this many band
+# widths (bull - bear) outside its band marks the sheet band_suspect and
+# the name does not debate -- the band reads as broken, not the price as
+# extreme. N picked from the post-step-10 distribution (latest completed
+# snapshot, 2026-11-23, 48 banded sheets): the widest legitimate name
+# sits 42.1 widths above its band (PLTR) and 6.0 below (QCOM), while
+# the broken-band failure mode this guards against printed 274-292
+# widths out (2026-11-19). 50 clears every live name and catches the
+# failure signature with room to spare.
+BAND_SUSPECT_WIDTHS = 50
+
+
+def band_distance_widths(price: float | None, bands: dict | None
+                         ) -> float | None:
+    """Signed distance of the price outside its band, in band widths
+    (bull - bear): positive above the bull band, negative below the bear
+    band, 0 inside. None when the price or bands are missing or the band
+    has no width."""
+    if price is None or not bands:
+        return None
+    try:
+        bear, bull = float(bands["bear"]), float(bands["bull"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    width = bull - bear
+    if width <= 0:
+        return None
+    if price > bull:
+        return (price - bull) / width
+    if price < bear:
+        return -(bear - price) / width
+    return 0.0
+
+
+def _mark_band_distance(sheet: dict, price: float | None) -> None:
+    """Record the band distance on the sheet and flag it band_suspect
+    past BAND_SUSPECT_WIDTHS (see the constant). A suspect sheet keeps
+    its record; it does not debate and renders no verdict."""
+    widths = band_distance_widths(price, sheet.get("bands"))
+    sheet["band_widths_outside"] = (round(widths, 4)
+                                    if widths is not None else None)
+    sheet["band_suspect"] = (widths is not None
+                             and abs(widths) > BAND_SUSPECT_WIDTHS)
 
 _QUARTER = re.compile(r"\bq[1-4]\b|[1-4]q\d{2}|quarter", re.IGNORECASE)
 _YEAR = re.compile(r"(20\d{2})")
@@ -408,6 +451,7 @@ def _revenue_sheet(sheet: dict, *, anchor: dict, price: float | None,
     width = high - low
     sheet["gap_range_widths"] = (round((implied_rev - mid) / width, 4)
                                  if width > 0 else None)
+    _mark_band_distance(sheet, price)
 
     if sheet["stale"]:
         sheet["baseline_verdict"] = "stale"
@@ -456,6 +500,8 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
         "bands": None,
         "implied": None,
         "gap_range_widths": None,
+        "band_widths_outside": None,
+        "band_suspect": False,
         "guidance_percentile": None,
         "directions": _directions(records),
         "fundamentals": fundamentals,
@@ -551,6 +597,7 @@ def build_fact_sheet(*, ticker: str, records: list[dict], price: float | None,
     width = high - low
     sheet["gap_range_widths"] = (round((implied_eps - mid) / width, 4)
                                  if width > 0 else None)
+    _mark_band_distance(sheet, price)
 
     if sheet["stale"]:
         sheet["baseline_verdict"] = "stale"

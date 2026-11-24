@@ -26,8 +26,9 @@ PRIORITY = {"crossing": 1, "falsifier_window": 1, "new_guidance": 2,
 _DIRECTIONAL = ("buy_zone", "buy_zone_strong", "short_zone",
                 "short_zone_strong")
 PRINT_WINDOW_DAYS = 5
-# One debate per ticker per window: a rendered crossing/refresh re-fire inside
-# this window is the same call, not a new one (no new state column/migration).
+# One debate per ticker per window: a crossing/refresh re-fire inside this
+# window of the earlier debate's RENDER is the same call, not a new one
+# (no new state column/migration).
 TRIGGER_COOLDOWN_HOURS = 24
 
 
@@ -70,6 +71,21 @@ def _created_at(trigger: dict) -> datetime | None:
     return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
 
 
+def _render_stamp(client, trigger: dict) -> datetime | None:
+    """When a done trigger's debate actually rendered -- the linked
+    verdict's rendered_at. Falls back to the queue time when no verdict
+    is linked or readable. The crossing/refresh cooldown runs from the
+    render, not the queue: a budget-delayed trigger can sit pending for
+    hours, and a re-fire just after it finally renders is the same call,
+    not a new one."""
+    verdict_id = trigger.get("verdict_id")
+    if verdict_id is not None:
+        rendered = verdict_store.verdict_rendered_at(client, verdict_id)
+        if rendered is not None:
+            return rendered
+    return _created_at(trigger)
+
+
 def _refire_reason(client, ticker: str, kind: str, detail: dict,
                    now: datetime) -> str | None:
     """Why this re-fire is the same call as an already-rendered trigger."""
@@ -95,7 +111,17 @@ def _refire_reason(client, ticker: str, kind: str, detail: dict,
     elif kind in ("crossing", "refresh"):
         cutoff = now - timedelta(hours=TRIGGER_COOLDOWN_HOURS)
         for t in past:
-            stamp = _created_at(t)
+            if kind == "crossing":
+                # The cooldown is per destination zone: a flip into the
+                # opposite zone is a new call, not a re-fire. A past row
+                # with no recorded to_zone predates the field and counts
+                # against any zone.
+                to_zone = detail.get("to_zone")
+                past_zone = (t.get("detail") or {}).get("to_zone")
+                if to_zone is not None and past_zone is not None \
+                        and past_zone != to_zone:
+                    continue
+            stamp = _render_stamp(client, t)
             if stamp is not None and stamp >= cutoff:
                 return f"within {TRIGGER_COOLDOWN_HOURS}h cooldown"
     return None
@@ -161,6 +187,7 @@ def compute_watch(client, ds, *, positions_fn=None, now: datetime | None = None
     positions_fn = positions_fn or _default_positions
     sheets = {s["ticker"]: s for s in val_store.latest_sheets(client)
               if s.get("status") == "banded" and not s.get("stale")
+              and not s.get("band_suspect")
               and s.get("bands") and s.get("price") is not None}
 
     flags: list[dict] = []
