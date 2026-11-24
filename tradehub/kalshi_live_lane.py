@@ -498,6 +498,12 @@ def _executed(order: dict, side: str, filled: int,
     return price, fee, ",".join(flags) or None
 
 
+def _provisional(row: dict) -> set[str]:
+    """The provisional-value flags a row still carries (see _executed)."""
+    return {f for f in (row.get("last_error") or "").split(",")
+            if f in ("fill_price_from_limit", "fee_estimated")}
+
+
 def _resolve_adopted(order: dict, row: dict) -> dict:
     """Status / fill patch for an adopted order from its exchange record.
     Only a terminal record (executed or canceled) with a readable fill
@@ -529,8 +535,14 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
     of the actual fee; the paper twin's P&L from the raw rule at the
     frozen quote, one contract), link the tracked decision row, and
     write off claims the exchange never took."""
+    # Settled rows still carrying a provisional price or fee (bounded to
+    # the last 7 days) stay in reconcile until the exchange fill corrects
+    # them.
     open_rows = [r for r in rows
-                 if r["status"] in ("pending", "placed", "filled")]
+                 if r["status"] in ("pending", "placed", "filled")
+                 or (r["status"] == "settled" and _provisional(r)
+                     and r.get("settled_at")
+                     and now - _dt(r["settled_at"]) <= timedelta(days=7))]
     if not open_rows:
         return
     # Adoption: a claim whose create response was lost has no order id;
@@ -599,7 +611,21 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                     want["fee_usd"] = agg["fee"]
                 elif price is not None:
                     want["fee_usd"] = taker_fee_usd(agg["filled"], price)
+                flags = _provisional(r)
+                if flags:
+                    if price is not None:
+                        flags.discard("fill_price_from_limit")
+                    if agg["fee"] is not None:
+                        flags.discard("fee_estimated")
+                    want["last_error"] = ",".join(sorted(flags)) or None
                 patch.update({k: v for k, v in want.items() if r.get(k) != v})
+                if (patch and r["status"] == "settled"
+                        and r.get("outcome") is not None):
+                    n = int(want["contracts_filled"])
+                    p = float(want.get("fill_price") or r.get("fill_price"))
+                    f = float(want.get("fee_usd", r.get("fee_usd")) or 0)
+                    won = (int(r["outcome"]) == 1) == (r["side"] == "yes")
+                    patch["pnl"] = round(n * ((1.0 if won else 0.0) - p) - f, 4)
                 r.update(patch)
         filled = int(r.get("contracts_filled") or 0)
         if closed and filled > 0 and r["status"] != "settled":

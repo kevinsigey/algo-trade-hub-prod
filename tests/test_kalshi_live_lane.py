@@ -781,3 +781,18 @@ def test_fills_correct_price_and_fee_at_unchanged_count(db):
     lane.run_once(db, portfolio, NOW)
     row = db.db[lane.ORDERS][0]
     assert row["fill_price"] == 0.38 and row["fee_usd"] == 0.01
+
+
+def test_settled_provisional_row_corrected_from_fills(db):
+    seed_rows(db, [order_row(status="settled", contracts_filled=1,
+                             fill_price=0.40, fee_usd=0.02, outcome=1,
+                             pnl=0.58, kalshi_order_id="ord-1",
+                             last_error="fill_price_from_limit,fee_estimated",
+                             settled_at=(NOW - timedelta(hours=1)).isoformat())])
+    portfolio = FakeLivePortfolio()
+    portfolio.fills = [{"order_id": "ord-1", "count_fp": "1.00",
+                        "yes_price_dollars": "0.3800", "fee_cost": "0.0100"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["fill_price"] == 0.38 and row["fee_usd"] == 0.01
+    assert row["pnl"] == 0.61 and row["last_error"] is None
