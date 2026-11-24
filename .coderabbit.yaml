@@ -28,7 +28,13 @@ reviews:
     - path: "tests/**"
       instructions: "Flag tests that cannot fail (asserting a default, a superset, or the implementation's own output)."
     - path: "market_sentiment_tool/src/**"
-      instructions: "Numbers first, little prose; a missing figure is a dash or a word, never 0; no computed score in TSX."
+      instructions: |
+        Check every change against docs/DESIGN-RULES.md (Kevin's binding UI rules). Flag as Major:
+        any page or tab that becomes a long scroll (it must fit about one 1440x900 viewport by default);
+        lists longer than 5 rows on the page without "Show all"; detail stacked on the page instead of
+        behind a click (DashCard/FullView or in-place expand); a redesign beyond what the PR says was asked;
+        account-derived dollars on a public route. Also: numbers first, little prose; a missing figure is
+        a dash or a word, never 0; no computed score in TSX; no horizontal scroll at 375px.
     - path: "market_sentiment_tool/supabase/migrations/**"
       instructions: "Migrations must be idempotent and additive. Flag anything that locks a big table or drops data. A migration must be applied by the reviewer before merge."
 chat:
