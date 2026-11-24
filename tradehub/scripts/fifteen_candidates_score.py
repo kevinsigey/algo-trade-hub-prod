@@ -114,11 +114,12 @@ def main(argv: list[str] | None = None) -> int:
         result = fc.evaluate(rows, version, now=now, fills=fills)
         _announce(client, result)
         report["candidates"].append(result)
-    # oil-trend-agree-v1: graded against the unfiltered raw rule, no kill.
-    trend = fc.trend_evaluate(
-        [d for ds in fc.trend_read(client).values() for d in ds], now=now)
-    _announce(client, trend)
-    report["candidates"].append(trend)
+    # Raw-rule oil shadows: graded against the unfiltered raw rule, no kill.
+    for shadow in fc.RAW_SHADOWS:
+        result = fc.raw_evaluate(
+            shadow, [d for ds in fc.raw_read(shadow, client).values() for d in ds], now=now)
+        _announce(client, result)
+        report["candidates"].append(result)
     print(json.dumps(report, indent=1))
     return 0
 
