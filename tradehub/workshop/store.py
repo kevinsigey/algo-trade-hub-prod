@@ -45,6 +45,15 @@ def kill(supa, idea_id: int) -> dict:
     return _set_once(supa, idea_id, "killed_at", {"auto_orders": False})  # a killed idea never trades again
 
 
+def untrack(supa, idea_id: int) -> dict:
+    """Remove an idea from tracking (Kevin, 2026-11-24, issue #601): set once, like
+    every other lifecycle step. The idea leaves the tracked set -- the shadow job
+    and the weekly critic stop recording it -- and leaves the standing set on the
+    Ideas record. Nothing is deleted: runs, shadow days, labels and fills keep
+    their idea id, so historical attribution is never orphaned."""
+    return _set_once(supa, idea_id, "untracked_at")
+
+
 def _all_ideas(supa) -> list[dict]:
     # ponytail: whole-table read; filter in SQL if ideas ever number in the thousands
     return supa.table(IDEAS).select("*").order("created_at", desc=True).execute().data
@@ -58,7 +67,8 @@ def tracked_ideas(supa) -> list[dict]:
     """Tracked but not yet live: the shadow job records these from tracked_at. Once an idea
     goes live it leaves this set -- the live anchor takes over the same record."""
     return [i for i in _all_ideas(supa)
-            if i.get("tracked_at") and not i.get("live_at") and not i.get("killed_at")]
+            if i.get("tracked_at") and not i.get("live_at") and not i.get("killed_at")
+            and not i.get("untracked_at")]
 
 
 def published_ideas(supa) -> list[dict]:

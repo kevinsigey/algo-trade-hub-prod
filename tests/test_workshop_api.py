@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from tradehub.api import admin, main
 from tradehub.api.dependencies import get_supabase
+from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol
 from workshop_fake import DB
 
@@ -151,6 +152,7 @@ def test_lifecycle_routes_need_admin():
     c = TestClient(main.app)
     for method, path in [("get", "/api/workshop/ideas/1/gate"), ("post", "/api/workshop/ideas/1/publish"),
                          ("post", "/api/workshop/ideas/1/live"), ("post", "/api/workshop/ideas/1/kill"),
+                         ("post", "/api/workshop/ideas/1/untrack"),
                          ("post", "/api/workshop/labels")]:
         assert getattr(c, method)(path).status_code == 401, path
 
@@ -250,6 +252,23 @@ def test_publish_and_kill_are_once(passed):
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 200
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409
     assert c.post("/api/workshop/ideas/99/publish").status_code == 404
+
+
+def test_untrack_is_once_refuses_live_and_stops_tracking(passed):
+    """Issue #601: removing an idea from tracking is set-once, refuses a live
+    idea (killing is its only exit), and takes it out of the tracked set the
+    shadow job and the critic read."""
+    c, db, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/track", json={}).status_code == 200
+    assert [x["id"] for x in workshop_store.tracked_ideas(db)] == [i]
+    db.db["ideas"][0]["live_at"] = "2026-11-01T00:00:00Z"
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    db.db["ideas"][0]["live_at"] = None
+    r = c.post(f"/api/workshop/ideas/{i}/untrack")
+    assert r.status_code == 200 and r.json()["untracked_at"]
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    assert workshop_store.tracked_ideas(db) == []
+    assert c.post("/api/workshop/ideas/99/untrack").status_code == 404
 
 
 def test_track_needs_a_pass_and_is_once(passed):

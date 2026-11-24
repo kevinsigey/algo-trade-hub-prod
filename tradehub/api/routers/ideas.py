@@ -68,6 +68,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
     fam = (view or {}).get("families", {}).get(idea["id"])
     origin = _registry.origin_of(idea, (view or {}).get("screen_ids", set())) if view else None
     status = "killed" if idea.get("killed_at") else "live" if idea.get("live_at") else \
+        "untracked" if idea.get("untracked_at") else \
         "tracking" if idea.get("tracked_at") else "backtest"
     live = None
     if idea.get("live_at") or idea.get("tracked_at"):
@@ -119,7 +120,7 @@ def _public_idea(supabase, idea: dict, runs: list[dict], big_live: set[int] | No
                          if latest else None,
                          "tests_total": (view or {}).get("tests_total")},
             "live_at": idea.get("live_at"), "tracked_at": idea.get("tracked_at"),
-            "killed_at": idea.get("killed_at"), "live": live,
+            "killed_at": idea.get("killed_at"), "untracked_at": idea.get("untracked_at"), "live": live,
             # The weekly critic's latest word per book (loop piece 1): the full
             # payload, so the card chip and the detail view read the same record.
             "critic": {book: payload for book in ("main", "big")
@@ -148,12 +149,12 @@ def _ideas_fingerprint(supabase) -> tuple:
     """A cheap mutation detector for the ideas cache: lifecycle timestamps,
     the newest run and the save count. Any write that changes what the list
     shows -- endpoint or direct -- changes the fingerprint."""
-    ideas = supabase.table("ideas").select("id,published_at,live_at,killed_at,tracked_at,auto_orders").execute().data or []
+    ideas = supabase.table("ideas").select("id,published_at,live_at,killed_at,tracked_at,untracked_at,auto_orders").execute().data or []
     runs = supabase.table("idea_runs").select("id").execute().data or []
     saves = supabase.table("idea_run_saves").select("run_id").execute().data or []
     acts = supabase.table("book_activations").select("book,idea_id,live_at,killed_at,auto_orders").execute().data or []
     return (tuple(sorted((i["id"], i.get("published_at"), i.get("live_at"), i.get("killed_at"),
-                          i.get("tracked_at"), bool(i.get("auto_orders"))) for i in ideas)),
+                          i.get("tracked_at"), i.get("untracked_at"), bool(i.get("auto_orders"))) for i in ideas)),
             max((r["id"] for r in runs), default=0), len(saves),
             tuple(sorted((a["book"], a["idea_id"], a.get("live_at"), a.get("killed_at"), bool(a.get("auto_orders")))
                          for a in acts)))

@@ -61,6 +61,7 @@ const SORT_LABEL: Record<SortKey, string> = {
  * tracking, or still passing. Everything else was trimmed to the Removed
  * disclosure below -- kept on the record, out of the way. */
 export function standing(idea: PublicIdea): boolean {
+  if (idea.untracked_at) return false; // removed from tracking (Kevin, 2026-11-24): on the record, out of the way
   if ((idea.live_books ?? []).length > 0) return true; // trading on a book: in view whatever its verdict
   return (idea.verdict_now ?? idea.latest_verdict) === "PASS";
 }

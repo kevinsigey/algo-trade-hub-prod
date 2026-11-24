@@ -1084,6 +1084,10 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
     }
   };
   const startTracking = () => act(() => adminJson(`/api/workshop/ideas/${id}/track`, { method: "POST", body: JSON.stringify({}) }));
+  const untrack = () => {
+    if (!window.confirm("Remove this idea from tracking? Its forward record stops today and it leaves the standing Ideas list. The record itself stays — runs, shadow days and fills keep their attribution. This cannot be undone.")) return;
+    act(() => adminJson(`/api/workshop/ideas/${id}/untrack`, { method: "POST" }));
+  };
   const toggleAuto = () => {
     const on = !idea.auto_orders;
     if (on && !window.confirm(`Turn on automatic paper orders? Each weekday morning the hub trades this idea's rule in the paper account at ${idea.size_pct}% of the account, skipping any order that would put one stock over 25%.`)) return;
@@ -1127,6 +1131,27 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
           </p>
           <button type="button" className={`${button} mt-3`} disabled={busy} onClick={startTracking}>
             Start tracking
+          </button>
+        </div>
+      )}
+
+      {idea.untracked_at ? (
+        <div>
+          <h2 className="text-sm font-semibold text-white">Removed from tracking</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Removed {idea.untracked_at.slice(0, 10)} — its forward record has stopped and it no longer stands
+            with the live ideas. The record stays: runs, shadow days and fills keep their attribution.
+          </p>
+        </div>
+      ) : !(idea.live_at && !idea.killed_at) && (
+        <div>
+          <h2 className="text-sm font-semibold text-white">Remove from tracking</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Stop this idea's forward record and take it out of the standing Ideas list, so old ideas stop
+            mixing with the new ones. Nothing is deleted — the record stays under Removed.
+          </p>
+          <button type="button" className={`${button} mt-3`} disabled={busy} onClick={untrack}>
+            Remove from tracking
           </button>
         </div>
       )}

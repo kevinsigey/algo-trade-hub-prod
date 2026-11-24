@@ -228,4 +228,10 @@ describe("Ideas standing", () => {
     expect(standing({ ...failing, status: "tracking", live_books: ["big"] } as unknown as PublicIdea)).toBe(true);
     expect(standing({ ...failing, status: "tracking", live_books: [] } as unknown as PublicIdea)).toBe(false);
   });
+
+  it("clears even a passing idea once it is removed from tracking (issue #601)", () => {
+    const passing = { verdict_now: "PASS", latest_verdict: "PASS", live_books: [] };
+    expect(standing({ ...passing, untracked_at: null } as unknown as PublicIdea)).toBe(true);
+    expect(standing({ ...passing, status: "untracked", untracked_at: "2026-11-24T00:00:00Z" } as unknown as PublicIdea)).toBe(false);
+  });
 });

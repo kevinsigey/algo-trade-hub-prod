@@ -64,6 +64,28 @@ def test_list_shows_published_only_with_fails_and_kills(api):
     assert "Secret" not in api.get("/api/ideas").text
 
 
+def test_untracked_idea_reads_removed_from_tracking(monkeypatch):
+    """Issue #601: an untracked idea stays on the published record, carrying its
+    untracked_at and the untracked status, so the list can file it under Removed."""
+    db = DB()
+    store.create_idea(db, "Old PASS", "old words")  # 1: published, then untracked
+    run(db, 1, 1, "PASS")
+    db.db["ideas"][0]["published_at"] = "2026-11-01T00:00:00Z"
+    monkeypatch.setattr(service, "closed", lambda supa: {"state": "live", "trades": []})
+    monkeypatch.setattr(main, "_today", lambda: date(2026, 11, 25))
+    main.app.dependency_overrides[get_supabase] = lambda: db
+    try:
+        c = TestClient(main.app)
+        before = c.get("/api/ideas").json()
+        assert before[0]["untracked_at"] is None and before[0]["status"] == "backtest"
+        store.untrack(db, 1)
+        after = c.get("/api/ideas").json()
+        assert after[0]["untracked_at"] and after[0]["status"] == "untracked"
+        assert after[0]["title"] == "Old PASS"  # still on the record, not deleted
+    finally:
+        main.app.dependency_overrides.clear()
+
+
 def test_detail_and_identical_404s(api):
     got = api.get("/api/ideas/1").json()
     assert [r["verdict"] for r in got["runs"]] == ["FAIL", "PASS"] and got["runs"][1]["headline"] == "h2"

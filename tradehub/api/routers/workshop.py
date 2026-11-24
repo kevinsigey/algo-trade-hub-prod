@@ -637,6 +637,25 @@ def workshop_kill(idea_id: int, book: str = "main", _admin: dict = Depends(admin
         raise HTTPException(status_code=409, detail="already killed") from exc
 
 
+@router.post("/api/workshop/ideas/{idea_id}/untrack", tags=["Workshop"])
+def workshop_untrack(idea_id: int, _admin: dict = Depends(admin.require_admin),
+                     supabase=Depends(get_supabase)):
+    """Remove an idea from tracking (Kevin, 2026-11-24, issue #601): its forward
+    record stops, it leaves the standing set on the Ideas record, and nothing is
+    deleted -- the record stays readable under Removed. A live idea is refused:
+    killing is a live idea's exit, and it stays the only one."""
+    _api._bust_ideas_cache()
+    idea = _found(supabase, idea_id)["idea"]
+    if idea.get("untracked_at"):
+        raise HTTPException(status_code=409, detail="already removed from tracking")
+    if idea.get("live_at") and not idea.get("killed_at"):
+        raise HTTPException(status_code=409, detail="a live idea is killed, not removed from tracking")
+    try:
+        return workshop_store.untrack(supabase, idea_id)
+    except workshop_store.AlreadySet as exc:
+        raise HTTPException(status_code=409, detail="already removed from tracking") from exc
+
+
 @router.post("/api/workshop/labels", tags=["Workshop"])
 def workshop_label(body: _LabelIn, user: dict = Depends(admin.require_admin), supabase=Depends(get_supabase)):
     if body.idea_id is not None and workshop_store.get_idea(supabase, body.idea_id) is None:
