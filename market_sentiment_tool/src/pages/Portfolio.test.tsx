@@ -151,6 +151,68 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(screen.queryByText("Staged orders")).toBeNull();
   });
 
+  it("cancels a staged order from the panel and the row leaves the list", async () => {
+    session.token = "jwt";
+    let resting = true;
+    const calls: { url: string; method: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+      if (url.includes("/api/portfolio/orders/") && method === "DELETE") {
+        resting = false;
+        return json({ cancelled: "a9", book: "main" });
+      }
+      if (url.includes("/api/portfolio/open-orders")) {
+        return json({ orders: resting ? [{
+          alpaca_order_id: "a9", client_order_id: "ext-1-stop-mirror-xom", symbol: "XOM",
+          side: "sell", type: "stop", time_in_force: "gtc", qty: 49, filled_qty: 0,
+          limit_price: null, stop_price: 175, status: "new", submitted_at: "2026-11-02T14:31:00Z",
+        }] : [] });
+      }
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      return json(payload({}));
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    fireEvent.click(full.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(full.getByRole("button", { name: "Confirm cancel" }));
+    await waitFor(() => expect(region("Staged orders").getByText("0")).toBeInTheDocument());
+    expect(calls.some((c) => c.method === "DELETE" && c.url.includes("/api/portfolio/orders/a9"))).toBe(true);
+  });
+
+  it("keeps the staged row and shows the error when a cancel is refused", async () => {
+    session.token = "jwt";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+      if (url.includes("/api/portfolio/orders/") && method === "DELETE") {
+        return json({ detail: "the order already filled or was already cancelled" }, 409);
+      }
+      if (url.includes("/api/portfolio/open-orders")) {
+        return json({ orders: [{
+          alpaca_order_id: "a9", client_order_id: "manual-x", symbol: "XOM",
+          side: "buy", type: "market", time_in_force: "day", qty: 3, filled_qty: 0,
+          limit_price: null, stop_price: null, status: "new", submitted_at: "2026-11-02T14:31:00Z",
+        }] });
+      }
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      return json(payload({}));
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    fireEvent.click(full.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(full.getByRole("button", { name: "Confirm cancel" }));
+    expect(await full.findByText(/Cancel failed/)).toBeInTheDocument();
+    expect(full.getByText("XOM")).toBeInTheDocument();
+  });
+
   it("lists closed trades in full on the Trade tab", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

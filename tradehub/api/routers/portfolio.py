@@ -458,3 +458,32 @@ def get_portfolio_open_orders(book: str = "main", user: dict = Depends(admin.req
         return {"orders": open_broker_orders(_book_or_400(book))}
     except AccountNotConnected as exc:
         raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+
+
+@router.delete("/api/portfolio/orders/{alpaca_order_id}", tags=["Portfolio"])
+def cancel_portfolio_order(alpaca_order_id: str, book: str = "main",
+                           user: dict = Depends(admin.require_admin)):
+    """Cancel one resting order by hand (Kevin, signed in) -- the staged-orders panel's
+    cancel button. Deliberately NOT a machine API: the only credential is Kevin's admin
+    session, and the cancel goes through paper_orders.cancel_any, so the paper host and
+    the book's order switch still apply while every order source stays cancellable --
+    hand orders, machine (ext-) orders, protective stops, and orders placed in the
+    Alpaca app (Kevin, 2026-11-23: a staged site order otherwise needed a direct
+    broker DELETE from inside the container). A cancel is not a placement; nothing
+    here can place or modify an order."""
+    from tradehub.portfolio import paper_orders
+    from tradehub.portfolio.alpaca_paper import AccountNotConnected
+
+    name = _book_or_400(book)
+    try:
+        paper_orders.cancel_any(alpaca_order_id, book=name)
+    except paper_orders.OrdersDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except paper_orders.OrderGone as exc:
+        raise HTTPException(status_code=409,
+                            detail="the order already filled or was already cancelled") from exc
+    except AccountNotConnected as exc:
+        raise HTTPException(status_code=424, detail="the paper account is not connected") from exc
+    except (paper_orders.OrderRejected, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"cancelled": alpaca_order_id, "book": name, "cancelled_by": user["email"]}
