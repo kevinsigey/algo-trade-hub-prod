@@ -379,8 +379,8 @@ function TileChip({ spec }: { spec: TileSpec }) {
 function LiveCard({ spec }: { spec: TileSpec & { card: NonNullable<TileSpec["card"]> } }) {
   return (
     <DashCard title={spec.name} meta={<TileChip spec={spec} />} value={spec.card.value} valueClass={spec.card.valueClass}
-              sub={spec.card.sub} hint={spec.card.hint}
-              detail={<div id={spec.id} className="space-y-4">{spec.visual}{spec.stats}{spec.children}</div>}>
+              sub={<span className="hidden sm:inline">{spec.card.sub}</span>} hint={spec.card.hint}
+              detail={<div id={spec.id} className="space-y-4"><p className="text-xs tabular-nums text-slate-400 sm:hidden">{spec.card.sub}</p>{spec.visual}{spec.stats}{spec.children}</div>}>
       {spec.card.graph}
     </DashCard>
   );
@@ -545,6 +545,19 @@ function servedTrial(t: ServedTrial): TrialRow {
            status: t.status, note: t.status === "no_read" ? "recording, no public read yet" : t.note };
 }
 
+/** True under Tailwind's `sm` (640px): phones get the compact page. */
+function usePhone(): boolean {
+  const q = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(max-width: 639px)") : null;
+  const [phone, setPhone] = useState(!!q?.matches);
+  useEffect(() => {
+    if (!q) return;
+    const on = () => setPhone(q.matches);
+    q.addEventListener("change", on);
+    return () => q.removeEventListener("change", on);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  return phone;
+}
+
 const trialProgress = (r: TrialRow) => (r.n == null ? -1 : r.n / Math.max(r.needed, 1));
 
 /** One shadow: the row (name, status, progress, net, low95) opens its full record in a box. */
@@ -557,7 +570,7 @@ function TrialItem({ r }: { r: TrialRow }) {
             aria-label={r.n == null ? "progress unknown" : `${r.n} of ${r.needed} toward the pass bar`}>
         <span className="block h-full rounded-full bg-sky-400/70" style={{ width: `${pct}%` }} />
       </span>
-      <span className="text-slate-300">{r.n == null ? "—" : r.n} / {r.needed} {r.unit}</span>
+      <span className="text-slate-300">{r.n == null ? "—" : r.n} / {r.needed} <span className="hidden sm:inline">{r.unit}</span></span>
       {r.net && <span className={r.netTone ?? "text-slate-300"}>{r.net}</span>}
       {r.low95 && <span>low95 {r.low95}</span>}
       {r.note && <span className="text-slate-500">{r.note}</span>}
@@ -566,7 +579,7 @@ function TrialItem({ r }: { r: TrialRow }) {
   return (
     <li>
       <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog"
-              className="block w-full px-4 py-2 text-left hover:bg-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
+              className="block w-full px-3 py-1.5 text-left sm:px-4 sm:py-2 hover:bg-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-slate-400">
           <span className="text-sm font-semibold text-white">{r.name}</span>
           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATUS_TONE[r.status]}`}>
@@ -575,7 +588,7 @@ function TrialItem({ r }: { r: TrialRow }) {
           {stats}
           {r.curve && r.curve.length > 1 && <span className="ml-auto hidden sm:block"><Sparkline curve={r.curve} /></span>}
         </span>
-        <span className="mt-0.5 block truncate text-xs text-slate-500">{r.tests}</span>
+        <span className="mt-0.5 hidden truncate text-xs text-slate-500 sm:block">{r.tests}</span>
       </button>
       {open && (
         <FullView title={r.name} onClose={() => setOpen(false)}>
@@ -610,17 +623,18 @@ function TrialList({ rows, label = "Shadows on trial" }: { rows: TrialRow[]; lab
 /** On trial: the PEEK shadows closest to their bar on the page; every one behind Show all. */
 function OnTrial({ rows }: { rows: TrialRow[] }) {
   const [all, setAll] = useState(false);
+  const peek = usePhone() ? 3 : PEEK;
   const ranked = [...rows].sort((a, b) => trialProgress(b) - trialProgress(a));
   return (
     <section aria-label="On trial" className="min-w-0 lg:col-span-2">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-white" title="Preregistered shadows: recorded, never traded, until they clear their bar.">On trial (shadows)</h2>
-        {ranked.length > PEEK && (
+        {ranked.length > peek && (
           <button type="button" onClick={() => setAll(true)} aria-haspopup="dialog"
                   className="text-xs text-emerald-300 hover:text-emerald-200">Show all {ranked.length}</button>
         )}
       </div>
-      <TrialList rows={ranked.slice(0, PEEK)} />
+      <TrialList rows={ranked.slice(0, peek)} />
       {all && (
         <FullView title="On trial — every shadow" onClose={() => setAll(false)}>
           <TrialList rows={ranked} label="All shadows on trial" />
@@ -666,7 +680,7 @@ function PilotCard() {
     <DashCard title="Kalshi live pilot — WTI & Brent" meta={REAL_MONEY} className="border-rose-500/30"
               value={full ? (full.balance == null ? "—" : usdPlain(full.balance)) : "Admin only"}
               valueClass={full ? "text-white" : "text-slate-400"}
-              sub={full ? <><span className={toneOf(full.pnl_since_start)}>{money(full.pnl_since_start)}</span> since start · <span className={full.halted ? "text-rose-300" : undefined}>{status}</span></> : blurb}
+              sub={full ? <><span className={toneOf(full.pnl_since_start)}>{money(full.pnl_since_start)}</span> since start · <span className={full.halted ? "text-rose-300" : undefined}>{status}</span></> : <span className="hidden sm:inline">{blurb}</span>}
               hint="Live orders on a real Kalshi account."
               detail={
                 <div className="space-y-3">
@@ -688,16 +702,16 @@ function PilotCard() {
       {full ? (
         <>
           <Spark data={cum} lines={[{ key: "pnl", color: run >= 0 ? "#34d399" : "#fb7185" }]} height={40} />
-          <p className="mt-1 text-xs tabular-nums text-slate-400">Fills {full.fills} of {full.decisions}</p>
+          <p className="mt-1 hidden text-xs tabular-nums text-slate-400 sm:block">Fills {full.fills} of {full.decisions}</p>
         </>
       ) : null}
-      <div className="mt-1">{link}</div>
+      <div className="mt-1 hidden sm:block">{link}</div>
     </DashCard>
   );
 }
 
 /** Small labelled bar groups for a card (one group per market; dimmed bars are the control). */
-function LabeledBars({ groups, height = 44 }: { groups: { label: string; bars: { v: number | null; dim?: boolean }[] }[]; height?: number }) {
+function LabeledBars({ groups, height = 36 }: { groups: { label: string; bars: { v: number | null; dim?: boolean }[] }[]; height?: number }) {
   if (groups.length === 0) return <div style={{ height }} className="flex items-center text-xs text-slate-500">—</div>;
   const data = groups.flatMap((g) => g.bars.map((b) => ({ v: b.v ?? 0, dim: !!b.dim })));
   return (
@@ -922,9 +936,9 @@ export default function Strategies() {
         sub: `vs SPY since start · ${live == null ? "—" : `${live} idea${live === 1 ? "" : "s"} trading`}`,
         graph: (
           <div>
-            {portfolio?.curve && portfolio.curve.length > 1 ? <CurveSpark curve={portfolio.curve} height="h-10" />
-              : <div className="flex h-10 items-center text-xs text-slate-500">—</div>}
-            <Link to="/portfolio" className="relative z-10 mt-1 inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
+            {portfolio?.curve && portfolio.curve.length > 1 ? <CurveSpark curve={portfolio.curve} height="h-8 sm:h-10" />
+              : <div className="flex h-8 items-center text-xs text-slate-500 sm:h-10">—</div>}
+            <Link to="/portfolio" className="relative z-10 mt-1 hidden items-center sm:inline-flex gap-1 text-xs text-emerald-300 hover:text-emerald-200">
               Portfolio <ArrowRight className="h-3 w-3" aria-hidden="true" />
             </Link>
           </div>
@@ -1351,33 +1365,34 @@ export default function Strategies() {
   const RETIRED = new Set(["sniper", "gap-tracker"]);
   const board = fifteen?.board;
   return (
-    <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Strategies</h1>
-      <p className="mt-1 text-sm text-slate-400">Live models first, shadows on trial below. Click any card or row for its full record.</p>
+    <div className="mx-auto max-w-7xl px-4 py-3 sm:py-5 md:px-6">
+      <h1 className="text-xl font-bold sm:text-2xl tracking-tight text-white">Strategies</h1>
+      <p className="mt-1 hidden text-sm text-slate-400 sm:block">Live models first, shadows on trial below. Click any card or row for its full record.</p>
 
-      <section aria-label="Live models" className="mt-4">
+      <section aria-label="Live models" className="mt-3 sm:mt-4">
         <h2 className="mb-2 text-sm font-semibold text-white">Live models</h2>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-5">
           <PilotCard />
           {tiles.filter((t): t is TileSpec & { card: NonNullable<TileSpec["card"]> } => !!t.card)
             .map((spec) => <LiveCard key={spec.id} spec={spec} />)}
         </div>
       </section>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+      <div className="mt-3 grid gap-2 sm:mt-5 sm:gap-3 lg:grid-cols-3">
         <OnTrial rows={trials} />
-        <div className="grid min-w-0 grid-cols-2 content-start gap-3 lg:mt-7 lg:grid-cols-1">
+        <div className="grid min-w-0 grid-cols-2 content-start gap-2 sm:gap-3 lg:mt-7 lg:grid-cols-1">
           {board?.commodities?.length ? (
-            <DashCard title="By commodity" className="col-span-2 lg:col-span-1"
+            <DashCard title="By commodity" className="sm:col-span-2 lg:col-span-1"
+                      sub={<span className="sm:hidden">{board.commodities.length} markets</span>}
                       meta={`${board.commodities.reduce((a, c) => a + c.models.length, 0)} models`}
                       hint="Every 15-minute model on each market, ranked, a simulated account under each"
                       detailTitle="15-minute models by commodity"
                       detail={<section aria-label="15-minute models by commodity"><FifteenBoard board={board} /></section>}>
-              <PeekRows rows={board.commodities.slice(0, PEEK).map((c) => {
+              <div className="hidden sm:block"><PeekRows rows={board.commodities.slice(0, PEEK).map((c) => {
                 const top = c.models[0];
                 return { key: c.series, label: c.commodity, aside: top ? (top.label === top.version ? top.version : top.label) : undefined,
                          value: top?.net_cents == null ? "—" : `${signed(top.net_cents)}¢`, valueClass: toneOf(top?.net_cents) };
-              })} />
+              })} /></div>
             </DashCard>
           ) : null}
           <DashCard title="What we learned" meta={`${LEARNED.length}`} sub={`${LEARNED[0].date} · ${LEARNED[0].text}`}

@@ -320,7 +320,7 @@ describe("Strategies", () => {
     expect(within(list).queryByText("LEAPS shadow")).toBeNull();
     const trend = within(list).getByText(/Trend-agree v1/).closest("li")!;
     expect(list.firstElementChild).toBe(trend);
-    expect(within(trend).getByText(/37 \/ 150 trades/)).toBeInTheDocument();
+    expect(within(trend).getByText((_, el) => el?.tagName === "SPAN" && /^37 \/ 150 trades/.test(el.textContent ?? ""))).toBeInTheDocument();
     expect(within(trend).getByRole("img", { name: "37 of 150 toward the pass bar" })).toBeInTheDocument();
     expect(within(trend).getByText("low95 −1.2¢")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show all 7" }));
@@ -335,6 +335,18 @@ describe("Strategies", () => {
     expect(within(view).getByRole("region", { name: "WTI record" })).toBeInTheDocument();
     expect(within(view).getByRole("region", { name: "Brent record" })).toBeInTheDocument();
     expect(within(view).getAllByText(/Simulated account/)).toHaveLength(2);
+  });
+
+  it("shows three trial rows on a phone, still with Show all", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("max-width"), addEventListener: () => {}, removeEventListener: () => {} }));
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    serve({ "/api/oil/fifteen-rule": { ...base, board: { account_start: 20, commodities: [
+      { series: "KXWTI15M", commodity: "WTI", models: ["a", "b", "c", "d"].map((v, i) => boardModel(v, v, "KXWTI15M", i + 1, 100, 1)) }] } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = await screen.findByRole("list", { name: "Shadows on trial" });
+    await within(list).findByText("d");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Show all 4" })).toBeInTheDocument();
   });
 
   it("keeps a trial recording until the paired leg is met too", async () => {
