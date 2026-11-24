@@ -219,9 +219,9 @@ class KalshiLivePortfolio:
     def get_orders(self, status: str | None = None) -> list:
         params = {"status": status} if status else None
         data = self._get("/portfolio/orders", params=params)
-        if data:
-            return data.get("orders", [])
-        return []
+        if data is None:  # an unread book never reads as 'no orders'
+            raise RuntimeError("Kalshi live orders read failed")
+        return data.get("orders", [])
 
     def get_fills(self, limit: int = 200) -> list:
         """Recent fills. A failed request raises instead of reading as
@@ -234,6 +234,6 @@ class KalshiLivePortfolio:
 
     def get_positions(self, limit: int = 200) -> list:
         data = self._get("/portfolio/positions", params={"limit": limit})
-        if data:
-            return data.get("market_positions", data.get("positions", []))
-        return []
+        if data is None:  # an unread book never reads as 'no positions'
+            raise RuntimeError("Kalshi live positions read failed")
+        return data.get("market_positions", data.get("positions", []))

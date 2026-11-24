@@ -406,3 +406,126 @@ def test_scoreboard_math(db):
     assert board["latency_median_s"] == 100.0
     assert board["gates"]["execution"]["state"] == "pending"
     assert board["pnl_since_start"] == 0.57
+
+
+# -- review blockers (PR #591) ----------------------------------------------------
+
+_REAL_SETTLE = kalshi_demo._settle_prod_fills
+
+
+class BrokenStateDB(DB):
+    def table(self, name):
+        if name == lane.STATE_TABLE:
+            raise RuntimeError("state read timeout")
+        return super().table(name)
+
+
+def test_state_read_failure_places_nothing():
+    db = BrokenStateDB()
+    seed_open(db, [decision()])
+    portfolio = FakeLivePortfolio()
+    summary = lane.run_once(db, portfolio, NOW)
+    assert summary["halted"] == "state_unreadable"
+    assert portfolio.placed == []
+    assert db.db.get(lane.ORDERS, []) == []
+    assert any(a["evidence"]["event"] == "state_unreadable" for a in alerts(db))
+
+
+def test_slippage_env_may_only_lower(monkeypatch):
+    monkeypatch.setenv("KALSHI_LIVE_MAX_SLIPPAGE", "0.06")
+    assert lane.max_slippage() == 0.03
+    monkeypatch.setenv("KALSHI_LIVE_MAX_SLIPPAGE", "0.01")
+    assert lane.max_slippage() == 0.01
+
+
+def test_caps_reserved_before_send_and_kept_on_raise(db, monkeypatch):
+    monkeypatch.setenv("KALSHI_LIVE_MAX_CONTRACTS_PER_DAY", "2")
+    # A failed claim from earlier today still counts: it may have landed.
+    seed_rows(db, [order_row(status="failed", contracts_requested=1,
+                             target="kalshi:KXWTI15M-old", ticker="KXWTI15M-old",
+                             created_at="2026-11-23T15:00:00+00:00")])
+    seed_open(db, [decision(WTI, 0), decision(BRENT, 1)])
+    portfolio = FakeLivePortfolio()
+    real_create = portfolio.create_order
+
+    def create(**kw):
+        if not portfolio.placed:
+            portfolio.placed.append(kw)
+            raise RuntimeError("response lost")
+        return real_create(**kw)
+    portfolio.create_order = create
+    lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1  # the second decision never sends
+    brent = [r for r in db.db[lane.ORDERS] if r["series"] == BRENT][0]
+    assert brent["skip_reason"] == "daily_contract_cap"
+
+
+def test_fill_price_and_fee_from_order_response(db):
+    portfolio = FakeLivePortfolio()
+    real_create = portfolio.create_order
+    portfolio.create_order = lambda **kw: {
+        **real_create(**kw), "average_fill_price": "0.3900",
+        "average_fee_paid": "0.0300"}
+    seed_open(db, [decision()])
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["fill_price"] == 0.39 and row["fee_usd"] == 0.03
+    assert row["slippage"] == -0.01 and not row.get("last_error")
+    # Missing fields fall back to the limit, flagged.
+    db2 = DB()
+    seed_open(db2, [decision()])
+    lane.run_once(db2, FakeLivePortfolio(), NOW)
+    row = db2.db[lane.ORDERS][0]
+    assert row["fill_price"] == 0.40
+    assert row["last_error"] == "fill_price_from_limit,fee_estimated"
+
+
+def test_unread_orders_never_write_off_a_claim(db):
+    seed_rows(db, [order_row(status="pending", kalshi_order_id=None,
+                             client_order_id="kl-KXWTI15M-26NOV230900-00")])
+    portfolio = FakeLivePortfolio()
+
+    def boom(status=None):
+        raise RuntimeError("Kalshi live orders read failed")
+    portfolio.get_orders = boom
+    lane.run_once(db, portfolio, NOW)
+    assert db.db[lane.ORDERS][0]["status"] == "pending"
+
+
+def test_settles_wti_and_brent_observations(db, monkeypatch):
+    monkeypatch.setattr(kalshi_demo, "_settle_prod_fills", _REAL_SETTLE)
+    for series in (WTI, BRENT, GAS):
+        target = f"kalshi:{series}-done"
+        seed_rows(db, [{"series": series, "target": target, "outcome": 1,
+                        "close_time": "2026-11-23T16:00:00+00:00"}],
+                  table=lane.DECISIONS)
+        seed_rows(db, [{"series": series, "target": target, "side": "yes",
+                        "status": "would_fill", "would_price": 0.40,
+                        "contracts": 1, "outcome": None,
+                        "gate_version": lane.LANE}], table=lane.PROD_FILLS)
+    summary = lane.run_once(db, FakeLivePortfolio(), NOW)
+    assert summary["prod_settled"] == 3
+    assert all(r["outcome"] == 1 for r in db.db[lane.PROD_FILLS])
+
+
+def test_daily_stop_keys_on_settlement_session(db):
+    # Placed 23:50 ET yesterday, settled 00:05 ET today: today's loss.
+    seed_rows(db, [order_row(status="settled", pnl=-2.00,
+                             created_at="2026-11-23T04:50:00+00:00",
+                             window_close="2026-11-23T05:05:00+00:00")])
+    seed_open(db, [decision()])
+    portfolio = FakeLivePortfolio()
+    summary = lane.run_once(db, portfolio, NOW)
+    assert summary["daily_stop"] == 2.0
+    assert portfolio.placed == []
+
+
+def test_close_buffer_rechecked_before_send(db, monkeypatch):
+    import itertools
+    clock = itertools.count(0, 600)  # each read: 10 more minutes
+    monkeypatch.setattr(lane.time, "monotonic", lambda: next(clock))
+    seed_open(db, [decision()])
+    portfolio = FakeLivePortfolio()
+    lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert db.db[lane.ORDERS][0]["skip_reason"] == "close_buffer"

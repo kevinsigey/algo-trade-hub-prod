@@ -101,3 +101,12 @@ def test_check_live_available(key_file, monkeypatch):
     assert check_live_available() is True
     monkeypatch.delenv("KALSHI_LIVE_KEY_ID")
     assert check_live_available() is False
+
+
+def test_failed_orders_and_positions_reads_raise(key_file, monkeypatch):
+    client = _client(key_file)
+    monkeypatch.setattr(client, "_get", lambda *a, **k: None)
+    with pytest.raises(RuntimeError):
+        client.get_orders()
+    with pytest.raises(RuntimeError):
+        client.get_positions()
