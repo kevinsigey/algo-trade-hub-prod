@@ -37,7 +37,7 @@ function show(pilot: unknown) {
     JSON.stringify(String(input).includes("/api/kalshi-demo")
       ? { state: "not_connected", demo: true, note: "n", live_pilot: pilot }
       : { books: [] }), { status: 200 })));
-  render(<MemoryRouter initialEntries={["/portfolio?book=kalshi-live"]}><Portfolio /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={["/portfolio?book=kalshi"]}><Portfolio /></MemoryRouter>);
 }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -46,7 +46,7 @@ describe("Kalshi live book", () => {
   it("renders the tab link with its REAL MONEY badge", async () => {
     show({ admin_only: true });
     const link = await screen.findByRole("link", { name: /Kalshi live/ });
-    expect(link).toHaveAttribute("href", "/portfolio?book=kalshi-live");
+    expect(link).toHaveAttribute("href", "/portfolio?book=kalshi");
     expect(within(link).getByText("REAL MONEY")).toBeInTheDocument();
   });
 

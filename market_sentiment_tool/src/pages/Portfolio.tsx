@@ -2,7 +2,6 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import KalshiDemoBook from "@/pages/KalshiDemoBook";
 import KalshiLiveBook from "@/pages/KalshiLiveBook";
 import { useApi } from "@/hooks/usePaperPortfolio";
 import {
@@ -20,7 +19,7 @@ import TradeTab from "@/pages/portfolio/TradeTab";
 
 /** The Portfolio page (2026-11-12 redesign): a fixed header, a warnings
  * strip, and three tabs -- Book (the default), Performance and Trade --
- * with the tab in the URL so it can be linked. The Kalshi demo book sits
+ * with the tab in the URL so it can be linked. The Kalshi live book sits
  * beside the two Alpaca books in the switcher. Everything on the page
  * refreshes on a 30-second cycle while the tab is visible. */
 
@@ -48,12 +47,7 @@ function BookTabs({ book }: { book: string }) {
       })}
       <Link to="/portfolio?book=kalshi" aria-current={book === "kalshi" ? "page" : undefined}
             className={`rounded-lg border px-3 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${book === "kalshi" ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-700 hover:bg-slate-800/60"}`}>
-        <span className={book === "kalshi" ? "font-semibold text-white" : "text-slate-200"}>Kalshi (demo)</span>
-        <span className="ml-2 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">DEMO</span>
-      </Link>
-      <Link to="/portfolio?book=kalshi-live" aria-current={book === "kalshi-live" ? "page" : undefined}
-            className={`rounded-lg border px-3 py-1.5 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${book === "kalshi-live" ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-700 hover:bg-slate-800/60"}`}>
-        <span className={book === "kalshi-live" ? "font-semibold text-white" : "text-slate-200"}>Kalshi live</span>
+        <span className={book === "kalshi" ? "font-semibold text-white" : "text-slate-200"}>Kalshi live</span>
         <span className="ml-2 rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300">REAL MONEY</span>
       </Link>
     </nav>
@@ -88,14 +82,14 @@ function TabNav({ book, tab }: { book: string; tab: TabId }) {
 export default function Portfolio() {
   const [searchParams] = useSearchParams();
   const rawBook = searchParams.get("book");
-  const book = rawBook === "big" ? "big" : rawBook === "kalshi" || rawBook === "kalshi-live" ? rawBook : "main";
+  const book = rawBook === "big" ? "big" : rawBook === "kalshi" ? "kalshi" : "main";
   return (
     <div className="mx-auto max-w-[100rem] px-4 py-5 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
         <BookTabs book={book} />
       </div>
-      {book === "kalshi" ? <KalshiDemoBook /> : book === "kalshi-live" ? <KalshiLiveBook /> : <AlpacaBook book={book} />}
+      {book === "kalshi" ? <KalshiLiveBook /> : <AlpacaBook book={book} />}
     </div>
   );
 }

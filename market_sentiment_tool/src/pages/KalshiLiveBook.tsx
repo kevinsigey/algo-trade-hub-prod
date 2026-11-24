@@ -4,8 +4,13 @@ import { Loader2 } from "lucide-react";
 import { sessionToken } from "@/components/RequireAdmin";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
-import { LivePilotCard, REFRESH_MS } from "@/pages/KalshiDemoBook";
-import type { KalshiDemoPayload, KalshiLivePilot } from "@/lib/kalshiDemo";
+import { PEEK, REFRESH_MS } from "@/pages/portfolio/shared";
+import type { KalshiDemoPayload, KalshiLivePilot, KalshiLivePilotAdminOnly } from "@/lib/kalshiDemo";
+
+const money = (v: number | null | undefined) => fmtUsd(v);
+const signed = (v: number | null | undefined) => fmtUsd(v, { signed: true });
+const pct = (v: number | null | undefined) =>
+  v == null || !Number.isFinite(v) ? "—" : `${Math.round(v * 100)}%`;
 
 const ET = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York", month: "short", day: "numeric",
@@ -13,6 +18,64 @@ const ET = new Intl.DateTimeFormat("en-US", {
 });
 const et = (iso: string | null) => (iso ? `${ET.format(new Date(iso))} ET` : "—");
 const cents = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(0)}¢`);
+
+/** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
+ * rule on the LIVE Kalshi account. Real money — the badge and the
+ * halt state are the point of the card. */
+function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
+  if (!pilot) return null;
+  if ("admin_only" in pilot) {
+    return <p className="mb-3 text-xs text-slate-500">Live pilot: admin only</p>;
+  }
+  if (pilot.state === "unavailable") return null;
+  const cents = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(1)}¢`;
+  const stat = (label: string, value: string, cls = "text-white") => (
+    <div key={label}>
+      <dt className="truncate text-[11px] text-slate-500">{label}</dt>
+      <dd className={`text-sm font-semibold tabular-nums ${cls}`}>{value}</dd>
+    </div>
+  );
+  const stateLine = pilot.halted
+    ? `Halted — ${pilot.halt_reason ?? "halted"}`
+    : pilot.state === "live" ? "Live" : "Not enabled";
+  const gate = pilot.gates;
+  return (
+    <div className="mt-2 rounded-xl border border-slate-800 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-white">Live pilot — oil &amp; gas raw rule</span>
+        <span className="rounded border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-300">REAL MONEY</span>
+        <span className={`text-xs font-medium ${pilot.halted ? "text-rose-300" : "text-slate-400"}`}>{stateLine}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stat("Live balance", money(pilot.balance))}
+        {stat("P&L since start", signed(pilot.pnl_since_start), tone(pilot.pnl_since_start))}
+        {stat("Fill rate", `${pilot.fills}/${pilot.decisions} · ${pct(pilot.fill_rate)}`)}
+        {stat("Mean slippage vs paper", cents(pilot.mean_slippage_cents))}
+        {stat("Live net / contract", signed(pilot.live_net_per_contract), tone(pilot.live_net_per_contract))}
+        {stat("Live low95", cents(pilot.live_low95_cents))}
+        {stat("Paper twin net / contract", signed(pilot.paper_net_per_contract), tone(pilot.paper_net_per_contract))}
+        {stat("Paper twin low95", cents(pilot.paper_low95_cents))}
+        {stat("Settled trades", String(pilot.settled))}
+        {stat("Latency median", pilot.latency_median_s == null ? "—" : `${pilot.latency_median_s.toFixed(0)}s`)}
+        {stat("Execution gate (50 fills)", `${gate.execution.state} · ${gate.execution.fills}/${gate.execution.bar}`)}
+        {stat("Edge gate (150 settled)", `${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}${gate.edge.stage3_unlocked ? " · stage 3 unlocked" : ""}`)}
+      </dl>
+      {pilot.orders.length ? (
+        <dl className="mt-3 space-y-1 border-t border-slate-800/70 pt-2">
+          {pilot.orders.slice(0, PEEK).map((o) => (
+            <div key={String(o.id ?? o.ticker)} className="flex items-baseline justify-between gap-2 text-xs">
+              <dt className="truncate text-slate-400">{o.ticker} · {o.status}{o.skip_reason ? ` (${o.skip_reason})` : ""}</dt>
+              <dd className={`tabular-nums ${tone(o.pnl)}`}>{signed(o.pnl)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="mt-2 text-xs text-slate-400">No live orders yet</p>
+      )}
+    </div>
+  );
+}
 
 function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
   return (
