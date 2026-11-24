@@ -81,7 +81,8 @@ export interface KalshiLivePilot {
   halted: boolean;
   halt_reason: string | null;
   balance: number | null;
-  pnl_since_start: number;
+  balance_at?: string | null;
+  pnl_since_start: number | null;
   decisions: number;
   fills: number;
   fill_rate: number | null;
@@ -119,11 +120,16 @@ export interface KalshiLivePilot {
   }>;
 }
 
+/** What a public (non-admin) request gets: the live pilot is Kevin-only. */
+export interface KalshiLivePilotAdminOnly {
+  admin_only: true;
+}
+
 export interface KalshiDemoNotConnected {
   state: "not_connected";
   demo: boolean;
   note: string;
-  live_pilot?: KalshiLivePilot | null;
+  live_pilot?: KalshiLivePilot | KalshiLivePilotAdminOnly | null;
 }
 
 export interface KalshiDemoLive {
@@ -147,7 +153,7 @@ export interface KalshiDemoLive {
   orders: KalshiOrder[];
   note: string;
   /** The live micro-pilot's scoreboard (real money, issue #590). */
-  live_pilot?: KalshiLivePilot | null;
+  live_pilot?: KalshiLivePilot | KalshiLivePilotAdminOnly | null;
 }
 
 export type KalshiDemoPayload = KalshiDemoNotConnected | KalshiDemoLive;

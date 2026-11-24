@@ -94,6 +94,7 @@ def _seams(monkeypatch):
     monkeypatch.setattr(kalshi_demo, "_tracked_decisions", lambda supa: {})
     monkeypatch.setattr(kalshi_demo, "_settle_prod_fills",
                         lambda supa, tracked, now, summary: None)
+    monkeypatch.setattr(lane, "_utcnow", lambda: NOW)
 
 
 def seed_open(db, decisions):
@@ -395,7 +396,7 @@ def test_scoreboard_math(db):
                   created_at="2026-11-22T16:00:00+00:00"),
     ])
     db.db[lane.STATE_TABLE] = [{"key": "balance", "value": {"usd": 10.0}}]
-    board = lane.build_scoreboard(db, NOW, admin=True)
+    board = lane.build_scoreboard(db, NOW)
     assert board["real_money"] is True
     assert board["balance"] == 10.0
     assert board["decisions"] == 2
@@ -522,7 +523,7 @@ def test_daily_stop_keys_on_settlement_session(db):
 
 
 def test_close_buffer_rechecked_after_claim(monkeypatch):
-    clock = {"t": 0}
+    clock = {"t": NOW}
 
     class SlowClaimDB(DB):
         def table(self, name):
@@ -532,11 +533,11 @@ def test_close_buffer_rechecked_after_claim(monkeypatch):
 
                 def execute():
                     if q.row is not None and q.row.get("status") == "pending":
-                        clock["t"] = 600  # the claim took ten minutes
+                        clock["t"] = NOW + timedelta(minutes=10)  # slow claim
                     return real()
                 q.execute = execute
             return q
-    monkeypatch.setattr(lane.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(lane, "_utcnow", lambda: clock["t"])
     db = SlowClaimDB()
     seed_open(db, [decision()])
     portfolio = FakeLivePortfolio()
@@ -671,14 +672,13 @@ def test_scoreboard_totals_cover_all_rows(db):
                              ticker=f"s{i}", contracts_requested=0,
                              created_at="2026-11-22T15:00:00+00:00")
                    for i in range(1005)])
-    board = lane.build_scoreboard(db, NOW, admin=True)
+    board = lane.build_scoreboard(db, NOW)
     assert board["pnl_since_start"] == 0.58
     assert board["fills"] == 1 and board["settled"] == 1
     assert len(board["orders"]) == 12
 
 
-def test_scoreboard_reads_stored_balance_and_hides_dollars_publicly(
-        db, monkeypatch):
+def test_scoreboard_reads_stored_balance(db, monkeypatch):
     from tradehub.core import kalshi_live_portfolio as klp
 
     def no_exchange(*a, **k):
@@ -689,9 +689,38 @@ def test_scoreboard_reads_stored_balance_and_hides_dollars_publicly(
     lane.run_once(db, FakeLivePortfolio(balance_cents=1234), NOW)
     seed_rows(db, [order_row(status="settled", contracts_filled=1,
                              fill_price=0.40, pnl=0.58, fee_usd=0.02)])
-    admin = lane.build_scoreboard(db, NOW, admin=True)
-    assert admin["balance"] == 12.34 and admin["pnl_since_start"] == 0.58
-    public = lane.build_scoreboard(db, NOW)
-    assert public["balance"] is None and public["pnl_since_start"] is None
-    assert public["orders"][0]["pnl"] is None
-    assert public["fills"] == 1
+    board = lane.build_scoreboard(db, NOW)
+    assert board["balance"] == 12.34 and board["pnl_since_start"] == 0.58
+
+
+def test_close_buffer_exact_boundary_does_not_send(db, monkeypatch):
+    d = decision()
+    monkeypatch.setattr(lane, "_utcnow", lambda: lane._dt(d["close_time"])
+                        - lane.CANCEL_BUFFER)
+    seed_open(db, [d])
+    portfolio = FakeLivePortfolio()
+    lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert db.db[lane.ORDERS][0]["skip_reason"] == "close_buffer"
+
+
+def test_select_all_survives_insert_between_pages(db):
+    seed_rows(db, [order_row(target=f"kalshi:t{i}", ticker=f"t{i}")
+                   for i in range(4)])
+    real = db.table
+
+    def table(name):
+        q = real(name)
+        execute = q.execute
+
+        def run():
+            got = execute()
+            if not getattr(db, "_inserted", False):
+                db._inserted = True
+                seed_rows(db, [order_row(target="kalshi:new", ticker="new")])
+            return got
+        q.execute = run
+        return q
+    db.table = table
+    ids = [r["id"] for r in lane._select_all(db, lane.ORDERS, page=2)]
+    assert ids == [4, 3, 2, 1]

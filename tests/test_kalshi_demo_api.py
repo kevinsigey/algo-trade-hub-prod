@@ -196,6 +196,11 @@ def test_endpoint_carries_the_live_pilot_scoreboard(monkeypatch):
         "tradehub.core.kalshi_portfolio.check_portfolio_available",
         lambda: False)
     out = main.get_kalshi_demo(supabase=DB())
+    assert out["live_pilot"] == {"admin_only": True}  # public: no figures
+    from tradehub.api import admin
+    monkeypatch.setattr(admin, "require_admin",
+                        lambda authorization, supabase: {"email": "k"})
+    out = main.get_kalshi_demo(authorization="Bearer t", supabase=DB())
     pilot = out["live_pilot"]
     assert pilot["real_money"] is True
     assert pilot["state"] == "not_enabled"
@@ -265,7 +270,7 @@ def test_live_pilot_dollars_only_for_admin(monkeypatch):
     db = DB()
     db.db["kalshi_live_state"] = [{"key": "balance", "value": {"usd": 12.34}}]
     public = main.get_kalshi_demo(authorization=None, supabase=db)
-    assert public["live_pilot"]["balance"] is None
+    assert public["live_pilot"] == {"admin_only": True}
     monkeypatch.setattr(admin, "require_admin",
                         lambda authorization, supabase: {"email": "k"})
     kevin = main.get_kalshi_demo(authorization="Bearer t", supabase=db)

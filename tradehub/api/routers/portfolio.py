@@ -169,7 +169,7 @@ def get_kalshi_demo(authorization: str | None = Header(None),
     )
 
     # Public route: the live pilot's dollar balance and P&L only for
-    # Kevin's admin session (no account-derived dollars in public).
+    # Kevin's admin session (no account-derived numbers in public).
     try:
         is_admin = isinstance(authorization, str) and bool(
             admin.require_admin(authorization, supabase))
@@ -183,8 +183,10 @@ def get_kalshi_demo(authorization: str | None = Header(None),
         # the lane's state, never an error on this endpoint).
         try:
             from tradehub import kalshi_live_lane
-            payload["live_pilot"] = kalshi_live_lane.build_scoreboard(
-                supabase, datetime.now(timezone.utc), admin=is_admin)
+            payload["live_pilot"] = (
+                kalshi_live_lane.build_scoreboard(
+                    supabase, datetime.now(timezone.utc))
+                if is_admin else {"admin_only": True})
         except Exception:  # noqa: BLE001
             payload["live_pilot"] = {"state": "unavailable",
                                      "real_money": True}

@@ -3,7 +3,8 @@ import { Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { ctDateTime } from "@/lib/format";
-import { getJson } from "@/lib/getJson";
+import { sessionToken } from "@/components/RequireAdmin";
+import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
 import { DashCard, PEEK, PeekRows, Spark } from "@/pages/portfolio/shared";
 import type {
@@ -11,6 +12,7 @@ import type {
   KalshiDemoLive,
   KalshiDemoPayload,
   KalshiLivePilot,
+  KalshiLivePilotAdminOnly,
   KalshiOrder,
 } from "@/lib/kalshiDemo";
 
@@ -115,8 +117,12 @@ function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
 /** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
  * rule on the LIVE Kalshi account. Real money — the badge and the
  * halt state are the point of the card. */
-function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | null | undefined }) {
-  if (!pilot || pilot.state === "unavailable") return null;
+function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
+  if (!pilot) return null;
+  if ("admin_only" in pilot) {
+    return <p className="mb-3 text-xs text-slate-500">Live pilot: admin only</p>;
+  }
+  if (pilot.state === "unavailable") return null;
   const cents = (v: number | null | undefined) =>
     v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(1)}¢`;
   const stat = (label: string, value: string, cls = "text-white") => (
@@ -173,7 +179,10 @@ export default function KalshiDemoBook() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      getJson<KalshiDemoPayload>("/api/kalshi-demo")
+      // Signed when Kevin is signed in: the live pilot block is admin-only.
+      sessionToken()
+        .then((token) => getJson<KalshiDemoPayload>("/api/kalshi-demo", GET_JSON_TIMEOUT_MS,
+          token ? { Authorization: `Bearer ${token}` } : undefined))
         .then((body) => {
           if (!cancelled) {
             setData(body);

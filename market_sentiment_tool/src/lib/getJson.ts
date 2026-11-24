@@ -7,11 +7,11 @@ import { buildApiUrl } from "@/lib/api";
 export const GET_JSON_TIMEOUT_MS = 25_000;
 
 /** GET one API path as JSON; a non-2xx answer becomes an Error carrying the server's `detail`. */
-export async function getJson<T>(path: string, timeoutMs: number = GET_JSON_TIMEOUT_MS): Promise<T> {
+export async function getJson<T>(path: string, timeoutMs: number = GET_JSON_TIMEOUT_MS, headers?: HeadersInit): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(buildApiUrl(path), { signal: controller.signal });
+    const response = await fetch(buildApiUrl(path), { signal: controller.signal, headers });
     // The timer stays armed until the body is read: fetch resolves on the
     // headers, and a body that stalls after them must still time out.
     const payload = await response.json();

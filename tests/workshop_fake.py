@@ -16,6 +16,10 @@ class Q:
         self.gtes = [*getattr(self, "gtes", []), (col, val)]
         return self
 
+    def lt(self, col, val):
+        self.lts = [*getattr(self, "lts", []), (col, val)]
+        return self
+
     def gt(self, col, val):
         self.gts = [*getattr(self, "gts", []), (col, val)]
         return self
@@ -72,7 +76,8 @@ class Q:
             return type("R", (), {"data": new})()
         out = [r for r in rows if all(r.get(c) == v for c, v in self.filters)
                and all(r.get(c, "") >= v for c, v in getattr(self, "gtes", []))
-               and all(r.get(c, "") > v for c, v in getattr(self, "gts", []))]
+               and all(r.get(c, "") > v for c, v in getattr(self, "gts", []))
+               and all(r.get(c) < v for c, v in getattr(self, "lts", []))]
         if self.patch is not None:
             for r in out:
                 r.update(self.patch)

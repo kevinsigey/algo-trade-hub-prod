@@ -259,6 +259,13 @@ describe("Kalshi live pilot (real money)", () => {
     expect(await screen.findByText("Halted — floor")).toBeInTheDocument();
   });
 
+  it("shows one admin-only line for a public request", async () => {
+    serveKalshi({ ...LIVE, live_pilot: { admin_only: true } });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("Live pilot: admin only")).toBeInTheDocument();
+    expect(screen.queryByText("REAL MONEY")).not.toBeInTheDocument();
+  });
+
   it("renders no live card when the payload carries none", async () => {
     serveKalshi(LIVE);
     render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);

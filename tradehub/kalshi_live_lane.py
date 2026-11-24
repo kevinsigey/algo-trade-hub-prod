@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import math
 import os
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -84,6 +83,11 @@ def _dt(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def _utcnow() -> datetime:
+    """The wall clock (a test seam): the send-time close-buffer check."""
+    return datetime.now(timezone.utc)
 
 
 def _iso(value: datetime) -> str:
@@ -159,12 +163,15 @@ def _select(supa, table: str, filters: dict, order: str | None = None,
 
 
 def _select_all(supa, table: str, page: int = 1000) -> list[dict]:
-    """Every row, newest first, read in pages (a capped read would drop
-    the oldest rows from cumulative totals and gate counts)."""
+    """Every row, newest id first, keyset-paged on id (a capped read
+    would drop the oldest rows from totals and gate counts; an offset
+    page would repeat or skip a row inserted between pages)."""
     out: list[dict] = []
     while True:
-        got = (supa.table(table).select("*").order("created_at", desc=True)
-               .order("id", desc=True).range(len(out), len(out) + page - 1).execute().data) or []
+        query = supa.table(table).select("*").order("id", desc=True)
+        if out:
+            query = query.lt("id", out[-1]["id"])
+        got = query.limit(page).execute().data or []
         out.extend(got)
         if len(got) < page:
             return out
@@ -712,7 +719,6 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         summary["refused"] = str(exc)
         return summary
 
-    started = time.monotonic()
     try:
         state = _get_state(supa)
     except Exception as exc:  # noqa: BLE001 -- unread halt = halt this pass
@@ -914,8 +920,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         by_key[(d["series"], d["target"])] = row
         # The clock is read again right before the send: the reads and
         # the claim take time, and an IOC carries no expiry.
-        elapsed = timedelta(seconds=time.monotonic() - started)
-        if now + elapsed > _dt(d["close_time"]) - CANCEL_BUFFER:
+        if _utcnow() >= _dt(d["close_time"]) - CANCEL_BUFFER:
             patch = {"status": "skipped_no_depth", "contracts_requested": 0,
                      "skip_reason": "close_buffer"}
             if row.get("id") is not None:
@@ -998,16 +1003,15 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
 
 # -- the scoreboard ---------------------------------------------------------------
 
-def build_scoreboard(supa, now: datetime, admin: bool = False) -> dict:
+def build_scoreboard(supa, now: datetime) -> dict:
     """The live lane's scoreboard block for the Kalshi page: balance
     and P&L, fill rate and mean slippage against the frozen paper
     price, live net per contract with its day-clustered low95 beside
     the paper twin's on the same windows, latency, gate and halt
     states. Read-only and fail-soft: an unapplied table or a missing
     key reads as the lane's state, never an error. No exchange call:
-    the balance is the one the last pass stored. Dollar balance and
-    P&L only for an admin request (public routes carry no
-    account-derived dollars)."""
+    the balance is the one the last pass stored. Admin-only: the
+    route serves it to Kevin's session alone."""
     from tradehub.core.kalshi_live_portfolio import live_enabled
     try:
         state = _get_state(supa)
@@ -1099,10 +1103,5 @@ def build_scoreboard(supa, now: datetime, admin: bool = False) -> dict:
             "window_close": r.get("window_close"),
         } for r in rows[:12]],
     }
-    if not admin:
-        board["balance"] = board["pnl_since_start"] = None
-        for o in board["orders"]:
-            o["pnl"] = o["fee_usd"] = None
-    else:
-        board["balance_at"] = (state.get("balance") or {}).get("at")
+    board["balance_at"] = (state.get("balance") or {}).get("at")
     return board
