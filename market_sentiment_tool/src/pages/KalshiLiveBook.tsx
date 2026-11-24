@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import { sessionToken } from "@/components/RequireAdmin";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
-import { PEEK, REFRESH_MS } from "@/pages/portfolio/shared";
+import { REFRESH_MS } from "@/pages/portfolio/shared";
 import type { KalshiDemoPayload, KalshiLivePilot, KalshiLivePilotAdminOnly } from "@/lib/kalshiDemo";
 
 const money = (v: number | null | undefined) => fmtUsd(v);
@@ -18,6 +18,8 @@ const ET = new Intl.DateTimeFormat("en-US", {
 });
 const et = (iso: string | null) => (iso ? `${ET.format(new Date(iso))} ET` : "—");
 const cents = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(0)}¢`);
+// PREREG_AT: the deploy of PR #591 (issue #590) -- the live record starts here.
+const LIVE_SINCE = "2026-11-24T14:21:37Z";
 
 /** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
  * rule on the LIVE Kalshi account. Real money — the badge and the
@@ -61,18 +63,6 @@ function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdmi
         {stat("Execution gate (50 fills)", `${gate.execution.state} · ${gate.execution.fills}/${gate.execution.bar}`)}
         {stat("Edge gate (150 settled)", `${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}${gate.edge.stage3_unlocked ? " · stage 3 unlocked" : ""}`)}
       </dl>
-      {pilot.orders.length ? (
-        <dl className="mt-3 space-y-1 border-t border-slate-800/70 pt-2">
-          {pilot.orders.slice(0, PEEK).map((o) => (
-            <div key={String(o.id ?? o.ticker)} className="flex items-baseline justify-between gap-2 text-xs">
-              <dt className="truncate text-slate-400">{o.ticker} · {o.status}{o.skip_reason ? ` (${o.skip_reason})` : ""}</dt>
-              <dd className={`tabular-nums ${tone(o.pnl)}`}>{signed(o.pnl)}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="mt-2 text-xs text-slate-400">No live orders yet</p>
-      )}
     </div>
   );
 }
@@ -152,12 +142,12 @@ export default function KalshiLiveBook() {
       <p className="mt-3 text-sm text-slate-300">
         Balance <b className="text-white">{fmtUsd(pilot.balance)}</b>
         {" · "}P&amp;L since start <b className={tone(pilot.pnl_since_start)}>{fmtUsd(pilot.pnl_since_start, { signed: true })}</b>
-        {" · "}<b className={pilot.halted ? "text-rose-300" : "text-white"}>{pilot.halted ? "Halted" : "Running"}</b>
+        {" · "}<b className={pilot.halted ? "text-rose-300" : "text-white"}>{pilot.halted ? `Halted — ${pilot.halt_reason ?? "halted"}` : pilot.state === "live" ? "Running" : "Not enabled"}</b>
       </p>
       <LivePilotCard pilot={pilot} />
       {pilot.orders.length ? <OrdersTable orders={pilot.orders} /> : (
         <p className="mt-3 text-sm text-slate-400">
-          Live since {pilot.balance_at ? et(pilot.balance_at) : "the first pass"}. No orders yet: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
+          Live since {et(LIVE_SINCE)}. No orders yet: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
         </p>
       )}
     </div>
