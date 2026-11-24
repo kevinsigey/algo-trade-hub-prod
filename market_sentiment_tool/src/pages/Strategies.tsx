@@ -502,7 +502,8 @@ function boardTrials(board: FifteenPayload["board"]): TrialRow[] {
       unit: ms.length > 1 ? `trades (best market; ${trades} across ${ms.length})` : "trades",
       net: net == null ? null : `${signed(net)}¢`, netTone: toneOf(net),
       low95: lead.low95 == null ? null : `${signed(lead.low95)}¢`,
-      status: ms.some((m) => m.progress.legs.n && m.progress.legs.low95) ? "eligible" : "recording",
+      // The board carries no promotion verdict, so eligible needs every leg (n, low95, paired) on one market.
+      status: ms.some((m) => m.progress.legs.n && m.progress.legs.low95 && m.progress.legs.paired) ? "eligible" : "recording",
     };
   });
 }

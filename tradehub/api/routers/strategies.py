@@ -22,14 +22,24 @@ def _row(id_, name, tests, needed, unit):
 
 
 def _oil_v7(supa, row):
+    """Settled pairs as the prereg counts them: a v7 target that settled,
+    with a v4 row for it decided on the same pass (equal `decided_at`)."""
+    from tradehub.journal import store
+    from tradehub.journal.forecasters.oil_hl import HL_VERSION
     from tradehub.journal.forecasters.oil_v7 import RV_VERSION
 
-    data = (supa.table("journal_scores").select("n_settled")
-            .eq("forecaster", "oil_wti_hourly").eq("forecaster_version", RV_VERSION)
-            .execute().data) or []
-    row["n"] = int(data[0].get("n_settled") or 0) if data else 0
+    # ponytail: three paged reads per page view, uncached; add the SWR cache if v7 grows past ~10k rows.
+    v7 = store.fetch_forecasts(supa, "oil_wti_hourly", RV_VERSION)
+    targets = sorted({r["target"] for r in v7})
+    settled = store.fetch_settlements(supa, targets) if targets else {}
+    v4 = {r["target"]: (r.get("payload") or {}).get("decided_at")
+          for r in (store.fetch_forecasts(supa, "oil_wti_hourly", HL_VERSION, targets) if targets else [])}
+    row["n"] = len({r["target"] for r in v7
+                    if r["target"] in settled
+                    and v4.get(r["target"]) is not None
+                    and v4[r["target"]] == (r.get("payload") or {}).get("decided_at")})
     row["status"] = "recording"
-    row["note"] = "Verdict on the paired Brier vs v4 at 300 settled or Jan 15, 2027"
+    row["note"] = "Verdict on the paired Brier vs v4 at 300 settled pairs or Jan 15, 2027"
 
 
 def _leaps(supa, row):

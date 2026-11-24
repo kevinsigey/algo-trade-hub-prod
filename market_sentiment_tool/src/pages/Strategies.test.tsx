@@ -438,4 +438,18 @@ describe("Strategies", () => {
     expect(within(retired).getByText("Crypto sniper")).toBeInTheDocument();
     expect(within(retired).getByText("Kalshi gap tracker")).toBeInTheDocument();
   });
+  it("keeps a trial recording until the paired leg is met too", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    const m = { version: "v4-late-window-shadow", label: "v4-late-window-shadow", series: "KXWTI15M", trades: 120,
+                net_cents: 1.5, low95: 0.3, paired_low95: -0.8, fill_short: 0, too_few: false,
+                progress: { n: 120, needed: 100, legs: { n: true, low95: true, paired: false } },
+                account: { start: 20, balance: 20, drawdown: 0, bust: false, curve: [], trades_taken: 120 } };
+    serve({ "/api/oil/fifteen-rule": { ...base, board: { account_start: 20, commodities: [
+      { series: "KXWTI15M", commodity: "WTI", models: [m] }] } } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = await screen.findByRole("list", { name: "Shadows on trial" });
+    const row = (await within(list).findByText("v4-late-window-shadow")).closest("li")!;
+    expect(within(row).getByText("recording")).toBeInTheDocument();
+    expect(within(row).queryByText("eligible")).toBeNull();
+  });
 });
