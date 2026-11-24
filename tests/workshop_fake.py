@@ -16,6 +16,10 @@ class Q:
         self.gtes = [*getattr(self, "gtes", []), (col, val)]
         return self
 
+    def lt(self, col, val):
+        self.lts = [*getattr(self, "lts", []), (col, val)]
+        return self
+
     def gt(self, col, val):
         self.gts = [*getattr(self, "gts", []), (col, val)]
         return self
@@ -26,7 +30,11 @@ class Q:
         return self
 
     def order(self, col, desc=False):
-        self.sort = (col, desc)
+        self.sorts = [*getattr(self, "sorts", []), (col, desc)]
+        return self
+
+    def in_(self, col, vals):
+        self.ins = [*getattr(self, "ins", []), (col, set(vals))]
         return self
 
     def range(self, lo, hi):
@@ -41,12 +49,24 @@ class Q:
         self.row = row
         return self
 
+    def upsert(self, rows, on_conflict):
+        self.upserts, self.conflict = rows, on_conflict
+        return self
+
     def update(self, patch):
         self.patch = patch
         return self
 
     def execute(self):
         rows = self.db.setdefault(self.table, [])
+        if getattr(self, "upserts", None) is not None:
+            for u in self.upserts:
+                hit = [r for r in rows if r.get(self.conflict) == u[self.conflict]]
+                if hit:
+                    hit[0].update(u)
+                else:
+                    rows.append({"id": len(rows) + 1, **u})
+            return type("R", (), {"data": self.upserts})()
         if self.row is not None:
             new = []
             for r in self.row if isinstance(self.row, list) else [self.row]:
@@ -56,12 +76,14 @@ class Q:
             return type("R", (), {"data": new})()
         out = [r for r in rows if all(r.get(c) == v for c, v in self.filters)
                and all(r.get(c, "") >= v for c, v in getattr(self, "gtes", []))
-               and all(r.get(c, "") > v for c, v in getattr(self, "gts", []))]
+               and all(r.get(c, "") > v for c, v in getattr(self, "gts", []))
+               and all(r.get(c) < v for c, v in getattr(self, "lts", []))]
         if self.patch is not None:
             for r in out:
                 r.update(self.patch)
-        if self.sort:
-            out.sort(key=lambda r: r[self.sort[0]], reverse=self.sort[1])
+        out = [r for r in out if all(r.get(c) in v for c, v in getattr(self, "ins", []))]
+        for col, desc in reversed(getattr(self, "sorts", [])):  # stable: last key first
+            out.sort(key=lambda r: r[col], reverse=desc)
         if getattr(self, "bounds", None):
             out = out[self.bounds[0]:self.bounds[1] + 1]
         return type("R", (), {"data": out})()

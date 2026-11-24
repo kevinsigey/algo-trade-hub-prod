@@ -188,6 +188,28 @@ def test_endpoint_live(monkeypatch):
     assert len(out["positions"]) == 1
 
 
+def test_endpoint_carries_the_live_pilot_scoreboard(monkeypatch):
+    # The live micro-pilot's block rides every payload shape (issue
+    # #590): with no live key placed and the lane not enabled, it reads
+    # as the lane's state -- real money, not enabled, no orders.
+    monkeypatch.setattr(
+        "tradehub.core.kalshi_portfolio.check_portfolio_available",
+        lambda: False)
+    out = main.get_kalshi_demo(supabase=DB())
+    assert out["live_pilot"] == {"admin_only": True}  # public: no figures
+    from tradehub.api import admin
+    monkeypatch.setattr(admin, "require_admin",
+                        lambda authorization, supabase: {"email": "k"})
+    out = main.get_kalshi_demo(authorization="Bearer t", supabase=DB())
+    pilot = out["live_pilot"]
+    assert pilot["real_money"] is True
+    assert pilot["state"] == "not_enabled"
+    assert pilot["enabled"] is False
+    assert pilot["orders"] == []
+    assert pilot["gates"]["execution"]["bar"] == 50
+    assert pilot["gates"]["edge"]["bar"] == 150
+
+
 class PositionsDownPortfolio(FakePortfolio):
     def get_positions_strict(self):
         raise RuntimeError("positions read failed")
@@ -238,3 +260,18 @@ def test_endpoint_refuses_a_non_demo_host(monkeypatch):
     assert out["state"] == "not_connected"
     # The guard fired before any account read reached the live host.
     assert instance.balance_calls == 0
+
+
+def test_live_pilot_dollars_only_for_admin(monkeypatch):
+    from tradehub.api import admin
+    monkeypatch.setattr(
+        "tradehub.core.kalshi_portfolio.check_portfolio_available",
+        lambda: False)
+    db = DB()
+    db.db["kalshi_live_state"] = [{"key": "balance", "value": {"usd": 12.34}}]
+    public = main.get_kalshi_demo(authorization=None, supabase=db)
+    assert public["live_pilot"] == {"admin_only": True}
+    monkeypatch.setattr(admin, "require_admin",
+                        lambda authorization, supabase: {"email": "k"})
+    kevin = main.get_kalshi_demo(authorization="Bearer t", supabase=db)
+    assert kevin["live_pilot"]["balance"] == 12.34

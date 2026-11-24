@@ -218,6 +218,62 @@ describe("Kalshi production-book record", () => {
   });
 });
 
+describe("Kalshi live pilot (real money)", () => {
+  const PILOT = {
+    state: "live", real_money: true, enabled: true, halted: false,
+    halt_reason: null, balance: 10.25, pnl_since_start: 0.57,
+    decisions: 2, fills: 1, fill_rate: 0.5, mean_slippage_cents: 1.0,
+    settled: 1, live_net_per_contract: 0.57, live_low95_cents: null,
+    paper_net_per_contract: 0.58, paper_low95_cents: null,
+    latency_median_s: 120,
+    gates: {
+      execution: { state: "pending", fills: 1, bar: 50, mean_slippage_cents: null },
+      edge: { state: "pending", settled: 1, bar: 150, low95_cents: null, stage3_unlocked: false },
+    },
+    daily_stop_usd: 2, floor_usd: 5,
+    orders: [{
+      id: 7, created_at: "2026-11-23T15:00:00Z", series: "KXWTI15M",
+      ticker: "KXWTI15M-26NOV231000-00", side: "yes", status: "settled",
+      skip_reason: null, contracts_requested: 1, contracts_filled: 1,
+      frozen_quote: 0.4, live_ask: 0.41, fill_price: 0.41, fee_usd: 0.02,
+      outcome: 1, pnl: 0.57, paper_pnl: 0.58,
+      window_close: "2026-11-23T15:15:00Z",
+    }],
+  };
+
+  it("renders the scoreboard card with its REAL MONEY badge", async () => {
+    serveKalshi({ ...LIVE, live_pilot: PILOT });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("REAL MONEY")).toBeInTheDocument();
+    expect(screen.getByText("Live pilot — oil & gas raw rule")).toBeInTheDocument();
+    expect(screen.getByText("Live balance")).toBeInTheDocument();
+    expect(screen.getByText("$10.25")).toBeInTheDocument();
+    expect(screen.getByText("1/2 · 50%")).toBeInTheDocument();
+    expect(screen.getByText("Execution gate (50 fills)")).toBeInTheDocument();
+    expect(screen.getByText("pending · 1/50")).toBeInTheDocument();
+  });
+
+  it("shows the halt state and reason when the lane is halted", async () => {
+    serveKalshi({ ...LIVE, live_pilot: { ...PILOT, state: "halted", halted: true, halt_reason: "floor" } });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("Halted — floor")).toBeInTheDocument();
+  });
+
+  it("shows one admin-only line for a public request", async () => {
+    serveKalshi({ ...LIVE, live_pilot: { admin_only: true } });
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("Live pilot: admin only")).toBeInTheDocument();
+    expect(screen.queryByText("REAL MONEY")).not.toBeInTheDocument();
+  });
+
+  it("renders no live card when the payload carries none", async () => {
+    serveKalshi(LIVE);
+    render(<MemoryRouter><KalshiDemoBook /></MemoryRouter>);
+    expect(await screen.findByText("$505.00")).toBeInTheDocument();
+    expect(screen.queryByText("REAL MONEY")).not.toBeInTheDocument();
+  });
+});
+
 describe("Kalshi demo lanes", () => {
   it("shows each lane's own record in the Orders card when two lanes have traded", async () => {
     serveKalshi({

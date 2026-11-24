@@ -3,13 +3,16 @@ import { Loader2 } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { ctDateTime } from "@/lib/format";
-import { getJson } from "@/lib/getJson";
+import { sessionToken } from "@/components/RequireAdmin";
+import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
 import { DashCard, PEEK, PeekRows, Spark } from "@/pages/portfolio/shared";
 import type {
   KalshiCurvePoint,
   KalshiDemoLive,
   KalshiDemoPayload,
+  KalshiLivePilot,
+  KalshiLivePilotAdminOnly,
   KalshiOrder,
 } from "@/lib/kalshiDemo";
 
@@ -111,6 +114,64 @@ function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
   );
 }
 
+/** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
+ * rule on the LIVE Kalshi account. Real money — the badge and the
+ * halt state are the point of the card. */
+function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
+  if (!pilot) return null;
+  if ("admin_only" in pilot) {
+    return <p className="mb-3 text-xs text-slate-500">Live pilot: admin only</p>;
+  }
+  if (pilot.state === "unavailable") return null;
+  const cents = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(1)}¢`;
+  const stat = (label: string, value: string, cls = "text-white") => (
+    <div key={label}>
+      <dt className="truncate text-[11px] text-slate-500">{label}</dt>
+      <dd className={`text-sm font-semibold tabular-nums ${cls}`}>{value}</dd>
+    </div>
+  );
+  const stateLine = pilot.halted
+    ? `Halted — ${pilot.halt_reason ?? "halted"}`
+    : pilot.state === "live" ? "Live" : "Not enabled";
+  const gate = pilot.gates;
+  return (
+    <div className="mt-2 rounded-xl border border-slate-800 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-white">Live pilot — oil &amp; gas raw rule</span>
+        <span className="rounded border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-300">REAL MONEY</span>
+        <span className={`text-xs font-medium ${pilot.halted ? "text-rose-300" : "text-slate-400"}`}>{stateLine}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stat("Live balance", money(pilot.balance))}
+        {stat("P&L since start", signed(pilot.pnl_since_start), tone(pilot.pnl_since_start))}
+        {stat("Fill rate", `${pilot.fills}/${pilot.decisions} · ${pct(pilot.fill_rate)}`)}
+        {stat("Mean slippage vs paper", cents(pilot.mean_slippage_cents))}
+        {stat("Live net / contract", signed(pilot.live_net_per_contract), tone(pilot.live_net_per_contract))}
+        {stat("Live low95", cents(pilot.live_low95_cents))}
+        {stat("Paper twin net / contract", signed(pilot.paper_net_per_contract), tone(pilot.paper_net_per_contract))}
+        {stat("Paper twin low95", cents(pilot.paper_low95_cents))}
+        {stat("Settled trades", String(pilot.settled))}
+        {stat("Latency median", pilot.latency_median_s == null ? "—" : `${pilot.latency_median_s.toFixed(0)}s`)}
+        {stat("Execution gate (50 fills)", `${gate.execution.state} · ${gate.execution.fills}/${gate.execution.bar}`)}
+        {stat("Edge gate (150 settled)", `${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}${gate.edge.stage3_unlocked ? " · stage 3 unlocked" : ""}`)}
+      </dl>
+      {pilot.orders.length ? (
+        <dl className="mt-3 space-y-1 border-t border-slate-800/70 pt-2">
+          {pilot.orders.slice(0, PEEK).map((o) => (
+            <div key={String(o.id ?? o.ticker)} className="flex items-baseline justify-between gap-2 text-xs">
+              <dt className="truncate text-slate-400">{o.ticker} · {o.status}{o.skip_reason ? ` (${o.skip_reason})` : ""}</dt>
+              <dd className={`tabular-nums ${tone(o.pnl)}`}>{signed(o.pnl)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="mt-2 text-xs text-slate-400">No live orders yet</p>
+      )}
+    </div>
+  );
+}
+
 export default function KalshiDemoBook() {
   const [data, setData] = useState<KalshiDemoPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +179,10 @@ export default function KalshiDemoBook() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      getJson<KalshiDemoPayload>("/api/kalshi-demo")
+      // Signed when Kevin is signed in: the live pilot block is admin-only.
+      sessionToken()
+        .then((token) => getJson<KalshiDemoPayload>("/api/kalshi-demo", GET_JSON_TIMEOUT_MS,
+          token ? { Authorization: `Bearer ${token}` } : undefined))
         .then((body) => {
           if (!cancelled) {
             setData(body);
@@ -151,12 +215,15 @@ export default function KalshiDemoBook() {
 
   if (data.state === "not_connected") {
     return (
-      <div className="mt-6 rounded-xl border border-slate-800 p-6">
-        <div className="flex items-center gap-2">
-          <span className="text-xl font-semibold text-white">Kalshi demo account not connected</span>
-          <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">DEMO</span>
+      <div>
+        <div className="mt-6 rounded-xl border border-slate-800 p-6">
+          <div className="flex items-center gap-2">
+            <span className="text-xl font-semibold text-white">Kalshi demo account not connected</span>
+            <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">DEMO</span>
+          </div>
+          <p className="mt-1 max-w-prose text-sm text-slate-400">{data.note}</p>
         </div>
-        <p className="mt-1 max-w-prose text-sm text-slate-400">{data.note}</p>
+        <LivePilotCard pilot={data.live_pilot} />
       </div>
     );
   }
@@ -316,6 +383,8 @@ export default function KalshiDemoBook() {
           )}
         </DashCard>
       </div>
+
+      <LivePilotCard pilot={data.live_pilot} />
     </div>
   );
 }

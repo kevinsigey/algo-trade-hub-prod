@@ -324,11 +324,19 @@ def test_guard_only_kalshi_portfolio_writes_orders():
     # Alpaca route "/api/portfolio/orders" contains the substring but is a
     # different string and a different service entirely.)
     root = Path("tradehub")
+    # Exactly two guarded write surfaces exist: the demo client
+    # (assert_demo_host) and, since the live micro-pilot (issue #590),
+    # the live client (assert_live_host). Any third file naming the
+    # order endpoint is an unguarded write path and fails here.
+    guarded = {root / "core" / "kalshi_portfolio.py",
+               root / "core" / "kalshi_live_portfolio.py"}
     offenders = [str(p) for p in root.rglob("*.py")
                  if '"/portfolio/events/orders' in p.read_text(errors="ignore")
-                 and p != root / "core" / "kalshi_portfolio.py"]
+                 and p not in guarded]
     assert offenders == []
-    for mod in ("tradehub/kalshi_demo.py", "tradehub/scripts/kalshi_demo_run.py"):
+    for mod in ("tradehub/kalshi_demo.py", "tradehub/scripts/kalshi_demo_run.py",
+                "tradehub/kalshi_live_lane.py",
+                "tradehub/scripts/kalshi_live_run.py"):
         assert "requests." not in Path(mod).read_text()
 
 
