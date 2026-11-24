@@ -223,17 +223,19 @@ class KalshiLivePortfolio:
         search never reads as 'not placed'."""
         params = {k: v for k, v in (("status", status), ("ticker", ticker))
                   if v}
-        return self._paged_orders("/portfolio/orders", params, max_pages)
+        return self._paged("/portfolio/orders", params, "orders", max_pages)
 
     def get_historical_orders(self, ticker: str, max_pages: int = 20) -> list:
         """One ticker's orders past Kalshi's historical cutoff (canceled
         or executed before it leave /portfolio/orders). Same contract:
         raises on a failed or unfinished search."""
-        return self._paged_orders("/historical/orders", {"ticker": ticker},
-                                  max_pages)
+        return self._paged("/historical/orders", {"ticker": ticker},
+                           "orders", max_pages)
 
-    def _paged_orders(self, endpoint: str, base: dict,
-                      max_pages: int) -> list:
+    def _paged(self, endpoint: str, base: dict, key: str,
+               max_pages: int) -> list:
+        """Cursor-page one endpoint to the end; a failed or unfinished
+        search raises."""
         orders: list = []
         cursor = None
         for _ in range(max_pages):
@@ -242,22 +244,26 @@ class KalshiLivePortfolio:
                 params["cursor"] = cursor
             data = self._get(endpoint, params=params)
             if data is None:
-                raise RuntimeError("Kalshi live orders read failed")
-            orders.extend(data.get("orders") or [])
+                raise RuntimeError(f"Kalshi live {endpoint} read failed")
+            orders.extend(data.get(key) or [])
             cursor = data.get("cursor")
             if not cursor:
                 return orders
-        raise RuntimeError("Kalshi live orders search incomplete "
+        raise RuntimeError(f"Kalshi live {endpoint} search incomplete "
                            f"after {max_pages} pages")
 
-    def get_fills(self, limit: int = 200) -> list:
-        """Recent fills. A failed request raises instead of reading as
-        'no fills' -- reconciling a placed order must not treat an
-        unread book as an unfilled one (the demo client's contract)."""
-        data = self._get("/portfolio/fills", params={"limit": limit})
-        if data is None:
-            raise RuntimeError("Kalshi live fills read failed")
-        return data.get("fills", [])
+    def get_fills(self, ticker: str | None = None, max_pages: int = 20) -> list:
+        """Current fills (optionally one ticker's), cursor-paged. A failed
+        or unfinished read raises instead of reading as 'no fills'."""
+        return self._paged("/portfolio/fills",
+                           {"ticker": ticker} if ticker else {}, "fills",
+                           max_pages)
+
+    def get_historical_fills(self, ticker: str, max_pages: int = 20) -> list:
+        """One ticker's fills past Kalshi's historical cutoff. Same
+        contract: raises on a failed or unfinished read."""
+        return self._paged("/historical/fills", {"ticker": ticker}, "fills",
+                           max_pages)
 
     def get_positions(self, limit: int = 200) -> list:
         data = self._get("/portfolio/positions", params={"limit": limit})

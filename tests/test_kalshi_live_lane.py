@@ -64,8 +64,12 @@ class FakeLivePortfolio:
     def get_historical_orders(self, ticker):
         return []
 
-    def get_fills(self, limit=200):
-        return self.fills
+    def get_fills(self, ticker=None):
+        return [f for f in self.fills if ticker is None
+                or f.get("ticker", ticker) == ticker]
+
+    def get_historical_fills(self, ticker):
+        return []
 
 
 def decision(series=WTI, minutes=0, **over):
@@ -803,14 +807,40 @@ def test_gate_waits_on_provisional_rows_then_evaluates(db):
     db.db[lane.ORDERS][0].update(kalshi_order_id="ord-p",
                                  last_error="fill_price_from_limit")
     portfolio = FakeLivePortfolio()
-    portfolio.get_fills = lambda limit=200: (_ for _ in ()).throw(
+    portfolio.get_fills = lambda **kw: (_ for _ in ()).throw(
         RuntimeError("fills down"))
     summary = lane.run_once(db, portfolio, NOW)
     assert summary["gate_waiting"] == "provisional_rows=1"
     assert "gate1" not in summary
     assert not [r for r in db.db.get(lane.STATE_TABLE, []) if r["key"] == "gate1"]
-    portfolio.get_fills = lambda limit=200: [
+    portfolio.get_fills = lambda **kw: [
         {"order_id": "ord-p", "count_fp": "1.00", "yes_price_dollars": "0.4300",
          "fee_cost": "0.0200"}]
     summary = lane.run_once(db, portfolio, NOW)
     assert summary["gate1"] == "halt" and "gate_waiting" not in summary
+
+
+def test_provisional_row_corrected_from_historical_fill(db):
+    seed_rows(db, [order_row(contracts_filled=1, fill_price=0.40,
+                             fee_usd=0.02, kalshi_order_id="ord-1",
+                             last_error="fill_price_from_limit,fee_estimated")])
+    portfolio = FakeLivePortfolio()
+    portfolio.get_historical_fills = lambda ticker: [
+        {"order_id": "ord-1", "count_fp": "1.00",
+         "yes_price_dollars": "0.3800", "fee_cost": "0.0100"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["fill_price"] == 0.38 and row["last_error"] is None
+
+
+def test_historical_fills_failure_keeps_row_provisional(db):
+    seed_rows(db, [order_row(contracts_filled=1, fill_price=0.40,
+                             fee_usd=0.02, kalshi_order_id="ord-1",
+                             last_error="fill_price_from_limit")])
+    portfolio = FakeLivePortfolio()
+
+    def boom(ticker):
+        raise RuntimeError("historical fills read failed")
+    portfolio.get_historical_fills = boom
+    lane.run_once(db, portfolio, NOW)
+    assert db.db[lane.ORDERS][0]["last_error"] == "fill_price_from_limit"

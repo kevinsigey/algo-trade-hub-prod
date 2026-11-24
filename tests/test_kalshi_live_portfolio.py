@@ -139,3 +139,21 @@ def test_order_searches_by_ticker_current_and_historical(key_file, monkeypatch):
     monkeypatch.setattr(client, "_get", lambda *a, **k: None)
     with pytest.raises(RuntimeError):
         client.get_historical_orders("T1")
+
+
+def test_fills_page_to_the_end_and_historical(key_file, monkeypatch):
+    client = _client(key_file)
+    pages = {None: {"fills": [{"fill_id": "a"}], "cursor": "p2"},
+             "p2": {"fills": [{"fill_id": "b"}], "cursor": ""}}
+    calls = []
+
+    def fake_get(ep, params=None, **k):
+        calls.append((ep, params.get("ticker")))
+        return pages[params.get("cursor")]
+    monkeypatch.setattr(client, "_get", fake_get)
+    assert [f["fill_id"] for f in client.get_fills(ticker="T1")] == ["a", "b"]
+    client.get_historical_fills("T1")
+    assert calls[-2][0] == "/historical/fills" and calls[-1][1] == "T1"
+    monkeypatch.setattr(client, "_get", lambda *a, **k: None)
+    with pytest.raises(RuntimeError):
+        client.get_historical_fills("T1")

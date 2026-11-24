@@ -419,16 +419,35 @@ def _fill_price_of(fill: dict, side: str) -> float | None:
     return None
 
 
-def _fills_by_order(portfolio) -> dict[str, dict] | None:
-    """order_id -> {filled, price} aggregated over the fills read.
-    None when the read failed: reconciliation must not treat an unread
-    book as unfilled."""
-    try:
-        fills = portfolio.get_fills(limit=200)
-    except Exception:  # noqa: BLE001
-        return None
+def _fills_by_ticker(portfolio, rows: list[dict],
+                     summary: dict) -> dict[str, dict | None]:
+    """ticker -> (order_id -> aggregated fills) for the rows holding an
+    order id: current fills first, historical ones when an order is not
+    among them. None for a ticker whose search failed: reconciliation
+    must not treat an unread book as unfilled."""
+    out: dict[str, dict | None] = {}
+    for ticker in {r["ticker"] for r in rows if r.get("kalshi_order_id")}:
+        ids = {r["kalshi_order_id"] for r in rows
+               if r["ticker"] == ticker and r.get("kalshi_order_id")}
+        try:
+            fills = list(portfolio.get_fills(ticker=ticker))
+            if ids - {f.get("order_id") for f in fills}:
+                fills += portfolio.get_historical_fills(ticker)
+        except Exception as exc:  # noqa: BLE001
+            summary["errors"].append(f"fills read {ticker}: {exc}")
+            out[ticker] = None
+            continue
+        # A fill moving past the cutoff between reads appears once.
+        unique = {f.get("fill_id") or f.get("trade_id") or id(f): f
+                  for f in fills}
+        out[ticker] = _aggregate_fills(unique.values())
+    return out
+
+
+def _aggregate_fills(fills) -> dict[str, dict]:
+    """order_id -> {filled, price, fee} aggregated over fills."""
     out: dict[str, dict] = {}
-    for f in fills or []:
+    for f in fills:
         oid = f.get("order_id")
         if not oid:
             continue
@@ -572,7 +591,7 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                 r.update(patch)
             else:
                 absent.add(id(r))
-    fills = _fills_by_order(portfolio)
+    fills = _fills_by_ticker(portfolio, open_rows, summary)
     settled_map = store.fetch_settlements(
         supa, [r["target"] for r in open_rows])
     for r in open_rows:
@@ -594,8 +613,8 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                              "was placed. Real money account."),
                        evidence={"ticker": r["ticker"], "side": r["side"]})
                 continue
-        if fills is not None and r.get("kalshi_order_id"):
-            agg = fills.get(r["kalshi_order_id"])
+        if fills.get(r["ticker"]) is not None and r.get("kalshi_order_id"):
+            agg = fills[r["ticker"]].get(r["kalshi_order_id"])
             if agg:
                 # The exchange's fills are authoritative: they correct a
                 # provisional price or fee even when the count agrees.
