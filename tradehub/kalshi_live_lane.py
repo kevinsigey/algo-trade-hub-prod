@@ -431,7 +431,10 @@ def _fills_by_ticker(portfolio, rows: list[dict],
                if r["ticker"] == ticker and r.get("kalshi_order_id")}
         try:
             fills = list(portfolio.get_fills(ticker=ticker))
-            if ids - {f.get("order_id") for f in fills}:
+            provisional = any(_provisional(r) for r in rows
+                              if r["ticker"] == ticker)
+            # A provisional row reads both, so a split order is whole.
+            if provisional or ids - {f.get("order_id") for f in fills}:
                 fills += portfolio.get_historical_fills(ticker)
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(f"fills read {ticker}: {exc}")
@@ -615,6 +618,9 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                 continue
         if fills.get(r["ticker"]) is not None and r.get("kalshi_order_id"):
             agg = fills[r["ticker"]].get(r["kalshi_order_id"])
+            if agg and _provisional(r) and agg["filled"] != int(
+                    r.get("contracts_filled") or 0):
+                agg = None  # incomplete fills never replace provisional values
             if agg:
                 # The exchange's fills are authoritative: they correct a
                 # provisional price or fee even when the count agrees.

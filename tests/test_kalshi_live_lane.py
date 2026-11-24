@@ -844,3 +844,24 @@ def test_historical_fills_failure_keeps_row_provisional(db):
     portfolio.get_historical_fills = boom
     lane.run_once(db, portfolio, NOW)
     assert db.db[lane.ORDERS][0]["last_error"] == "fill_price_from_limit"
+
+
+def test_provisional_row_combines_fills_split_across_endpoints(db):
+    seed_rows(db, [order_row(contracts_filled=2, contracts_requested=2,
+                             fill_price=0.40, fee_usd=0.03,
+                             kalshi_order_id="ord-1",
+                             last_error="fill_price_from_limit,fee_estimated")])
+    portfolio = FakeLivePortfolio()
+    portfolio.fills = [{"order_id": "ord-1", "fill_id": "f1",
+                        "count_fp": "1.00", "yes_price_dollars": "0.3800",
+                        "fee_cost": "0.0100"}]
+    portfolio.get_historical_fills = lambda ticker: [
+        {"order_id": "ord-1", "fill_id": "f1", "count_fp": "1.00",
+         "yes_price_dollars": "0.3800", "fee_cost": "0.0100"},  # duplicate
+        {"order_id": "ord-1", "fill_id": "f2", "count_fp": "1.00",
+         "yes_price_dollars": "0.3600", "fee_cost": "0.0100"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["contracts_filled"] == 2
+    assert row["fill_price"] == 0.37 and row["fee_usd"] == 0.02
+    assert row["last_error"] is None
