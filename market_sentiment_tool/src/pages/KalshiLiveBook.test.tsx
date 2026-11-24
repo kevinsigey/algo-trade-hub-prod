@@ -56,7 +56,7 @@ describe("Kalshi live book", () => {
     expect(screen.getAllByText("$10.25").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Slippage" })).toBeInTheDocument();
-    expect(screen.getByText("1.0¢")).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getByText("1.0¢")).toBeInTheDocument();
   });
 
   it("admin_only payload shows the sign-in line", async () => {
