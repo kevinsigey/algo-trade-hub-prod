@@ -123,3 +123,19 @@ def test_get_orders_pages_to_the_end_or_raises(key_file, monkeypatch):
                         {"orders": [], "cursor": "again"})
     with pytest.raises(RuntimeError):
         client.get_orders()
+
+
+def test_order_searches_by_ticker_current_and_historical(key_file, monkeypatch):
+    client = _client(key_file)
+    calls = []
+
+    def fake_get(ep, params=None, **k):
+        calls.append((ep, params.get("ticker")))
+        return {"orders": [{"order_id": "x"}], "cursor": ""}
+    monkeypatch.setattr(client, "_get", fake_get)
+    client.get_orders(ticker="T1")
+    client.get_historical_orders("T1")
+    assert calls == [("/portfolio/orders", "T1"), ("/historical/orders", "T1")]
+    monkeypatch.setattr(client, "_get", lambda *a, **k: None)
+    with pytest.raises(RuntimeError):
+        client.get_historical_orders("T1")

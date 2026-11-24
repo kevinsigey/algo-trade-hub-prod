@@ -216,20 +216,31 @@ class KalshiLivePortfolio:
             return data.get("order", data)
         return None
 
-    def get_orders(self, status: str | None = None,
+    def get_orders(self, status: str | None = None, ticker: str | None = None,
                    max_pages: int = 20) -> list:
-        """Every order, cursor-paged to the end. A failed or unfinished
-        search raises: an incomplete search never reads as 'not
-        placed'."""
+        """Every current order (optionally one ticker's), cursor-paged to
+        the end. A failed or unfinished search raises: an incomplete
+        search never reads as 'not placed'."""
+        params = {k: v for k, v in (("status", status), ("ticker", ticker))
+                  if v}
+        return self._paged_orders("/portfolio/orders", params, max_pages)
+
+    def get_historical_orders(self, ticker: str, max_pages: int = 20) -> list:
+        """One ticker's orders past Kalshi's historical cutoff (canceled
+        or executed before it leave /portfolio/orders). Same contract:
+        raises on a failed or unfinished search."""
+        return self._paged_orders("/historical/orders", {"ticker": ticker},
+                                  max_pages)
+
+    def _paged_orders(self, endpoint: str, base: dict,
+                      max_pages: int) -> list:
         orders: list = []
         cursor = None
         for _ in range(max_pages):
-            params = {"limit": 200}
-            if status:
-                params["status"] = status
+            params = {**base, "limit": 200}
             if cursor:
                 params["cursor"] = cursor
-            data = self._get("/portfolio/orders", params=params)
+            data = self._get(endpoint, params=params)
             if data is None:
                 raise RuntimeError("Kalshi live orders read failed")
             orders.extend(data.get("orders") or [])

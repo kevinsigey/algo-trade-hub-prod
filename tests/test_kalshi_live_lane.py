@@ -58,7 +58,10 @@ class FakeLivePortfolio:
                 "fill_count": self.fill_count,
                 "remaining_count": "0.00"}
 
-    def get_orders(self, status=None):
+    def get_orders(self, status=None, ticker=None):
+        return []
+
+    def get_historical_orders(self, ticker):
         return []
 
     def get_fills(self, limit=200):
@@ -487,7 +490,7 @@ def test_unread_orders_never_write_off_a_claim(db):
                              client_order_id="kl-KXWTI15M-26NOV230900-00")])
     portfolio = FakeLivePortfolio()
 
-    def boom(status=None):
+    def boom(**kw):
         raise RuntimeError("Kalshi live orders read failed")
     portfolio.get_orders = boom
     lane.run_once(db, portfolio, NOW)
@@ -605,7 +608,7 @@ def test_adopted_ioc_resolved_from_order_record(db):
                   window_close=(NOW + timedelta(minutes=5)).isoformat()),
     ])
     portfolio = FakeLivePortfolio()
-    portfolio.get_orders = lambda status=None: [
+    portfolio.get_orders = lambda **kw: [
         {"order_id": "o-a", "client_order_id": "kl-a", "status": "canceled",
          "fill_count": "0.00"},
         {"order_id": "o-b", "client_order_id": "kl-b", "status": "executed",
@@ -724,3 +727,57 @@ def test_select_all_survives_insert_between_pages(db):
     db.table = table
     ids = [r["id"] for r in lane._select_all(db, lane.ORDERS, page=2)]
     assert ids == [4, 3, 2, 1]
+
+
+# -- round 5: per-ticker current + historical search, fills authoritative -------
+
+def _closed_claim(**over):
+    return order_row(status="pending", kalshi_order_id=None, live_ask=0.40,
+                     client_order_id="kl-h", **over)
+
+
+def test_claim_found_only_in_historical_orders(db):
+    seed_rows(db, [_closed_claim()])
+    portfolio = FakeLivePortfolio()
+    portfolio.get_historical_orders = lambda ticker: [
+        {"order_id": "o-h", "client_order_id": "kl-h", "status": "executed",
+         "fill_count": "1.00", "average_fill_price": "0.4000",
+         "average_fee_paid": "0.0200"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["kalshi_order_id"] == "o-h" and row["status"] != "failed"
+
+
+def test_historical_read_failure_keeps_claim_pending(db):
+    seed_rows(db, [_closed_claim()])
+    portfolio = FakeLivePortfolio()
+
+    def boom(ticker):
+        raise RuntimeError("Kalshi live orders read failed")
+    portfolio.get_historical_orders = boom
+    lane.run_once(db, portfolio, NOW)
+    assert db.db[lane.ORDERS][0]["status"] == "pending"
+
+
+def test_claim_failed_only_when_both_searches_complete_empty(db):
+    seed_rows(db, [_closed_claim()])
+    portfolio = FakeLivePortfolio()
+    seen = []
+    portfolio.get_orders = lambda **kw: seen.append(kw) or []
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "failed"
+    assert row["skip_reason"] == "placement_interrupted"
+    assert seen == [{"ticker": row["ticker"]}]
+
+
+def test_fills_correct_price_and_fee_at_unchanged_count(db):
+    seed_rows(db, [order_row(contracts_filled=1, fill_price=0.40,
+                             fee_usd=0.02, kalshi_order_id="ord-1",
+                             window_close=(NOW + timedelta(minutes=5)).isoformat())])
+    portfolio = FakeLivePortfolio()
+    portfolio.fills = [{"order_id": "ord-1", "count_fp": "1.00",
+                        "yes_price_dollars": "0.3800", "fee_cost": "0.0100"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["fill_price"] == 0.38 and row["fee_usd"] == 0.01

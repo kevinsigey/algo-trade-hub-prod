@@ -438,8 +438,13 @@ def _fills_by_order(portfolio) -> dict[str, dict] | None:
             count = 0
         if count <= 0:
             continue
-        agg = out.setdefault(oid, {"filled": 0, "cost": 0.0, "priced": 0})
+        agg = out.setdefault(oid, {"filled": 0, "cost": 0.0, "priced": 0,
+                                   "fee": 0.0})
         agg["filled"] += count
+        try:  # the exchange's fee; None once any fill lacks it
+            agg["fee"] = round(agg["fee"] + float(f["fee_cost"]), 4)
+        except (KeyError, TypeError, ValueError):
+            agg["fee"] = None
         price = _fill_price_of(f, "yes")  # fills price the YES leg
         if price is not None:
             agg["cost"] += price * count
@@ -531,33 +536,40 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
     # Adoption: a claim whose create response was lost has no order id;
     # sweep the exchange's orders by client_order_id (resting, executed
     # and canceled views) and adopt what it holds before judging it.
-    missing = [r for r in open_rows if not r.get("kalshi_order_id")]
-    if missing:
+    # Searched once per ticker: current orders, then historical ones for
+    # claims not found there. Only a claim BOTH completed searches miss
+    # is proven absent; a failed or incomplete search keeps it pending.
+    absent: set[int] = set()
+    by_ticker: dict[str, list[dict]] = {}
+    for r in open_rows:
+        if not r.get("kalshi_order_id"):
+            by_ticker.setdefault(r["ticker"], []).append(r)
+    for ticker, claims in by_ticker.items():
         try:
-            exchange = []
-            for status in (None, "executed", "canceled"):
-                exchange.extend(portfolio.get_orders(status=status) or [])
-            by_client = {o.get("client_order_id"): o for o in exchange
-                         if o.get("client_order_id")}
+            found = {o.get("client_order_id"): o
+                     for o in portfolio.get_orders(ticker=ticker)}
+            if any(r.get("client_order_id") not in found for r in claims):
+                for o in portfolio.get_historical_orders(ticker):
+                    found.setdefault(o.get("client_order_id"), o)
         except Exception as exc:  # noqa: BLE001 -- adoption retries next pass
-            by_client = None
-            summary["errors"].append(f"orders read: {exc}")
-        for r in missing if by_client is not None else []:
-            found = by_client.get(r.get("client_order_id"))
-            if found and found.get("order_id"):
-                patch = {"kalshi_order_id": found["order_id"],
-                         **_resolve_adopted(found, r)}
+            summary["errors"].append(f"orders read {ticker}: {exc}")
+            continue
+        for r in claims:
+            order = found.get(r.get("client_order_id"))
+            if order and order.get("order_id"):
+                patch = {"kalshi_order_id": order["order_id"],
+                         **_resolve_adopted(order, r)}
                 _update(supa, r, patch)
                 r.update(patch)
-    # An unread order book never proves a claim was never placed.
-    missing_read_ok = not missing or by_client is not None
+            else:
+                absent.add(id(r))
     fills = _fills_by_order(portfolio)
     settled_map = store.fetch_settlements(
         supa, [r["target"] for r in open_rows])
     for r in open_rows:
         patch: dict[str, Any] = {}
         closed = _dt(r["window_close"]) <= now
-        if r["status"] == "pending" and closed and missing_read_ok:
+        if r["status"] == "pending" and closed and id(r) in absent:
             # A claim whose placement never landed and whose window has
             # closed: the exchange holds nothing under this key.
             if r.get("kalshi_order_id") is None:
@@ -575,12 +587,19 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                 continue
         if fills is not None and r.get("kalshi_order_id"):
             agg = fills.get(r["kalshi_order_id"])
-            if agg and agg["filled"] != int(r.get("contracts_filled") or 0):
-                patch["contracts_filled"] = agg["filled"]
+            if agg:
+                # The exchange's fills are authoritative: they correct a
+                # provisional price or fee even when the count agrees.
+                want: dict[str, Any] = {"contracts_filled": agg["filled"]}
                 price = _side_price(agg["price"], r["side"])
                 if price is not None:
-                    patch["fill_price"] = price
-                    patch["fee_usd"] = taker_fee_usd(agg["filled"], price)
+                    want["fill_price"] = price
+                    want["slippage"] = round(price - float(r["frozen_quote"]), 4)
+                if agg["fee"] is not None:
+                    want["fee_usd"] = agg["fee"]
+                elif price is not None:
+                    want["fee_usd"] = taker_fee_usd(agg["filled"], price)
+                patch.update({k: v for k, v in want.items() if r.get(k) != v})
                 r.update(patch)
         filled = int(r.get("contracts_filled") or 0)
         if closed and filled > 0 and r["status"] != "settled":
