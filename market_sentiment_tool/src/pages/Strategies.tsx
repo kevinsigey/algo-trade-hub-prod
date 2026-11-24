@@ -466,6 +466,7 @@ const TRIAL_TESTS: Record<string, string> = {
   "v4-side50-shadow": "Oil buys only on sides the model gives 50%+",
   "v4-spread3-shadow": "Oil buys only when the quote is 3¢+ wide",
   "oil-trend-agree-v1": "Oil trades only when they agree with the last 15-minute move",
+  "oil-big-gap-v1": "Oil buys only when the model's gap is 15+ points",
   "v5-binance-gold-shadow": "Gold read off the Binance tape",
 };
 

@@ -305,7 +305,7 @@ def board(supa) -> dict[str, Any]:
                                     for ts in trades.values() for t in ts])
     candidates = _candidate_trades(supa, offsets, fills)
     from tradehub import fifteen_candidates as fc
-    trend = fc.trend_read(supa)
+    raw_shadows = [(sh, fc.raw_read(sh, supa)) for sh in fc.RAW_SHADOWS]
 
     weights: dict[str, float] = {}
     for r in _read(supa, fifteen_blend.WEIGHTS_TABLE):
@@ -343,14 +343,16 @@ def board(supa) -> dict[str, Any]:
             _attach_sizes(trades, fills)
             models.append(model_row(version, version, series, trades, live_by_target,
                                     fill_short=short, needed=100, extra_windows=sat_out))
-        if series in trend:
+        for shadow, per_series in raw_shadows:
+            if series not in per_series:
+                continue
             # Graded against the UNFILTERED raw rule, so that is its pairing.
-            decided = [d for d in trend[series] if d["pnl"] is not None]
+            decided = [d for d in per_series[series] if d["pnl"] is not None]
             models.append(model_row(
-                fc.TREND_VERSION, "Trend-agree v1 (vs raw rule)", series,
+                shadow.version, shadow.label, series,
                 [d for d in decided if d["action"] == "buy"],
                 {d["target"]: d["pnl"] for d in decided},
-                fill_short=0, needed=fc.TREND_MIN_TRADES,
+                fill_short=0, needed=fc.RAW_MIN_TRADES,
                 extra_windows=[d for d in decided if d["action"] == "skip"]))
         if series == "KXGOLD15M":
             trades = bin_trades.get(series, [])
