@@ -294,9 +294,9 @@ def evaluate(rows: list[dict], version: str, *, now: datetime,
 # Recomputed read-only from frozen journal rows, like the live record.
 
 TREND_VERSION = "oil-trend-agree-v1"
-# The merged PR's deploy time, written in at deploy. None = not started:
-# nothing is recorded or graded until it is set.
-TREND_PREREG_AT: datetime | None = None
+# Fixed before merge (Claude's review, 2026-11-24): the first window opening
+# at 18:00 UTC on Nov 24, after this PR deploys. Nothing before it counts.
+TREND_PREREG_AT: datetime | None = datetime(2026, 11, 24, 18, 0, tzinfo=UTC)
 TREND_MIN_TRADES = 150
 TREND_SERIES = {WTI: ("oil_wti_15m", "wti-15m-v2"),
                 BRENT: ("oil_brent_15m", "brent-15m-v2")}

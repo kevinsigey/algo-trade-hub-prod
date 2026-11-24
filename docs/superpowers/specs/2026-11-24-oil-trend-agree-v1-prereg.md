@@ -3,8 +3,9 @@
 Frozen 2026-11-24, approved by Kevin as a preregistered SHADOW. Paper only:
 nothing here places an order or touches the live lane's trading path.
 
-**PREREG_AT = _the deploy time of the merged PR_** — written into
-`TREND_PREREG_AT` in `tradehub/fifteen_candidates.py` (and here) at deploy.
+**PREREG_AT = 2026-11-24 18:00 UTC** (fixed in review before merge: the first
+window boundary after this PR deploys), set in `TREND_PREREG_AT` in
+`tradehub/fifteen_candidates.py`.
 Until it is set, nothing is recorded or graded.
 
 ## Frozen rule
