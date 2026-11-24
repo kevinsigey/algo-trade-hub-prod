@@ -164,6 +164,30 @@ def test_cancel_of_an_order_already_gone(keys, monkeypatch):
         paper_orders.cancel("o-9", STOP_ID, session=Session(Resp(422, {"message": "order is already in filled state"})))
 
 
+def test_cancel_any_takes_an_order_of_any_source(keys, monkeypatch):
+    """The site's hand cancel (2026-11-23): no tag guard -- hand, machine, stop and
+    app orders all cancel through the one DELETE call site. The id shape and the
+    book's order switch are the only fences left."""
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(204))
+    paper_orders.cancel_any("o-9", session=s)
+    assert s.calls == [{"url": "https://paper-api.alpaca.markets/v2/orders/o-9", "method": "DELETE"}]
+    for bad in ("", "../account", "a b", "x" * 65):
+        with pytest.raises(ValueError):
+            paper_orders.cancel_any(bad, session=s)
+    assert len(s.calls) == 1
+    monkeypatch.delenv("TRADEHUB_PAPER_ORDERS")
+    with pytest.raises(paper_orders.OrdersDisabled):
+        paper_orders.cancel_any("o-9", session=s)
+    assert len(s.calls) == 1
+
+
+def test_cancel_any_of_an_order_already_gone(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    with pytest.raises(paper_orders.OrderGone):
+        paper_orders.cancel_any("o-9", session=Session(Resp(404)))
+
+
 def test_oco_take_profit_and_stop_only_as_a_protective_order(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     s = Session(Resp(200, {"id": "o-1"}))

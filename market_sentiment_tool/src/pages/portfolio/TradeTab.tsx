@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
 
@@ -329,22 +329,56 @@ const STAGED_READERS: Record<StagedSortKey, (o: OpenOrder) => number | string | 
 function StagedOrders({ book }: { book: string }) {
   const [orders, setOrders] = useState<OpenOrder[] | null>(null);
   const [sort, setSort] = useState<SortState<StagedSortKey> | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const loadRef = useRef<() => void>(() => undefined);
+  // Ids cancelled from this panel: a poll response that started before the
+  // cancel (or a broker read that still lags it) must never resurrect the row.
+  const cancelledIdsRef = useRef<Set<string>>(new Set());
   const sortedOrders = useMemo(
     () => (orders === null ? null : sortRows(orders, sort, (o, k) => STAGED_READERS[k](o))),
     [orders, sort]);
 
   useEffect(() => {
     let cancelled = false;
+    cancelledIdsRef.current = new Set();
     const load = () => {
       adminCall<{ email: string }>("/api/admin/me")
         .then(() => adminCall<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
-        .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
+        .then((body) => {
+          if (cancelled) return;
+          const rows = Array.isArray(body.orders) ? body.orders : [];
+          setOrders(rows.filter((x) => !x.alpaca_order_id || !cancelledIdsRef.current.has(x.alpaca_order_id)));
+        })
         .catch(() => undefined); // a failed refresh keeps the last read
     };
+    loadRef.current = load;
     load();
     const stop = pollWhileVisible(load);
     return () => { cancelled = true; stop(); };
   }, [book]);
+
+  /** Cancel one resting order at the broker (Kevin, 2026-11-23): two clicks --
+   * the first arms the row, the second sends it -- then the row leaves the list
+   * at once and the poll re-reads the broker's own record. */
+  const cancelOrder = async (o: OpenOrder) => {
+    const id = o.alpaca_order_id;
+    if (!id || busyId) return; // one cancel in flight at a time
+    setBusyId(id);
+    setCancelError(null);
+    try {
+      await adminCall(`/api/portfolio/orders/${encodeURIComponent(id)}?book=${book}`, { method: "DELETE" });
+      cancelledIdsRef.current.add(id);
+      setConfirmId(null);
+      setOrders((cur) => (cur ?? []).filter((x) => x.alpaca_order_id !== id));
+      loadRef.current();
+    } catch (e) {
+      setCancelError(e instanceof Error ? e.message : "Cancel failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (orders === null || sortedOrders === null) return null;
   const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
@@ -354,13 +388,14 @@ function StagedOrders({ book }: { book: string }) {
   );
   const table = (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[32rem] text-left text-xs">
+      <table className="w-full min-w-[36rem] text-left text-xs">
         <thead>
           <tr className="text-[11px] text-slate-500">
             {head("symbol", "Symbol")}{head("side", "Side")}
             {head("type", "Type")}{head("qty", "Qty")}
             {head("price", "Price")}{head("tif", "TIF")}
             {head("status", "Status")}
+            <th className="py-1 pl-3 text-right font-normal"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
@@ -373,10 +408,31 @@ function StagedOrders({ book }: { book: string }) {
               <td className="py-1.5 pr-3 tabular-nums">{price(o) != null ? `$${price(o)!.toFixed(2)}` : "—"}</td>
               <td className="py-1.5 pr-3">{o.time_in_force}</td>
               <td className="py-1.5">{o.status}</td>
+              <td className="whitespace-nowrap py-1.5 pl-3 text-right">
+                {o.alpaca_order_id == null ? "—" : confirmId === o.alpaca_order_id ? (
+                  <>
+                    <button type="button" disabled={busyId !== null}
+                            onClick={() => void cancelOrder(o)}
+                            className="rounded border border-rose-800 px-2 py-0.5 text-[11px] text-rose-300 hover:bg-rose-950 disabled:opacity-50">
+                      {busyId === o.alpaca_order_id ? "Cancelling…" : "Confirm cancel"}
+                    </button>
+                    <button type="button" disabled={busyId !== null} onClick={() => setConfirmId(null)}
+                            className="ml-1.5 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-50">
+                      Keep
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" disabled={busyId !== null} onClick={() => { setConfirmId(o.alpaca_order_id); setCancelError(null); }}
+                          className="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-rose-800 hover:text-rose-300 disabled:opacity-50">
+                    Cancel
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {cancelError && <p className="mt-2 text-rose-400">Cancel failed: {cancelError}</p>}
     </div>
   );
   return (

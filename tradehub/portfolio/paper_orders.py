@@ -218,6 +218,22 @@ def cancel(order_id: str, client_order_id: str, *, book: str | None = None, sess
     _delete_order(order_id, book=book, session=session)
 
 
+def cancel_any(order_id: str, *, book: str | None = None, session=requests) -> None:
+    """Cancel any one order resting on the book, whatever placed it -- a hand order
+    (manual-/idea- tags), a machine order (ext-), a protective stop, or an order placed
+    in the Alpaca app. The site's hand cancel (Kevin, 2026-11-23: a staged site order
+    could only be cancelled by a direct broker DELETE from inside the container).
+    Unlike cancel()/cancel_machine_order() there is deliberately no tag guard here:
+    the only caller is the admin-session endpoint, where Kevin's own session is the
+    authority. The order-id shape and the book's order switch still apply, and the
+    delete funnels through the module's one call site like every other cancel."""
+    if not ORDER_ID.match(order_id or ""):
+        raise ValueError("not an order id")
+    if not orders_enabled(book):
+        raise OrdersDisabled("the book's order switch is off")
+    _delete_order(order_id, book=book, session=session)
+
+
 def can_short(symbol: str, *, book: str | None = None, session=requests) -> bool:
     """Return True if the asset is shortable and easy to borrow."""
     from tradehub.portfolio.alpaca_paper import asset_flags
