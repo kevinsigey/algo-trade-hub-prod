@@ -37,9 +37,11 @@ def _announce(client, result: dict) -> None:
         write_gate_alert(
             client, family=FAMILY, version=version, event="eligible",
             title=f"{version} is promotion-eligible",
-            body=(f"{result['trades']} fresh trades since 2026-11-14: net "
+            body=(f"{result['trades']} fresh trades since "
+                  f"{result.get('prereg_at') or '2026-11-14'}: net "
                   f"{result['net_per_contract']} per contract, low95 "
-                  f"{result['low95']}, paired low95 vs the live gate "
+                  f"{result['low95']}, paired low95 vs "
+                  f"{result.get('baseline', 'the live gate')} "
                   f"{result['paired_low95']}. Promotion still needs Kevin's "
                   "word -- this alert is the notification, not a switch."),
             evidence=result)
@@ -112,6 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         result = fc.evaluate(rows, version, now=now, fills=fills)
         _announce(client, result)
         report["candidates"].append(result)
+    # oil-trend-agree-v1: graded against the unfiltered raw rule, no kill.
+    trend = fc.trend_evaluate(
+        [d for ds in fc.trend_read(client).values() for d in ds], now=now)
+    _announce(client, trend)
+    report["candidates"].append(trend)
     print(json.dumps(report, indent=1))
     return 0
 

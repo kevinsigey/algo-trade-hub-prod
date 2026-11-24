@@ -304,6 +304,8 @@ def board(supa) -> dict[str, Any]:
     fills = _fills(supa, offsets + [t for trades in (blend_trades, vol_trades, bin_trades)
                                     for ts in trades.values() for t in ts])
     candidates = _candidate_trades(supa, offsets, fills)
+    from tradehub import fifteen_candidates as fc
+    trend = fc.trend_read(supa)
 
     weights: dict[str, float] = {}
     for r in _read(supa, fifteen_blend.WEIGHTS_TABLE):
@@ -341,6 +343,15 @@ def board(supa) -> dict[str, Any]:
             _attach_sizes(trades, fills)
             models.append(model_row(version, version, series, trades, live_by_target,
                                     fill_short=short, needed=100, extra_windows=sat_out))
+        if series in trend:
+            # Graded against the UNFILTERED raw rule, so that is its pairing.
+            decided = [d for d in trend[series] if d["pnl"] is not None]
+            models.append(model_row(
+                fc.TREND_VERSION, "Trend-agree v1 (vs raw rule)", series,
+                [d for d in decided if d["action"] == "buy"],
+                {d["target"]: d["pnl"] for d in decided},
+                fill_short=0, needed=fc.TREND_MIN_TRADES,
+                extra_windows=[d for d in decided if d["action"] == "skip"]))
         if series == "KXGOLD15M":
             trades = bin_trades.get(series, [])
             short = _attach_sizes(trades, fills)
