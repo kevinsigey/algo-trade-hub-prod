@@ -117,7 +117,7 @@ function OrdersTable({ orders }: { orders: KalshiOrder[] }) {
 /** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
  * rule on the LIVE Kalshi account. Real money — the badge and the
  * halt state are the point of the card. */
-function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
+export function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
   if (!pilot) return null;
   if ("admin_only" in pilot) {
     return <p className="mb-3 text-xs text-slate-500">Live pilot: admin only</p>;
