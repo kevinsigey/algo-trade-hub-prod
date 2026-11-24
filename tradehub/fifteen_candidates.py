@@ -280,3 +280,134 @@ def evaluate(rows: list[dict], version: str, *, now: datetime,
         "killed": killed,
         "days_run": max(days_run, 0),
     }
+
+
+# ------------------------------------------------- oil-trend-agree-v1
+# Preregistered 2026-11-24 (docs/superpowers/specs/
+# 2026-11-24-oil-trend-agree-v1-prereg.md): the RAW oil rule's own
+# decisions (oil_fifteen_rule.pick at the first frozen read, the halt
+# excluded -- what kalshi_live_lane.raw_open_decisions trades), kept
+# only when the side agrees with the underlying's last-15-minute move.
+# Not a Dial: it reads the journal's first-frozen forecasts, not the
+# offset grid, so it lives beside CANDIDATES rather than in it (the
+# demo lane reads CANDIDATES; this never reaches any order path).
+# Recomputed read-only from frozen journal rows, like the live record.
+
+TREND_VERSION = "oil-trend-agree-v1"
+# Fixed before merge (Claude's review, 2026-11-24): the first window opening
+# at 18:00 UTC on Nov 24, after this PR deploys. Nothing before it counts.
+TREND_PREREG_AT: datetime | None = datetime(2026, 11, 24, 18, 0, tzinfo=UTC)
+TREND_MIN_TRADES = 150
+TREND_SERIES = {WTI: ("oil_wti_15m", "wti-15m-v2"),
+                BRENT: ("oil_brent_15m", "brent-15m-v2")}
+
+
+def trend_skip_reason(side: str, p_now: Any, p_prev: Any) -> str | None:
+    """None keeps the raw decision; otherwise why the filter drops it.
+    m15 = ln(p_now / p_prev): YES needs m15 > 0, NO needs m15 < 0."""
+    if p_now is None or p_prev is None or float(p_now) <= 0 or float(p_prev) <= 0:
+        return "no_m15"
+    m15 = math.log(float(p_now) / float(p_prev))
+    if m15 == 0:
+        return "flat_m15"
+    return None if (side == "yes") == (m15 > 0) else "disagrees"
+
+
+def fee_ceil(cost: float) -> float:
+    """Kalshi's taker fee for one contract, rounded up to the cent."""
+    return math.ceil(round(0.07 * cost * (1 - cost) * 100, 6)) / 100
+
+
+def _floor15(iso: str) -> datetime:
+    t = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    return t.replace(minute=t.minute - t.minute % int(WINDOW_MINUTES), second=0, microsecond=0)
+
+
+def trend_decisions(rows: list[dict], settled: dict[str, int], series: str,
+                    prereg_at: datetime | None = None) -> list[dict]:
+    """Every raw-rule buy on one oil series from prereg_at on, each
+    marked kept (action buy) or dropped (action skip, with its reason).
+    `rows` are the series' journal forecasts (any order, any number of
+    freezes per target); `settled` maps target -> outcome. Pure."""
+    from tradehub import oil_fifteen_rule as rule
+    prereg_at = prereg_at or TREND_PREREG_AT
+    if prereg_at is None or series not in TREND_SERIES:
+        return []
+    first: dict[str, dict] = {}
+    for r in sorted(rows, key=lambda r: str(r["frozen_at"])):
+        first.setdefault(r["target"], r)
+    by_open = {}
+    for r in first.values():
+        by_open.setdefault(_floor15(r["frozen_at"]), r)
+    out = []
+    for opened, r in sorted(by_open.items()):
+        if opened < prereg_at or rule.in_halt(str(r["frozen_at"])):
+            continue
+        pay = r.get("payload") or {}
+        choice = rule.pick(float(r["probability"]), yes_ask=pay.get("yes_ask"),
+                           yes_bid=pay.get("yes_bid"))
+        if choice is None:
+            continue
+        side, cost = choice
+        prev = by_open.get(opened - timedelta(minutes=WINDOW_MINUTES))
+        p_now, p_prev = pay.get("price"), (prev.get("payload") or {}).get("price") if prev else None
+        reason = trend_skip_reason(side, p_now, p_prev)
+        outcome = settled.get(r["target"])
+        won = outcome == (1 if side == "yes" else 0)
+        out.append({"series": series, "target": r["target"], "frozen_at": r["frozen_at"],
+                    "window_open": opened.isoformat(),
+                    "close_time": (opened + timedelta(minutes=WINDOW_MINUTES)).isoformat(),
+                    "side": side, "cost": cost,
+                    "p_now": p_now, "p_prev": p_prev,
+                    "action": "skip" if reason else "buy", "reason": reason,
+                    "outcome": outcome,
+                    "pnl": None if outcome is None
+                    else round(float(won) - cost - fee_ceil(cost), 4)})
+    return out
+
+
+def trend_evaluate(decisions: list[dict], *, now: datetime) -> dict[str, Any]:
+    """The frozen grade over settled decisions: kept trades' day-
+    clustered low95, and the paired gain per window against the
+    UNFILTERED raw rule (kept: 0; dropped: minus the raw trade's pnl)."""
+    settled = [d for d in decisions if d["pnl"] is not None]
+    kept = [(_et_day(d), d["pnl"]) for d in settled if d["action"] == "buy"]
+    deltas = [(_et_day(d), 0.0 if d["action"] == "buy" else -d["pnl"]) for d in settled]
+    n = len(kept)
+    low95 = clustered_low95(kept) if n else None
+    paired = clustered_low95(deltas) if deltas else None
+    skips: dict[str, int] = {}
+    for d in decisions:
+        if d["reason"]:
+            skips[d["reason"]] = skips.get(d["reason"], 0) + 1
+    return {"version": TREND_VERSION,
+            "prereg_at": TREND_PREREG_AT.isoformat() if TREND_PREREG_AT else None,
+            "baseline": "the unfiltered raw oil rule",
+            "windows": len(settled), "trades": n,
+            "net_per_contract": round(sum(x for _d, x in kept) / n, 4) if n else None,
+            "low95": round(low95, 4) if low95 is not None else None,
+            "paired_windows": len(deltas),
+            "paired_low95": round(paired, 4) if paired is not None else None,
+            "skips": skips,
+            "eligible": (n >= TREND_MIN_TRADES and low95 is not None and low95 > 0
+                         and paired is not None and paired > 0),
+            "killed": False,  # no stopping rule: it stays shadow until it passes
+            "days_run": max((now - TREND_PREREG_AT).days, 0) if TREND_PREREG_AT else 0}
+
+
+def trend_read(supa) -> dict[str, list[dict]]:
+    """Per series, trend_decisions over the journal since one window
+    before TREND_PREREG_AT. Read-only; empty until it is set."""
+    from tradehub.journal import store
+    if TREND_PREREG_AT is None:
+        return {s: [] for s in TREND_SERIES}
+    since = (TREND_PREREG_AT - timedelta(minutes=WINDOW_MINUTES)).isoformat()
+    out = {}
+    for series, (name, version) in TREND_SERIES.items():
+        rows = store.select_all(
+            supa, store.FORECASTS,
+            lambda q, n=name, v=version: q.eq("forecaster", n).eq("forecaster_version", v)
+            .gte("frozen_at", since), ("id",))
+        settled = store.fetch_settlements(supa, [r["target"] for r in rows]) if rows else {}
+        out[series] = trend_decisions(rows, settled, series)
+    return out
