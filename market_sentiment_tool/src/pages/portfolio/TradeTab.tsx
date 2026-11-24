@@ -333,16 +333,24 @@ function StagedOrders({ book }: { book: string }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const loadRef = useRef<() => void>(() => undefined);
+  // Ids cancelled from this panel: a poll response that started before the
+  // cancel (or a broker read that still lags it) must never resurrect the row.
+  const cancelledIdsRef = useRef<Set<string>>(new Set());
   const sortedOrders = useMemo(
     () => (orders === null ? null : sortRows(orders, sort, (o, k) => STAGED_READERS[k](o))),
     [orders, sort]);
 
   useEffect(() => {
     let cancelled = false;
+    cancelledIdsRef.current = new Set();
     const load = () => {
       adminCall<{ email: string }>("/api/admin/me")
         .then(() => adminCall<{ orders: OpenOrder[] }>(`/api/portfolio/open-orders?book=${book}`))
-        .then((body) => { if (!cancelled) setOrders(Array.isArray(body.orders) ? body.orders : []); })
+        .then((body) => {
+          if (cancelled) return;
+          const rows = Array.isArray(body.orders) ? body.orders : [];
+          setOrders(rows.filter((x) => !x.alpaca_order_id || !cancelledIdsRef.current.has(x.alpaca_order_id)));
+        })
         .catch(() => undefined); // a failed refresh keeps the last read
     };
     loadRef.current = load;
@@ -356,11 +364,12 @@ function StagedOrders({ book }: { book: string }) {
    * at once and the poll re-reads the broker's own record. */
   const cancelOrder = async (o: OpenOrder) => {
     const id = o.alpaca_order_id;
-    if (!id) return;
+    if (!id || busyId) return; // one cancel in flight at a time
     setBusyId(id);
     setCancelError(null);
     try {
       await adminCall(`/api/portfolio/orders/${encodeURIComponent(id)}?book=${book}`, { method: "DELETE" });
+      cancelledIdsRef.current.add(id);
       setConfirmId(null);
       setOrders((cur) => (cur ?? []).filter((x) => x.alpaca_order_id !== id));
       loadRef.current();
@@ -402,19 +411,19 @@ function StagedOrders({ book }: { book: string }) {
               <td className="whitespace-nowrap py-1.5 pl-3 text-right">
                 {o.alpaca_order_id == null ? "—" : confirmId === o.alpaca_order_id ? (
                   <>
-                    <button type="button" disabled={busyId === o.alpaca_order_id}
+                    <button type="button" disabled={busyId !== null}
                             onClick={() => void cancelOrder(o)}
                             className="rounded border border-rose-800 px-2 py-0.5 text-[11px] text-rose-300 hover:bg-rose-950 disabled:opacity-50">
                       {busyId === o.alpaca_order_id ? "Cancelling…" : "Confirm cancel"}
                     </button>
-                    <button type="button" onClick={() => setConfirmId(null)}
-                            className="ml-1.5 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-slate-800">
+                    <button type="button" disabled={busyId !== null} onClick={() => setConfirmId(null)}
+                            className="ml-1.5 rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-slate-800 disabled:opacity-50">
                       Keep
                     </button>
                   </>
                 ) : (
-                  <button type="button" onClick={() => { setConfirmId(o.alpaca_order_id); setCancelError(null); }}
-                          className="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-rose-800 hover:text-rose-300">
+                  <button type="button" disabled={busyId !== null} onClick={() => { setConfirmId(o.alpaca_order_id); setCancelError(null); }}
+                          className="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-rose-800 hover:text-rose-300 disabled:opacity-50">
                     Cancel
                   </button>
                 )}

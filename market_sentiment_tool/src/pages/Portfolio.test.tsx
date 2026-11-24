@@ -184,6 +184,79 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(calls.some((c) => c.method === "DELETE" && c.url.includes("/api/portfolio/orders/a9"))).toBe(true);
   });
 
+  it("does not let a lagging broker read resurrect a cancelled row", async () => {
+    session.token = "jwt";
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+      if (url.includes("/api/portfolio/orders/") && method === "DELETE") {
+        return json({ cancelled: "a9", book: "main" });
+      }
+      if (url.includes("/api/portfolio/open-orders")) {
+        reads += 1;
+        // The broker read lags the cancel: every read still shows the order.
+        return json({ orders: [{
+          alpaca_order_id: "a9", client_order_id: "ext-1-stop-mirror-xom", symbol: "XOM",
+          side: "sell", type: "stop", time_in_force: "gtc", qty: 49, filled_qty: 0,
+          limit_price: null, stop_price: 175, status: "new", submitted_at: "2026-11-02T14:31:00Z",
+        }] });
+      }
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      return json(payload({}));
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    fireEvent.click(full.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(full.getByRole("button", { name: "Confirm cancel" }));
+    await waitFor(() => expect(region("Staged orders").getByText("0")).toBeInTheDocument());
+    // The post-cancel refresh (the second read) has landed and still carried
+    // the row; it must stay gone, not flicker back.
+    await waitFor(() => expect(reads).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText("XOM")).toBeNull();
+  });
+
+  it("locks the cancel controls while a cancel is in flight", async () => {
+    session.token = "jwt";
+    let releaseDelete: (() => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+      if (url.includes("/api/portfolio/orders/") && method === "DELETE") {
+        await new Promise<void>((resolve) => { releaseDelete = resolve; });
+        return json({ cancelled: "a9", book: "main" });
+      }
+      if (url.includes("/api/portfolio/open-orders")) {
+        return json({ orders: [
+          { alpaca_order_id: "a9", client_order_id: "manual-x", symbol: "XOM",
+            side: "buy", type: "market", time_in_force: "day", qty: 3, filled_qty: 0,
+            limit_price: null, stop_price: null, status: "new", submitted_at: "2026-11-02T14:31:00Z" },
+          { alpaca_order_id: "b7", client_order_id: "manual-y", symbol: "CVX",
+            side: "buy", type: "market", time_in_force: "day", qty: 5, filled_qty: 0,
+            limit_price: null, stop_price: null, status: "new", submitted_at: "2026-11-02T14:32:00Z" },
+        ] });
+      }
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      return json(payload({}));
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    const xomRow = full.getByText("XOM").closest("tr")!;
+    const cvxRow = full.getByText("CVX").closest("tr")!;
+    fireEvent.click(within(xomRow).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(xomRow).getByRole("button", { name: "Confirm cancel" }));
+    await waitFor(() => expect(within(xomRow).getByRole("button", { name: "Keep" })).toBeDisabled());
+    expect(within(cvxRow).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    releaseDelete!();
+    await waitFor(() => expect(region("Staged orders").getByText("1")).toBeInTheDocument());
+  });
+
   it("keeps the staged row and shows the error when a cancel is refused", async () => {
     session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
