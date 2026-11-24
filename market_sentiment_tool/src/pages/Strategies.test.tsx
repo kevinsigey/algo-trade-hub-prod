@@ -4,6 +4,9 @@ import { MemoryRouter } from "react-router-dom";
 
 import Strategies from "@/pages/Strategies";
 
+const auth = vi.hoisted(() => ({ token: null as string | null }));
+vi.mock("@/components/RequireAdmin", () => ({ sessionToken: async () => auth.token }));
+
 const GAP_SCORE = { n: 0, model_brier: null, market_brier: null, brier_delta: null,
                     model_log_loss: null, market_log_loss: null, calibration: [] };
 const gapPos = (ticker: string, category: string, pnl: number, exit_reason: string) => ({
@@ -61,14 +64,14 @@ function serve(overrides: Record<string, unknown> = {}) {
   }));
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); auth.token = null; });
 
 describe("Strategies", () => {
   it("shows every strategy as a tile with its stage and its record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Strategies", level: 1 })).toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     expect(await within(list).findByText((_, el) => el?.tagName === "P" && /\+1\.4 pts vs SPY since start/.test(el.textContent ?? ""))).toBeInTheDocument();
     expect(within(list).getByText(/1 idea trading/)).toBeInTheDocument();
     expect(await within(list).findByText(/9 of 24 hit/)).toBeInTheDocument();
@@ -82,23 +85,23 @@ describe("Strategies", () => {
     }
   });
 
-  it("keeps the explanations under the tile expansions, collapsed except the live tile", async () => {
+  it("keeps every explanation under a collapsed tile expansion", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const rule = await within(list).findByText(/Five minutes into each 15-minute window, buy the side/);
     const fifteenDetails = rule.closest("details");
     expect(fifteenDetails).not.toBeNull();
     expect(fifteenDetails!.open).toBe(false);
     const stockDetails = within(list).getByText(/Workshop ideas that cleared their gates/).closest("details");
     expect(stockDetails).not.toBeNull();
-    expect(stockDetails!.open).toBe(true);
+    expect(stockDetails!.open).toBe(false);
   });
 
   it("splits the 15-minute tile into one market block per market, each with its gated record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     expect(tile!.id).toBe("fifteen-rule");
@@ -132,7 +135,7 @@ describe("Strategies", () => {
               { fill_short: 0, account: { start: 20, balance: 21.5, drawdown: 0.5, bust: false, curve: [20, 21.5], trades_taken: 8 } }),
       ] } ] } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     // The board sits on the main page under its own heading (#589) -- no
@@ -155,7 +158,7 @@ describe("Strategies", () => {
   it("splits the fifteen expansion into small titled expansions instead of one mega-dropdown", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     // Several of these blocks render only once the fifteen payload lands; wait for one.
@@ -181,7 +184,7 @@ describe("Strategies", () => {
   it("shows the trade record with the gated record leading, the raw record as control, and the go-live bar", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     expect(await within(tile!).findByText(/7 of 300 settled gated trades in 7 separate 15-minute windows/)).toBeInTheDocument();
@@ -206,7 +209,7 @@ describe("Strategies", () => {
       shadow: { gate_version: "v2-oil-shadow", prereg_at: "2026-11-09T19:00:00+00:00",
                 fresh: { windows: 273, trades: 246, net_per_contract: -0.048, low95: -0.108, win_rate: 0.4 } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
     expect(within(tile!).queryByText("Oil shadow — the minute-1 variant")).not.toBeInTheDocument();
@@ -218,7 +221,7 @@ describe("Strategies", () => {
     serve({ "/api/oil/fifteen-rule": { ...base,
       decline: [{ day: "2026-11-12", series: "Natural gas", live: cell(12, 0.025), blend: cell(4, 0.08), volregime: cell(0, null) }] } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     await within(tile!).findByText("Day by day — v1 rule, blend and vol-regime challenger", { selector: "summary" });
     const table = within(tile!).getByRole("table", { name: "15-minute decline monitor" });
@@ -240,7 +243,7 @@ describe("Strategies", () => {
                                      Silver: { n: 0, net_per_contract: null, win_rate: null },
                                      Copper: { n: 1, net_per_contract: 0.02, win_rate: 1 } } } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute metals rule")).closest("li");
     expect(tile).not.toBeNull();
     expect(tile!.id).toBe("fifteen-metals");
@@ -265,7 +268,7 @@ describe("Strategies", () => {
                                      Silver: { n: 0, net_per_contract: null, win_rate: null },
                                      Copper: { n: 0, net_per_contract: null, win_rate: null } } } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("15-minute metals rule")).closest("li");
     expect(tile).not.toBeNull();
     // One per metal, plus the tile headline itself.
@@ -278,14 +281,14 @@ describe("Strategies", () => {
               { t: "2026-10-01", portfolio_pct: 2.1, spy_pct: 1.2 },
               { t: "2026-11-01", portfolio_pct: 1.4, spy_pct: 0 }] } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     expect(await within(list).findByRole("img", { name: "Portfolio curve against SPY" })).toBeInTheDocument();
   });
 
   it("shows the gap tracker as a paused, closed book below the retired entries, with each desk's record", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     expect(await within(list).findByText(/2 closed · \+\$80\.50 realized · 50% won/)).toBeInTheDocument();
     expect(within(list).getByText(/1 closed · −\$260\.00 realized · 0% won/)).toBeInTheDocument();
     expect(within(list).queryByText(/oil and crypto/)).not.toBeInTheDocument();
@@ -299,7 +302,7 @@ describe("Strategies", () => {
     expect(tile!.id).toBe("gap-tracker");
     expect(tile!.className).toContain("opacity-70");
     expect(within(tile!).getByText(/Paused · Nov 9, 2026/)).toBeInTheDocument();
-    expect(list.lastElementChild?.id).toBe("gap-tracker");
+    expect(screen.getByRole("list", { name: "Retired strategies" }).lastElementChild?.id).toBe("gap-tracker");
     // One post-mortem expansion; the live-desk panels and their framing are gone.
     expect(within(tile!).getByLabelText("Kalshi gap tracker — the record")).toBeInTheDocument();
     expect(within(list).queryByText("Oil gap tracker", { selector: "h2" })).toBeNull();
@@ -311,7 +314,7 @@ describe("Strategies", () => {
   it("states the gap rule once, in past tense, with the fee outside the entry test and the one-hour exit", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     // The post-mortem states the corrected rule once, in past tense: the 8-point entry gap was
     // measured gross (fees came out of the trade's P&L), 2+ hours was the entry cutoff, and the
     // near-settlement exit was 1 hour.
@@ -327,7 +330,7 @@ describe("Strategies", () => {
   it("gives the gap post-mortem: worse-than-market grades, the churn, and how the trades ended", async () => {
     serve();
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     const tile = (await within(list).findByText("Kalshi gap tracker")).closest("li");
     expect(tile).not.toBeNull();
     // Why it was paused, in the grade's own numbers: both desks worse than Kalshi's price.
@@ -360,7 +363,7 @@ describe("Strategies", () => {
       ledger_by_category: { oil: { closed: 21, realized: -667.95, win_rate: 0.5238, median_pnl: -12.5 },
                             crypto: { closed: 20, realized: -2509.22, win_rate: 0.2, median_pnl: -95 } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const list = screen.getByRole("list", { name: "Strategies at a glance" });
+    const list = document.body;
     expect(await within(list).findByText(/21 closed · −\$667\.95 realized · 52% won · typical trade −\$12\.50/)).toBeInTheDocument();
     expect(within(list).getByText(/20 closed · −\$2509\.22 realized · 20% won · typical trade −\$95\.00/)).toBeInTheDocument();
   });
@@ -371,5 +374,68 @@ describe("Strategies", () => {
     const chart = within(await screen.findByLabelText("15-minute settlements scoring"));
     expect(chart.getByText(/969 settled/)).toBeInTheDocument();
     expect(chart.getByText(/model ahead/)).toBeInTheDocument();
+  });
+  it("renders one section per stage, in order", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const headings = ["Real money", "Paper, trading", "On trial (shadows)", "What we learned", "Retired & paused"];
+    for (const h of headings) expect(screen.getByText(h)).toBeInTheDocument();
+    const text = document.body.textContent ?? "";
+    const at = headings.map((h) => text.indexOf(h));
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(screen.getByText(/oil-trend-agree-v1\./)).toBeInTheDocument();
+    expect(await screen.findByText("Not proven yet")).toBeInTheDocument();
+  });
+
+  it("hides the live pilot's dollars from the public and shows them to admin", async () => {
+    const pilot = { state: "live", halted: false, halt_reason: null, balance: 9.87, pnl_since_start: -0.13,
+                    decisions: 12, fills: 9, live_net_per_contract: 0.02, paper_net_per_contract: 0.05 };
+    serve({ "/api/kalshi-demo": { state: "ok", live_pilot: { admin_only: true } } });
+    const { unmount } = render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const real = screen.getByRole("region", { name: "Real money" });
+    expect(within(real).getByText(/A \$10 live pilot runs .* WTI & Brent/)).toBeInTheDocument();
+    expect(within(real).queryByText("$9.87")).toBeNull();
+    expect(within(real).getByRole("link", { name: /Kalshi live book/ })).toHaveAttribute("href", "/portfolio?book=kalshi");
+    unmount();
+    auth.token = "t";
+    serve({ "/api/kalshi-demo": { state: "ok", live_pilot: pilot } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const admin = screen.getByRole("region", { name: "Real money" });
+    expect(await within(admin).findByText("$9.87")).toBeInTheDocument();
+    expect(within(admin).getByText("−$0.13")).toBeInTheDocument();
+    expect(within(admin).getByText("9 of 12")).toBeInTheDocument();
+    expect(within(admin).getByText("Running")).toBeInTheDocument();
+  });
+
+  it("lists every shadow on trial with its progress toward the bar", async () => {
+    const base = BODIES["/api/oil/fifteen-rule"] as Record<string, unknown>;
+    const m = (series: string, n: number, needed: number, net: number) => ({
+      version: "oil-trend-agree-v1", label: "Trend-agree v1 (vs raw rule)", series, trades: n, net_cents: net,
+      low95: -1.2, paired_low95: null, fill_short: 0, too_few: n < 10,
+      progress: { n, needed, legs: { n: false, low95: false, paired: false } },
+      account: { start: 20, balance: 20, drawdown: 0, bust: false, curve: [], trades_taken: n } });
+    serve({ "/api/oil/fifteen-rule": { ...base, board: { account_start: 20, commodities: [
+              { series: "KXWTI15M", commodity: "WTI", models: [m("KXWTI15M", 37, 150, 4)] },
+              { series: "KXBRENT15M", commodity: "Brent", models: [m("KXBRENT15M", 20, 150, -2)] }] } },
+            "/api/strategies/trials": { trials: [
+              { id: "leaps", name: "LEAPS shadow", tests: "Do LEAPS deliver?", n: null, needed: 4, unit: "pairs",
+                score: null, score_label: null, status: "no_read", note: null }] } });
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const list = await screen.findByRole("list", { name: "Shadows on trial" });
+    const trend = (await within(list).findByText(/Trend-agree v1/)).closest("li")!;
+    expect(within(trend).getByText(/37 \/ 150 trades/)).toBeInTheDocument();
+    expect(within(trend).getByRole("img", { name: "37 of 150 toward the pass bar" })).toBeInTheDocument();
+    expect(within(trend).getByText("low95 −1.2¢")).toBeInTheDocument();
+    const leaps = (await within(list).findByText("LEAPS shadow")).closest("li")!;
+    expect(within(leaps).getByText("recording, no public read yet")).toBeInTheDocument();
+  });
+
+  it("keeps retired and paused strategies collapsed", async () => {
+    serve();
+    render(<MemoryRouter><Strategies /></MemoryRouter>);
+    const retired = screen.getByRole("region", { name: "Retired & paused" });
+    expect(retired.querySelector("details")!.open).toBe(false);
+    expect(within(retired).getByText("Crypto sniper")).toBeInTheDocument();
+    expect(within(retired).getByText("Kalshi gap tracker")).toBeInTheDocument();
   });
 });

@@ -6,7 +6,9 @@ import { FifteenDeclineMonitor, type DeclineRow } from "@/components/FifteenDecl
 import { FifteenSettlements } from "@/components/FifteenSettlements";
 import { SniperRecord } from "@/components/SniperRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
-import { getJson } from "@/lib/getJson";
+import { sessionToken } from "@/components/RequireAdmin";
+import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
+import type { KalshiDemoPayload } from "@/lib/kalshiDemo";
 
 /** One read per endpoint; a failed read stays null and its tile says the record is unavailable. */
 function useJson<T>(url: string): T | null {
@@ -355,6 +357,8 @@ function SeriesBars({ labels, fifteen, lines }: {
 
 interface TileSpec {
   id: string; name: string; stage: Stage; chipLabel?: string; muted?: boolean; defaultOpen?: boolean;
+  /** The plain read where the strategy has a gate: true proven, false not yet; omitted when it has none. */
+  proven?: boolean;
   visual: ReactNode; stats: ReactNode; children: ReactNode;
 }
 
@@ -367,6 +371,11 @@ function Tile({ spec }: { spec: TileSpec }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-white">{spec.name}</span>
             <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STAGE_TONE[spec.stage]}`}>{spec.chipLabel ?? spec.stage}</span>
+            {spec.proven != null && (
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${spec.proven ? "border-emerald-500/50 text-emerald-300" : "border-slate-600 text-slate-400"}`}>
+                {spec.proven ? "Proven" : "Not proven yet"}
+              </span>
+            )}
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-slate-400">
               Details <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
             </span>
@@ -438,6 +447,164 @@ function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
   );
 }
 
+/** What we learned, newest first. Append a row here when a finding lands. */
+const LEARNED: { date: string; text: string }[] = [
+  { date: "2026-11-24", text: "Natural gas paused on the live pilot: the gas model reads the Hyperliquid perp while Kalshi settles on Pyth. Since Nov 10, 22 gas trades lost while the perp said they won, and 1 went the other way." },
+  { date: "2026-11-24", text: "Oil trades that agreed with the last 15-minute move did better on held-out data (+10.8¢ vs +0.4¢ a contract). Now on trial as oil-trend-agree-v1." },
+  { date: "2026-11-20", text: "The v2-oil shadow was killed." },
+  { date: "2026-11-20", text: "Sports were removed from the hub." },
+];
+
+/** One line per 15-minute shadow version on the board; the rest come from /api/strategies/trials. */
+const TRIAL_TESTS: Record<string, string> = {
+  "v2-blend-shadow": "A self-weighting blend of the 15-minute models",
+  "v3-volregime-shadow": "Trades only in the volatility regime that has paid",
+  "v4-edge20-shadow": "The live rule with a 20¢ edge bar instead of 10¢",
+  "v4-no-gold-shadow": "The live rule with gold left out",
+  "v4-late-window-shadow": "Entering at minutes 11–13 instead of minute 5",
+  "v4-per-commodity-shadow": "Each market at its own best minute and bar",
+  "v4-side50-shadow": "Oil buys only on sides the model gives 50%+",
+  "v4-spread3-shadow": "Oil buys only when the quote is 3¢+ wide",
+  "oil-trend-agree-v1": "Oil trades only when they agree with the last 15-minute move",
+  "v5-binance-gold-shadow": "Gold read off the Binance tape",
+};
+
+type TrialStatus = "recording" | "eligible" | "killed" | "no_read";
+interface TrialRow { id: string; name: string; tests: string; n: number | null; needed: number; unit: string;
+                     net: string | null; netTone?: string; low95: string | null; status: TrialStatus; note?: string | null }
+interface ServedTrial { id: string; name: string; tests: string; n: number | null; needed: number; unit: string;
+                        score: number | null; score_label: string | null; status: TrialStatus; note: string | null }
+
+const STATUS_TONE: Record<TrialStatus, string> = {
+  recording: "border-sky-500/50 text-sky-300", eligible: "border-emerald-500/50 text-emerald-300",
+  killed: "border-rose-500/50 text-rose-300", no_read: "border-slate-700 text-slate-500",
+};
+
+/** The board's per-market models folded to one row per shadow version: trades pooled,
+ * progress and low95 from the market closest to its bar (the bar is per market). */
+function boardTrials(board: FifteenPayload["board"]): TrialRow[] {
+  const byVersion = new Map<string, BoardModel[]>();
+  for (const card of board?.commodities ?? []) {
+    for (const m of card.models) {
+      if (m.version === "live") continue;
+      byVersion.set(m.version, [...(byVersion.get(m.version) ?? []), m]);
+    }
+  }
+  return [...byVersion.entries()].map(([version, ms]) => {
+    const lead = [...ms].sort((a, b) => b.progress.n / b.progress.needed - a.progress.n / a.progress.needed)[0];
+    const trades = ms.reduce((a, m) => a + m.trades, 0);
+    const priced = ms.filter((m) => m.net_cents != null && m.trades > 0);
+    const pn = priced.reduce((a, m) => a + m.trades, 0);
+    const net = pn > 0 ? priced.reduce((a, m) => a + (m.net_cents ?? 0) * m.trades, 0) / pn : null;
+    return {
+      id: version, name: lead.label === version ? version : `${lead.label} · ${version}`,
+      tests: TRIAL_TESTS[version] ?? "15-minute shadow", n: lead.progress.n, needed: lead.progress.needed,
+      unit: ms.length > 1 ? `trades (best market; ${trades} across ${ms.length})` : "trades",
+      net: net == null ? null : `${signed(net)}¢`, netTone: toneOf(net),
+      low95: lead.low95 == null ? null : `${signed(lead.low95)}¢`,
+      status: ms.some((m) => m.progress.legs.n && m.progress.legs.low95) ? "eligible" : "recording",
+    };
+  });
+}
+
+function servedTrial(t: ServedTrial): TrialRow {
+  const score = t.score == null ? null
+    : t.score_label === "pass rate" ? `${Math.round(t.score * 100)}%` : t.score.toFixed(2);
+  return { id: t.id, name: t.name, tests: t.tests, n: t.n, needed: t.needed, unit: t.unit,
+           net: score == null ? null : `${score} ${t.score_label ?? ""}`.trim(), low95: null,
+           status: t.status, note: t.status === "no_read" ? "recording, no public read yet" : t.note };
+}
+
+/** Every preregistered shadow, one row each: what it tests, how far to its bar, where it stands. */
+function TrialList({ rows }: { rows: TrialRow[] }) {
+  if (rows.length === 0) return <p className="text-sm text-slate-500">Trial records unavailable.</p>;
+  return (
+    <ul aria-label="Shadows on trial" className="divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-900/50">
+      {rows.map((r) => {
+        const pct = r.n == null ? 0 : Math.min(100, (r.n / Math.max(r.needed, 1)) * 100);
+        return (
+          <li key={r.id} className="px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-white">{r.name}</span>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${STATUS_TONE[r.status]}`}>
+                {r.status === "no_read" ? "recording" : r.status}
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-slate-400">{r.tests}</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums text-slate-400">
+              <div className="h-1.5 w-32 rounded-full bg-slate-800" role="img"
+                   aria-label={r.n == null ? "progress unknown" : `${r.n} of ${r.needed} toward the pass bar`}>
+                <div className="h-full rounded-full bg-sky-400/70" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="text-slate-300">{r.n == null ? "—" : r.n} / {r.needed} {r.unit}</span>
+              {r.net && <span className={r.netTone ?? "text-slate-300"}>{r.net}</span>}
+              {r.low95 && <span>low95 {r.low95}</span>}
+              {r.note && <span className="text-slate-500">{r.note}</span>}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The real-money pilot: admin sees the figures (the same admin read the Kalshi live book makes),
+ * everyone else one line. */
+function RealMoney() {
+  const [pilot, setPilot] = useState<KalshiDemoPayload["live_pilot"]>(null);
+  useEffect(() => {
+    let stop = false;
+    sessionToken()
+      .then((token) => getJson<KalshiDemoPayload>("/api/kalshi-demo", GET_JSON_TIMEOUT_MS,
+        token ? { Authorization: `Bearer ${token}` } : undefined))
+      .then((d) => { if (!stop) setPilot(d.live_pilot ?? null); })
+      .catch(() => undefined);
+    return () => { stop = true; };
+  }, []);
+  const full = pilot && !("admin_only" in pilot) && pilot.state !== "unavailable" ? pilot : null;
+  const cell = (label: string, value: string, cls = "text-white") => (
+    <div><dt className="text-[11px] text-slate-500">{label}</dt><dd className={`text-sm font-semibold tabular-nums ${cls}`}>{value}</dd></div>
+  );
+  const money = (v: number | null | undefined) => (v == null ? "—" : usd(v));
+  return (
+    <div className="rounded-xl border border-rose-500/30 bg-slate-900/50 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-white">Kalshi live pilot — WTI &amp; Brent</span>
+        <span className="rounded border border-rose-500/40 bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-300">REAL MONEY</span>
+        {full && (
+          <span className={`text-xs font-medium ${full.halted ? "text-rose-300" : "text-slate-400"}`}>
+            {full.halted ? `Halted — ${full.halt_reason ?? "halted"}` : full.state === "live" ? "Running" : "Not enabled"}
+          </span>
+        )}
+      </div>
+      {full ? (
+        <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {cell("Balance", full.balance == null ? "—" : usdPlain(full.balance))}
+          {cell("P&L since start", money(full.pnl_since_start), toneOf(full.pnl_since_start))}
+          {cell("Fills", `${full.fills} of ${full.decisions}`)}
+          {cell("Live vs paper / contract", `${money(full.live_net_per_contract)} vs ${money(full.paper_net_per_contract)}`)}
+        </dl>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">
+          A $10 live pilot runs the 15-minute oil rule on WTI &amp; Brent with real money. Figures are admin-only.
+        </p>
+      )}
+      <Link to="/portfolio?book=kalshi" className="mt-3 inline-flex items-center gap-1 text-sm text-emerald-300 hover:text-emerald-200">
+        Kalshi live book <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </Link>
+    </div>
+  );
+}
+
+function StageHeading({ title, blurb }: { title: string; blurb: string }) {
+  return (
+    <div className="mb-3">
+      <h2 className="text-lg font-semibold text-white">{title}</h2>
+      <p className="text-xs text-slate-400">{blurb}</p>
+    </div>
+  );
+}
+
 /**
  * Strategies (Kevin, 2026-11-05; split per market 2026-11-09; visual tiles 2026-11-09): every rule
  * that trades or paper-trades as a tile — its record drawn (bars, curves) with a few headline
@@ -448,6 +615,7 @@ function RecordLine({ text, tone }: { text: string | null; tone?: string }) {
  * bottom as a closed book: the final record on the tile, the post-mortem in its one expansion.
  * The market pages keep the live reads; the Track record keeps whether the reads are right;
  * this page keeps whether trading on them pays.
+ * Organised by stage (Kevin, 2026-11-24): real money, paper, on trial, learned, retired & paused.
  */
 export default function Strategies() {
   const portfolio = useJson<{ scoreboard?: { return_pct: number | null; ahead_pts: number | null };
@@ -463,6 +631,8 @@ export default function Strategies() {
                          closed_positions?: GapPosition[];
                          ledger_by_category?: Record<string, GapCategoryLedger> }>("/api/gaps/desk");
   const sniper = useJson<{ overall?: { count: number; hit_rate: number } }>("/api/crypto/sniper-verdict");
+  const served = useJson<{ trials?: ServedTrial[] }>("/api/strategies/trials");
+  const trials = [...boardTrials(fifteen?.board), ...(served?.trials ?? []).map(servedTrial)];
 
   // Trading on at least one book; `live` on this payload is the shadow record's state, not trading.
   const live = Array.isArray(ideas) ? ideas.filter((i) => (i.live_books ?? []).length > 0).length : null;
@@ -629,7 +799,7 @@ export default function Strategies() {
 
   const tiles: TileSpec[] = [
     {
-      id: "stock-ideas", name: "Stock ideas", stage: "Live paper account", defaultOpen: true,
+      id: "stock-ideas", name: "Stock ideas", stage: "Live paper account",
       visual: portfolio?.curve ? <CurveSpark curve={portfolio.curve} /> : null,
       stats: (
         <div>
@@ -658,6 +828,7 @@ export default function Strategies() {
     },
     {
       id: "fifteen-rule", name: "15-minute rules — oil & gas", stage: "Paper record",
+      proven: liveBar ? liveBar.ready : undefined,
       visual: <SeriesBars labels={OIL_LABELS} fifteen={fifteen} lines={Object.fromEntries(OIL_LABELS.map((l) => [l, fifteenRecord(l)]))} />,
       stats: <RecordLine text={oilLine.record} tone={oilLine.tone} />,
       children: (
@@ -823,6 +994,8 @@ export default function Strategies() {
     },
     ...(hasMetals ? [{
       id: "fifteen-metals", name: "15-minute metals rule", stage: "Paper record" as Stage,
+      // Same bar as oil: ready_trades settled gated trades with low95 above zero.
+      proven: (metalAgg?.n ?? 0) >= (fifteen?.metals?.ready_trades ?? 300) && (metalAgg?.low95 ?? 0) > 0,
       visual: <SeriesBars labels={METAL_LABELS} fifteen={fifteen?.metals ?? null} lines={Object.fromEntries(METAL_LABELS.map((l) => [l, metalsRecord(l)]))} />,
       stats: <RecordLine text={metalLine.record} tone={metalLine.tone} />,
       children: (
@@ -1024,18 +1197,55 @@ export default function Strategies() {
     },
   ];
 
+  const RETIRED = new Set(["sniper", "gap-tracker"]);
   return (
     <div className="mx-auto max-w-7xl px-4 py-5 md:px-6">
       <h1 className="text-2xl font-bold tracking-tight text-white">Strategies</h1>
       <p className="mt-1 max-w-[70ch] text-sm text-slate-400">
-        Every rule that trades or paper-trades, one market per line: what it does, where it stands, and whether trading on its reads pays.
+        Every rule by stage: what trades real money, what paper-trades, what is on trial, and what we have learned.
       </p>
 
-      <ul aria-label="Strategies at a glance" className="mt-5 grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {tiles.map((spec) => <Tile key={spec.id} spec={spec} />)}
-      </ul>
+      <section aria-label="Real money" className="mt-6">
+        <StageHeading title="Real money" blurb="Live orders on a real Kalshi account." />
+        <RealMoney />
+      </section>
 
-      {fifteen?.board && <section aria-label="15-minute models by commodity" className="mt-8"><h2 className="text-lg font-semibold text-white">15-minute models by commodity</h2><FifteenBoard board={fifteen.board} /></section>}
+      <section aria-label="Paper, trading" className="mt-8">
+        <StageHeading title="Paper, trading" blurb="Rules trading on paper with a running record. Details stay folded." />
+        <ul aria-label="Paper strategies" className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {tiles.filter((t) => !RETIRED.has(t.id)).map((spec) => <Tile key={spec.id} spec={spec} />)}
+        </ul>
+      </section>
+
+      <section aria-label="On trial" className="mt-8">
+        <StageHeading title="On trial (shadows)" blurb="Preregistered shadows: recorded, never traded, until they clear their bar." />
+        <TrialList rows={trials} />
+        {fifteen?.board && <section aria-label="15-minute models by commodity" className="mt-6"><h3 className="text-base font-semibold text-white">15-minute models by commodity</h3><FifteenBoard board={fifteen.board} /></section>}
+      </section>
+
+      <section aria-label="What we learned" className="mt-8">
+        <StageHeading title="What we learned" blurb="Findings, newest first." />
+        <ul className="space-y-2">
+          {LEARNED.map((f) => (
+            <li key={`${f.date}-${f.text.slice(0, 20)}`} className="flex gap-3 text-sm">
+              <span className="shrink-0 tabular-nums text-slate-500">{f.date}</span>
+              <span className="text-slate-300">{f.text}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section aria-label="Retired & paused" className="mt-8">
+        <details className="group">
+          <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+            <span className="text-lg font-semibold text-white">Retired &amp; paused</span>
+            <ChevronDown className="ml-1 inline h-4 w-4 text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true" />
+          </summary>
+          <ul aria-label="Retired strategies" className="mt-3 grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {tiles.filter((t) => RETIRED.has(t.id)).map((spec) => <Tile key={spec.id} spec={spec} />)}
+          </ul>
+        </details>
+      </section>
     </div>
   );
 }

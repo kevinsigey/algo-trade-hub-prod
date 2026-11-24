@@ -165,13 +165,13 @@ FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", str(Path(__file__).resolve().par
 # ── Routers (step 20: main.py split by area) ────────────────────────────────
 from tradehub.api.routers import (  # noqa: E402
     crypto, deals, desks, ideas, journal, machine, oil, portfolio, screening,
-    system, thesis, valuation, weather, workshop,
+    strategies, system, thesis, valuation, weather, workshop,
 )
 
 for _r in (system.router, portfolio.router, workshop.router, ideas.router,
            deals.router, oil.router, desks.router, machine.router, thesis.router,
            journal.router, crypto.router, weather.router, screening.router,
-           valuation.router):
+           valuation.router, strategies.router):
     app.include_router(_r)
 
 # Names tests and other modules historically import from main; the handlers
