@@ -292,13 +292,15 @@ function FifteenBoard({ board }: { board: NonNullable<FifteenPayload["board"]> }
         Fees on multi-contract trades are approximate. The board's paired check is display-only —
         the promotion leg pairs on the offset-5 row.
       </p>
-      {board.commodities.map((card) => (
-        <section key={card.series} aria-label={`${card.commodity} models`}
-                 className="rounded-md border border-slate-800 px-3 py-2">
-          <h4 className="text-sm font-semibold text-slate-100">{card.commodity}</h4>
-          {card.models.map((m) => <BoardModelRow key={m.version} m={m} />)}
-        </section>
-      ))}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {board.commodities.map((card) => (
+          <section key={card.series} aria-label={`${card.commodity} models`}
+                   className="rounded-md border border-slate-800 px-3 py-2">
+            <h4 className="text-sm font-semibold text-slate-100">{card.commodity}</h4>
+            {card.models.map((m) => <BoardModelRow key={m.version} m={m} />)}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
@@ -666,11 +668,6 @@ export default function Strategies() {
               Kalshi's fee; hold to the close. Nothing trades around the 4:45–6:30 PM ET futures halt.
             </p>
           </SubDetails>
-          {fifteen?.board && (
-            <SubDetails title="By commodity — every model, ranked">
-              <FifteenBoard board={fifteen.board} />
-            </SubDetails>
-          )}
           <SubDetails title="Settlements scoring — the forecasts vs Kalshi's price">
             <FifteenSettlements />
           </SubDetails>
@@ -1037,6 +1034,8 @@ export default function Strategies() {
       <ul aria-label="Strategies at a glance" className="mt-5 grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {tiles.map((spec) => <Tile key={spec.id} spec={spec} />)}
       </ul>
+
+      {fifteen?.board && <section aria-label="15-minute models by commodity" className="mt-8"><h2 className="text-lg font-semibold text-white">15-minute models by commodity</h2><FifteenBoard board={fifteen.board} /></section>}
     </div>
   );
 }

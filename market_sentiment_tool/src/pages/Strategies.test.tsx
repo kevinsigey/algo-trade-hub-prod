@@ -135,7 +135,14 @@ describe("Strategies", () => {
     const list = screen.getByRole("list", { name: "Strategies at a glance" });
     const tile = (await within(list).findByText("15-minute rules — oil & gas")).closest("li");
     expect(tile).not.toBeNull();
-    const card = await within(tile!).findByRole("region", { name: "Natural gas models" });
+    // The board sits on the main page under its own heading (#589) -- no
+    // <details> needs opening to reach it -- and the oil & gas tile no
+    // longer carries the "By commodity" sub-panel.
+    const boardSection = await screen.findByRole("region", { name: "15-minute models by commodity" });
+    expect(within(boardSection).getByRole("heading", { name: "15-minute models by commodity" })).toBeInTheDocument();
+    expect(within(tile!).queryByText("By commodity — every model, ranked", { selector: "summary" })).toBeNull();
+    expect(within(tile!).queryByRole("region", { name: "Natural gas models" })).toBeNull();
+    const card = within(boardSection).getByRole("region", { name: "Natural gas models" });
     expect(within(card).getByText("Live rule")).toBeInTheDocument();
     expect(within(card).getByText(/97 trades/)).toBeInTheDocument();
     expect(within(card).getByText(/\+7\.8¢/)).toBeInTheDocument();
