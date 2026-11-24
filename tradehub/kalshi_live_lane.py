@@ -535,14 +535,11 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
     of the actual fee; the paper twin's P&L from the raw rule at the
     frozen quote, one contract), link the tracked decision row, and
     write off claims the exchange never took."""
-    # Settled rows still carrying a provisional price or fee (bounded to
-    # the last 7 days) stay in reconcile until the exchange fill corrects
-    # them.
+    # Settled rows still carrying a provisional price or fee stay in
+    # reconcile until the exchange fill corrects them (only a handful).
     open_rows = [r for r in rows
                  if r["status"] in ("pending", "placed", "filled")
-                 or (r["status"] == "settled" and _provisional(r)
-                     and r.get("settled_at")
-                     and now - _dt(r["settled_at"]) <= timedelta(days=7))]
+                 or (r["status"] == "settled" and _provisional(r))]
     if not open_rows:
         return
     # Adoption: a claim whose create response was lost has no order id;
@@ -679,6 +676,14 @@ def _per_contract_items(rows: list[dict]) -> list[tuple[tuple[str, str], float]]
     return items
 
 
+def _gate_waits(rows: list[dict], summary: dict) -> bool:
+    """A gate never judges provisional prices or fees: it waits a pass."""
+    n = sum(1 for r in rows if _provisional(r))
+    if n:
+        summary["gate_waiting"] = f"provisional_rows={n}"
+    return n > 0
+
+
 def _evaluate_gates(supa, state: dict, rows: list[dict], now: datetime,
                     summary: dict) -> None:
     """The pilot's two automatic gates, evaluated each pass once their
@@ -686,7 +691,8 @@ def _evaluate_gates(supa, state: dict, rows: list[dict], now: datetime,
     lane state and are never lifted automatically."""
     filled_rows = [r for r in rows if int(r.get("contracts_filled") or 0) > 0]
     sent = [r for r in rows if r["status"] in SENT_STATUSES]
-    if "gate1" not in state and len(filled_rows) >= GATE1_FILLS:
+    if ("gate1" not in state and len(filled_rows) >= GATE1_FILLS
+            and not _gate_waits(filled_rows, summary)):
         slips = [(float(r.get("fill_price") or r.get("live_ask")
                         or r["frozen_quote"])
                   - float(r["frozen_quote"])) * 100.0
@@ -719,7 +725,8 @@ def _evaluate_gates(supa, state: dict, rows: list[dict], now: datetime,
         summary["gate1"] = "halt" if tripped else "pass"
 
     settled = [r for r in rows if r["status"] == "settled"]
-    if "gate2" not in state and len(settled) >= GATE2_TRADES:
+    if ("gate2" not in state and len(settled) >= GATE2_TRADES
+            and not _gate_waits(settled, summary)):
         low = clustered_low95(_per_contract_items(settled))
         tripped = low is not None and low < 0
         values = {"gate2": {
