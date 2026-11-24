@@ -167,8 +167,23 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
         check_portfolio_available,
     )
 
+    def with_live_pilot(payload: dict) -> dict:
+        # The live micro-pilot's scoreboard rides every payload shape:
+        # the lane is independent of the demo connection, and its read
+        # is fail-soft (an unapplied table or a missing key reads as
+        # the lane's state, never an error on this endpoint).
+        try:
+            from tradehub import kalshi_live_lane
+            payload["live_pilot"] = kalshi_live_lane.build_scoreboard(
+                supabase, datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001
+            payload["live_pilot"] = {"state": "unavailable",
+                                     "real_money": True}
+        return payload
+
     if not check_portfolio_available():
-        return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
+        return with_live_pilot(
+            {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE})
     try:
         portfolio = KalshiPortfolio()
         # The tab is labelled demo; never serve a live host's balances or
@@ -176,10 +191,11 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
         # read (build_report is unreachable unless it passes).
         portfolio.assert_demo_host()
     except (ValueError, NotDemoHostError):
-        return {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE}
+        return with_live_pilot(
+            {"state": "not_connected", "demo": True, "note": kalshi_demo.NOTE})
     try:
-        return kalshi_demo.build_report(
-            supabase, portfolio, datetime.now(timezone.utc))
+        return with_live_pilot(kalshi_demo.build_report(
+            supabase, portfolio, datetime.now(timezone.utc)))
     except Exception as exc:  # noqa: BLE001
         raise _table_fault(kalshi_demo.ORDERS, exc) from exc
 
