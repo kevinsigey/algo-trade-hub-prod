@@ -1,8 +1,8 @@
 /**
- * The site-wide line (Trading HQ spec §3): the hub may place PAPER orders for ideas Kevin switches on, never real ones.
+ * The site-wide line (Trading HQ spec §3): the hub places PAPER orders for ideas Kevin switches on, plus one $10 live Kalshi pilot (real money).
  * A banner, not a footnote: it sits above every page so no screenshot of a number can lose it.
  */
-export const NO_ORDERS_TEXT = "Paper orders only — never real money.";
+export const NO_ORDERS_TEXT = "Paper orders, plus one $10 live Kalshi pilot (real money).";
 
 export function NoOrdersBanner() {
   return (

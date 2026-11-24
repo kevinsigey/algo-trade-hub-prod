@@ -224,7 +224,7 @@ describe("the sidebar link and the route agree", () => {
   it("carries the no-orders line above every page", async () => {
     for (const path of ["/journal", "/models", "/no-such-route"]) {
       await renderAppAt(path);
-      expect(screen.getByRole("note")).toHaveTextContent("Paper orders only — never real money.");
+      expect(screen.getByRole("note")).toHaveTextContent("Paper orders, plus one $10 live Kalshi pilot (real money).");
       cleanup();
     }
   });
