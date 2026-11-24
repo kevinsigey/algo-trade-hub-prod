@@ -394,7 +394,8 @@ def test_scoreboard_math(db):
                   target="kalshi:KXWTI15M-u", ticker="KXWTI15M-u",
                   created_at="2026-11-22T16:00:00+00:00"),
     ])
-    board = lane.build_scoreboard(db, NOW, portfolio=FakeLivePortfolio())
+    db.db[lane.STATE_TABLE] = [{"key": "balance", "value": {"usd": 10.0}}]
+    board = lane.build_scoreboard(db, NOW, admin=True)
     assert board["real_money"] is True
     assert board["balance"] == 10.0
     assert board["decisions"] == 2
@@ -520,15 +521,73 @@ def test_daily_stop_keys_on_settlement_session(db):
     assert portfolio.placed == []
 
 
-def test_close_buffer_rechecked_before_send(db, monkeypatch):
-    import itertools
-    clock = itertools.count(0, 600)  # each read: 10 more minutes
-    monkeypatch.setattr(lane.time, "monotonic", lambda: next(clock))
+def test_close_buffer_rechecked_after_claim(monkeypatch):
+    clock = {"t": 0}
+
+    class SlowClaimDB(DB):
+        def table(self, name):
+            q = super().table(name)
+            if name == lane.ORDERS:
+                real = q.execute
+
+                def execute():
+                    if q.row is not None and q.row.get("status") == "pending":
+                        clock["t"] = 600  # the claim took ten minutes
+                    return real()
+                q.execute = execute
+            return q
+    monkeypatch.setattr(lane.time, "monotonic", lambda: clock["t"])
+    db = SlowClaimDB()
     seed_open(db, [decision()])
     portfolio = FakeLivePortfolio()
     lane.run_once(db, portfolio, NOW)
     assert portfolio.placed == []
-    assert db.db[lane.ORDERS][0]["skip_reason"] == "close_buffer"
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "skipped_no_depth"
+    assert row["skip_reason"] == "close_buffer"
+
+
+def test_daily_stop_counts_delayed_settlement(db):
+    # Window closed yesterday ET, settled (and the loss booked) today.
+    seed_rows(db, [order_row(status="settled", pnl=-2.00,
+                             window_close="2026-11-22T20:00:00+00:00",
+                             settled_at="2026-11-23T14:00:00+00:00")])
+    seed_open(db, [decision()])
+    portfolio = FakeLivePortfolio()
+    summary = lane.run_once(db, portfolio, NOW)
+    assert summary["daily_stop"] == 2.0
+    assert portfolio.placed == []
+
+
+def test_settlement_finds_decisions_beyond_newest_1000(db, monkeypatch):
+    monkeypatch.setattr(kalshi_demo, "_settle_prod_fills", _REAL_SETTLE)
+    seed_rows(db, [{"series": WTI, "target": "kalshi:old", "outcome": 1,
+                    "close_time": "2026-11-01T16:00:00+00:00"}]
+              + [{"series": WTI, "target": f"kalshi:n{i}", "outcome": 0,
+                  "close_time": "2026-11-23T16:00:00+00:00"}
+                 for i in range(1001)], table=lane.DECISIONS)
+    seed_rows(db, [{"series": WTI, "target": "kalshi:old", "side": "yes",
+                    "status": "would_fill", "would_price": 0.40,
+                    "contracts": 1, "outcome": None,
+                    "gate_version": lane.LANE}], table=lane.PROD_FILLS)
+    summary = lane.run_once(db, FakeLivePortfolio(), NOW)
+    assert summary["prod_settled"] == 1
+
+
+def test_executed_reads_dollar_total_fields():
+    price, fee, flag = lane._executed(
+        {"taker_fill_cost_dollars": "0.7600", "taker_fees_dollars": "0.0300"},
+        "yes", 2, 0.40)
+    assert (price, fee, flag) == (0.38, 0.03, None)
+
+
+def test_select_all_has_stable_order(db):
+    seed_rows(db, [order_row(target=f"kalshi:t{i}", ticker=f"t{i}",
+                             created_at="2026-11-23T15:00:00+00:00")
+                   for i in range(3)])
+    rows = lane._select_all(db, lane.ORDERS, page=2)
+    assert [r["id"] for r in rows] == [3, 2, 1]
+
 
 
 # -- review majors, round 2 (PR #591) -------------------------------------------
@@ -612,22 +671,27 @@ def test_scoreboard_totals_cover_all_rows(db):
                              ticker=f"s{i}", contracts_requested=0,
                              created_at="2026-11-22T15:00:00+00:00")
                    for i in range(1005)])
-    board = lane.build_scoreboard(db, NOW, portfolio=FakeLivePortfolio())
+    board = lane.build_scoreboard(db, NOW, admin=True)
     assert board["pnl_since_start"] == 0.58
     assert board["fills"] == 1 and board["settled"] == 1
     assert len(board["orders"]) == 12
 
 
-def test_scoreboard_live_balance_read_is_short_and_fail_soft(db, monkeypatch):
+def test_scoreboard_reads_stored_balance_and_hides_dollars_publicly(
+        db, monkeypatch):
     from tradehub.core import kalshi_live_portfolio as klp
-    seen = {}
 
-    class SlowLive:
-        def get_balance(self, timeout=10):
-            seen["timeout"] = timeout
-            raise TimeoutError("slow")
+    def no_exchange(*a, **k):
+        raise AssertionError("scoreboard must not call the exchange")
     monkeypatch.setattr(klp, "check_live_available", lambda: True)
-    monkeypatch.setattr(klp, "KalshiLivePortfolio", SlowLive)
-    board = lane.build_scoreboard(db, NOW)
-    assert board["balance"] is None
-    assert seen["timeout"] <= 2
+    monkeypatch.setattr(klp, "KalshiLivePortfolio", no_exchange)
+    seed_open(db, [])
+    lane.run_once(db, FakeLivePortfolio(balance_cents=1234), NOW)
+    seed_rows(db, [order_row(status="settled", contracts_filled=1,
+                             fill_price=0.40, pnl=0.58, fee_usd=0.02)])
+    admin = lane.build_scoreboard(db, NOW, admin=True)
+    assert admin["balance"] == 12.34 and admin["pnl_since_start"] == 0.58
+    public = lane.build_scoreboard(db, NOW)
+    assert public["balance"] is None and public["pnl_since_start"] is None
+    assert public["orders"][0]["pnl"] is None
+    assert public["fills"] == 1

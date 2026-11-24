@@ -164,7 +164,7 @@ def _select_all(supa, table: str, page: int = 1000) -> list[dict]:
     out: list[dict] = []
     while True:
         got = (supa.table(table).select("*").order("created_at", desc=True)
-               .range(len(out), len(out) + page - 1).execute().data) or []
+               .order("id", desc=True).range(len(out), len(out) + page - 1).execute().data) or []
         out.extend(got)
         if len(got) < page:
             return out
@@ -174,9 +174,9 @@ def _update(supa, row: dict, patch: dict) -> None:
     (supa.table(ORDERS).update(patch).eq("id", row["id"]).execute())
 
 
-def _balance_usd(portfolio, **kw) -> float | None:
+def _balance_usd(portfolio) -> float | None:
     try:
-        got = portfolio.get_balance(**kw)
+        got = portfolio.get_balance()
     except Exception:  # noqa: BLE001 -- a dead read is a skip, not a crash
         return None
     if not got or got.get("balance") is None:
@@ -454,14 +454,16 @@ def _executed(order: dict, side: str, filled: int,
               limit: float) -> tuple[float, float, str | None]:
     """(fill price, fee usd, flag) from the create response: V2's
     average_fill_price (YES-leg dollars) and average_fee_paid (per
-    contract), else the legacy taker_fill_cost / taker_fees (cents,
-    order totals). A price outside (0, limit] or a missing field falls
+    contract), else taker_fill_cost_dollars / taker_fees_dollars (order
+    totals), else the legacy taker_fill_cost / taker_fees (cents). A price outside (0, limit] or a missing field falls
     back to the limit / the computed fee, flagged -- the limit is the
     worst an IOC buy can fill at."""
     flags = []
     try:
         if order.get("average_fill_price") is not None:
             price = _side_price(float(order["average_fill_price"]), side)
+        elif order.get("taker_fill_cost_dollars") is not None:
+            price = float(order["taker_fill_cost_dollars"]) / filled
         else:
             price = float(order["taker_fill_cost"]) / 100.0 / filled
     except (TypeError, ValueError, KeyError):
@@ -472,6 +474,8 @@ def _executed(order: dict, side: str, filled: int,
     try:
         if order.get("average_fee_paid") is not None:
             fee = round(float(order["average_fee_paid"]) * filled, 4)
+        elif order.get("taker_fees_dollars") is not None:
+            fee = float(order["taker_fees_dollars"])
         else:
             fee = float(order["taker_fees"]) / 100.0
     except (TypeError, ValueError, KeyError):
@@ -730,12 +734,14 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     # observer rows; fail-soft, observation never breaks the pass.
     try:
         from tradehub import kalshi_demo
+        # The decisions for exactly the pending observations, any series.
+        targets = sorted({r["target"]
+                          for r in kalshi_demo._unsettled_would_fills(supa)})
         tracked: dict[str, dict] = {}
-        for name, _v, _l in rule.SERIES:  # all three locked series
-            tracked.update({d["target"]: d for d in _select(
-                supa, DECISIONS,
-                {"series": fifteen_tracking._BY_NAME[name]["series"]},
-                order="close_time", desc=True, limit=1000)})
+        for i in range(0, len(targets), 200):
+            tracked.update({d["target"]: d for d in (
+                supa.table(DECISIONS).select("*")
+                .in_("target", targets[i:i + 200]).execute().data or [])})
         kalshi_demo._settle_prod_fills(supa, tracked, now, summary)
     except Exception as exc:  # noqa: BLE001
         summary["errors"].append(f"prod settle: {exc}")
@@ -759,6 +765,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         summary["balance_unavailable"] = True
         return summary
     summary["balance"] = balance
+    _set_state(supa, state, {"balance": {"usd": balance, "at": _iso(now)}})
     if balance < FLOOR_USD:
         _halt(supa, state, "floor", now)
         summary["halted"] = "floor"
@@ -776,7 +783,8 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     todays = [r for r in rows if _dt(r["created_at"]) >= day_start]
     session = now.astimezone(ET).date()
     settled_today = [r for r in rows if r["status"] == "settled"
-                     and _dt(r["window_close"]).astimezone(ET).date() == session]
+                     and _dt(r.get("settled_at") or r["window_close"])
+                     .astimezone(ET).date() == session]
     session_loss = sum(-float(r["pnl"]) for r in settled_today
                        if (r.get("pnl") or 0) < 0)
     if session_loss >= DAILY_STOP_USD:
@@ -891,10 +899,6 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                     continue
 
         _observe_prod_live(supa, d, base_row, contracts, prod_keys, summary)
-        elapsed = timedelta(seconds=time.monotonic() - started)
-        if now + elapsed > _dt(d["close_time"]) - CANCEL_BUFFER:
-            skip("skipped_no_depth", "close_buffer")
-            continue
 
         claim = {**base_row, "contracts_requested": contracts,
                  "contracts_filled": 0, "live_ask": price,
@@ -908,6 +912,17 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
             summary["errors"].append(f"claim {d['target']}: {exc}")
             continue
         by_key[(d["series"], d["target"])] = row
+        # The clock is read again right before the send: the reads and
+        # the claim take time, and an IOC carries no expiry.
+        elapsed = timedelta(seconds=time.monotonic() - started)
+        if now + elapsed > _dt(d["close_time"]) - CANCEL_BUFFER:
+            patch = {"status": "skipped_no_depth", "contracts_requested": 0,
+                     "skip_reason": "close_buffer"}
+            if row.get("id") is not None:
+                _update(supa, row, patch)
+            row.update(patch)
+            summary["skipped_no_depth"] += 1
+            continue
         # Reserve before the exchange write and keep it if create raises:
         # a response can be lost after acceptance.
         contracts_today += contracts
@@ -983,17 +998,17 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
 
 # -- the scoreboard ---------------------------------------------------------------
 
-def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
+def build_scoreboard(supa, now: datetime, admin: bool = False) -> dict:
     """The live lane's scoreboard block for the Kalshi page: balance
     and P&L, fill rate and mean slippage against the frozen paper
     price, live net per contract with its day-clustered low95 beside
     the paper twin's on the same windows, latency, gate and halt
     states. Read-only and fail-soft: an unapplied table or a missing
-    key reads as the lane's state, never an error."""
-    from tradehub.core.kalshi_live_portfolio import (
-        check_live_available,
-        live_enabled,
-    )
+    key reads as the lane's state, never an error. No exchange call:
+    the balance is the one the last pass stored. Dollar balance and
+    P&L only for an admin request (public routes carry no
+    account-derived dollars)."""
+    from tradehub.core.kalshi_live_portfolio import live_enabled
     try:
         state = _get_state(supa)
     except Exception:  # noqa: BLE001 -- the board shows it, never breaks
@@ -1003,18 +1018,7 @@ def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
     except Exception:  # noqa: BLE001 -- table not applied yet
         rows = []
     halt = state.get("halt") or {}
-    balance = None
-    if portfolio is not None:
-        balance = _balance_usd(portfolio)
-    elif check_live_available():
-        try:
-            from tradehub.core.kalshi_live_portfolio import (
-                KalshiLivePortfolio,
-            )
-            # A short timeout keeps /api/kalshi-demo off a slow live read.
-            balance = _balance_usd(KalshiLivePortfolio(), timeout=2)
-        except Exception:  # noqa: BLE001 -- a scoreboard read never breaks
-            balance = None
+    balance = (state.get("balance") or {}).get("usd")
 
     sent = [r for r in rows if r["status"] in SENT_STATUSES]
     filled_rows = [r for r in rows if int(r.get("contracts_filled") or 0) > 0]
@@ -1034,7 +1038,7 @@ def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
                        if r.get("latency_s") is not None)
     gate1 = state.get("gate1") or {}
     gate2 = state.get("gate2") or {}
-    return {
+    board = {
         "state": ("halted" if halt.get("halted")
                   else "live" if live_enabled() else "not_enabled"),
         "real_money": True,
@@ -1095,3 +1099,10 @@ def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
             "window_close": r.get("window_close"),
         } for r in rows[:12]],
     }
+    if not admin:
+        board["balance"] = board["pnl_since_start"] = None
+        for o in board["orders"]:
+            o["pnl"] = o["fee_usd"] = None
+    else:
+        board["balance_at"] = (state.get("balance") or {}).get("at")
+    return board

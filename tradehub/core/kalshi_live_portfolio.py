@@ -143,14 +143,12 @@ class KalshiLivePortfolio:
             "Content-Type": "application/json",
         }
 
-    def _get(self, endpoint: str, params: dict | None = None,
-             timeout: float = 10):
+    def _get(self, endpoint: str, params: dict | None = None):
         path = f"/trade-api/v2{endpoint}"
         url = f"{self.base_url}{endpoint}"
         headers = self._sign_request("GET", path)
         try:
-            r = requests.get(url, headers=headers, params=params,
-                             timeout=timeout)
+            r = requests.get(url, headers=headers, params=params, timeout=10)
             if r.status_code == 200:
                 return r.json()
             if "/markets/" not in endpoint:
@@ -205,9 +203,9 @@ class KalshiLivePortfolio:
 
     # -- reads -----------------------------------------------------------
 
-    def get_balance(self, timeout: float = 10):
+    def get_balance(self):
         """Account balance: {'balance': cents, ...} or None."""
-        return self._get("/portfolio/balance", timeout=timeout)
+        return self._get("/portfolio/balance")
 
     def get_market_data(self, ticker: str):
         return self._get(f"/markets/{ticker}")

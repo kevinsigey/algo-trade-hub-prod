@@ -26,7 +26,11 @@ class Q:
         return self
 
     def order(self, col, desc=False):
-        self.sort = (col, desc)
+        self.sorts = [*getattr(self, "sorts", []), (col, desc)]
+        return self
+
+    def in_(self, col, vals):
+        self.ins = [*getattr(self, "ins", []), (col, set(vals))]
         return self
 
     def range(self, lo, hi):
@@ -72,8 +76,9 @@ class Q:
         if self.patch is not None:
             for r in out:
                 r.update(self.patch)
-        if self.sort:
-            out.sort(key=lambda r: r[self.sort[0]], reverse=self.sort[1])
+        out = [r for r in out if all(r.get(c) in v for c, v in getattr(self, "ins", []))]
+        for col, desc in reversed(getattr(self, "sorts", [])):  # stable: last key first
+            out.sort(key=lambda r: r[col], reverse=desc)
         if getattr(self, "bounds", None):
             out = out[self.bounds[0]:self.bounds[1] + 1]
         return type("R", (), {"data": out})()

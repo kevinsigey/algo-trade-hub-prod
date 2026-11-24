@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from tradehub.api.schemas import (
@@ -154,7 +154,8 @@ def get_portfolio(book: str = "main", supabase=Depends(get_supabase)):
 
 
 @router.get("/api/kalshi-demo", tags=["Portfolio"])
-def get_kalshi_demo(supabase=Depends(get_supabase)):
+def get_kalshi_demo(authorization: str | None = Header(None),
+                    supabase=Depends(get_supabase)):
     """The Kalshi DEMO book behind the Portfolio page's third tab: the live
     demo balance and positions (cached ~15s in kalshi_demo.live_summary)
     plus the demo runner's own record against the shadow record for the
@@ -167,6 +168,14 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
         check_portfolio_available,
     )
 
+    # Public route: the live pilot's dollar balance and P&L only for
+    # Kevin's admin session (no account-derived dollars in public).
+    try:
+        is_admin = isinstance(authorization, str) and bool(
+            admin.require_admin(authorization, supabase))
+    except Exception:  # noqa: BLE001 -- any failure reads as public
+        is_admin = False
+
     def with_live_pilot(payload: dict) -> dict:
         # The live micro-pilot's scoreboard rides every payload shape:
         # the lane is independent of the demo connection, and its read
@@ -175,7 +184,7 @@ def get_kalshi_demo(supabase=Depends(get_supabase)):
         try:
             from tradehub import kalshi_live_lane
             payload["live_pilot"] = kalshi_live_lane.build_scoreboard(
-                supabase, datetime.now(timezone.utc))
+                supabase, datetime.now(timezone.utc), admin=is_admin)
         except Exception:  # noqa: BLE001
             payload["live_pilot"] = {"state": "unavailable",
                                      "real_money": True}

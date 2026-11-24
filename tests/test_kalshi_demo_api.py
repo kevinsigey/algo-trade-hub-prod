@@ -255,3 +255,18 @@ def test_endpoint_refuses_a_non_demo_host(monkeypatch):
     assert out["state"] == "not_connected"
     # The guard fired before any account read reached the live host.
     assert instance.balance_calls == 0
+
+
+def test_live_pilot_dollars_only_for_admin(monkeypatch):
+    from tradehub.api import admin
+    monkeypatch.setattr(
+        "tradehub.core.kalshi_portfolio.check_portfolio_available",
+        lambda: False)
+    db = DB()
+    db.db["kalshi_live_state"] = [{"key": "balance", "value": {"usd": 12.34}}]
+    public = main.get_kalshi_demo(authorization=None, supabase=db)
+    assert public["live_pilot"]["balance"] is None
+    monkeypatch.setattr(admin, "require_admin",
+                        lambda authorization, supabase: {"email": "k"})
+    kevin = main.get_kalshi_demo(authorization="Bearer t", supabase=db)
+    assert kevin["live_pilot"]["balance"] == 12.34
