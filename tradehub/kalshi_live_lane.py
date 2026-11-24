@@ -252,6 +252,13 @@ def _alert(supa, *, target: str, event: str, title: str, body: str,
 
 # -- the raw decisions ---------------------------------------------------------
 
+# Kevin, 2026-11-24 (prereg amendment, issue #590): no new live buys on
+# natural gas. The model reads the Hyperliquid perp but Kalshi settles on
+# Pyth, and since Nov 10 gas lost 22 trades the perp said it won (1 the
+# other way). Open gas rows still settle; lift this when the basis is fixed.
+PAUSED_SERIES = frozenset({"KXNATGAS15M"})
+
+
 def raw_open_decisions(supa, now: datetime) -> list[dict]:
     """The RAW rule's buys for windows still open, from the same
     first-frozen reads the paper record uses: rule.pick (the gross
@@ -261,6 +268,8 @@ def raw_open_decisions(supa, now: datetime) -> list[dict]:
     lo, hi = now + CANCEL_BUFFER, now + timedelta(minutes=15)
     for name, version, _label in rule.SERIES:
         series = fifteen_tracking._BY_NAME[name]["series"]
+        if series in PAUSED_SERIES:
+            continue
         targets = [t for t in fifteen_tracking.fetch_targets(supa, name, lo, hi)
                    if _dt(t["cutoff_at"]) > lo]
         if not targets:
