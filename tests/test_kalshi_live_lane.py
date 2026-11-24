@@ -529,3 +529,105 @@ def test_close_buffer_rechecked_before_send(db, monkeypatch):
     lane.run_once(db, portfolio, NOW)
     assert portfolio.placed == []
     assert db.db[lane.ORDERS][0]["skip_reason"] == "close_buffer"
+
+
+# -- review majors, round 2 (PR #591) -------------------------------------------
+
+def test_adopted_ioc_resolved_from_order_record(db):
+    seed_rows(db, [
+        order_row(status="pending", kalshi_order_id=None, live_ask=0.40,
+                  client_order_id="kl-a", target="kalshi:KXWTI15M-a",
+                  ticker="KXWTI15M-a",
+                  window_close=(NOW + timedelta(minutes=5)).isoformat()),
+        order_row(status="pending", kalshi_order_id=None, live_ask=0.40,
+                  client_order_id="kl-b", target="kalshi:KXWTI15M-b",
+                  ticker="KXWTI15M-b",
+                  window_close=(NOW + timedelta(minutes=5)).isoformat()),
+    ])
+    portfolio = FakeLivePortfolio()
+    portfolio.get_orders = lambda status=None: [
+        {"order_id": "o-a", "client_order_id": "kl-a", "status": "canceled",
+         "fill_count": "0.00"},
+        {"order_id": "o-b", "client_order_id": "kl-b", "status": "executed",
+         "fill_count": "1.00", "average_fill_price": "0.3800",
+         "average_fee_paid": "0.0200"}]
+    lane.run_once(db, portfolio, NOW)
+    by_t = {r["ticker"]: r for r in db.db[lane.ORDERS]}
+    assert by_t["KXWTI15M-a"]["status"] == "unfilled"
+    b = by_t["KXWTI15M-b"]
+    assert b["status"] == "filled" and b["contracts_filled"] == 1
+    assert b["fill_price"] == 0.38 and b["fee_usd"] == 0.02
+
+
+class OneStateWriteDB(DB):
+    """Every state write after the first fails, like a crash between
+    two writes."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = 0
+
+    def table(self, name):
+        q = super().table(name)
+        if name != lane.STATE_TABLE:
+            return q
+        real = q.execute
+        outer = self
+
+        def execute():
+            if (q.row is not None or q.patch is not None
+                    or getattr(q, "upserts", None) is not None):
+                outer.writes += 1
+                if outer.writes > 1:
+                    raise RuntimeError("crash")
+            return real()
+        q.execute = execute
+        return q
+
+
+def test_failed_gate_and_halt_land_in_one_write():
+    db = OneStateWriteDB()
+    _seed_filled(db, 50, 0.43)
+    lane.run_once(db, FakeLivePortfolio(), NOW)
+    state = {r["key"]: r["value"] for r in db.db[lane.STATE_TABLE]}
+    assert state["gate1"]["result"] == "halt"
+    assert state["halt"]["reason"] == "execution_gate"
+
+
+def test_edge_gate_pass_and_unlock_land_in_one_write():
+    db = OneStateWriteDB()
+    db.db[lane.STATE_TABLE] = [{"key": "gate1", "value": {"result": "pass"}}]
+    _seed_settled(db, 150, 0.05)
+    lane.run_once(db, FakeLivePortfolio(), NOW)
+    state = {r["key"]: r["value"] for r in db.db[lane.STATE_TABLE]}
+    assert state["gate2"]["result"] == "pass"
+    assert state["stage3"]["unlocked"] is True
+
+
+def test_scoreboard_totals_cover_all_rows(db):
+    seed_rows(db, [order_row(status="settled", contracts_filled=1,
+                             fill_price=0.40, pnl=0.58, paper_pnl=0.58,
+                             created_at="2026-11-01T15:00:00+00:00")])
+    seed_rows(db, [order_row(status="skipped_cap", target=f"kalshi:s{i}",
+                             ticker=f"s{i}", contracts_requested=0,
+                             created_at="2026-11-22T15:00:00+00:00")
+                   for i in range(1005)])
+    board = lane.build_scoreboard(db, NOW, portfolio=FakeLivePortfolio())
+    assert board["pnl_since_start"] == 0.58
+    assert board["fills"] == 1 and board["settled"] == 1
+    assert len(board["orders"]) == 12
+
+
+def test_scoreboard_live_balance_read_is_short_and_fail_soft(db, monkeypatch):
+    from tradehub.core import kalshi_live_portfolio as klp
+    seen = {}
+
+    class SlowLive:
+        def get_balance(self, timeout=10):
+            seen["timeout"] = timeout
+            raise TimeoutError("slow")
+    monkeypatch.setattr(klp, "check_live_available", lambda: True)
+    monkeypatch.setattr(klp, "KalshiLivePortfolio", SlowLive)
+    board = lane.build_scoreboard(db, NOW)
+    assert board["balance"] is None
+    assert seen["timeout"] <= 2

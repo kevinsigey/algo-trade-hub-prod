@@ -158,13 +158,25 @@ def _select(supa, table: str, filters: dict, order: str | None = None,
     return query.limit(limit).execute().data or []
 
 
+def _select_all(supa, table: str, page: int = 1000) -> list[dict]:
+    """Every row, newest first, read in pages (a capped read would drop
+    the oldest rows from cumulative totals and gate counts)."""
+    out: list[dict] = []
+    while True:
+        got = (supa.table(table).select("*").order("created_at", desc=True)
+               .range(len(out), len(out) + page - 1).execute().data) or []
+        out.extend(got)
+        if len(got) < page:
+            return out
+
+
 def _update(supa, row: dict, patch: dict) -> None:
     (supa.table(ORDERS).update(patch).eq("id", row["id"]).execute())
 
 
-def _balance_usd(portfolio) -> float | None:
+def _balance_usd(portfolio, **kw) -> float | None:
     try:
-        got = portfolio.get_balance()
+        got = portfolio.get_balance(**kw)
     except Exception:  # noqa: BLE001 -- a dead read is a skip, not a crash
         return None
     if not got or got.get("balance") is None:
@@ -181,23 +193,27 @@ def _get_state(supa) -> dict[str, Any]:
     return {r["key"]: (r.get("value") or {}) for r in rows}
 
 
-def _set_state(supa, state: dict, key: str, value: dict) -> None:
-    state[key] = value
+def _set_state(supa, state: dict, values: dict[str, dict]) -> None:
+    """Every key in ONE upsert: a gate result and its halt (or unlock)
+    land together or not at all. A failed write leaves the gate
+    unrecorded, so the next pass re-evaluates it."""
+    state.update(values)
+    at = _iso(datetime.now(timezone.utc))
     try:
-        patch = {"value": value,
-                 "updated_at": _iso(datetime.now(timezone.utc))}
-        if _select(supa, STATE_TABLE, {"key": key}, limit=1):
-            (supa.table(STATE_TABLE).update(patch)
-             .eq("key", key).execute())
-        else:
-            supa.table(STATE_TABLE).insert({"key": key, **patch}).execute()
+        (supa.table(STATE_TABLE)
+         .upsert([{"key": k, "value": v, "updated_at": at}
+                  for k, v in values.items()], on_conflict="key")
+         .execute())
     except Exception:  # noqa: BLE001 -- the in-memory copy still guards this pass
         pass
 
 
+def _halt_value(reason: str, now: datetime) -> dict:
+    return {"halted": True, "reason": reason, "at": _iso(now)}
+
+
 def _halt(supa, state: dict, reason: str, now: datetime) -> None:
-    _set_state(supa, state, "halt", {"halted": True, "reason": reason,
-                                     "at": _iso(now)})
+    _set_state(supa, state, {"halt": _halt_value(reason, now)})
 
 
 # -- alerts -------------------------------------------------------------------
@@ -466,6 +482,30 @@ def _executed(order: dict, side: str, filled: int,
     return price, fee, ",".join(flags) or None
 
 
+def _resolve_adopted(order: dict, row: dict) -> dict:
+    """Status / fill patch for an adopted order from its exchange record.
+    Only a terminal record (executed or canceled) with a readable fill
+    count resolves; anything else stays pending for the next pass."""
+    if order.get("status") not in ("executed", "canceled"):
+        return {}
+    try:
+        filled = int(float(order.get("fill_count",
+                                     order.get("fill_count_fp"))))
+    except (TypeError, ValueError):
+        return {}
+    if filled <= 0:
+        return {"status": "unfilled", "contracts_filled": 0,
+                "skip_reason": "ioc_unfilled"}
+    limit = float(row.get("live_ask") or row["frozen_quote"])
+    price, fee, flag = _executed(order, row["side"], filled, limit)
+    patch = {"status": "filled", "contracts_filled": filled,
+             "fill_price": price, "fee_usd": fee,
+             "slippage": round(price - float(row["frozen_quote"]), 4)}
+    if flag:
+        patch["last_error"] = flag
+    return patch
+
+
 def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
                summary: dict) -> None:
     """Close out placed rows: adopt fill counts from the exchange's
@@ -494,8 +534,10 @@ def _reconcile(supa, portfolio, rows: list[dict], now: datetime,
         for r in missing if by_client is not None else []:
             found = by_client.get(r.get("client_order_id"))
             if found and found.get("order_id"):
-                _update(supa, r, {"kalshi_order_id": found["order_id"]})
-                r["kalshi_order_id"] = found["order_id"]
+                patch = {"kalshi_order_id": found["order_id"],
+                         **_resolve_adopted(found, r)}
+                _update(supa, r, patch)
+                r.update(patch)
     # An unread order book never proves a claim was never placed.
     missing_read_ok = not missing or by_client is not None
     fills = _fills_by_order(portfolio)
@@ -596,13 +638,14 @@ def _evaluate_gates(supa, state: dict, rows: list[dict], now: datetime,
         mean_slip = sum(slips) / len(slips)
         fill_rate = len(filled_rows) / len(sent) if sent else None
         tripped = mean_slip > GATE1_MAX_SLIPPAGE * 100.0
-        _set_state(supa, state, "gate1", {
+        values = {"gate1": {
             "result": "halt" if tripped else "pass",
             "mean_slippage_cents": round(mean_slip, 2),
             "fill_rate": None if fill_rate is None else round(fill_rate, 4),
-            "fills": len(filled_rows), "at": _iso(now)})
+            "fills": len(filled_rows), "at": _iso(now)}}
         if tripped:
-            _halt(supa, state, "execution_gate", now)
+            values["halt"] = _halt_value("execution_gate", now)
+        _set_state(supa, state, values)
         _alert(supa, target="gate1", event="gate1_halt" if tripped else "gate1_pass",
                title=("Kalshi live pilot HALTED: execution gate"
                       if tripped else "Kalshi live pilot: execution gate passed"),
@@ -623,15 +666,15 @@ def _evaluate_gates(supa, state: dict, rows: list[dict], now: datetime,
     if "gate2" not in state and len(settled) >= GATE2_TRADES:
         low = clustered_low95(_per_contract_items(settled))
         tripped = low is not None and low < 0
-        _set_state(supa, state, "gate2", {
+        values = {"gate2": {
             "result": "halt" if tripped else "pass",
             "low95_cents": None if low is None else round(low, 2),
-            "settled": len(settled), "at": _iso(now)})
+            "settled": len(settled), "at": _iso(now)}}
         if tripped:
-            _halt(supa, state, "edge_gate", now)
+            values["halt"] = _halt_value("edge_gate", now)
         else:
-            _set_state(supa, state, "stage3", {"unlocked": True,
-                                               "at": _iso(now)})
+            values["stage3"] = {"unlocked": True, "at": _iso(now)}
+        _set_state(supa, state, values)
         _alert(supa, target="gate2", event="gate2_halt" if tripped else "gate2_pass",
                title=("Kalshi live pilot HALTED: edge gate"
                       if tripped else "Kalshi live pilot: edge gate passed"),
@@ -679,7 +722,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                      "is placed while the read fails. Real money account."),
                evidence={"error": str(exc)[:300]})
         return summary
-    rows = _select(supa, ORDERS, {}, order="created_at", desc=True, limit=1000)
+    rows = _select_all(supa, ORDERS)
     _reconcile(supa, portfolio, rows, now, summary)
     _evaluate_gates(supa, state, rows, now, summary)
 
@@ -956,8 +999,7 @@ def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
     except Exception:  # noqa: BLE001 -- the board shows it, never breaks
         state = {"halt": {"halted": True, "reason": "state_unreadable"}}
     try:
-        rows = _select(supa, ORDERS, {}, order="created_at", desc=True,
-                       limit=1000)
+        rows = _select_all(supa, ORDERS)
     except Exception:  # noqa: BLE001 -- table not applied yet
         rows = []
     halt = state.get("halt") or {}
@@ -969,7 +1011,8 @@ def build_scoreboard(supa, now: datetime, portfolio=None) -> dict:
             from tradehub.core.kalshi_live_portfolio import (
                 KalshiLivePortfolio,
             )
-            balance = _balance_usd(KalshiLivePortfolio())
+            # A short timeout keeps /api/kalshi-demo off a slow live read.
+            balance = _balance_usd(KalshiLivePortfolio(), timeout=2)
         except Exception:  # noqa: BLE001 -- a scoreboard read never breaks
             balance = None
 

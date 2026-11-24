@@ -143,12 +143,14 @@ class KalshiLivePortfolio:
             "Content-Type": "application/json",
         }
 
-    def _get(self, endpoint: str, params: dict | None = None):
+    def _get(self, endpoint: str, params: dict | None = None,
+             timeout: float = 10):
         path = f"/trade-api/v2{endpoint}"
         url = f"{self.base_url}{endpoint}"
         headers = self._sign_request("GET", path)
         try:
-            r = requests.get(url, headers=headers, params=params, timeout=10)
+            r = requests.get(url, headers=headers, params=params,
+                             timeout=timeout)
             if r.status_code == 200:
                 return r.json()
             if "/markets/" not in endpoint:
@@ -203,9 +205,9 @@ class KalshiLivePortfolio:
 
     # -- reads -----------------------------------------------------------
 
-    def get_balance(self):
+    def get_balance(self, timeout: float = 10):
         """Account balance: {'balance': cents, ...} or None."""
-        return self._get("/portfolio/balance")
+        return self._get("/portfolio/balance", timeout=timeout)
 
     def get_market_data(self, ticker: str):
         return self._get(f"/markets/{ticker}")
@@ -216,12 +218,28 @@ class KalshiLivePortfolio:
             return data.get("order", data)
         return None
 
-    def get_orders(self, status: str | None = None) -> list:
-        params = {"status": status} if status else None
-        data = self._get("/portfolio/orders", params=params)
-        if data is None:  # an unread book never reads as 'no orders'
-            raise RuntimeError("Kalshi live orders read failed")
-        return data.get("orders", [])
+    def get_orders(self, status: str | None = None,
+                   max_pages: int = 20) -> list:
+        """Every order, cursor-paged to the end. A failed or unfinished
+        search raises: an incomplete search never reads as 'not
+        placed'."""
+        orders: list = []
+        cursor = None
+        for _ in range(max_pages):
+            params = {"limit": 200}
+            if status:
+                params["status"] = status
+            if cursor:
+                params["cursor"] = cursor
+            data = self._get("/portfolio/orders", params=params)
+            if data is None:
+                raise RuntimeError("Kalshi live orders read failed")
+            orders.extend(data.get("orders") or [])
+            cursor = data.get("cursor")
+            if not cursor:
+                return orders
+        raise RuntimeError("Kalshi live orders search incomplete "
+                           f"after {max_pages} pages")
 
     def get_fills(self, limit: int = 200) -> list:
         """Recent fills. A failed request raises instead of reading as

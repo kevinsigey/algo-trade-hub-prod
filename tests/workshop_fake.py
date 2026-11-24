@@ -41,12 +41,24 @@ class Q:
         self.row = row
         return self
 
+    def upsert(self, rows, on_conflict):
+        self.upserts, self.conflict = rows, on_conflict
+        return self
+
     def update(self, patch):
         self.patch = patch
         return self
 
     def execute(self):
         rows = self.db.setdefault(self.table, [])
+        if getattr(self, "upserts", None) is not None:
+            for u in self.upserts:
+                hit = [r for r in rows if r.get(self.conflict) == u[self.conflict]]
+                if hit:
+                    hit[0].update(u)
+                else:
+                    rows.append({"id": len(rows) + 1, **u})
+            return type("R", (), {"data": self.upserts})()
         if self.row is not None:
             new = []
             for r in self.row if isinstance(self.row, list) else [self.row]:

@@ -110,3 +110,16 @@ def test_failed_orders_and_positions_reads_raise(key_file, monkeypatch):
         client.get_orders()
     with pytest.raises(RuntimeError):
         client.get_positions()
+
+
+def test_get_orders_pages_to_the_end_or_raises(key_file, monkeypatch):
+    client = _client(key_file)
+    pages = {None: {"orders": [{"order_id": "a"}], "cursor": "c2"},
+             "c2": {"orders": [{"order_id": "b"}], "cursor": ""}}
+    monkeypatch.setattr(client, "_get", lambda ep, params=None, **k:
+                        pages[params.get("cursor")])
+    assert [o["order_id"] for o in client.get_orders()] == ["a", "b"]
+    monkeypatch.setattr(client, "_get", lambda ep, params=None, **k:
+                        {"orders": [], "cursor": "again"})
+    with pytest.raises(RuntimeError):
+        client.get_orders()
