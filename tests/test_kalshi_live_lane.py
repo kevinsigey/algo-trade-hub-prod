@@ -865,3 +865,19 @@ def test_provisional_row_combines_fills_split_across_endpoints(db):
     assert row["contracts_filled"] == 2
     assert row["fill_price"] == 0.37 and row["fee_usd"] == 0.02
     assert row["last_error"] is None
+
+
+_REAL_RAW_OPEN = lane.raw_open_decisions  # the autouse seam patches it per test
+
+
+def test_paused_series_get_no_new_live_decisions(monkeypatch):
+    from datetime import datetime, timezone
+    from tradehub import fifteen_tracking
+    seen = []
+    monkeypatch.setattr(fifteen_tracking, "fetch_targets",
+                        lambda supa, name, lo, hi: seen.append(
+                            fifteen_tracking._BY_NAME[name]["series"]) or [])
+    _REAL_RAW_OPEN(None, datetime(2026, 11, 24, 16, 0, tzinfo=timezone.utc))
+    assert "KXNATGAS15M" in lane.PAUSED_SERIES
+    assert "KXNATGAS15M" not in seen
+    assert {"KXWTI15M", "KXBRENT15M"} <= set(seen)
