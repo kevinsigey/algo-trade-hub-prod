@@ -382,19 +382,20 @@ export function ByIdeaCard({ rows, equity, liveIdeas, book }: {
   const split = closed?.results_split;
   return (
     <DashCard title="By idea" className="md:col-span-2" value={cards.length}
-              meta={split ? <>Tested <span className={tone(split.tested.pnl)}>{signed(split.tested.pnl)}</span> · Discretionary <span className={tone(split.discretionary.pnl)}>{signed(split.discretionary.pnl)}</span></> : undefined}
+              sub={split ? <>Tested <span className={tone(split.tested.pnl)}>{signed(split.tested.pnl)}</span> · Disc. <span className={tone(split.discretionary.pnl)}>{signed(split.discretionary.pnl)}</span></> : undefined}
               detail={<ByIdeaTable cards={cards} rows={rows} realizedByIdea={realizedByIdea} closed={closed} />}
               detailTitle={`By idea · ${cards.length} ideas`}>
       <ul className="divide-y divide-slate-800/70 text-xs tabular-nums" data-peek="">
         {cards.slice(0, PEEK).map((c) => (
           <li key={c.idea} className={`flex items-baseline gap-2 py-1 ${c.id == null && c.idea.endsWith("(manual)") ? "text-slate-400" : "text-slate-200"}`}>
             <span className="min-w-0 font-medium"><IdeaName c={c} raised /></span>
-            <span className="shrink-0 text-slate-500">{c.pct != null ? `${c.pct.toFixed(1)}%` : "—"}</span>
+            <span className="shrink-0 text-slate-500">{c.pct != null ? `${c.pct.toFixed(1)}%` : "—"} · {c.positions} pos</span>
             <span className={`ml-auto shrink-0 ${tone(c.unrealized)}`}>{c.positions && c.unrealized != null ? signed(c.unrealized) : "—"}</span>
           </li>
         ))}
         {cards.length === 0 && <li className="py-1 text-slate-500">No ideas holding anything</li>}
       </ul>
+      {cards.length > 0 && <p className="mt-1 text-xs text-slate-400">Show all {cards.length}</p>}
     </DashCard>
   );
 }

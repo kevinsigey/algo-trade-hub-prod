@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import { Maximize2, TriangleAlert } from "lucide-react";
-
-import { FullView } from "@/components/Panel";
+import { TriangleAlert } from "lucide-react";
 
 import { ctDateTime } from "@/lib/format";
 import {
@@ -12,7 +10,7 @@ import {
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
 import { ApiError } from "@/lib/workshop";
-import { adminCall, money, pollWhileVisible, signed } from "./shared";
+import { adminCall, DashCard, money, pollWhileVisible, signed } from "./shared";
 
 /** The account's figures (cash, buying power, exposure, P&L, margin,
  * breaker) -- the Book tab's Account card shows them; the header stays one row. */
@@ -59,50 +57,53 @@ const CHECK_OUTCOME_TONE: Record<string, string> = {
   pass: "text-emerald-300", warn: "text-amber-300", block: "text-rose-300", unavailable: "text-slate-400",
 };
 
-/** What in the check needs attention, as one-line chips (2026-11-12
- * redesign): an over-cap sleeve or member, a member under its floor, the
- * gold cluster over its flag. Quiet sleeves stay out of the strip. */
-export function checkChips(state: PortfolioCheckState): string[] {
-  const chips: string[] = [];
+export type CheckIssue = { key: string; who: string; issue: string; size: string; over: boolean };
+
+/** What in the check needs attention, one short row each: an over-cap sleeve or
+ * member, a member under its floor, the gold cluster over its flag, a holding
+ * in no sleeve over the unassigned cap, and anything the check could not
+ * price. Quiet sleeves stay out. An empty list is a complete, clean check. */
+export function checkIssues(state: PortfolioCheckState): CheckIssue[] {
+  const out: CheckIssue[] = [];
+  const add = (who: string, issue: string, size: string, over = false) =>
+    out.push({ key: `${who}-${issue}`, who, issue, size, over });
   for (const s of state.sleeves) {
     if (s.status === "over" && s.sleeve_max_pct != null) {
-      chips.push(`${s.label} over cap ${s.weight_pct.toFixed(1)}% / ${s.sleeve_max_pct.toFixed(0)}%`);
+      add(s.label, "over cap", `${s.weight_pct.toFixed(1)}% / ${s.sleeve_max_pct.toFixed(0)}%`, true);
     } else if (s.status !== "ok") {
-      chips.push(`${s.label} ${s.status} at ${s.weight_pct.toFixed(1)}%`);
+      add(s.label, s.status, `${s.weight_pct.toFixed(1)}%`, s.status === "over");
     }
     for (const m of s.members) {
       if (m.status === "over" && m.max_pct != null) {
-        chips.push(`${m.symbol} over cap ${m.weight_pct.toFixed(1)}% / ${m.max_pct.toFixed(0)}%`);
+        add(m.symbol, "over cap", `${m.weight_pct.toFixed(1)}% / ${m.max_pct.toFixed(0)}%`, true);
       } else if (m.status === "under" && m.min_pct != null) {
-        chips.push(`${m.symbol} under floor ${m.weight_pct.toFixed(1)}% / ${m.min_pct.toFixed(0)}%`);
+        add(m.symbol, "under floor", `${m.weight_pct.toFixed(1)}% / ${m.min_pct.toFixed(0)}%`);
       }
     }
   }
   const gold = state.clusters["gold"];
-  if (gold && gold.pct > GOLD_FLAG_PCT) {
-    chips.push(`Gold cluster ${gold.pct.toFixed(0)}% (flag ${GOLD_FLAG_PCT}%)`);
-  }
-  // The strip's quiet line claims a complete check, so an unresolved
-  // input is itself something to show: a holding in no sleeve over the
-  // unassigned cap (5%, the cap the detail table reads against), and
-  // any holding the check could not price.
+  if (gold && gold.pct > GOLD_FLAG_PCT) add("Gold cluster", "over flag", `${gold.pct.toFixed(0)}% / ${GOLD_FLAG_PCT}%`);
+  // A complete-looking check needs its inputs resolved: a holding in no sleeve
+  // over the unassigned cap (5%), and any holding the check could not price.
   for (const u of state.unassigned) {
-    if (u.weight_pct > 5) {
-      chips.push(`${u.symbol} unassigned ${u.weight_pct.toFixed(1)}% / 5%`);
-    }
+    if (u.weight_pct > 5) add(u.symbol, "unassigned", `${u.weight_pct.toFixed(1)}% / 5%`);
   }
-  if (state.unpriced.length > 0) {
-    chips.push(`${state.unpriced.join(", ")} unpriced — not checked`);
-  }
-  return chips;
+  if (state.unpriced.length > 0) add(state.unpriced.join(", "), "unpriced", "not checked");
+  return out;
+}
+
+/** The card's headline: "6 unassigned" when the rows share one issue, else "6 issues". */
+export function checkHeadline(issues: CheckIssue[]): string {
+  const kinds = new Set(issues.map((i) => i.issue));
+  return `${issues.length} ${kinds.size === 1 ? [...kinds][0] : issues.length === 1 ? "issue" : "issues"}`;
 }
 
 /**
- * The warnings strip, which replaces the Portfolio check card (2026-11-12
- * redesign). It shows only what needs attention, as chips; with nothing to
- * report it reads "All within limits · last check PASS". Clicking it opens
- * the full check -- sleeve bars, the member table and recent outcomes --
- * in a drawer under the strip. The circuit-breaker alert and the
+ * The Portfolio check card (2026-11-25 polish; a chip strip before): a headline
+ * count in the status colour and at most three short rows (name, issue, size
+ * against cap). "Show all" -- the whole card -- opens the full check: sleeve
+ * bars, the member table and recent outcomes. With nothing to report it is
+ * one line, "All clear". The circuit-breaker alert and the
  * concentration warning ride above it, as before. One engine with the
  * preflight and activation gates, so the strip can never disagree with
  * them. Signed-in only for the check itself: signed out, it renders
@@ -111,8 +112,6 @@ export function checkChips(state: PortfolioCheckState): string[] {
 export function WarningsStrip({ book, data }: { book: string; data: PortfolioPayload }) {
   const [state, setState] = useState<PortfolioCheckState | null>(null);
   const [failed, setFailed] = useState(false);
-  const [open, setOpen] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -140,11 +139,11 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
 
   const rows = data.positions.filter((p) => p.symbol !== "Cash");
   const heavy = concentration(rows);
-  const chips = state ? checkChips(state) : [];
+  const issues = state ? checkIssues(state) : [];
   const last = state?.recent_checks[0];
 
   return (
-    <div className="mt-2 space-y-1.5" role="region" aria-label="Warnings">
+    <div className="space-y-1.5 empty:hidden" role="region" aria-label="Warnings">
       {data.breaker?.tripped && (
         <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-1.5 text-sm text-rose-200">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -162,41 +161,32 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
           Portfolio check unavailable — retrying.
         </p>
       )}
-      {state && (
-        <div className="rounded-lg border border-slate-800 bg-slate-900/60">
-          <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)}
-                  className="flex w-full flex-wrap items-center gap-1.5 px-3 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
-            {chips.length === 0 ? (
-              <span className="text-xs text-slate-300">
-                All within limits
-                {last && (
-                  <> · last check{" "}
-                    <span className={`font-semibold uppercase ${CHECK_OUTCOME_TONE[last.outcome ?? "unavailable"]}`}>
-                      {last.outcome ?? "unavailable"}
-                    </span>
-                  </>
-                )}
-              </span>
-            ) : (
-              chips.map((c) => (
-                <span key={c} className="rounded-full border border-amber-500/50 bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
-                  {c}
-                </span>
-              ))
-            )}
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-slate-500">
-              Portfolio check
-              <Maximize2 className="h-3 w-3" aria-hidden="true" />
-            </span>
-          </button>
-          {open && <FullView title="Portfolio check" onClose={() => setOpen(false)}><CheckDetail state={state} /></FullView>}
-        </div>
-      )}
+      {state && (issues.length === 0 ? (
+        <DashCard title="Portfolio check" detail={<CheckDetail state={state} />} detailTitle="Portfolio check"
+                  hint="Open for sleeve bars, the member table and recent outcomes"
+                  meta={<><span className="font-semibold text-emerald-300">All clear</span>
+                    {last && <span className={`uppercase ${CHECK_OUTCOME_TONE[last.outcome ?? "unavailable"]}`} title="The last check's outcome"> · {last.outcome ?? "unavailable"}</span>}</>} />
+      ) : (
+        <DashCard title="Portfolio check" detail={<CheckDetail state={state} />} detailTitle="Portfolio check"
+                  hint="Open for sleeve bars, the member table and recent outcomes"
+                  value={checkHeadline(issues)} valueClass={issues.some((i) => i.over) ? "text-rose-300" : "text-amber-300"}>
+          <ul className="divide-y divide-slate-800/70 text-xs tabular-nums">
+            {issues.slice(0, 3).map((i) => (
+              <li key={i.key} className="flex items-baseline gap-2 py-1">
+                <span className="min-w-0 truncate font-medium text-slate-200">{i.who}</span>
+                <span className="shrink-0 text-slate-500">{i.issue}</span>
+                <span className={`ml-auto shrink-0 ${i.over ? "text-rose-300" : "text-amber-300"}`}>{i.size}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-slate-400">Show all{issues.length > 3 ? ` ${issues.length}` : ""}</p>
+        </DashCard>
+      ))}
     </div>
   );
 }
 
-/** The full check, in the strip's drawer: sleeve and member bars, the
+/** The full check, in the card's open view: sleeve and member bars, the
  * member table, cluster chips and recent outcomes. */
 function CheckDetail({ state }: { state: PortfolioCheckState }) {
   const pct = (v: number, dp = 1) => `${v.toFixed(dp)}%`;

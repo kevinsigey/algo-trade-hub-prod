@@ -36,12 +36,12 @@ export default function Portfolio() {
   const paper: Record<string, PaperRead> = { main, big };
 
   return (
-    <div className="mx-auto max-w-[100rem] px-4 py-4 md:px-6">
+    <div className="mx-auto max-w-[100rem] px-4 py-3 md:px-6">
       <h1 className="text-xl font-bold md:text-2xl tracking-tight text-white">Portfolio</h1>
       <div className="mt-2 grid gap-2 md:mt-3 md:gap-3 md:grid-cols-[18.5rem_minmax(0,1fr)]">
         <aside aria-label="Selected book" className="min-w-0 space-y-2 md:self-start">
           <BookSelector book={book} books={books} paper={paper} kalshi={kalshi} />
-          {book === "kalshi" ? <KalshiBox k={kalshi} /> : <AccountBox book={book} read={paper[book]} />}
+          {book === "kalshi" ? <KalshiBox k={kalshi} /> : <AccountBox read={paper[book]} />}
         </aside>
         <div className="flex min-w-0 flex-col">
           {book === "kalshi"

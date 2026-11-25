@@ -355,6 +355,21 @@ export function curveRange(curve: CurvePoint[], range: CurveRange, now: Date = n
   }));
 }
 
+/** The curve since `sinceIso` (the prior close): the last point at or before it as the
+ * start, then every later point, all rebased so each line reads 0% at the start. */
+export function curveSince(curve: CurvePoint[], sinceIso: string | null | undefined): CurvePoint[] {
+  if (!sinceIso || curve.length === 0) return [];
+  const at = new Date(sinceIso).getTime();
+  const startIdx = curve.reduce((acc, p, i) => (new Date(p.t).getTime() <= at ? i : acc), -1);
+  const kept = curve.slice(Math.max(0, startIdx)).filter((p, i) => i === 0 || new Date(p.t).getTime() > at);
+  const rebase = (v: number, base: number) => ((1 + v / 100) / (1 + base / 100) - 1) * 100;
+  const q0 = kept[0].qqq_pct;
+  return kept.map((p) => ({
+    t: p.t, portfolio_pct: rebase(p.portfolio_pct, kept[0].portfolio_pct), spy_pct: rebase(p.spy_pct, kept[0].spy_pct),
+    qqq_pct: p.qqq_pct == null || q0 == null ? null : rebase(p.qqq_pct, q0),
+  }));
+}
+
 /** The backend's label for a lot no Workshop idea claims (book.MANUAL). */
 export const MANUAL_IDEA = "No idea yet (manual)";
 

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Bar, BarChart, Cell, Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, YAxis } from "recharts";
 
 import { FullView, Panel } from "@/components/Panel";
 import { sessionToken } from "@/components/RequireAdmin";
@@ -84,26 +84,45 @@ export function Fig({ label, value, className = "text-white", hint }: {
 
 /** A sparkline: one or more series, no axes. Decorative inside a card -- the
  * open view carries the readable chart. */
-export function Spark<T extends object>({ data, lines, height = 48 }: {
+export function Spark<T extends object>({ data, lines, height = 48, grid, live }: {
   data: T[];
   lines: { key: keyof T & string; color: string; dashed?: boolean; width?: number }[];
   /** Pixels, or "100%" to fill a positioned parent. */
   height?: number | string;
+  /** Faint horizontal gridlines. */
+  grid?: boolean;
+  /** Mark the latest point of one line with an emerald dot, pulsing while `pulse`. */
+  live?: { key: keyof T & string; pulse: boolean };
 }) {
   if (data.length < 2) return <div style={{ height }} className="flex items-center text-xs text-slate-500">—</div>;
   return (
     <div style={{ height }} aria-hidden="true">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
+          {grid && <CartesianGrid vertical={false} stroke={GRID_STROKE} strokeDasharray="3 3" />}
           <YAxis hide domain={["auto", "auto"]} />
           {lines.map((l) => (
             <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={l.width ?? 1.5}
-                  strokeDasharray={l.dashed ? "3 2" : undefined} dot={false} isAnimationActive={false} connectNulls={false} />
+                  strokeDasharray={l.dashed ? "3 2" : undefined} dot={live?.key === l.key ? liveDot(data.length - 1, live.pulse) : false} isAnimationActive={false} connectNulls={false} />
           ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
+}
+
+/** A Line `dot` renderer that draws only the last point: emerald, with a soft ping while live. */
+function liveDot(last: number, pulse: boolean) {
+  return function LiveDot({ cx, cy, index }: { cx?: number; cy?: number; index?: number }) {
+    if (index !== last || cx == null || cy == null) return <g key={index} />;
+    return (
+      <g key={index}>
+        {pulse && <circle cx={cx} cy={cy} r={5} fill="#34d399" opacity={0.5} className="animate-ping"
+                          style={{ transformBox: "fill-box", transformOrigin: "center" }} />}
+        <circle cx={cx} cy={cy} r={3.5} fill="#34d399" stroke="#0f172a" strokeWidth={1} />
+      </g>
+    );
+  };
 }
 
 /** Mini signed bars, green up and rose down. */
@@ -186,6 +205,9 @@ export const price = (v: number | null | undefined) => fmtUsd(v);
 
 export const dayLabel = (d: string) =>
   new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** The charts' faint horizontal gridline colour (slate-800). */
+export const GRID_STROKE = "#1e293b";
 
 export const tooltipStyle = { background: "#0f172a", border: "1px solid #1e293b" };
 
