@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import NewIdeaBox from "@/components/NewIdeaBox";
 
@@ -31,7 +31,22 @@ async function check() {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+function Where() {
+  const l = useLocation();
+  return <p>at {l.pathname}{l.search}</p>;
+}
+
 describe("NewIdeaBox", () => {
+  it("opens the new idea in the Test tab of its page, asking for the AI draft", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (u: RequestInfo | URL) =>
+      new Response(JSON.stringify(String(u).includes("/api/workshop/ideas") ? { id: 12 } : { spec: { thesis: "x" }, questions: [], model: "m", preflight: LEDGER }), { status: 200 })));
+    render(<MemoryRouter><Routes><Route path="*" element={<><NewIdeaBox /><Where /></>} /></Routes></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Type an idea in plain words"), { target: { value: "chips keep winning" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check against the record" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn into a test" }));
+    expect(await screen.findByText("at /ideas/12?tab=test&draft=1")).toBeInTheDocument();
+  });
+
   it("shows what the record says, then offers the test", async () => {
     serve(200, { spec: { thesis: "x" }, questions: ["What size?"], model: "m", preflight: LEDGER });
     await check();

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
 import { claimLabel, conditionText, legText, rulesText } from "@/lib/workshop";
-import Workshop, { TradeLabels } from "@/pages/Workshop";
-import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
+import IdeaRecord from "@/pages/IdeaRecord";
+import { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
 
 const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
 vi.mock("@/lib/supabase", () => ({
@@ -61,7 +61,8 @@ describe("save-by-choice", () => {
       "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [preview], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [] } },
       "/api/workshop/ideas/1/runs/1/save": { body: { ...RUN } },
     });
-    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    await openLatestRun();
     expect(await screen.findByText("Preview — not saved")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save this run" }));
     await waitFor(() => {
@@ -79,40 +80,30 @@ describe("workshop copy", () => {
   });
 });
 
+/** A verdict card sits behind its row in the Test tab's Verdict list: open the newest run. */
+const openLatestRun = async () => fireEvent.click((await screen.findAllByRole("button", { name: /^Open variation/ }))[0]);
+
 describe("Workshop pages", () => {
-  it("lists ideas with their latest verdict and sends the bearer token", async () => {
-    const f = serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "FAIL" }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
-    expect(screen.getByLabelText("Type an idea in plain words")).toBeInTheDocument();
-    expect(screen.getByText("4 runs")).toBeInTheDocument();
-    expect((f.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
-  });
 
   it("shows a verdict with the shuffle result and the variation count", async () => {
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [RUN] } } });
-    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
-    // The headline appears twice by design since §6: the summary header leads with the latest
-    // run's headline, and the verdict card below carries it too.
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    // The headline appears three times by design: the summary header leads with the latest run's
+    // headline, its row in the Verdict list names it, and the opened verdict card carries it too.
     expect(await screen.findAllByText("Worked on the years it was built on, not after.")).toHaveLength(2);
+    await openLatestRun();
+    expect(await screen.findAllByText("Worked on the years it was built on, not after.")).toHaveLength(3);
     expect(screen.getByText(/beats 71% of 1,000/)).toBeInTheDocument();
     expect(screen.getByText("4 · bar raised accordingly")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
   });
 
-  it("shows which trial of its search an idea is, in the list and on its page (A3)", async () => {
-    const batch = { id: "random-lab-gen-3", trial: 54, size: 15, position: 3 };
-    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "TXN + MU wrap", created_at: "", runs: 1, latest_verdict: "PASS", batch }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText(/Trial 3 of 15 in random-lab-gen-3 · lab trial 54/)).toBeInTheDocument();
-  });
 
   it("shows the run's search stamp in its verdict card (A3)", async () => {
     const run = { ...RUN, result: { ...RUN.result, batch: { id: "spec-e", trial: 2, position: 2, of: 4 } } };
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [run], batch: { id: "spec-e", trial: 2, size: 4, position: 2 } } } });
-    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    await openLatestRun();
     expect(await screen.findByText(/Trial 2 of 4 in spec-e · the bar above counts the whole search/)).toBeInTheDocument();
     const summary = await screen.findByRole("region", { name: "Summary" });
     expect(summary).toHaveTextContent("Trial 2 of 4 in spec-e");
@@ -136,7 +127,8 @@ describe("Workshop pages", () => {
         zone: "bear", close_reason: "extrinsic_over_cap" }],
     };
     serve({ "/api/workshop/ideas/81": { body: { idea: { id: 81, title: "Spec F", plain_words: "LEAPS instead of shares", created_at: "", tags: ["leaps-trial"] }, runs: [RUN], leaps } } });
-    render(<MemoryRouter initialEntries={["/workshop/81"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/81?tab=lifecycle"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    fireEvent.click(await screen.findByText("LEAPS shadow trial"));
     const panel = await screen.findByRole("region", { name: "Spec F LEAPS shadow trial" });
     expect(panel).toHaveTextContent("1 pair opened (1 open, 0 closed)");
     expect(panel).toHaveTextContent("premium is 40% of the share cash");
@@ -150,15 +142,17 @@ describe("Workshop pages", () => {
     const older = { ...RUN, id: 0, variation: 3, created_at: "2026-10-20T00:00:00Z",
       result: { ...RUN.result, headline: "An earlier headline." } };
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [older, RUN] } } });
-    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     // The summary header carries the LATEST verdict, headline and lifecycle state.
     const summary = await screen.findByRole("region", { name: "Summary" });
     expect(summary).toHaveTextContent("FAIL");
     expect(summary).toHaveTextContent("Worked on the years it was built on, not after.");
     expect(summary).toHaveTextContent("2 runs");
     expect(summary).toHaveTextContent("In testing · not published");
-    // The older run is one collapsed line: variation, verdict, date, headline.
-    expect(screen.getByText(/Variation 3 · FAIL · .* — An earlier headline\./)).toBeInTheDocument();
+    // The older run is one row of the Verdict list: its headline, with variation, verdict and date on the row.
+    const row = screen.getByRole("button", { name: "Open variation 3" });
+    expect(row).toHaveTextContent("An earlier headline.");
+    expect(row.getAttribute("title")).toMatch(/Variation 3 · FAIL · /);
   });
 
   it("falls back to the hand-fill form when the AI can't draft", async () => {
@@ -166,7 +160,7 @@ describe("Workshop pages", () => {
       "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Bonds protect me", created_at: "" }, runs: [] } },
       "/api/workshop/draft": { status: 424, body: { detail: "OPENROUTER_API_KEY is not set", reason: "no_key", template: { ...SPEC, title: "", hold: [], when: null, claim: "beats_benchmark", assumptions: [] } } },
     });
-    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     expect(await screen.findByText("The AI couldn't draft this — fill it in.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run it" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("Bonds")).toBeInTheDocument();
@@ -174,46 +168,101 @@ describe("Workshop pages", () => {
 
   it("never sends the session to a path built from a non-numeric id", async () => {
     const f = serve({});
-    render(<MemoryRouter initialEntries={["/workshop/..%2F..%2Fadmin%2Fme"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/..%2F..%2Fadmin%2Fme?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     expect(await screen.findByText("No such idea.")).toBeInTheDocument();
-    expect(f).not.toHaveBeenCalled();
+    // Only the sign-in check goes out; nothing carries the session to a path built from the id.
+    expect(f.mock.calls.map(([u]) => String(u)).filter((u) => !u.endsWith("/api/admin/me"))).toEqual([]);
   });
 
-  it("is admin only", async () => {
-    session.token = null;
-    serve({ "/api/portfolio": { body: { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] } } });
-    window.history.pushState({}, "", "/workshop");
-    await act(async () => {
-      render(<App />);
-    });
-    expect(screen.getByRole("heading", { name: "Admin only" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /workshop/i })).toHaveAttribute("href", "/workshop");
-  });
 });
 
 
 const PASS_RUN = { ...RUN, verdict: "PASS", result: { ...RUN.result, verdict: "PASS", headline: "Did what it claims on the years it hadn't seen." } };
 const IDEA = { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "", published_at: null, live_at: null, killed_at: null, size_pct: null };
-const openIdea = () =>
-  render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+const openIdea = (tab: "test" | "lifecycle" = "lifecycle") =>
+  render(<MemoryRouter initialEntries={[`/ideas/1?tab=${tab}`]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
 const posts = (f: ReturnType<typeof serve>) =>
   f.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "POST").map(([u, init]) => [String(u), (init as RequestInit).body]);
 
-describe("Workshop idea page split (step 11)", () => {
-  it("lays the page out as Draft, Verdict and Go live sections, in that order", async () => {
+describe("Idea page: Record, Test and Lifecycle tabs", () => {
+  it("lays the owner's page out as Record, Test and Lifecycle, with Draft and Verdict in Test and the gate in Lifecycle", async () => {
     serve({
       "/api/workshop/ideas/1": { body: { idea: IDEA, runs: [PASS_RUN], tag: "idea-1-", shadow: null } },
     });
-    openIdea();
+    openIdea("test");
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Record", "Test", "Lifecycle"]);
     await screen.findByRole("heading", { name: "Draft" });
     const labels = [...document.querySelectorAll("section[aria-label]")].map((s) => s.getAttribute("aria-label"));
-    const order = ["Draft", "Verdict", "Go live"].map((n) => labels.indexOf(n));
+    const order = ["Draft", "Verdict"].map((n) => labels.indexOf(n));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    // The gate lives in the Go live section, built once for both books.
-    const goLiveSection = document.querySelector('section[aria-label="Go live"]');
-    expect(goLiveSection?.querySelector("button")?.textContent).toBeDefined();
-    expect(screen.getByRole("button", { name: "Check the gate" })).toBeInTheDocument();
+    // The gate lives in the Lifecycle tab, built once for both books.
+    fireEvent.click(screen.getByRole("tab", { name: "Lifecycle" }));
+    expect(await screen.findByRole("button", { name: "Check the gate" })).toBeInTheDocument();
+  });
+
+  it("shows a visitor only the Record tab, and never asks for the owner's side", async () => {
+    session.token = null;
+    const f = serve({ "/api/ideas/1": { body: { id: 1, title: "Gold", plain_words: "Gold beats stocks", status: "backtest", kind: "long_only", claim: null, variations: 1, runs: [], trades: [], shadow: null, published_at: "2026-11-01", live_at: null, tracked_at: null, killed_at: null } } });
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    expect(await screen.findByRole("tab", { name: "Record" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Test" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Lifecycle" })).toBeNull();
+    expect(f.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/api/workshop"))).toEqual([]);
+  });
+
+  it("opens the Test tab from the old Workshop link, keeping the new-idea draft flag", async () => {
+    serve({
+      "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Gold", plain_words: "Gold with a stop", created_at: "" }, runs: [] } },
+      "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } },
+    });
+    window.history.pushState({}, "", "/workshop/2?draft=1");
+    await act(async () => { render(<App />); });
+    expect(await screen.findByRole("button", { name: "Run it" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/ideas/2");
+    expect(window.location.search).toContain("tab=test");
+  });
+});
+
+describe("Idea page Test and Lifecycle tabs stay short", () => {
+  it("lists the newest 5 runs; Show all has every one, each opening its verdict card", async () => {
+    const runs = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ ...RUN, id: n, variation: n, result: { ...RUN.result, headline: `Headline ${n}` } }));
+    serve({ "/api/workshop/ideas/1": { body: { idea: IDEA, runs, tag: "idea-1-", shadow: null } } });
+    openIdea("test");
+    const card = await screen.findByRole("region", { name: "Verdict" });
+    expect(within(card).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(card).queryByText("Headline 1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all runs" }));
+    const all = within(await screen.findByRole("dialog", { name: "Every run" }));
+    expect(all.getAllByRole("listitem")).toHaveLength(7);
+    fireEvent.click(all.getByRole("button", { name: "Open variation 1" }));
+    expect(await screen.findByRole("dialog", { name: /Variation 1 · FAIL/ })).toBeInTheDocument();
+  });
+
+  it("shows the newest 5 automatic orders, Show all has the rest", async () => {
+    const live = { ...IDEA, published_at: "2026-11-01T00:00:00Z", live_at: "2026-11-02T15:00:00Z", size_pct: 20, auto_orders: true };
+    const orders = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: n, idea_id: 1, day: `2026-11-0${n}`, symbol: `S${n}`, side: "buy", qty: 1, client_order_id: `c${n}`, status: "sent", reason: null, alpaca_order_id: null, at: "" }));
+    serve({ "/api/workshop/ideas/1": { body: { idea: live, runs: [PASS_RUN], tag: "idea-1-", shadow: null, orders_enabled: true, orders } } });
+    openIdea();
+    expect(await screen.findByText("buy 1 S5")).toBeInTheDocument();
+    expect(screen.queryByText("buy 1 S6")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all 7 orders" }));
+    expect(await within(screen.getByRole("dialog")).findByText("buy 1 S7")).toBeInTheDocument();
+  });
+});
+
+describe("Idea page tabs keep their state", () => {
+  it("an edit typed in the draft editor survives a switch to Record and back", async () => {
+    serve({ "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Short QQQ", created_at: "" }, runs: [] } },
+            "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } } });
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Short (tickers, comma separated)"), { target: { value: "SPY" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Record" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Test" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+    expect(await screen.findByLabelText("Short (tickers, comma separated)")).toHaveValue("SPY");
   });
 });
 
@@ -291,22 +340,6 @@ describe("Workshop live-paper gate", () => {
   });
 });
 
-describe("Workshop trade labels", () => {
-  it("relabels a fill to an idea", async () => {
-    const f = serve({
-      "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 1, latest_verdict: "PASS" }] },
-      "/api/workshop/fills": { body: { state: "live", fills: [{ order_id: "o-1", symbol: "GLD", side: "buy", qty: 10, price: 300, at: "2026-11-02T15:00:00Z", tag: null, idea_id: null, idea: "No idea yet (manual)", history: [] }] } },
-      "/api/workshop/labels": { body: {} },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Trade labels" }));
-    const pick = await screen.findByLabelText("Idea for GLD buy 10 on 2026-11-02");
-    fireEvent.change(pick, { target: { value: "1" } });
-    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
-  });
-});
-
-
 describe("Workshop editor: shorts and orders", () => {
   it("posts short legs and the order type with the run", async () => {
     const f = serve({
@@ -314,7 +347,7 @@ describe("Workshop editor: shorts and orders", () => {
       "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [], execution: { order_type: "market", timing: "open", limit_offset_bps: 0 } }, model: "x/y:free" } },
       "/api/workshop/ideas/2/runs": { body: RUN },
     });
-    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     fireEvent.change(await screen.findByLabelText("Short (tickers, comma separated)"), { target: { value: "SPY" } });
     fireEvent.change(screen.getByLabelText("Orders"), { target: { value: "limit:close" } });
     fireEvent.change(screen.getByLabelText("Limit offset (bps)"), { target: { value: "15" } });
@@ -355,7 +388,7 @@ describe("Workshop editor: exits", () => {
       "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } },
       "/api/workshop/ideas/2/runs": { body: RUN },
     });
-    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     fireEvent.change(await screen.findByLabelText("Stop-loss %"), { target: { value: "8" } });
     fireEvent.change(screen.getByLabelText("Trailing stop %"), { target: { value: "12" } });
     fireEvent.change(screen.getByLabelText("Max days held"), { target: { value: "60" } });
@@ -374,7 +407,7 @@ describe("Workshop editor: intraday exits", () => {
       "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Pair", plain_words: "Gold vs SPY", created_at: "" }, runs: [] } },
       "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: ["SPY"] }, model: "x/y:free" } },
     });
-    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     expect(await screen.findByRole("option", { name: /During the day/ })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Short (tickers, comma separated)"), { target: { value: "" } });
     expect(screen.getByRole("option", { name: /During the day/ })).toBeEnabled();
@@ -543,7 +576,7 @@ describe("Workshop playbook", () => {
       "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Oil ballast", plain_words: "Oil as a ballast against the fall of the S&P", created_at: "" }, runs: [] } },
       "/api/workshop/draft": { body: DRAFT },
     });
-    render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     expect(await screen.findByText("Hold it while the market falls")).toBeInTheDocument();
     expect(screen.getByText(/fall of the s&p/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("USO")).toBeInTheDocument();
@@ -745,7 +778,7 @@ describe("Workshop spread rules", () => {
 
 describe("Workshop drafts: left-out tickers and saved drafts", () => {
   const IDEA2 = { idea: { id: 2, title: "K-Shape", plain_words: "long RL WSM ABNB DG DLTR BJ MO", created_at: "" }, runs: [] };
-  const page = () => render(<MemoryRouter initialEntries={["/workshop/2?draft=1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+  const page = () => render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
 
   it("says which named tickers the draft left out", async () => {
     serve({ "/api/workshop/ideas/2": { body: IDEA2 }, "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["RL", "WSM"], when: undefined, rules: null }, model: "x", play: null, alternatives: [], dropped: ["BJ", "MO"] } } });
@@ -756,7 +789,7 @@ describe("Workshop drafts: left-out tickers and saved drafts", () => {
   it("imports a chat-drafted spec onto the same confirm screen, confession shown", async () => {
     const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 },
       "/api/workshop/draft/import": { body: { spec: { ...SPEC, hold: ["RL"], when: undefined, rules: null }, model: "import", play: null, alternatives: [], dropped: [], unexpressed: ["no options legs yet"] } } });
-    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "Import a spec drafted in chat" }));
     fireEvent.change(screen.getByLabelText("Spec JSON (envelope or bare spec)"), { target: { value: JSON.stringify({ spec: { title: "x" }, requested: ["RL"], unexpressed: ["no options legs yet"] }) } });
     fireEvent.click(screen.getByRole("button", { name: "Import as draft" }));
@@ -767,7 +800,9 @@ describe("Workshop drafts: left-out tickers and saved drafts", () => {
   it("restores a saved draft after a reload, and Discard drops it", async () => {
     localStorage.setItem("workshop-draft-2", JSON.stringify({ ...SPEC, title: "Saved K-Shape", hold: ["RL", "WSM", "ABNB", "DG", "DLTR", "BJ", "MO"], when: undefined, rules: null }));
     const f = serve({ "/api/workshop/ideas/2": { body: IDEA2 } });
-    render(<MemoryRouter initialEntries={["/workshop/2"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    // A restored draft waits behind Edit draft; it does not pop open by itself.
+    fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
     expect(await screen.findByDisplayValue("RL, WSM, ABNB, DG, DLTR, BJ, MO")).toBeInTheDocument();
     expect(f.mock.calls.some(([u]) => String(u).includes("/api/workshop/draft"))).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Discard saved draft" }));
@@ -832,72 +867,15 @@ describe("Workshop verdict clarity (critique L4)", () => {
   });
 });
 
-describe("Workshop dashboard and labeling queue", () => {
-  it("leads with totals, not lists", async () => {
-    serve({
-      "/api/workshop/ideas": { body: [] },
-      "/api/screening/screens": { body: [] },
-      "/api/workshop/dashboard": { body: {
-        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
-        runs: { total: 90, saved: 61, latest_verdicts: { PASS: 40, FAIL: 11 }, recent: [] },
-        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [{ idea: "Live one", pnl: 100, trades: 2 }] },
-        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    expect(await screen.findByText("Tests kept")).toBeInTheDocument();
-    expect(screen.getByText("61")).toBeInTheDocument();
-    expect(screen.getByText("Needs labeling")).toBeInTheDocument();
-    expect(await screen.findByText("Closed paper P&L by idea")).toBeInTheDocument();
-  });
-
-  it("shows only the fills that need a label", async () => {
-    const fills = [
-      { order_id: "a", symbol: "GLD", side: "buy", qty: 3, price: 10, at: "2026-11-02T00:00:00Z", tag: "idea-1-auto-x", idea_id: 1, idea: "One", history: [] },
-      { order_id: "b", symbol: "SPY", side: "buy", qty: 1, price: 10, at: "2026-11-02T00:00:00Z", tag: "ext-9", idea_id: null, idea: null, history: [] },
-      { order_id: "c", symbol: "QQQ", side: "sell", qty: 2, price: 10, at: "2026-11-02T00:00:00Z", tag: null, idea_id: null, idea: null, history: [] },
-    ];
-    serve({ "/api/workshop/fills": { body: { state: "live", fills } } });
-    render(<TradeLabels ideas={[]} />);
-    expect(await screen.findByText(/QQQ sell 2/)).toBeInTheDocument();
-    expect(screen.queryByText(/GLD buy 3/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/SPY buy 1/)).not.toBeInTheDocument();
-    expect(screen.getByText(/2 fills already attributed/)).toBeInTheDocument();
-  });
-});
-
 describe("A2 — verdicts under the current bar", () => {
-  it("the ideas list chip reads the current-bar standing, with the as-run verdict beside it", async () => {
-    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "PASS", verdict_now: "FAIL" }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
-    expect(screen.getByText("FAIL")).toBeInTheDocument();
-    expect(screen.getByText("as run PASS")).toBeInTheDocument();
-  });
-
-  it("the dashboard tile counts verdicts under the current bar and shows the as-run tally", async () => {
-    serve({
-      "/api/workshop/ideas": { body: [] },
-      "/api/screening/screens": { body: [] },
-      "/api/workshop/dashboard": { body: {
-        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
-        runs: { total: 98, saved: 61, latest_verdicts: { PASS: 12, FAIL: 30 }, latest_verdicts_as_run: { PASS: 45, FAIL: 10 }, recent: [] },
-        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [] },
-        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    expect(await screen.findByText("Latest verdicts, current bar")).toBeInTheDocument();
-    expect(screen.getByText("12 PASS")).toBeInTheDocument();
-    expect(screen.getByText(/as run 45 PASS/)).toBeInTheDocument();
-  });
-
   it("an old-bar PASS run on the idea page says what it reads under the current bar, and why", async () => {
     const legacy = { ...RUN, verdict: "PASS", verdict_now: "FAIL", p_ok: false, wf_ok: true, p: 0.029,
       result: { ...RUN.result, verdict: "PASS",
         shuffle: { beats_pct: 97, p: 0.029, bar: 0.05, permutations: 1000, seed: 4, method: "random timing" },
         walk_forward: { held: 4, of: 4, folds: [] } } };
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [legacy], tag: "idea-1-", shadow: null, orders_enabled: false, orders: [] } } });
-    render(<MemoryRouter initialEntries={["/workshop/1"]}><Routes><Route path="/workshop/:id" element={<WorkshopIdea />} /></Routes></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ideas/1?tab=test"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    await openLatestRun();
     const note = await screen.findByText((_, el) => el?.tagName === "P" && (el?.textContent ?? "").includes("Under the current bar"));
     expect(note.textContent).toContain("this run reads FAIL: p = 0.029 is over 0.01");
     expect(note.textContent).toContain("The PASS above is the verdict as run, judged at p < 0.05");

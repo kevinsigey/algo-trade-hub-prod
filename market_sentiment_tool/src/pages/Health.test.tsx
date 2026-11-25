@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
+import { MemoryRouter } from "react-router-dom";
 import Health from "@/pages/Health";
 
 // The page now reads the re-run state through the signed admin fetch, which loads the
@@ -62,7 +63,7 @@ describe("Health page", () => {
   });
 
   it("shows the timer, family and order-book facts and a dash for a missing age", async () => {
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("Timers fresh")).toBeTruthy());
     expect(screen.getByText("0/1")).toBeTruthy(); // only journal is tracked, and it never ran
     expect(screen.getByText("Never ran")).toBeTruthy(); // journal chip
@@ -75,7 +76,7 @@ describe("Health page", () => {
   });
 
   it("draws the 14-day heatmap with evidence-based cell labels", async () => {
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("Last 14 days")).toBeTruthy());
     expect(screen.getByLabelText("scan · 2026-10-17 · silent — a gap inside an active stretch")).toBeTruthy();
     expect(screen.getByLabelText("weather · 2026-10-16 · ran · 12 frozen")).toBeTruthy();
@@ -95,7 +96,7 @@ describe("Health page", () => {
       return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body } as unknown as Response;
     }));
     const { fireEvent } = await import("@testing-library/react");
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await screen.findByText("Timers fresh");
     // journal is not re-runnable: exactly one Re-run button exists (scan).
     expect(screen.getAllByRole("button", { name: "Re-run" })).toHaveLength(1);
@@ -120,7 +121,7 @@ describe("Health page", () => {
       return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => body } as unknown as Response;
     }));
     const { fireEvent } = await import("@testing-library/react");
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await screen.findByText("Timers fresh");
     fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
     await screen.findByText(/Re-run pending/);
@@ -156,7 +157,7 @@ describe("Health page", () => {
         },
       }),
     );
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("2/2")).toBeTruthy());
     // The whole point: a healthy system with two untracked jobs must not read as degraded.
     expect(screen.queryByText("Degraded")).toBeNull();
@@ -172,13 +173,13 @@ describe("Health page", () => {
 
   it("reports an absent report as an error rather than a healthy page", async () => {
     vi.stubGlobal("fetch", mockFetch({ status: "ok", report: null }));
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/has no health report/)).toBeTruthy());
   });
 
   it("reports the status when a non-JSON response comes back", async () => {
     vi.stubGlobal("fetch", mockFetch({}, false, "text/html"));
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText(/status 500/)).toBeTruthy());
   });
 });
@@ -186,7 +187,7 @@ describe("Health page", () => {
 describe("Health timestamps", () => {
   it("shows times in Central time, not raw ISO", async () => {
     vi.stubGlobal("fetch", mockFetch({ status: "ok", report: REPORT }));
-    render(<Health />);
+    render(<MemoryRouter><Health /></MemoryRouter>);
     expect(await screen.findByText(/^Generated 7:00 AM CT, Sat Oct 17$/)).toBeInTheDocument();
     expect(screen.queryByText(/2026-10-17T12:00:00/)).not.toBeInTheDocument();
   });
