@@ -48,10 +48,17 @@ describe("Kalshi live book", () => {
     expect(await screen.findByText("graph starts after 2 settled trades")).toBeInTheDocument();
   });
 
-  it("leads Positions with open positions and lists only filled orders", async () => {
+  it("draws the curve from $0 with the end value labelled once 2 trades settle", async () => {
+    const second = { ...PILOT.orders[0], id: 9, pnl: -0.2, window_close: "2026-11-24T16:15:00Z" };
+    show({ ...PILOT, orders: [...PILOT.orders, second] });
+    expect(await screen.findByRole("img", { name: "Cumulative realized P&L, ending +$0.37" })).toBeInTheDocument();
+    expect(screen.getByText("$0")).toBeInTheDocument();
+  });
+
+  it("headlines Positions with the fill count and lists only filled orders", async () => {
     const skipped = { ...PILOT.orders[0], id: 8, status: "skipped_no_depth", skip_reason: "no_depth", contracts_filled: 0, pnl: null, fill_price: null };
-    show({ ...PILOT, positions: [], orders: [skipped, ...PILOT.orders] });
-    expect(await screen.findByText("None open")).toBeInTheDocument();
+    show({ ...PILOT, orders: [skipped, ...PILOT.orders] });
+    expect(await screen.findByText("fills")).toBeInTheDocument();
     expect(screen.getByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
     expect(screen.queryByText(/skipped/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { sessionToken } from "@/components/RequireAdmin";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
-import { DashCard, Fig, PEEK, PeekRows, REFRESH_MS, Spark } from "@/pages/portfolio/shared";
+import { DashCard, Fig, PEEK, PeekRows, REFRESH_MS } from "@/pages/portfolio/shared";
 import type { KalshiDemoPayload, KalshiLivePilot, KalshiLivePilotAdminOnly } from "@/lib/kalshiDemo";
 
 export const REAL_MONEY_BADGE = "rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300";
@@ -194,6 +194,35 @@ export function marketName(o: Order): string {
 
 /** Cumulative realized P&L, one step per settled order in window-close order.
  * Fewer than two points is no curve: the card says so instead of a flat line. */
+/** Cumulative P&L as straight segments from a $0 start, a dot per settled trade,
+ * a dashed zero line and the end value labelled. Percent coordinates keep the dots round. */
+function PnlChart({ curve }: { curve: { t: string; cum: number }[] }) {
+  const vals = [0, ...curve.map((c) => c.cum)];
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = (hi - lo || 1) * 0.2;
+  const y = (v: number) => 10 + (1 - (v - lo + pad) / (hi - lo + 2 * pad)) * 80;
+  const ms = curve.map((c) => Date.parse(c.t));
+  const span = ms[ms.length - 1] - ms[0];
+  // The start sits at the first trade's time; with no time spread, space points evenly.
+  const x = (i: number) => 4 + (span > 0 ? (ms[i] - ms[0]) / span : i / Math.max(1, curve.length - 1)) * 80;
+  const pts = [{ x: x(0), y: y(0) }, ...curve.map((c, i) => ({ x: x(i), y: y(c.cum) }))];
+  const end = curve[curve.length - 1].cum;
+  const color = end >= 0 ? "#34d399" : "#fb7185";
+  return (
+    <svg role="img" aria-label={`Cumulative realized P&L, ending ${fmtUsd(end, { signed: true })}`} className="h-full w-full">
+      <line x1="0%" x2="100%" y1={`${y(0)}%`} y2={`${y(0)}%`} stroke="#64748b" strokeDasharray="4 3" />
+      <text x="1%" y={`${y(0) - 2}%`} fontSize="10" fill="#64748b">$0</text>
+      {pts.slice(1).map((p, i) => (
+        <line key={i} x1={`${pts[i].x}%`} y1={`${pts[i].y}%`} x2={`${p.x}%`} y2={`${p.y}%`} stroke={color} strokeWidth="2" />
+      ))}
+      {pts.slice(1).map((p, i) => <circle key={i} cx={`${p.x}%`} cy={`${p.y}%`} r="3" fill={color} />)}
+      <text x={`${pts[pts.length - 1].x + 2}%`} y={`${pts[pts.length - 1].y}%`} dy="0.35em" fontSize="12" fontWeight="600" fill={color}>
+        {fmtUsd(end, { signed: true })}
+      </text>
+    </svg>
+  );
+}
+
 export function pnlCurve(orders: Order[]): { t: string; cum: number }[] {
   let cum = 0;
   return orders
@@ -212,7 +241,6 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
   const gate = p.gates;
   const curve = pnlCurve(orders);
   const fills = orders.filter((o) => o.contracts_filled > 0);
-  const openCount = Array.isArray(p.positions) ? p.positions.length : typeof p.positions === "number" ? p.positions : null;
   return (
     <div className="grid flex-1 gap-2 lg:grid-cols-2">
       <DashCard title="Performance" value={signed(p.pnl_since_start)} valueClass={tone(p.pnl_since_start)}
@@ -222,7 +250,7 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
         <div className="relative min-h-[150px] flex-1">
           {curve.length >= 2 ? (
             <div className="absolute inset-0">
-              <Spark data={curve} height="100%" lines={[{ key: "cum", color: "#34d399", width: 2 }]} />
+              <PnlChart curve={curve} />
             </div>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
@@ -240,13 +268,10 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
           <Fig label="Edge gate" value={`${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}`} hint="Needs 150 settled trades" />
         </dl>
       </DashCard>
-      <DashCard title="Positions" value={openCount ?? "—"} sub="open positions"
-                hint="Open positions, then recent fills. Open for every order, skipped ones included."
+      <DashCard title="Positions" value={fills.length} sub="fills"
+                hint="Recent filled orders. Open for every order, skipped ones included."
                 defaultOpen={open === "positions"} detailTitle={`Live orders · ${orders.length}`}
                 detail={orders.length ? <OrdersTable orders={orders} /> : undefined}>
-        <h3 className="text-[11px] text-slate-500">Open positions</h3>
-        <p className="text-xs text-slate-300">{openCount ? `${openCount} open` : openCount === 0 ? "None open" : "—"}</p>
-        <h3 className="mt-2 text-[11px] text-slate-500">Recent fills</h3>
         {fills.length ? (
           <PeekRows rows={fills.slice(0, PEEK).map((o, i) => ({
             key: String(o.id ?? `${o.ticker}-${i}`), label: marketName(o), value: signed(o.pnl), valueClass: tone(o.pnl),
