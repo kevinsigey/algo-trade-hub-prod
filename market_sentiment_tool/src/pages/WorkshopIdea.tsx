@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { FullView } from "@/components/Panel";
 import { TagEditor } from "@/components/TagEditor";
 import { PlayCheckButton } from "@/components/PlayCheck";
 import TickerListInput from "@/components/TickerListInput";
 import { ctDateTime } from "@/lib/format";
 import { PaperLine } from "@/pages/Ideas";
+import { PEEK, PeekRows } from "@/pages/portfolio/shared";
 import {
   ApiError,
   CLAIM_OPTIONS,
@@ -1059,10 +1061,31 @@ function LifecycleSteps({ idea, runs, passed }: { idea: IdeaDetail["idea"]; runs
   );
 }
 
+function OrdersTable({ orders }: { orders: NonNullable<IdeaDetail["orders"]> }) {
+  return (
+    <table className="w-full text-xs">
+              <thead className="text-left text-slate-500">
+                <tr><th className="py-1 font-normal">Day</th><th className="font-normal">Order</th><th className="font-normal">Status</th></tr>
+              </thead>
+              <tbody>
+                {orders.map((o) => (
+                  <tr key={o.id} className="border-t border-slate-800 align-top">
+                    <td className="whitespace-nowrap py-1 pr-2 text-slate-400">{o.day}</td>
+                    <td className="py-1 pr-2 font-mono text-slate-200">{o.side} {o.qty} {o.symbol}</td>
+                    <td className="py-1"><span className={o.status === "sent" ? "text-emerald-300" : o.status === "rejected" ? "text-rose-300" : "text-slate-400"}>{o.status}</span>{o.reason && <span className="block text-slate-500">{o.reason}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+  );
+}
+
+
 /** Publish, tracking, the live-paper gate, the order tag and the kill button (spec §4.5-4.6). Each step happens once. */
 export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: IdeaDetail; onChange: () => void }) {
   const { idea, runs, tag, shadow } = detail;
   const [busy, setBusy] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The lifecycle reads the latest SAVED run: a preview changes nothing here
   // until it is saved (save-by-choice, 2026-11-02).
@@ -1095,7 +1118,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
   };
 
   return (
-    <section className="mt-6 space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+    <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
       <LifecycleSteps idea={idea} runs={runs} passed={passed} />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {idea.published_at ? (
@@ -1178,20 +1201,15 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
             </div>
           )}
           {(detail.orders?.length ?? 0) > 0 && (
-            <table className="w-full text-xs">
-              <thead className="text-left text-slate-500">
-                <tr><th className="py-1 font-normal">Day</th><th className="font-normal">Order</th><th className="font-normal">Status</th></tr>
-              </thead>
-              <tbody>
-                {detail.orders?.map((o) => (
-                  <tr key={o.id} className="border-t border-slate-800 align-top">
-                    <td className="whitespace-nowrap py-1 pr-2 text-slate-400">{o.day}</td>
-                    <td className="py-1 pr-2 font-mono text-slate-200">{o.side} {o.qty} {o.symbol}</td>
-                    <td className="py-1"><span className={o.status === "sent" ? "text-emerald-300" : o.status === "rejected" ? "text-rose-300" : "text-slate-400"}>{o.status}</span>{o.reason && <span className="block text-slate-500">{o.reason}</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <OrdersTable orders={detail.orders!.slice(0, PEEK)} />
+              {detail.orders!.length > PEEK && (
+                <button type="button" className="text-xs text-emerald-300 hover:underline" onClick={() => setOrdersOpen(true)}>
+                  Show all {detail.orders!.length} orders
+                </button>
+              )}
+              {ordersOpen && <FullView title="Automatic paper orders" onClose={() => setOrdersOpen(false)}><OrdersTable orders={detail.orders!} /></FullView>}
+            </>
           )}
           {!idea.killed_at && (
             <button type="button" className="rounded-lg border border-rose-500/40 px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" disabled={busy} onClick={kill}>
@@ -1299,7 +1317,7 @@ function lifecycleLabel(data: IdeaDetail): string {
  * count, and the lifecycle state -- the page's whole answer before any
  * scrolling. The full cards below keep every detail; this only leads.
  */
-function SummaryHeader({ data }: { data: IdeaDetail }) {
+export function SummaryHeader({ data }: { data: IdeaDetail }) {
   const latest = data.runs[data.runs.length - 1];
   return (
     <section aria-label="Summary" className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3">
@@ -1433,48 +1451,45 @@ export function LeapsTrialPanel({ data }: { data: LeapsPanelData }) {
   );
 }
 
-export default function WorkshopIdea() {
-  // Only a numeric id ever reaches a URL: the requests below carry Kevin's session token, so a crafted link
-  // must not be able to point them at another API path.
-  const raw = useParams().id ?? "";
-  const id = /^\d+$/.test(raw) ? raw : null;
+const dropParam = (p: URLSearchParams, key: string) => { p.delete(key); return p; };
+
+/**
+ * The Test tab of `/ideas/:id` (admin): the Draft and the Verdict of the old Workshop page, as two cards.
+ * The draft editor and each run's verdict card open in a full view, so the tab never grows; the runs are a
+ * 5-row list with Show all. Everything the page did is still here; the editors are the same components.
+ */
+export function IdeaTestTab({ id, data, reload }: { id: string; data: IdeaDetail; reload: () => Promise<unknown> | void }) {
   const [params, setParams] = useSearchParams();
-  const [data, setData] = useState<IdeaDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ spec: IdeaSpec; model: string | null; note?: string; play?: PlayMatch | null; alternatives?: DraftResponse["alternatives"]; dropped?: string[]; unexpressed?: string[] } | null>(null);
   const [importText, setImportText] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);  // the draft editor's full view
+  const [viewRun, setViewRun] = useState<number | null>(null);  // the run whose verdict card is open
+  const [allRuns, setAllRuns] = useState(false);
 
-  const load = useCallback(() => {
-    if (id === null) {
-      setError("No such idea.");
-      return Promise.resolve();
-    }
-    return adminJson<IdeaDetail>(`/api/workshop/ideas/${id}`).then(setData).catch((e: Error) => setError(e.message));
-  }, [id]);
-  useEffect(() => {
-    load();
-  }, [load]);
+  /** A draft the owner just asked for (AI, import, variation) opens the editor; a restored one waits for "Edit draft". */
+  const startDraft = (d: NonNullable<typeof draft>) => { setDraft(d); setEditOpen(true); };
 
   const requestDraft = useCallback((text: string, title: string, free = false) => {
     setDrafting(true);
     adminJson<DraftResponse>("/api/workshop/draft", { method: "POST", body: JSON.stringify({ text, free }) })
-      .then((d) => setDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives, dropped: d.dropped, unexpressed: d.unexpressed }))
+      .then((d) => startDraft({ spec: d.spec, model: d.model, play: d.play, alternatives: d.alternatives, dropped: d.dropped, unexpressed: d.unexpressed }))
       .catch((e: unknown) => {
         const template = e instanceof ApiError ? (e.body?.template as IdeaSpec | undefined) : undefined;
-        if (template) setDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
+        if (template) startDraft({ spec: { ...template, title: title.slice(0, 120) }, model: null, note: "The AI couldn't draft this — fill it in." });
         else setError(e instanceof Error ? e.message : "Draft failed");
       })
       .finally(() => {
         setDrafting(false);
-        setParams({}, { replace: true });
+        setParams(dropParam, { replace: true });
       });
   }, [setParams]);
 
   useEffect(() => {
-    if (!data || params.get("draft") !== "1" || draft || drafting) return;
+    if (params.get("draft") !== "1" || draft || drafting) return;
     try {
       if (localStorage.getItem(`workshop-draft-${id}`)) return;
     } catch { void 0; }
@@ -1482,7 +1497,7 @@ export default function WorkshopIdea() {
   }, [data, params, draft, drafting, requestDraft, id]);
 
   useEffect(() => {
-    if (!data || draft || drafting) return;
+    if (draft || drafting) return;
     const key = `workshop-draft-${id}`;
     try {
       const raw = localStorage.getItem(key);
@@ -1491,7 +1506,7 @@ export default function WorkshopIdea() {
         setDraft({ spec, model: null, play: null, alternatives: [], dropped: [] });
       }
     } catch { void 0; }
-  }, [data, draft, drafting, id]);
+  }, [draft, drafting, id]);
 
   /** The import door (§2.2): paste a spec drafted in chat -- the envelope {spec, requested,
    * unexpressed} or a bare spec -- and it lands on this same confirm screen as a draft. */
@@ -1511,7 +1526,7 @@ export default function WorkshopIdea() {
     setError(null);
     adminJson<DraftResponse>("/api/workshop/draft/import", { method: "POST", body: JSON.stringify(payload) })
       .then((d) => {
-        setDraft({ spec: d.spec, model: d.model, play: null, alternatives: [], dropped: d.dropped, unexpressed: d.unexpressed });
+        startDraft({ spec: d.spec, model: d.model, play: null, alternatives: [], dropped: d.dropped, unexpressed: d.unexpressed });
         setImportOpen(false);
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Import failed"))
@@ -1528,7 +1543,6 @@ export default function WorkshopIdea() {
   };
 
   const run = async (spec: IdeaSpec) => {
-    if (id === null) return;
     setRunning(true);
     setError(null);
     try {
@@ -1536,118 +1550,152 @@ export default function WorkshopIdea() {
       await adminJson<Run>(`/api/workshop/ideas/${id}/${route}`, { method: "POST", body: JSON.stringify({ spec, draft_model: draft?.model ?? null }) });
       try { localStorage.removeItem(`workshop-draft-${id}`); } catch { void 0; }
       setDraft(null);
-      await load();
+      setEditOpen(false);
+      await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Run failed");
     } finally {
       setRunning(false);
     }
   };
+  const discard = () => {
+    try { localStorage.removeItem(`workshop-draft-${id}`); } catch { void 0; }
+    setDraft(null);
+    setEditOpen(false);
+  };
+
+  const button = "rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900 disabled:opacity-50";
+  const spinner = drafting && (
+    <p className="mt-3 flex items-center gap-2 text-sm text-slate-400">
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
+    </p>
+  );
+  const runsNewestFirst = [...data.runs].reverse();
+  const runRows = runsNewestFirst.map((r, idx) => ({
+    key: String(r.id),
+    label: (
+      <button type="button" onClick={() => setViewRun(r.id)} aria-label={`Open variation ${r.variation}`} aria-haspopup="dialog"
+              title={`Variation ${r.variation} · ${r.verdict}${r.saved_at ? "" : " · preview, not saved"} · ${ctDateTime(r.created_at)}`}
+              className="max-w-full truncate text-left hover:underline">
+        {r.result.headline}
+      </button>
+    ),
+    aside: `#${r.variation}${r.saved_at ? "" : " · preview"}${idx === 0 ? " · latest" : ""}`,
+    value: (
+      <span className={`rounded border px-1.5 text-[11px] font-semibold ${toneClass[verdictTone(r.verdict_now ?? r.verdict)]}`}>{r.verdict_now ?? r.verdict}</span>
+    ),
+  }));
+  const opened = viewRun != null ? data.runs.find((r) => r.id === viewRun) : undefined;
+  const onVary = (spec: IdeaSpec) => { setViewRun(null); startDraft({ spec, model: null }); };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 md:px-8">
-      <Link to="/workshop" className="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Workshop
-      </Link>
-      {data && <h1 className="mt-3 text-xl font-semibold text-white">“{data.idea.plain_words}”</h1>}
-      {data && <SummaryHeader data={data} />}
-      {data && id && <div className="mt-3"><TagEditor key={id} ideaId={Number(id)} initial={data.idea.tags ?? []} /></div>}
-      {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
-      {data && (
-        <section className="mt-8" aria-label="Draft">
-          <h2 className="text-base font-semibold text-white">Draft</h2>
-      {drafting && (
-        <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> The AI is drafting the test…
-        </p>
-      )}
-      {draft?.play && data && (
-        <section className="mt-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm" aria-label="Matched play">
-          <div className="text-xs uppercase tracking-wide text-emerald-300">Matched play</div>
-          <div className="mt-1 font-semibold text-white">{draft.play.name}</div>
-          <p className="mt-0.5 text-slate-300">{draft.play.summary}</p>
-          <p className="mt-1 text-xs text-slate-400">
-            Matched on: {draft.play.why.map((w) => `“${w}”`).join(", ")} · from {draft.play.source}
-            {draft.model && draft.model !== "playbook" ? ` · picked by ${draft.model}` : " · picked by word match"}
+    <div className="space-y-3">
+      <SummaryHeader data={data} />
+      <TagEditor key={id} ideaId={Number(id)} initial={data.idea.tags ?? []} />
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <section aria-label="Draft" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Draft</h2>
+          <p className="mt-2 text-sm text-slate-300">
+            {draft ? "A draft is in progress." : data.runs.length === 0 ? "No runs yet — draft the test to get a verdict." : "Open a run's verdict and press Try a variation to draft the next one."}
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {(draft.alternatives ?? []).map((a) => (
-              <button key={a.id} type="button" className={button} onClick={() => switchPlay(a)}>Use {a.name} instead</button>
-            ))}
-            <button type="button" className={button} disabled={drafting} onClick={() => { setDraft(null); requestDraft(data.idea.plain_words, data.idea.title, true); }}>
-              Write it from scratch
-            </button>
+          {spinner}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {draft && <button type="button" className={button} onClick={() => setEditOpen(true)}>Edit draft</button>}
+            {draft && <button type="button" className={button} onClick={discard}>Discard saved draft</button>}
+            {data.runs.length === 0 && !draft && !drafting && (
+              <button type="button" onClick={() => setParams((p) => { p.set("draft", "1"); return p; })} className={button}>Draft the test</button>
+            )}
           </div>
-        </section>
-      )}
-      {draft?.dropped && draft.dropped.length > 0 && (
-        <p className="mt-4 text-sm text-amber-300">The draft left out: {draft.dropped.join(", ")}. Add them back if you meant them.</p>
-      )}
-      {draft?.unexpressed && draft.unexpressed.length > 0 && (
-        <p className="mt-2 text-sm text-slate-300">The drafter couldn't express: {draft.unexpressed.join("; ")}</p>
-      )}
-      {data && !draft && !drafting && (
-        <div className="mt-6">
-          <button type="button" className="text-sm text-slate-400 underline decoration-dotted underline-offset-4 hover:text-slate-200" onClick={() => setImportOpen((v) => !v)}>
-            Import a spec drafted in chat
-          </button>
-          {importOpen && (
+          {!draft && !drafting && (
             <div className="mt-3">
-              <label className="block text-xs uppercase tracking-wide text-slate-400" htmlFor="spec-import">Spec JSON (envelope or bare spec)</label>
-              <textarea id="spec-import" value={importText} onChange={(e) => setImportText(e.target.value)} rows={8}
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200"
-                placeholder='{"spec": {...}, "requested": ["XLE"], "unexpressed": []}' />
-              <div className="mt-2 flex justify-end">
-                <button type="button" className={button} disabled={!importText.trim()} onClick={importSpec}>Import as draft</button>
-              </div>
+              <button type="button" className="text-sm text-slate-400 underline decoration-dotted underline-offset-4 hover:text-slate-200" onClick={() => setImportOpen((v) => !v)}>
+                Import a spec drafted in chat
+              </button>
+              {importOpen && (
+                <div className="mt-3">
+                  <label className="block text-xs uppercase tracking-wide text-slate-400" htmlFor="spec-import">Spec JSON (envelope or bare spec)</label>
+                  <textarea id="spec-import" value={importText} onChange={(e) => setImportText(e.target.value)} rows={5}
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200"
+                    placeholder='{"spec": {...}, "requested": ["XLE"], "unexpressed": []}' />
+                  <div className="mt-2 flex justify-end">
+                    <button type="button" className={button} disabled={!importText.trim()} onClick={importSpec}>Import as draft</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
-      {draft && (
-        <div className="mt-4 flex justify-end">
-          <button type="button" className={button} onClick={() => { try { localStorage.removeItem(`workshop-draft-${id}`); } catch { void 0; } setDraft(null); }}>
-            Discard saved draft
-          </button>
-        </div>
-      )}
-      {draft && data && data.runs.length > 0 && <AutopsyNote autopsy={data.runs[data.runs.length - 1].result.autopsy} revising />}
-      {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} storageKey={id ? `workshop-draft-${id}` : undefined} />}
-      {data && data.runs.length === 0 && !draft && !drafting && (
-        <button type="button" onClick={() => setParams({ draft: "1" })} className="mt-6 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-900">
-          Draft the test
-        </button>
-      )}
         </section>
+        <section aria-label="Verdict" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Verdict <span className="font-normal normal-case text-slate-500">· {data.runs.length} {data.runs.length === 1 ? "run" : "runs"}</span></h2>
+            <button type="button" onClick={() => setAllRuns(true)} aria-haspopup="dialog" aria-label="Show all runs"
+                    className="text-xs text-emerald-300 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">Show all</button>
+          </div>
+          <div className="mt-2"><PeekRows rows={runRows.slice(0, PEEK)} empty="No runs yet." /></div>
+        </section>
+      </div>
+      {editOpen && (draft || drafting) && (
+        <FullView title="Draft" onClose={() => setEditOpen(false)}>
+          {spinner}
+          {draft?.play && (
+            <section className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm" aria-label="Matched play">
+              <div className="text-xs uppercase tracking-wide text-emerald-300">Matched play</div>
+              <div className="mt-1 font-semibold text-white">{draft.play.name}</div>
+              <p className="mt-0.5 text-slate-300">{draft.play.summary}</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Matched on: {draft.play.why.map((w) => `“${w}”`).join(", ")} · from {draft.play.source}
+                {draft.model && draft.model !== "playbook" ? ` · picked by ${draft.model}` : " · picked by word match"}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(draft.alternatives ?? []).map((a) => (
+                  <button key={a.id} type="button" className={button} onClick={() => switchPlay(a)}>Use {a.name} instead</button>
+                ))}
+                <button type="button" className={button} disabled={drafting} onClick={() => { setDraft(null); requestDraft(data.idea.plain_words, data.idea.title, true); }}>
+                  Write it from scratch
+                </button>
+              </div>
+            </section>
+          )}
+          {draft?.dropped && draft.dropped.length > 0 && (
+            <p className="mt-4 text-sm text-amber-300">The draft left out: {draft.dropped.join(", ")}. Add them back if you meant them.</p>
+          )}
+          {draft?.unexpressed && draft.unexpressed.length > 0 && (
+            <p className="mt-2 text-sm text-slate-300">The drafter couldn't express: {draft.unexpressed.join("; ")}</p>
+          )}
+          {draft && data.runs.length > 0 && <AutopsyNote autopsy={data.runs[data.runs.length - 1].result.autopsy} revising />}
+          {draft && <DraftEditor key={JSON.stringify(draft.spec)} initial={draft.spec} onRun={run} busy={running} note={draft.note} storageKey={`workshop-draft-${id}`} />}
+        </FullView>
       )}
-      {data && data.runs.length > 0 && (
-        <section className="mt-8" aria-label="Verdict">
-          <h2 className="text-base font-semibold text-white">Verdict</h2>
-          {id && !isEvent(data.runs[data.runs.length - 1].spec) && (
-            <div className="mt-4">
+      {opened && (
+        <FullView title={`Variation ${opened.variation} · ${opened.verdict}`} onClose={() => setViewRun(null)}>
+          {opened.id === data.runs[data.runs.length - 1].id && !isEvent(opened.spec) && (
+            <div className="mb-4">
               <PlayCheckButton ideaId={Number(id)} source="workshop" title={data.idea.title} />
             </div>
           )}
-      {data && [...data.runs].reverse().map((r, idx) =>
-        idx === 0 ? (
-          <VerdictCard key={r.id} ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
-        ) : (
-          <details key={r.id} className="mt-6">
-            <summary className="cursor-pointer text-sm text-slate-300">
-              Variation {r.variation} · {r.verdict}{r.saved_at ? "" : " · preview, not saved"} · {ctDateTime(r.created_at)} — {r.result.headline}
-            </summary>
-            <VerdictCard ideaId={id ?? ""} run={r} onVary={(spec) => { setDraft({ spec, model: null }); window.scrollTo({ top: 0, behavior: "smooth" }); }} onSaved={() => { void load(); }} />
-          </details>
-        ),
+          <VerdictCard ideaId={id} run={opened} onVary={onVary} onSaved={() => { void reload(); }} />
+        </FullView>
       )}
-        </section>
+      {allRuns && (
+        <FullView title="Every run" onClose={() => setAllRuns(false)}>
+          <PeekRows rows={runRows} empty="No runs yet." />
+        </FullView>
       )}
-      {data && id && (
-        <section className="mt-8" aria-label="Go live">
-          <h2 className="text-base font-semibold text-white">Go live</h2>
-          <LifecyclePanel id={id} detail={data} onChange={load} />
-          {data.leaps && <LeapsTrialPanel data={data.leaps} />}
-        </section>
+    </div>
+  );
+}
+
+/** The Lifecycle tab of `/ideas/:id` (admin): publish, track, go live, auto orders, kill and the $1M book (the panel), and LEAPS behind an expander. */
+export function IdeaLifecycleTab({ id, data, reload }: { id: string; data: IdeaDetail; reload: () => Promise<unknown> | void }) {
+  return (
+    <div className="space-y-3">
+      <LifecyclePanel id={id} detail={data} onChange={() => { void reload(); }} />
+      {data.leaps && (
+        <details className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-white">LEAPS shadow trial</summary>
+          <LeapsTrialPanel data={data.leaps} />
+        </details>
       )}
     </div>
   );

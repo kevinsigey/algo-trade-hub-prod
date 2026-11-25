@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useParams } from "react-router-dom";
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
@@ -25,7 +25,6 @@ import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
 import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
-import WorkshopIdea from "@/pages/WorkshopIdea";
 import Strategies from "@/pages/Strategies";
 import Valuation from "@/pages/Valuation";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -366,6 +365,15 @@ function Guarded({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={useLocation().pathname}>{children}</ErrorBoundary>;
 }
 
+/** The Workshop idea page lives on as the owner's Test tab of the idea (keeps ?draft=1 from the new-idea flow). */
+function WorkshopIdeaRedirect() {
+  const { id } = useParams();
+  const { search } = useLocation();
+  const q = new URLSearchParams(search);
+  q.set("tab", "test");
+  return <Navigate to={`/ideas/${id}?${q}`} replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -391,7 +399,7 @@ function App() {
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Navigate to="/valuation" replace /></RequireAdmin>} />
           <Route path="/valuation" element={<RequireAdmin><Valuation /></RequireAdmin>} />
-          <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
+          <Route path="/workshop/:id" element={<WorkshopIdeaRedirect />} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
           <Route path="/lab" element={<Navigate to="/journal" replace />} />

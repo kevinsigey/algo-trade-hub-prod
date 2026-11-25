@@ -35,7 +35,7 @@ export default function NewIdeaBox() {
         method: "POST",
         body: JSON.stringify({ title: title.length < 3 ? `${title}…` : title, plain_words: words }),
       });
-      navigate(`/workshop/${idea.id}?draft=1`);
+      navigate(`/ideas/${idea.id}?tab=test&draft=1`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the idea");
       setBusy("");
@@ -84,7 +84,7 @@ export default function NewIdeaBox() {
           )}
           {ledger?.best_prior && (
             <p className="mt-1">
-              Best on these names: <Link to={`/workshop/${ledger.best_prior.idea_id}`} className="text-emerald-300 hover:underline">{ledger.best_prior.title ?? `Idea ${ledger.best_prior.idea_id}`}</Link>
+              Best on these names: <Link to={`/ideas/${ledger.best_prior.idea_id}`} className="text-emerald-300 hover:underline">{ledger.best_prior.title ?? `Idea ${ledger.best_prior.idea_id}`}</Link>
               {" "}· {ledger.best_prior.value.toFixed(2)} on unseen years · {ledger.best_prior.verdict_now} today
             </p>
           )}
