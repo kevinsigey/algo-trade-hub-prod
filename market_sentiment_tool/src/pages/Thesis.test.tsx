@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import Thesis from "@/pages/Thesis";
 import type { ForecastCard } from "@/lib/thesisTracker";
 
 const hook = vi.hoisted(() => ({ cards: [] as ForecastCard[], loading: false, error: null as string | null }));
+vi.mock("@/components/RequireAdmin", () => ({ sessionToken: async () => null }));
 vi.mock("@/hooks/useThesisCards", () => ({ useThesisCards: () => hook }));
+vi.mock("@/hooks/useThesisScoreboard", () => ({ useThesisScoreboard: () => ({ board: null, loading: false, error: null }) }));
+const showAll = () => { fireEvent.click(screen.getByText(/Show all/)); return within(screen.getByRole("dialog")); };
 
 const CARD: ForecastCard = {
   id: 1,
@@ -31,18 +34,20 @@ describe("Thesis tracker page", () => {
     hook.loading = false;
     hook.error = null;
     render(<Thesis />);
-    expect(screen.getByText("NVDA")).toBeTruthy();
-    expect(screen.getByText("positive")).toBeTruthy();
-    expect(screen.getByText("inflow")).toBeTruthy();
-    expect(screen.getByText("deteriorated")).toBeTruthy();
-    expect(screen.getByText("Frozen")).toBeTruthy();
+    const full = showAll();
+    expect(full.getByText("NVDA")).toBeTruthy();
+    expect(full.getByText("positive")).toBeTruthy();
+    expect(full.getByText("inflow")).toBeTruthy();
+    expect(full.getByText("deteriorated")).toBeTruthy();
+    expect(full.getByText("Frozen")).toBeTruthy();
   });
 
   it("marks a superseded card instead of showing it as live", () => {
     hook.cards = [{ ...CARD, superseded: true }];
     render(<Thesis />);
-    expect(screen.getByText("Superseded")).toBeTruthy();
-    expect(screen.queryByText("Frozen")).toBeNull();
+    const full = showAll();
+    expect(full.getByText("Superseded")).toBeTruthy();
+    expect(full.queryByText("Frozen")).toBeNull();
   });
 
   it("says plainly when no cards exist yet", () => {
