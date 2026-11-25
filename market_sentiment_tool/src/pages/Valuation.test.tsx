@@ -110,6 +110,10 @@ function serve() {
   return fetchMock;
 }
 
+async function openCard(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `Open ${name}` }));
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -145,6 +149,7 @@ describe("Guidance tab", () => {
   it("keeps the two bases in separate, labeled tables", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     const rev = screen.getByTestId("basis-revenue");
     expect(within(eps).getByText("AMGN")).toBeInTheDocument();
@@ -158,6 +163,7 @@ describe("Guidance tab", () => {
   it("shows the guide direction and the zone in plain words", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     expect(within(eps).getByText("Above guidance value")).toBeInTheDocument();
     expect(within(eps).getByText("Below guidance value")).toBeInTheDocument();
@@ -167,6 +173,7 @@ describe("Guidance tab", () => {
   it("explains every zone in a legend", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const legend = await screen.findByTestId("zone-legend");
     expect(legend).toHaveTextContent("Below guidance value");
     expect(legend).toHaveTextContent("In line");
@@ -176,6 +183,7 @@ describe("Guidance tab", () => {
   it("lists unbanded names with their state and the recorded reason", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const un = await screen.findByTestId("unbanded");
     expect(within(un).getByText("KO")).toBeInTheDocument();
     expect(within(un).getByText("AAPL")).toBeInTheDocument();
@@ -197,6 +205,7 @@ describe("Guidance tab", () => {
   it("shows the guard's own reason for a rejected name, not the template", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const un = await screen.findByTestId("unbanded");
     expect(await within(un).findByText(/2\.69x the recorded consensus/)).toBeInTheDocument();
   });
@@ -204,6 +213,7 @@ describe("Guidance tab", () => {
   it("renders the gap as n/a for a point guide", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     expect(await within(eps).findByText("n/a (narrow guide)")).toBeInTheDocument();
   });
@@ -211,6 +221,7 @@ describe("Guidance tab", () => {
   it("defines the stale zone in the legend", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const legend = await screen.findByTestId("zone-legend");
     expect(legend).toHaveTextContent("Stale — zone held");
   });
@@ -218,6 +229,7 @@ describe("Guidance tab", () => {
   it("expands a banded row into the band chart and the full fact sheet", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     fireEvent.click(within(eps).getByRole("button", { name: /AMGN/ }));
     // The band chart: bear/base/bull bar with the price marked.
@@ -262,6 +274,7 @@ describe("Guidance tab (Round 2 hygiene)", () => {
       peer_members: ["ABBV", "AMGN"] };
     serveSheets([detail, CVS, LLY, KO, AAPL], detail);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     fireEvent.click(within(eps).getByRole("button", { name: /AMGN/ }));
     expect(await screen.findByText(/33rd among guided peers/)).toBeInTheDocument();
@@ -282,6 +295,7 @@ describe("Guidance tab (Round 2 hygiene)", () => {
   it("moves the band-chart price label off the axis row when it would collide", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     fireEvent.click(within(eps).getByRole("button", { name: /AMGN/ }));
     const chart = await screen.findByTestId("band-chart-AMGN");
@@ -295,6 +309,7 @@ describe("Guidance tab (Round 2 hygiene)", () => {
   it("keeps the single-row strip when the price label clears the axis labels", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     const eps = await screen.findByTestId("basis-eps");
     fireEvent.click(within(eps).getByRole("button", { name: /CVS/ }));
     const chart = await screen.findByTestId("band-chart-CVS");
@@ -310,6 +325,7 @@ describe("Guidance tab (Round 2 hygiene)", () => {
     ] };
     serveSheets([AMGN, CVS, LLY, guarded, AAPL]);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     expect(await screen.findByText(/2\.69x the recorded consensus/)).toBeInTheDocument();
     // All four reasons are on the page (behind the expandable tail), not
     // summarized away behind a "(+2 more)" dead end.

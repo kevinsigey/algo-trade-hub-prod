@@ -2,6 +2,9 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 
+import { FullView } from "@/components/Panel";
+import { DashCard, PEEK, PeekRows } from "@/pages/portfolio/shared";
+
 import { adminJson } from "@/lib/workshop";
 import { ctDateTimeYear, ctDateYear, ordinal } from "@/lib/format";
 import BandCrossings from "@/pages/BandCrossings";
@@ -166,26 +169,25 @@ function FreshnessBar({ board, snapshot }: {
   if (!snapshot && !f) return null;
   const computed = f?.computed_at ?? snapshot?.computed_at ?? null;
   const snapId = f?.snapshot_id ?? snapshot?.id ?? null;
+  const stamp = (snapId != null
+    ? `Snapshot #${snapId} · computed ${computed ? ctDateTimeYear(computed) : "—"}`
+    : "Unversioned legacy read — no snapshot stamp on this data yet")
+    + (f?.previous_snapshot_id != null ? ` · movers measured against snapshot #${f.previous_snapshot_id}` : "")
+    + (f ? ` · ${f.cadence}.` : "")
+    + " — one consistent snapshot; a recompute publishes a new snapshot, it never edits this one.";
   return (
-    <div data-testid="freshness-bar" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-      <p data-testid="snapshot-stamp" className="text-xs text-slate-500">
-        {snapId != null
-          ? `Snapshot #${snapId} · computed ${computed ? ctDateTimeYear(computed) : "—"}`
-          : "Unversioned legacy read — no snapshot stamp on this data yet"}
-        {f?.previous_snapshot_id != null && f?.previous_snapshot_id !== undefined
-          ? ` · movers measured against snapshot #${f.previous_snapshot_id}`
-          : ""}
-        {f ? ` · ${f.cadence}.` : ""}
-        {" — one consistent snapshot; a recompute publishes a new snapshot, it never edits this one."}
+    <div data-testid="freshness-bar" className="flex min-w-0 items-center gap-x-3">
+      <p data-testid="snapshot-stamp" title={stamp} className="min-w-0 truncate text-xs text-slate-500">
+        {stamp}
       </p>
       {f && f.age_hours != null && (
-        <span data-testid="freshness-age" className="text-xs text-slate-500">
+        <span data-testid="freshness-age" className="shrink-0 text-xs text-slate-500">
           {`Snapshot age ${f.age_hours < 1 ? "<1" : Math.round(f.age_hours)}h`}
         </span>
       )}
       {f?.stale && (
         <span data-testid="freshness-stale"
-              className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300">
+              className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300">
           Stale — older than the stated cadence
         </span>
       )}
@@ -216,7 +218,7 @@ function capText(v: number | null | undefined): string {
 function MoversSection({ board }: { board: GuidanceBoard }) {
   const movers = board.movers;
   return (
-    <section data-testid="movers" aria-label="Movers" className="mt-6">
+    <section data-testid="movers" aria-label="Movers">
       <h2 className="text-lg font-semibold text-white">Movers — since the previous snapshot</h2>
       {!movers ? (
         <p className="mt-2 text-sm text-slate-400">
@@ -312,15 +314,21 @@ type GridFilter = "all" | "buy" | "below_bear" | "between" | "above_bull";
  * then the rest; sortable by distance / guide revision / market cap
  * and filterable by zone status. Prices are the snapshot's, labelled
  * with their as-of. */
-function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
-  members, onCloseRibbon }: {
+function BandGrid({ board, classified, sheetFor, members, ensureMembers }: {
   board: GuidanceBoard; classified: Set<string>;
-  onSelect: (ticker: string) => void;
-  ribbonTicker: string | null;
   sheetFor: (ticker: string) => FactSheet | undefined;
   members: Record<string, string[]>;
-  onCloseRibbon: () => void;
+  ensureMembers: (sheet: FactSheet) => void;
 }) {
+  // The ribbon: a row's full fact sheet opens right under it.
+  const [ribbonTicker, setRibbonTicker] = useState<string | null>(null);
+  const onSelect = (ticker: string) => {
+    const sheet = sheetFor(ticker);
+    if (!sheet) return;
+    setRibbonTicker(ticker);
+    ensureMembers(sheet);
+  };
+  const onCloseRibbon = () => setRibbonTicker(null);
   const [sort, setSort] = useState<GridSort>("distance");
   const [filter, setFilter] = useState<GridFilter>("all");
   // One-screen default (Kevin, 2026-11-16): only the first FULL_ROWS
@@ -379,7 +387,7 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
     { id: "grid-sort-cap", label: "Market cap", value: "cap" },
   ];
   return (
-    <section data-testid="band-grid" aria-label="Football-field grid" className="mt-8">
+    <section data-testid="band-grid" aria-label="Football-field grid">
       <h2 className="text-lg font-semibold text-white">Football-field grid</h2>
       <p className="mt-0.5 text-sm text-slate-400">
         Every banded name, one row: bear / base / bull as the field, the snapshot
@@ -396,11 +404,6 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
             {f.label}
           </button>
         ))}
-        <button type="button" data-testid="grid-filter-noband"
-                onClick={() => document.getElementById("missing-band-queue")?.scrollIntoView?.()}
-                className={chipCls(false)}>
-          {`No band (${board.missing_band.length})`}
-        </button>
         <span className="mx-1 text-slate-600">|</span>
         {sorts.map((s) => (
           <button key={s.id} type="button" data-testid={s.id} aria-pressed={sort === s.value}
@@ -504,25 +507,18 @@ function BandGrid({ board, classified, onSelect, ribbonTicker, sheetFor,
 /** Rebuild — the missing-band queue: held or watched (classified)
  * names with no house band in this snapshot, as a worklist. Each row
  * carries the stored reason and, when the name has a fact sheet, the
- * way into its sheet — where the band-authoring decision view lives. */
-function MissingBandQueue({ board, hasSheet, onSelect }: {
-  board: GuidanceBoard; hasSheet: (ticker: string) => boolean;
-  onSelect: (ticker: string) => void;
+ * way into its sheet — where the band-authoring decision view lives. The
+ * sheet opens in place under its row (idempotent: a second click keeps it
+ * open). The queue lives in its own open view, so the list starts open. */
+function MissingBandQueue({ board, sheetFor, members, ensureMembers }: {
+  board: GuidanceBoard; sheetFor: (ticker: string) => FactSheet | undefined;
+  members: Record<string, string[]>; ensureMembers: (sheet: FactSheet) => void;
 }) {
-  // One-screen default: the queue leads with a summary line that NAMES
-  // the held names (a held name with no band is a work item, not a
-  // statistic) plus the total count; the full worklist sits behind
-  // the expander.
-  const [open, setOpen] = useState(false);
-  const heldNames = board.missing_band.filter((r) => r.held)
-    .map((r) => r.ticker);
+  const [openTicker, setOpenTicker] = useState<string | null>(null);
+  const heldNames = board.missing_band.filter((r) => r.held).map((r) => r.ticker);
   return (
-    <section data-testid="missing-band-queue" id="missing-band-queue"
-             aria-label="Missing-band queue" className="mt-8">
-      <h2 className="text-lg font-semibold text-white">
-        {`Missing a band — the worklist (${board.missing_band.length})`}
-      </h2>
-      <p className="mt-0.5 text-sm text-slate-400">
+    <section data-testid="missing-band-queue" id="missing-band-queue" aria-label="Missing-band queue">
+      <p className="text-sm text-slate-400">
         Held or classified names with no house band in this snapshot. A missing
         band is a coverage gap to close, not a name to forget.
       </p>
@@ -534,42 +530,43 @@ function MissingBandQueue({ board, hasSheet, onSelect }: {
         <>
           <p data-testid="queue-summary" className="mt-2 text-sm text-slate-300">
             {`${board.missing_band.length} ${board.missing_band.length === 1 ? "name has" : "names have"} no band in this snapshot`}
-            {heldNames.length > 0
-              ? ` — held: ${heldNames.join(", ")}`
-              : " — none of them held"}
-            {". "}
-            <button type="button" data-testid="queue-expand" aria-expanded={open}
-                    onClick={() => setOpen((v) => !v)}
-                    className="font-medium text-sky-300 hover:text-sky-200">
-              {open ? "Hide the full queue" : "Show the full queue"}
-            </button>
+            {heldNames.length > 0 ? ` — held: ${heldNames.join(", ")}` : " — none of them held"}
           </p>
-          {open && (
-        <ul className="mt-2 space-y-1.5">
-          {board.missing_band.map((r) => (
-            <li key={r.ticker} data-testid={`queue-row-${r.ticker}`}
-                className="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-              <span className="font-semibold text-white">{r.ticker}</span>
-              {r.held && (
-                <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-300">
-                  {`Held${r.books.length ? ` · ${r.books.join(", ")}` : ""}`}
-                </span>
-              )}
-              {r.watched && (
-                <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-xs font-medium text-slate-300">Classified print</span>
-              )}
-              <span className="text-sm text-slate-400">{r.reason ?? "no bands computed"}</span>
-              {hasSheet(r.ticker) && (
-                <button type="button" data-testid={`queue-open-${r.ticker}`}
-                        onClick={() => onSelect(r.ticker)}
-                        className="text-sm font-medium text-sky-300 hover:text-sky-200">
-                  Open its fact sheet →
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-          )}
+          <ul className="mt-2 space-y-1.5">
+            {board.missing_band.map((r) => {
+              const sheet = sheetFor(r.ticker);
+              return (
+                <li key={r.ticker} data-testid={`queue-row-${r.ticker}`}
+                    className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-semibold text-white">{r.ticker}</span>
+                    {r.held && (
+                      <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-300">
+                        {`Held${r.books.length ? ` · ${r.books.join(", ")}` : ""}`}
+                      </span>
+                    )}
+                    {r.watched && (
+                      <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-xs font-medium text-slate-300">Classified print</span>
+                    )}
+                    <span className="text-sm text-slate-400">{r.reason ?? "no bands computed"}</span>
+                    {sheet && (
+                      <button type="button" data-testid={`queue-open-${r.ticker}`}
+                              onClick={() => { setOpenTicker(r.ticker); ensureMembers(sheet); }}
+                              className="text-sm font-medium text-sky-300 hover:text-sky-200">
+                        Open its fact sheet →
+                      </button>
+                    )}
+                  </div>
+                  {sheet && openTicker === r.ticker && (
+                    <div data-testid={`queue-sheet-${r.ticker}`} className="mt-2 border-t border-slate-800 pt-2">
+                      <SheetDetail sheet={sheet} members={members[r.ticker]} />
+                      <NameDecision ticker={r.ticker} />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </>
       )}
     </section>
@@ -611,7 +608,7 @@ function feedText(item: FeedItem): string {
  * when nothing changed, it says so plainly and invents nothing. */
 function AttentionFeed({ summary }: { summary: PageSummary }) {
   return (
-    <section data-testid="attention-feed" aria-label="Needs attention" className="mt-6">
+    <section data-testid="attention-feed" aria-label="Needs attention">
       <h2 className="text-lg font-semibold text-white">Needs attention — what changed</h2>
       {summary.feed_state === "no_previous_snapshot" ? (
         <p className="mt-2 text-sm text-slate-400">
@@ -981,23 +978,260 @@ function onFileText(sheet: FactSheet): string {
   return `${metrics.join(", ")} · ${records.length} record${records.length === 1 ? "" : "s"}`;
 }
 
+/** Every fact sheet in full: the two banded tables (one per basis, never
+ * mixed) and the not-banded table with the recorded reasons. A name's
+ * decision view opens in its expansion. */
+function TablesView({ sheets, unbandedCount, members, ensureMembers, chips, initialExpanded }: {
+  sheets: FactSheet[]; unbandedCount: number; members: Record<string, string[]>;
+  ensureMembers: (sheet: FactSheet) => void; chips: Record<string, VerdictChip>;
+  initialExpanded: string | null;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(initialExpanded);
+  useEffect(() => { if (initialExpanded) setExpanded(initialExpanded); }, [initialExpanded]);
+  const toggle = (sheet: FactSheet) => {
+    const next = expanded === sheet.ticker ? null : sheet.ticker;
+    setExpanded(next);
+    if (next) ensureMembers(sheet);
+  };
+  const onToggle = (t: string) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); };
+  const unbanded = sheets.filter((s) => s.status !== "banded");
+  return (
+    <div data-testid="reference-table" id="reference-table">
+      <ZoneLegend />
+      <p className="mt-4 max-w-3xl text-sm text-slate-400">
+        The record behind the board: every fact sheet in full, with every name's decision view in its expansion.
+      </p>
+      <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-6">
+        <h3 className="text-base font-semibold text-white">Bands from earnings guidance</h3>
+        <p className="mt-0.5 text-sm text-slate-400">
+          The recorded full-year EPS guide × the peer group's median forward P/E.
+          The bear band carries a 10% haircut to the guide's low end.
+        </p>
+        <div className="mt-3">
+          <BandedTable sheets={sheets} basis="eps" expanded={expanded} onToggle={onToggle} members={members} chips={chips} />
+        </div>
+      </section>
+      <section data-testid="basis-revenue" aria-label="Bands from revenue guidance" className="mt-6">
+        <h3 className="text-base font-semibold text-white">Bands from revenue guidance</h3>
+        <p className="mt-0.5 text-sm text-slate-400">
+          For names that guide revenue but not EPS: the recorded full-year revenue guide ×
+          the peer group's median price/sales, per share. Kept in its own table — the two
+          bases never mix in one comparison.
+        </p>
+        <div className="mt-3">
+          <BandedTable sheets={sheets} basis="revenue" expanded={expanded} onToggle={onToggle} members={members} chips={chips} />
+        </div>
+      </section>
+      <section data-testid="unbanded" aria-label="Names without bands" className="mt-8">
+        <h3 className="text-base font-semibold text-white">{`Not banded — and why (${unbandedCount})`}</h3>
+        <p className="mt-0.5 max-w-3xl text-sm text-slate-400">
+          A name lands here when the recorder has no usable full-year guide for it. Each
+          sheet's recorded note is shown, not hidden — a missing band is a coverage fact,
+          not an oversight.
+        </p>
+        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-3 py-2 font-medium">State</th>
+                <th className="px-3 py-2 font-medium">On file</th>
+                <th className="px-3 py-2 font-medium">Recorded note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unbanded.map((s) => {
+                const open = expanded === s.ticker;
+                return [
+                  <tr key={s.ticker} className="border-b border-slate-800/60 hover:bg-slate-900/40">
+                    <td className="px-3 py-2">
+                      <button type="button" aria-expanded={open} onClick={() => toggle(s)}
+                              className="inline-flex items-center gap-1 font-semibold text-white">
+                        {s.ticker}
+                        <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-slate-300">{STATE_LABELS[s.status] ?? s.status}</td>
+                    <td className="px-3 py-2 text-slate-300">{onFileText(s)}</td>
+                    <td className="px-3 py-2 text-slate-400"><UnbandedNote sheet={s} /></td>
+                  </tr>,
+                  open ? (
+                    <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
+                      <td colSpan={4} className="px-3 py-3">
+                        <SheetDetail sheet={s} members={members[s.ticker]} />
+                        <NameDecision ticker={s.ticker} />
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const ZONE_LEGEND = ["buy_zone_strong", "buy_zone", "neutral", "no_chase_long", "short_zone", "short_zone_strong", "stale"] as const;
+
+/** What the zones mean, plus the page's method note (moved off the page face). */
+function ZoneLegend() {
+  return (
+    <div data-testid="zone-legend" className="rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3">
+      <p className="text-sm text-slate-400">
+        Each company's own recorded full-year guidance, valued at a 50/50 blend of its own 5-year median
+        multiple and its peer group's median (the peer median alone, flagged "peer only", without 5 years of
+        history), as bear / base / bull bands — with the zone the current price sits in. A zone says where the
+        price sits against the company's own guidance value. Nothing on this page places, sizes, or recommends a trade.
+      </p>
+      <h3 className="mt-3 text-sm font-medium text-slate-200">What the zones mean</h3>
+      <ul className="mt-2 grid gap-x-6 gap-y-1 text-xs text-slate-400 md:grid-cols-2">
+        {ZONE_LEGEND.map((v) => (
+          <li key={v} className="flex gap-2">
+            <span className="shrink-0">{zoneBadge(v)}</span>
+            <span>{zoneInfo(v).blurb}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-slate-500">
+        The gap column reads the distance from the guide midpoint in guide-range widths:
+        +1.0 means the figure the price implies sits one full guide range above the midpoint.
+      </p>
+    </div>
+  );
+}
+
+/** A KPI tile: one number, its label on the same line of text. */
+function Kpi({ value, label, sub, className = "" }: {
+  value: string | number; label: string; sub?: string; className?: string;
+}) {
+  return (
+    <div className={`min-w-0 rounded-lg border border-slate-800 bg-slate-900/60 p-2 sm:p-3 ${className}`}>
+      <div className="truncate font-display text-2xl sm:text-[1.75rem] font-semibold leading-none tabular-nums text-white">{value}</div>
+      {" "}
+      <div className="mt-1 truncate text-xs text-slate-400">{label}</div>
+      {sub && <div className="hidden truncate text-[11px] text-slate-500 sm:block">{sub}</div>}
+    </div>
+  );
+}
+
+/** One row of the page's names list: where a banded name sits, at a glance. */
+interface NameRow {
+  ticker: string; verdict: string | null; distance: number | null;
+  bands: GridRow["bands"]; price: number | string | null; held: boolean;
+}
+
+const namesFromSheets = (sheets: FactSheet[]): NameRow[] =>
+  sheets.filter((s) => s.status === "banded").map((s) => {
+    const base = num(s.bands?.base), p = num(s.price);
+    return {
+      ticker: s.ticker, verdict: s.baseline_verdict ?? null, held: false, price: s.price,
+      distance: base && p ? ((p - base) / p) * 100 : null,
+      bands: { bear: num(s.bands?.bear), base, bull: num(s.bands?.bull) },
+    };
+  }).map((r) => ({ ...r, distance: r.distance != null && Number.isFinite(r.distance) ? r.distance : null }));
+
+/** The names most worth a look: held first, then classified prints, then the
+ * most below guidance value (the grid's default order). Five rows; the rest
+ * open in the full tables. */
+function NamesList({ rows, total, sheetFor, members, ensureMembers, chips, onShowAll }: {
+  rows: NameRow[]; total: number; sheetFor: (t: string) => FactSheet | undefined;
+  members: Record<string, string[]>; ensureMembers: (sheet: FactSheet) => void;
+  chips: Record<string, VerdictChip>; onShowAll: () => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <section data-testid="names-list" aria-label="Names to look at"
+             className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-xs font-medium text-slate-400">Names to look at</h2>
+        <button type="button" data-testid="names-show-all" onClick={onShowAll}
+                className="text-xs font-medium text-sky-300 hover:text-sky-200">
+          {`Show all ${total}`}
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-xs text-slate-500">—</p>
+      ) : (
+        <ul className="mt-1 divide-y divide-slate-800/70">
+          {rows.slice(0, PEEK).map((r) => {
+            const sheet = sheetFor(r.ticker);
+            const isOpen = open === r.ticker;
+            return (
+              <li key={r.ticker} data-testid={`name-row-${r.ticker}`}>
+                <button type="button" aria-expanded={isOpen}
+                        onClick={() => { setOpen(isOpen ? null : r.ticker); if (!isOpen && sheet) ensureMembers(sheet); }}
+                        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-left text-xs tabular-nums sm:flex-nowrap">
+                  <span className="w-14 shrink-0 font-semibold text-white">{r.ticker}</span>
+                  {r.held && <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Held</span>}
+                  <span className="shrink-0">{zoneBadge(r.verdict)}</span>
+                  <span className="hidden min-w-0 flex-1 sm:block">
+                    <BandTrack bands={r.bands} price={r.price} ticker={r.ticker} />
+                  </span>
+                  <span data-testid={`name-distance-${r.ticker}`} className="ml-auto shrink-0 font-semibold text-slate-100">
+                    {r.distance == null ? "—" : pctText(r.distance)}
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+                </button>
+                {isOpen && sheet && (
+                  <div className="pb-3">
+                    <VerdictChipLine chip={chips[r.ticker]} ticker={r.ticker} />
+                    <div className="mt-2">
+                      <SheetDetail sheet={sheet} members={members[r.ticker]} />
+                      <NameDecision ticker={r.ticker} />
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** The zone mix as one stacked bar: below / in line / above (+ stale). */
+function ZoneMix({ summary }: { summary: ReturnType<typeof summarize> }) {
+  const parts = [
+    { n: summary.buyZones, label: "below guidance value", cls: "bg-emerald-500" },
+    { n: summary.flatZones, label: "in line", cls: "bg-slate-400" },
+    { n: summary.shortZones, label: "above guidance value", cls: "bg-rose-500" },
+    { n: summary.stale, label: "stale (zone held)", cls: "bg-amber-500" },
+  ];
+  const total = parts.reduce((a, p) => a + p.n, 0);
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-900/60 p-3 col-span-3 lg:col-span-1">
+      <div className="flex h-[1.75rem] items-center">
+        <div role="img" aria-label="Zone mix" className="flex h-3 w-full overflow-hidden rounded-full bg-slate-800">
+          {total > 0 && parts.filter((p) => p.n > 0).map((p) => (
+            <div key={p.label} className={p.cls} style={{ width: `${(p.n / total) * 100}%` }} />
+          ))}
+        </div>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-slate-400">
+        {parts.filter((p) => p.n > 0 || p.label.startsWith("below") || p.label.startsWith("above")).map((p) => (
+          <span key={p.label} className="inline-flex items-center gap-1">
+            <span className={`h-2 w-2 rounded-full ${p.cls}`} aria-hidden="true" />{`${p.n} ${p.label}`}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const THREE = 3;
+
 export default function Valuation() {
   const [sheets, setSheets] = useState<FactSheet[] | null>(null);
   const [snapshot, setSnapshot] = useState<SnapshotStamp | null>(null);
   const [pageSummary, setPageSummary] = useState<PageSummary | null>(null);
   const [board, setBoard] = useState<GuidanceBoard | null>(null);
-  const [refOpen, setRefOpen] = useState(false);
-  // Presentation fix (Kevin, 2026-11-16): the default view is one
-  // screen — freshness, movers, the compact grid, the queue summary.
-  // Everything else lives behind the Reference toggle. null = not yet
-  // touched: the section then defaults OPEN when the board block did
-  // not ride the load (the tables are the page in that case) and
-  // closed when it did.
-  const [showReference, setShowReference] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [members, setMembers] = useState<Record<string, string[]>>({});
   const [chips, setChips] = useState<Record<string, VerdictChip>>({});
+  const [tablesOpen, setTablesOpen] = useState(false);
   const [searchParams] = useSearchParams();
   const decisionParam = searchParams.get("decision")?.toUpperCase() ?? null;
 
@@ -1020,84 +1254,58 @@ export default function Valuation() {
     return () => { live = false; };
   }, []);
 
-  // Deep link from a Screening row (?decision=TICKER): open that name's
-  // sheet expansion, where its decision view lives. The expansion sits
-  // inside the reference-table disclosure now, so open that too.
+  // Deep link from a Screening row (?decision=TICKER): open the full tables
+  // with that name's sheet expanded, where its decision view lives.
   useEffect(() => {
-    if (!decisionParam || !sheets) return;
-    const sheet = sheets.find((s) => s.ticker === decisionParam);
-    if (sheet) {
-      setExpanded(sheet.ticker);
-      setRefOpen(true);
-      setShowReference(true);
+    if (decisionParam && sheets?.some((s) => s.ticker === decisionParam)) {
+      setTablesOpen(true);
+      const sheet = sheets.find((s) => s.ticker === decisionParam);
+      if (sheet) ensureMembers(sheet);
     }
-  }, [decisionParam, sheets]);
+  }, [decisionParam, sheets]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Board, grid, and queue navigation OPENS the sheet — idempotently.
-  // (toggle() belongs to the reference table's own disclosure buttons:
-  // selecting "open its fact sheet" for an already-open sheet must not
-  // close it.)
-  const selectFromBoard = (sheet: FactSheet) => {
-    setRefOpen(true);
-    setShowReference(true);
-    setExpanded(sheet.ticker);
-    if (sheet.peer_group && members[sheet.ticker] === undefined) {
-      adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
-        .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
-        .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
-    }
-    document.getElementById("reference-table")?.scrollIntoView?.();
+  // Peer members ride the per-name read; load once, on first open.
+  const ensureMembers = (sheet: FactSheet) => {
+    if (!sheet.peer_group || members[sheet.ticker] !== undefined) return;
+    adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
+      .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
+      .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
   };
-
-  const selectByTicker = (ticker: string) => {
-    const sheet = (sheets ?? []).find((s) => s.ticker === ticker);
-    if (sheet) selectFromBoard(sheet);
-  };
-
-  // Grid tiles open their full fact sheet in a ribbon right under the
-  // row (Kevin, 2026-11-16) — no scroll to the bottom tables. The
-  // ribbon carries the same SheetDetail + decision view the reference
-  // table's expansion carries. Selecting is idempotent; the ribbon's
-  // own Close dismisses it.
-  const [ribbonTicker, setRibbonTicker] = useState<string | null>(null);
-  const openRibbon = (sheet: FactSheet) => {
-    setRibbonTicker(sheet.ticker);
-    if (sheet.peer_group && members[sheet.ticker] === undefined) {
-      adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
-        .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
-        .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
-    }
-  };
-  const openRibbonByTicker = (ticker: string) => {
-    const sheet = (sheets ?? []).find((s) => s.ticker === ticker);
-    if (sheet) openRibbon(sheet);
-  };
+  const sheetFor = (t: string) => (sheets ?? []).find((s) => s.ticker === t);
 
   const summary = useMemo(() => (sheets ? summarize(sheets) : null), [sheets]);
-  const referenceShown = showReference ?? !board;
+  const classified = useMemo(() => new Set((pageSummary?.classified_names ?? []).map((c) => c.ticker)), [pageSummary]);
 
-  const toggle = (sheet: FactSheet) => {
-    const next = expanded === sheet.ticker ? null : sheet.ticker;
-    setExpanded(next);
-    if (next && sheet.peer_group && members[sheet.ticker] === undefined) {
-      adminJson<FactSheet>(`/api/valuation-bands/${sheet.ticker}`)
-        .then((row) => setMembers((m) => ({ ...m, [sheet.ticker]: row.peer_members ?? [] })))
-        .catch(() => setMembers((m) => ({ ...m, [sheet.ticker]: [] })));
-    }
-  };
+  const nameRows = useMemo<NameRow[]>(() => {
+    const rows: NameRow[] = board
+      ? board.grid.map((g) => ({ ticker: g.ticker, verdict: g.zone, distance: g.distance_pct, bands: g.bands, price: g.price, held: g.held }))
+      : namesFromSheets(sheets ?? []);
+    const rank = (r: NameRow) => (r.held ? 0 : classified.has(r.ticker) ? 1 : 2);
+    return rows.sort((a, b) => rank(a) - rank(b) || (a.distance ?? 1e9) - (b.distance ?? 1e9));
+  }, [board, sheets, classified]);
 
-  const unbanded = (sheets ?? []).filter((s) => s.status !== "banded");
+  const tablesView = (initial: string | null) => sheets && summary && (
+    <TablesView sheets={sheets} unbandedCount={summary.unbanded} members={members}
+                ensureMembers={ensureMembers} chips={chips} initialExpanded={initial} />
+  );
+
+  const movers = board?.movers ?? null;
+  const moverCount = movers ? movers.guide_revisions.length + movers.band_migrations.length : null;
+  const feed = pageSummary?.feed ?? [];
+  const missing = board?.missing_band ?? null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 md:px-8">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Guidance</h1>
-      <p className="mt-1 max-w-3xl text-sm text-slate-400">
-        Each company's own recorded full-year guidance, valued at a 50/50 blend of its own 5-year median multiple and its peer group's median (the peer median alone, flagged "peer only", without 5 years of history), as bear / base / bull bands — with the zone the current price sits in.
-      </p>
-      <p className="mt-3 max-w-3xl rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">
-        Display only — not trade recommendations. A zone says where the price sits against the
-        company's own guidance value. Nothing on this page places, sizes, or
-        recommends a trade.
+    <div className="mx-auto max-w-6xl px-4 py-3 md:px-8">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="text-2xl font-bold tracking-tight text-white">Guidance</h1>
+        <span data-testid="display-only"
+              title="A zone says where the price sits against the company's own guidance value. Nothing here places, sizes, or recommends a trade."
+              className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-xs font-medium text-amber-200">
+          Display only — not trade recommendations
+        </span>
+      </div>
+      <p className="mt-1 text-sm text-slate-400">
+        Recorded full-year guidance as bear / base / bull bands, with the zone the price sits in.
       </p>
 
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
@@ -1109,180 +1317,106 @@ export default function Valuation() {
 
       {sheets && summary && (
         <>
-          <p data-testid="valuation-summary" className="mt-5 text-sm text-slate-300">
-            <span className="font-medium text-white">{summary.total} fact sheets</span>
-            {" "}— one for every name with recorded guidance ·{" "}
-            <span className="font-medium text-white">{summary.banded} banded</span>
-            {` (${summary.epsBanded} EPS basis · ${summary.revenueBanded} revenue basis)`} ·{" "}
-            {summary.buyZones} below guidance value ·{" "}
-            {summary.shortZones} above guidance value
-            {summary.flatZones > 0 && ` · ${summary.flatZones} in line`}
-            {summary.stale > 0 && ` · ${summary.stale} stale (zone held)`}
-            {` · ${summary.unbanded} not banded`}
-          </p>
-          <FreshnessBar board={board} snapshot={snapshot} />
+          <div className="mt-1"><FreshnessBar board={board} snapshot={snapshot} /></div>
 
-          {board ? (
-            <>
-              <MoversSection board={board} />
-              <BandGrid board={board}
-                        classified={new Set((pageSummary?.classified_names ?? []).map((c) => c.ticker))}
-                        onSelect={openRibbonByTicker}
-                        ribbonTicker={ribbonTicker}
-                        sheetFor={(t) => (sheets ?? []).find((s) => s.ticker === t)}
-                        members={members}
-                        onCloseRibbon={() => setRibbonTicker(null)} />
-              <MissingBandQueue board={board}
-                                hasSheet={(t) => sheets.some((s) => s.ticker === t)}
-                                onSelect={selectByTicker} />
-            </>
-          ) : (
+          <div data-testid="valuation-summary"
+               className="mt-3 grid grid-cols-3 gap-2 sm:gap-3 lg:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,2fr)]">
+            <Kpi value={summary.total} label="fact sheets" sub="every name with recorded guidance" />
+            <Kpi value={summary.banded} label="banded" sub={`${summary.epsBanded} EPS basis · ${summary.revenueBanded} revenue basis`} />
+            <Kpi value={summary.unbanded} label="not banded" />
+            <Kpi value={moverCount ?? "—"} label="movers" />
+            <Kpi value={board ? board.grid.filter((g) => g.held).length : "—"} label="held banded" />
+            <ZoneMix summary={summary} />
+          </div>
+
+          {!board && (
             <p className="mt-3 text-xs text-amber-300/80">
-              The board block did not ride this load — the tables below still serve
-              the stamped snapshot; the movers, grid, and missing-band queue return
-              with it.
+              The board block did not ride this load — the tables still serve the stamped snapshot;
+              the movers, grid, and missing-band queue return with it.
             </p>
           )}
 
-          <button type="button" data-testid="reference-toggle"
-                  aria-expanded={referenceShown}
-                  onClick={() => setShowReference(!referenceShown)}
-                  className="mt-10 flex w-full items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3 text-left hover:border-slate-600">
-            <span className="text-sm font-medium text-slate-200">
-              Reference — attention feed, zone legend, band crossings, level watcher, debates and the full fact-sheet tables
-            </span>
-            <span className="shrink-0 text-xs text-slate-400">{referenceShown ? "Hide" : "Show"}</span>
-          </button>
-
-          {referenceShown && (
-          <>
-          {pageSummary ? (
-            <AttentionFeed summary={pageSummary} />
-          ) : (
-            <p className="mt-3 text-xs text-amber-300/80">
-              The summary block did not ride this load — the feed returns with it;
-              the board and tables above serve the stamped snapshot regardless.
-            </p>
-          )}
-
-          <div data-testid="zone-legend" className="mt-4 rounded-xl border border-slate-800 bg-slate-900/40 px-3.5 py-3">
-            <h2 className="text-sm font-medium text-slate-200">What the zones mean</h2>
-            <ul className="mt-2 grid gap-x-6 gap-y-1 text-xs text-slate-400 md:grid-cols-2">
-              {(["buy_zone_strong", "buy_zone", "neutral", "no_chase_long", "short_zone", "short_zone_strong", "stale"] as const).map((v) => (
-                <li key={v} className="flex gap-2">
-                  <span className="shrink-0">{zoneBadge(v)}</span>
-                  <span>{zoneInfo(v).blurb}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 text-xs text-slate-500">
-              The gap column reads the distance from the guide midpoint in guide-range widths:
-              +1.0 means the figure the price implies sits one full guide range above the midpoint.
-            </p>
+          <div className="mt-3 grid grid-cols-2 items-start gap-3 lg:grid-cols-3">
+            {board && (
+              <DashCard title="Movers" value={moverCount ?? "—"} sub={movers ? "since the previous snapshot" : "no previous snapshot"}
+                        hint="Guide revisions and band migrations between the two latest snapshots."
+                        detailTitle="Movers — since the previous snapshot" detail={<MoversSection board={board} />}>
+                <div className="hidden sm:block">
+                  <PeekRows empty="—" rows={(movers?.guide_revisions ?? []).slice(0, THREE).map((r, i) => ({
+                    key: `${r.ticker}-${r.metric}-${i}`, label: r.ticker, aside: r.metric === "anchor" ? "guide" : r.metric,
+                    value: pctText(r.change_pct), valueClass: (r.change_pct ?? 0) < 0 ? "text-rose-300" : "text-emerald-300",
+                  }))} />
+                </div>
+              </DashCard>
+            )}
+            {board && (
+              <DashCard title="Football field" value={summary.banded} sub={`${summary.buyZones} below · ${summary.flatZones} in line · ${summary.shortZones} above`}
+                        hint="Every banded name: bear / base / bull as the field, the price as the marker."
+                        detailTitle="Football field — every banded name"
+                        detail={
+                          <div className="space-y-4">
+                            <ZoneLegend />
+                            <BandGrid board={board} classified={classified} sheetFor={sheetFor}
+                                      members={members} ensureMembers={ensureMembers} />
+                          </div>}>
+              </DashCard>
+            )}
+            <DashCard title="Needs attention" value={pageSummary && pageSummary.feed_state !== "no_previous_snapshot" ? feed.length : "—"}
+                      sub={pageSummary ? "changes since the previous snapshot" : "summary not loaded"}
+                      hint="Genuine changes only, conjunctions pinned first; with band crossings and the level watcher."
+                      detailTitle="Needs attention — what changed"
+                      detail={
+                        <div className="space-y-4">
+                          {pageSummary ? <AttentionFeed summary={pageSummary} /> : (
+                            <p className="text-xs text-amber-300/80">
+                              The summary block did not ride this load — the feed returns with it;
+                              the board and tables serve the stamped snapshot regardless.
+                            </p>
+                          )}
+                          <BandCrossings />
+                          <LevelWatcher />
+                        </div>}>
+              <div className="hidden sm:block">
+                <PeekRows empty="—" rows={feed.slice(0, THREE).map((it, i) => ({
+                  key: `${it.kind}-${it.ticker}-${i}`, label: it.ticker, aside: it.kind.replace("_", " "),
+                  value: it.zone ? zoneInfo(it.zone).label : "—",
+                }))} />
+              </div>
+            </DashCard>
+            {board && (
+              <DashCard title="Missing a band" value={board.missing_band.length}
+                        sub={`${board.missing_band.filter((r) => r.held).length} held`}
+                        hint="Held or classified names with no house band: a coverage gap to close."
+                        detailTitle={`Missing a band — the worklist (${board.missing_band.length})`}
+                        detail={<MissingBandQueue board={board} sheetFor={sheetFor} members={members} ensureMembers={ensureMembers} />}>
+                <div className="hidden sm:block">
+                  <PeekRows empty="—" rows={board.missing_band.slice(0, THREE).map((r) => ({
+                    key: r.ticker, label: r.ticker, aside: r.held ? "held" : r.watched ? "classified" : undefined,
+                    value: r.sheet_status ? (STATE_LABELS[r.sheet_status] ?? r.sheet_status).split(" — ")[0] : "—",
+                  }))} />
+                </div>
+              </DashCard>
+            )}
+            <DashCard title="Debates" value={pageSummary ? pageSummary.counts.pending_debates : "—"} sub="pending in the queue"
+                      hint="The debate queue, agent debates and valuation debates."
+                      detailTitle="Debates"
+                      detail={<div id="debate-queue-anchor"><DebateQueue /><DebatesSection /></div>} />
+            <DashCard title="Fact sheets" value={summary.total}
+                      sub={`${summary.epsBanded} EPS · ${summary.revenueBanded} revenue · ${summary.unbanded} not banded`}
+                      hint="Every fact sheet in full: the earnings and revenue band tables and the not-banded reasons."
+                      detailTitle={`Fact sheets — every name in full (${summary.total})`}
+                      detail={tablesView(null)} />
           </div>
 
-          <BandCrossings />
-
-          <LevelWatcher />
-
-          <div id="debate-queue-anchor">
-            <DebateQueue />
-          </div>
-
-          <details data-testid="reference-table" id="reference-table" open={refOpen}
-                   onToggle={(e) => setRefOpen((e.target as HTMLDetailsElement).open)}
-                   className="mt-10">
-            <summary className="cursor-pointer text-lg font-semibold text-white">
-              {`Reference table — every fact sheet in full (${summary.total} sheets)`}
-            </summary>
-            <p className="mt-1 max-w-3xl text-sm text-slate-400">
-              The board above is the read; this is the record it summarizes — the full
-              fact-sheet tables, unchanged, with every name's decision view in its
-              expansion.
-            </p>
-
-          <section data-testid="basis-eps" aria-label="Bands from earnings guidance" className="mt-8">
-            <h2 className="text-lg font-semibold text-white">Bands from earnings guidance</h2>
-            <p className="mt-0.5 text-sm text-slate-400">
-              The recorded full-year EPS guide × the peer group's median forward P/E.
-              The bear band carries a 10% haircut to the guide's low end.
-            </p>
-            <div className="mt-3">
-              <BandedTable sheets={sheets} basis="eps" expanded={expanded}
-                           onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} chips={chips} />
-            </div>
-          </section>
-
-          <section data-testid="basis-revenue" aria-label="Bands from revenue guidance" className="mt-8">
-            <h2 className="text-lg font-semibold text-white">Bands from revenue guidance</h2>
-            <p className="mt-0.5 text-sm text-slate-400">
-              For names that guide revenue but not EPS: the recorded full-year revenue guide ×
-              the peer group's median price/sales, per share. Kept in its own table — the two
-              bases never mix in one comparison.
-            </p>
-            <div className="mt-3">
-              <BandedTable sheets={sheets} basis="revenue" expanded={expanded}
-                           onToggle={(t) => { const s = sheets.find((x) => x.ticker === t); if (s) toggle(s); }}
-                           members={members} chips={chips} />
-            </div>
-          </section>
-
-          <section data-testid="unbanded" aria-label="Names without bands" className="mt-10">
-            <h2 className="text-lg font-semibold text-white">
-              Not banded — and why ({summary.unbanded})
-            </h2>
-            <p className="mt-0.5 max-w-3xl text-sm text-slate-400">
-              A name lands here when the recorder has no usable full-year guide for it. Each
-              sheet's recorded note is shown, not hidden — a missing band is a coverage fact,
-              not an oversight.
-            </p>
-            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
-              <table className="w-full min-w-[760px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2 font-medium">Name</th>
-                    <th className="px-3 py-2 font-medium">State</th>
-                    <th className="px-3 py-2 font-medium">On file</th>
-                    <th className="px-3 py-2 font-medium">Recorded note</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unbanded.map((s) => {
-                    const open = expanded === s.ticker;
-                    return [
-                      <tr key={s.ticker} className="border-b border-slate-800/60 hover:bg-slate-900/40">
-                        <td className="px-3 py-2">
-                          <button type="button" aria-expanded={open} onClick={() => toggle(s)}
-                                  className="inline-flex items-center gap-1 font-semibold text-white">
-                            {s.ticker}
-                            <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-slate-300">{STATE_LABELS[s.status] ?? s.status}</td>
-                        <td className="px-3 py-2 text-slate-300">{onFileText(s)}</td>
-                        <td className="px-3 py-2 text-slate-400"><UnbandedNote sheet={s} /></td>
-                      </tr>,
-                      open ? (
-                        <tr key={`${s.ticker}-detail`} className="border-b border-slate-800 bg-slate-900/30">
-                          <td colSpan={4} className="px-3 py-3">
-                            <SheetDetail sheet={s} members={members[s.ticker]} />
-                            <NameDecision ticker={s.ticker} />
-                          </td>
-                        </tr>
-                      ) : null,
-                    ];
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          </details>
-          </>
+          <NamesList rows={nameRows} total={summary.total} sheetFor={sheetFor} members={members}
+                     ensureMembers={ensureMembers} chips={chips} onShowAll={() => setTablesOpen(true)} />
+          {tablesOpen && (
+            <FullView title={`Fact sheets — every name in full (${summary.total})`} onClose={() => setTablesOpen(false)}>
+              {tablesView(decisionParam)}
+            </FullView>
           )}
         </>
       )}
-      <DebatesSection />
     </div>
   );
 }
