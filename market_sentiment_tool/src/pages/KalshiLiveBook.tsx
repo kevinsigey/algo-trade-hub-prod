@@ -248,11 +248,15 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
                 hint="The live pilot's scoreboard: P&L, fills and the two gates it must clear"
                 defaultOpen={open === "performance"} detailTitle="Live pilot" detail={<LivePilotCard pilot={p} />}>
         <div className="relative min-h-[150px] flex-1">
-          {curve.length >= 2 ? (
+          {curve.length >= 2 ? (<>
             <div className="absolute inset-0">
               <PnlChart curve={curve} />
             </div>
-          ) : (
+            <span className="absolute bottom-0 left-0 text-[10px] text-slate-500"
+                  title="Realized P&L of the settled trades among the latest orders. The headline is the balance change since start, which also counts fees and open positions.">
+              settled trades in the latest {orders.length} orders
+            </span>
+          </>) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
               <span className="text-2xl">—</span>
               <span className="text-xs">graph starts after 2 settled trades</span>
@@ -268,7 +272,7 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
           <Fig label="Edge gate" value={`${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}`} hint="Needs 150 settled trades" />
         </dl>
       </DashCard>
-      <DashCard title="Positions" value={fills.length} sub="fills"
+      <DashCard title="Positions" value={p.fills ?? "—"} sub={`fills · ${fills.length} in the latest ${orders.length} orders`}
                 hint="Recent filled orders. Open for every order, skipped ones included."
                 defaultOpen={open === "positions"} detailTitle={`Live orders · ${orders.length}`}
                 detail={orders.length ? <OrdersTable orders={orders} /> : undefined}>

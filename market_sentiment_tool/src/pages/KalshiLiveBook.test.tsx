@@ -58,7 +58,7 @@ describe("Kalshi live book", () => {
   it("headlines Positions with the fill count and lists only filled orders", async () => {
     const skipped = { ...PILOT.orders[0], id: 8, status: "skipped_no_depth", skip_reason: "no_depth", contracts_filled: 0, pnl: null, fill_price: null };
     show({ ...PILOT, orders: [skipped, ...PILOT.orders] });
-    expect(await screen.findByText("fills")).toBeInTheDocument();
+    expect(await screen.findByText(/^fills · \d+ in the latest \d+ orders$/)).toBeInTheDocument();
     expect(screen.getByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
     expect(screen.queryByText(/skipped/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
