@@ -987,6 +987,7 @@ function TablesView({ sheets, unbandedCount, members, ensureMembers, chips, init
   initialExpanded: string | null;
 }) {
   const [expanded, setExpanded] = useState<string | null>(initialExpanded);
+  useEffect(() => { if (initialExpanded) setExpanded(initialExpanded); }, [initialExpanded]);
   const toggle = (sheet: FactSheet) => {
     const next = expanded === sheet.ticker ? null : sheet.ticker;
     setExpanded(next);
@@ -1126,7 +1127,7 @@ const namesFromSheets = (sheets: FactSheet[]): NameRow[] =>
     const base = num(s.bands?.base), p = num(s.price);
     return {
       ticker: s.ticker, verdict: s.baseline_verdict ?? null, held: false, price: s.price,
-      distance: base ? ((p ?? NaN) / base - 1) * 100 : null,
+      distance: base && p ? ((p - base) / p) * 100 : null,
       bands: { bear: num(s.bands?.bear), base, bull: num(s.bands?.bull) },
     };
   }).map((r) => ({ ...r, distance: r.distance != null && Number.isFinite(r.distance) ? r.distance : null }));
@@ -1161,7 +1162,7 @@ function NamesList({ rows, total, sheetFor, members, ensureMembers, chips, onSho
               <li key={r.ticker} data-testid={`name-row-${r.ticker}`}>
                 <button type="button" aria-expanded={isOpen}
                         onClick={() => { setOpen(isOpen ? null : r.ticker); if (!isOpen && sheet) ensureMembers(sheet); }}
-                        className="flex w-full items-center gap-2 py-1.5 text-left text-xs tabular-nums">
+                        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-left text-xs tabular-nums sm:flex-nowrap">
                   <span className="w-14 shrink-0 font-semibold text-white">{r.ticker}</span>
                   {r.held && <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-300">Held</span>}
                   <span className="shrink-0">{zoneBadge(r.verdict)}</span>
