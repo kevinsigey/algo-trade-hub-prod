@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Portfolio from "@/pages/Portfolio";
@@ -55,6 +55,8 @@ describe("Kalshi live book", () => {
     expect(await screen.findByText("KXWTI15M-26NOV241000-00")).toBeInTheDocument();
     expect(screen.getAllByText("$10.25").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Running")).toBeInTheDocument();
+    // The orders table is the Positions card's open view.
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
     expect(screen.getByRole("columnheader", { name: "Slippage" })).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getByText("1.0¢")).toBeInTheDocument();
   });

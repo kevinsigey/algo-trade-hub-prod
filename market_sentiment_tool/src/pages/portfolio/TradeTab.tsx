@@ -177,7 +177,7 @@ function ClosedTable({ trades: all }: { trades: ClosedPayload["trades"] }) {
  * option legs it would not price or size alone. Signed-in only, like the order form:
  * a visitor's read 401s and the box simply never appears. Done/Dismiss are Kevin's
  * clicks; the runner never resolves its own hand-offs. */
-function ManualActions({ book }: { book: string }) {
+export function ManualActions({ book }: { book: string }) {
   const [actions, setActions] = useState<ManualAction[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);

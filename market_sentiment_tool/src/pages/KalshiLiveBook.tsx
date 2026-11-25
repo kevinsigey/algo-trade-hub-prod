@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
 
 import { sessionToken } from "@/components/RequireAdmin";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
-import { REFRESH_MS } from "@/pages/portfolio/shared";
+import { DashCard, Fig, PEEK, PeekRows, REFRESH_MS } from "@/pages/portfolio/shared";
 import type { KalshiDemoPayload, KalshiLivePilot, KalshiLivePilotAdminOnly } from "@/lib/kalshiDemo";
 
+export const REAL_MONEY_BADGE = "rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300";
 const money = (v: number | null | undefined) => fmtUsd(v);
 const signed = (v: number | null | undefined) => fmtUsd(v, { signed: true });
 const pct = (v: number | null | undefined) =>
@@ -24,7 +24,7 @@ const LIVE_SINCE = "2026-11-24T14:21:37Z";
 /** The live micro-pilot's scoreboard (issue #590): the oil & gas raw
  * rule on the LIVE Kalshi account. Real money — the badge and the
  * halt state are the point of the card. */
-function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
+export function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdminOnly | null | undefined }) {
   if (!pilot) return null;
   if ("admin_only" in pilot) {
     return <p className="mb-3 text-xs text-slate-500">Live pilot: admin only</p>;
@@ -67,7 +67,7 @@ function LivePilotCard({ pilot }: { pilot: KalshiLivePilot | KalshiLivePilotAdmi
   );
 }
 
-function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
+export function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
   return (
     <div className="mt-3 overflow-x-auto">
       <table className="w-full min-w-[52rem] text-xs tabular-nums">
@@ -103,11 +103,19 @@ function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
   );
 }
 
-/** The real-money Kalshi pilot on its own Portfolio book (admin payload only). */
-export default function KalshiLiveBook() {
+export type KalshiRead = {
+  /** The pilot, only for the signed-in admin; null for a visitor or before the first read. */
+  pilot: KalshiLivePilot | null;
+  /** The read landed and carries no account figures (a visitor, or admin-only). */
+  adminOnly: boolean;
+  loading: boolean;
+  error: string | null;
+};
+
+/** The real-money Kalshi pilot's read (admin payload only), on the page's 30-second cycle. */
+export function useKalshiPilot(): KalshiRead {
   const [data, setData] = useState<KalshiDemoPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -121,35 +129,92 @@ export default function KalshiLiveBook() {
     const timer = setInterval(load, REFRESH_MS);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
+  const p = data?.live_pilot;
+  const pilot = p && !("admin_only" in p) ? p : null;
+  return { pilot, adminOnly: data !== null && pilot === null, loading: data === null && error === null, error };
+}
 
-  if (data === null && error === null) {
+/** The Kalshi account box for the left column: the figures as labelled rows. */
+export function KalshiBox({ k }: { k: KalshiRead }) {
+  const p = k.pilot;
+  if (!p) {
     return (
-      <div className="mt-8 flex items-center gap-2 text-slate-400">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Reading the live account…
+      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-400">
+        {k.loading ? "Reading the live account…"
+          : k.adminOnly ? "Live pilot: sign in as admin to see the real-money account."
+          : `Could not read the Kalshi live book: ${k.error}`}
       </div>
     );
   }
-  if (data === null) return <p className="mt-8 text-rose-300">Could not read the Kalshi live book: {error}</p>;
-
-  const pilot = data.live_pilot;
-  if (!pilot || "admin_only" in pilot) {
-    return <p className="mt-6 text-sm text-slate-400">Live pilot: sign in as admin to see the real-money account.</p>;
-  }
-
+  const rows: [string, string, string?, string?][] = [
+    ["Live balance", money(p.balance), undefined, "Cash in the live Kalshi account."],
+    ["P&L since start", signed(p.pnl_since_start), tone(p.pnl_since_start), "Live profit or loss since the pilot began."],
+    ["State", p.halted ? `Halted — ${p.halt_reason ?? "halted"}` : p.state === "live" ? "Running" : "Not enabled",
+      p.halted ? "text-rose-300" : undefined, "Whether the pilot is trading, halted by a stop, or not enabled."],
+    ["Fill rate", `${p.fills}/${p.decisions} · ${pct(p.fill_rate)}`, undefined, "Orders that filled, over orders the rule decided to place."],
+    ["Settled trades", String(p.settled), undefined, "Positions that have resolved yes or no."],
+    ["Daily stop", money(p.daily_stop_usd), undefined, "The day's loss at which the pilot halts itself."],
+    ["Floor", money(p.floor_usd), undefined, "The balance below which the pilot stops trading."],
+  ];
   return (
-    <div>
-      {error ? <p className="mt-2 text-sm text-rose-300">Refresh failed: {error} — showing the last report.</p> : null}
-      <p className="mt-3 text-sm text-slate-300">
-        Balance <b className="text-white">{fmtUsd(pilot.balance)}</b>
-        {" · "}P&amp;L since start <b className={tone(pilot.pnl_since_start)}>{fmtUsd(pilot.pnl_since_start, { signed: true })}</b>
-        {" · "}<b className={pilot.halted ? "text-rose-300" : "text-white"}>{pilot.halted ? `Halted — ${pilot.halt_reason ?? "halted"}` : pilot.state === "live" ? "Running" : "Not enabled"}</b>
-      </p>
-      <LivePilotCard pilot={pilot} />
-      {pilot.orders.length ? <OrdersTable orders={pilot.orders} /> : (
-        <p className="mt-3 text-sm text-slate-400">
-          Live since {et(LIVE_SINCE)}. No orders yet: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
-        </p>
-      )}
+    <section aria-label="Kalshi account" className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-medium text-slate-400">Kalshi account</h2>
+        <span className={REAL_MONEY_BADGE}>REAL MONEY</span>
+      </div>
+      <div className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-white">{money(p.balance)}</div>
+      {k.error && <p className="mt-1 text-[11px] text-rose-300">Refresh failed — showing the last report.</p>}
+      <dl className="mt-2 divide-y divide-slate-800/70 text-xs">
+        {rows.map(([label, value, cls, hint]) => (
+          <div key={label} title={hint} className="flex items-baseline justify-between gap-2 py-1">
+            <dt className="cursor-help text-slate-400 underline decoration-dotted decoration-slate-600 underline-offset-2">{label}</dt>
+            <dd className={`text-right font-semibold tabular-nums ${cls ?? "text-slate-100"}`}>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+/** Kalshi's two main cards, in the same frame as the paper books: Performance
+ * (the pilot's P&L and progress) and Positions (its orders). No Trade card. */
+export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | "positions" }) {
+  const p = k.pilot;
+  if (!p) return null;
+  const orders = p.orders;
+  const gate = p.gates;
+  return (
+    <div className="grid gap-2 lg:grid-cols-2">
+      <DashCard title="Performance" value={signed(p.pnl_since_start)} valueClass={tone(p.pnl_since_start)}
+                sub="P&L since start" meta={<span className={REAL_MONEY_BADGE}>REAL MONEY</span>}
+                hint="The live pilot's scoreboard: P&L, fills and the two gates it must clear"
+                defaultOpen={open === "performance"} detailTitle="Live pilot" detail={<LivePilotCard pilot={p} />}>
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+          <Fig label="Live balance" value={money(p.balance)} />
+          <Fig label="Fill rate" value={`${p.fills}/${p.decisions} · ${pct(p.fill_rate)}`} hint="Orders that filled, over orders decided" />
+          <Fig label="Settled trades" value={String(p.settled)} />
+          <Fig label="Live net / contract" value={signed(p.live_net_per_contract)} className={tone(p.live_net_per_contract)} />
+          <Fig label="Execution gate" value={`${gate.execution.state} · ${gate.execution.fills}/${gate.execution.bar}`} hint="Needs 50 fills" />
+          <Fig label="Edge gate" value={`${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}`} hint="Needs 150 settled trades" />
+        </dl>
+      </DashCard>
+      <DashCard title="Positions" value={orders.length} sub="orders" hint="Open and past live orders, newest first"
+                defaultOpen={open === "positions"} detailTitle={`Live orders · ${orders.length}`}
+                detail={orders.length ? <OrdersTable orders={orders} /> : undefined}>
+        {orders.length ? (
+          <>
+            <PeekRows rows={orders.slice(0, PEEK).map((o, i) => ({
+              key: String(o.id ?? `${o.ticker}-${i}`), label: o.ticker,
+              aside: `${o.side.toUpperCase()} · ${o.status}`, value: signed(o.pnl), valueClass: tone(o.pnl),
+            }))} />
+            <p className="mt-1 text-xs text-slate-400">Show all {orders.length}</p>
+          </>
+        ) : (
+          <p className="text-xs text-slate-400">
+            Live since {et(LIVE_SINCE)}. No orders yet: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
+          </p>
+        )}
+      </DashCard>
     </div>
   );
 }

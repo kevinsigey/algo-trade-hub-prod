@@ -50,7 +50,13 @@ afterEach(() => {
 /** Open a dashboard card and return its open view. */
 function openCard(name: string | RegExp) {
   fireEvent.click(screen.getByRole("button", { name: typeof name === "string" ? `Open ${name}` : name }));
-  return within(screen.getByRole("dialog"));
+  // Views stack (a card inside the Performance view opens over it): the newest is on top.
+  return within(screen.getAllByRole("dialog").at(-1)!);
+}
+
+/** Close the newest open view, leaving the ones under it open. */
+function closeTop() {
+  fireEvent.click(within(screen.getAllByRole("dialog").at(-1)!).getByRole("button", { name: "Close" }));
 }
 
 const region = (name: string) => within(screen.getByRole("region", { name }));
@@ -86,15 +92,16 @@ describe("Portfolio", () => {
         { symbol: "Cash", qty: null, side: null, market_value: 41200, pct_of_book: 39, unrealized_pl: null, idea: null },
       ],
     }));
-    page(<Portfolio />);
-    expect(await screen.findByText("+4.8%")).toBeInTheDocument();
-    expect(screen.getByText("+2.7 pts")).toBeInTheDocument();
+    pageAt("/portfolio?tab=book");
+    // The selector card, the account box and the Performance card all carry it.
+    expect((await screen.findAllByText("+4.8%")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("+2.7 pts").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("Strategy HQ")).toBeNull();
     expect(screen.getByText("Net liquidation value")).toBeInTheDocument();
     expect(screen.getByText("Paper account · live · as of 2:41 PM CT, Tue Nov 10")).toBeInTheDocument();
     // Manual shares read as their own row in the By-idea summary, one per symbol.
     expect(screen.getByText("GLD (manual)")).toBeInTheDocument();
-    expect(region("Positions").getByText("1")).toBeInTheDocument();
+    expect(region("Positions").getAllByText("1").length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -332,7 +339,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
     pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("AAPL")).toBeInTheDocument();
     openCard("Closed trades");
-    const symbolsInOrder = () => [...screen.getByRole("dialog").querySelectorAll("tbody tr")]
+    const symbolsInOrder = () => [...screen.getAllByRole("dialog").at(-1)!.querySelectorAll("tbody tr")]
       .map((tr) => tr.textContent ?? "").filter((t) => t.includes("NVDA") || t.includes("AAPL"))
       .map((t) => (t.includes("NVDA") ? "NVDA" : "AAPL"));
     // Default: newest exit first (AAPL, Nov 11).
@@ -381,7 +388,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
       if (url.includes("/api/workshop/ideas")) return new Response(JSON.stringify([]), { status: 200 });
       return new Response(JSON.stringify(payload({})), { status: 200 });
     }));
-    pageAt("/portfolio?tab=trade");
+    pageAt("/portfolio");
     // The failed check shows as a failed read, not a silent dark queue.
     expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
     // The retry succeeds, the queue loads, and the failure box clears.
@@ -398,7 +405,7 @@ describe("Portfolio hand orders (signed-in only)", () => {
       if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "boom" }), { status: 500 });
       return new Response(JSON.stringify(payload({})), { status: 200 });
     }));
-    pageAt("/portfolio?tab=trade");
+    pageAt("/portfolio");
     expect(await screen.findByText(/Couldn't read the hand-off list/, {}, { timeout: 5000 })).toBeInTheDocument();
     // Past the two quick retries, the queue endpoint is still untouched
     // and the failure is still on screen.
@@ -728,6 +735,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     const positions = within(await screen.findByRole("region", { name: "Positions" }));
     expect(positions.getByText("MU")).toBeInTheDocument();
     expect(positions.queryByText("Chips")).toBeNull();
+    openCard("Positions");
     expect(screen.getByText("Chips")).toBeInTheDocument(); // the By-idea row carries it
   });
 
@@ -740,6 +748,8 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       ],
     }));
     page(<Portfolio />);
+    await screen.findByRole("region", { name: "Positions" });
+    openCard("Positions");
     expect(await screen.findByText("GLD (manual)")).toBeInTheDocument();
     openCard("By idea");
     fireEvent.click(screen.getByRole("button", { name: "Slices of GLD (manual)" }));
@@ -838,8 +848,8 @@ describe("Manual actions box", () => {
       if (url.includes("/api/portfolio")) return new Response(JSON.stringify(payload({ book: "big" })), { status: 200 });
       return new Response("{}", { status: 200 });
     }));
-    // Manual actions live at the top of the Trade tab now.
-    render(<MemoryRouter initialEntries={["/portfolio?book=big&tab=trade"]}><Portfolio /></MemoryRouter>);
+    // Hand-offs stay on the page, beside the Trade card, with no click.
+    render(<MemoryRouter initialEntries={["/portfolio?book=big"]}><Portfolio /></MemoryRouter>);
     expect(await screen.findByText("Needs your hand")).toBeInTheDocument();
     expect(screen.getByText(/over the budget/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -960,13 +970,14 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
     await screen.findByRole("region", { name: "Positions" });
     expect(region("Positions").getByText("2")).toBeInTheDocument();
     // GLD appears once as a mover (its two lots' day P&L summed) and once in
-    // the positions summary -- not once per idea that holds it.
-    expect(screen.getAllByText("GLD")).toHaveLength(2);
+    // the positions table of the open view -- not once per idea that holds it.
+    const full = openCard("Positions");
+    expect(full.getAllByText("GLD")).toHaveLength(2);
     // The summed -$88 (two lots at -$44) is what both the mover and the
     // positions row carry. (The per-slice -$44 still shows inside the
     // By-idea cards, where per-idea attribution is the point.)
     expect(region("Today's movers").getByText("−$88")).toBeInTheDocument();
-    expect(openCard("Positions").getByText("−$88")).toBeInTheDocument();
+    expect(full.getAllByText("−$88")).toHaveLength(2);
   });
 
   it("holds the Sharpe back until 20 trading days, however many snapshots", async () => {
@@ -979,8 +990,9 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100000, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     pageAt("/portfolio?tab=performance");
-    // Both day-count guards hold at 8 trading days: Sharpe and beta to SPY.
-    expect(await screen.findAllByText("after 1 mo")).toHaveLength(2);
+    // Both day-count guards hold at 8 trading days: Sharpe and beta to SPY
+    // (the page card shows Sharpe too, so three in all).
+    expect(await screen.findAllByText("after 1 mo")).toHaveLength(3);
     expect(screen.queryByText("-10.01")).toBeNull();
     expect(screen.getByText("58%")).toBeInTheDocument();
   });
@@ -1004,7 +1016,7 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       await screen.findByRole("region", { name: "Positions" });
       expect(region("Positions").getByText("2")).toBeInTheDocument();
       expect(region("Positions").getAllByText("GLD")).toHaveLength(2);
-      expect(openCard("Positions").getAllByText("GLD")).toHaveLength(2);
+      expect(openCard("Positions").getAllByText("GLD").length).toBeGreaterThanOrEqual(2);
       const keyWarnings = errors.filter((a) => String(a[0]).includes("same key"));
       expect(keyWarnings).toEqual([]);
     } finally {
@@ -1050,7 +1062,8 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
       ],
     }));
     page(<Portfolio />);
-    await screen.findByRole("region", { name: "By idea" });
+    await screen.findByRole("region", { name: "Positions" });
+    openCard("Positions");
     expect(region("By idea").getByText("2")).toBeInTheDocument();
     expect(openCard("By idea").getAllByRole("button", { name: /^Slices of/ })).toHaveLength(2);
   });
@@ -1119,19 +1132,19 @@ describe("Portfolio performance tab deepening (2026-11-12 redesign PR 2)", () =>
     let full = openCard("Where the return came from");
     expect(full.getByText("By idea")).toBeInTheDocument();
     expect(full.getByText("By sector")).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
+    closeTop();
     // Stats open to every stat with its definition.
     full = openCard("Risk");
     expect(full.getByText("Volatility")).toBeInTheDocument();
     expect(full.getByText(/Standard deviation of daily returns/)).toBeInTheDocument();
     expect(full.getByText("Trading days")).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
+    closeTop();
     // The closed-trade list opens with its stats line.
     full = openCard("Closed trades, All");
     expect(full.getByText("Profit factor")).toBeInTheDocument();
     expect(full.getByText("2.00")).toBeInTheDocument();
     expect(full.getByText("3.0d")).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
+    closeTop();
     // Weeks open to a table, one row per week.
     full = openCard("Realized by week");
     expect(full.getByText("Week of")).toBeInTheDocument();
@@ -1211,18 +1224,22 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     return urls;
   }
 
-  /** Every card on the tab opens its view; Esc closes it and focus returns to the card. */
+  /** Every card opens its view; Close shuts it and focus returns to the card. Cards
+   * inside an already-open view (a legacy ?tab= link) open over it. */
   async function eachCardOpensAndCloses(expected: string[]) {
+    const depth = screen.queryAllByRole("dialog").length;
     for (const name of expected) {
       // Keyboard path: focus the card, then activate it.
-      const opener = screen.getByRole("button", { name: `Open ${name}` });
+      const scope = depth ? within(screen.getAllByRole("dialog").at(-1)!) : screen;
+      const opener = scope.getByRole("button", { name: `Open ${name}` });
       opener.focus();
       fireEvent.click(opener);
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toBeInTheDocument();
-      expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
-      fireEvent.keyDown(document, { key: "Escape" });
-      expect(screen.queryByRole("dialog")).toBeNull();
+      const dialogs = screen.getAllByRole("dialog");
+      expect(dialogs).toHaveLength(depth + 1);
+      const close = within(dialogs.at(-1)!).getByRole("button", { name: "Close" });
+      expect(document.activeElement).toBe(close);
+      fireEvent.click(close);
+      expect(screen.queryAllByRole("dialog")).toHaveLength(depth);
       expect(document.activeElement).toBe(opener);
     }
   }
@@ -1231,7 +1248,9 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     serveDash();
     pageAt("/portfolio?tab=book");
     await screen.findByRole("region", { name: "Positions" });
-    const cards = ["Composition", "Account", "Today's movers", "Positions", "By idea"];
+    // The Account box moved to the left column; the rest sit in the Positions view.
+    expect(screen.getByRole("region", { name: "Account" })).toBeInTheDocument();
+    const cards = ["Composition", "Today's movers", "By idea"];
     for (const name of cards) expect(screen.getByRole("region", { name })).toBeInTheDocument();
     await eachCardOpensAndCloses(cards);
   });
@@ -1240,7 +1259,7 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     session.token = "jwt";
     serveDash();
     pageAt("/portfolio?tab=trade");
-    expect(await screen.findByText("size it by hand")).toBeInTheDocument();
+    expect((await screen.findAllByText("size it by hand")).length).toBeGreaterThanOrEqual(1);
     await screen.findByText("Staged orders");
     // The ticket is on the page, not behind a click.
     expect(screen.getByLabelText("Symbol")).toBeInTheDocument();
@@ -1261,12 +1280,13 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
   it("shows at most 5 rows of a long list on the page and every row in the open view", async () => {
     session.token = "jwt";
     serveDash();
-    pageAt("/portfolio?tab=book");
+    pageAt("/portfolio");
     await screen.findByRole("region", { name: "Positions" });
     const peek = (name: string) => screen.getByRole("region", { name }).querySelectorAll("[data-peek] li");
     expect(peek("Positions")).toHaveLength(5);
+    expect(within(screen.getByRole("region", { name: "Positions" })).getByText("Show all 8")).toBeInTheDocument();
     expect(openCard("Positions").getAllByRole("row")).toHaveLength(1 + 8);
-    fireEvent.keyDown(document, { key: "Escape" });
+    closeTop();
     cleanup();
     pageAt("/portfolio?tab=trade");
     await screen.findByText("Staged orders");
@@ -1275,7 +1295,7 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     for (const name of ["Staged orders", "Recent orders", "Closed trades"]) {
       expect(peek(name)).toHaveLength(5);
       expect(openCard(name).getAllByRole("row")).toHaveLength(1 + 8);
-      fireEvent.keyDown(document, { key: "Escape" });
+      closeTop();
     }
   });
 
@@ -1313,6 +1333,7 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     // Buying power, short value and the open P&L are unknown on this payload.
     expect(region("Account").getAllByText("—").length).toBeGreaterThanOrEqual(3);
     expect(region("Positions").getByText(/Open/).textContent).toContain("—");
+    openCard("Positions");
     expect(region("Composition").getAllByText("—").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("$0")).toBeNull();
     expect(screen.queryByText("+$0")).toBeNull();
@@ -1324,5 +1345,86 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     expect(region("Daily returns").getAllByText("—").length).toBeGreaterThanOrEqual(1);
     expect(region("Where the return came from").getAllByText("—").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("+0.0%")).toBeNull();
+  });
+});
+
+describe("Portfolio summary and frame (2026-11-25 redesign)", () => {
+  const KALSHI = {
+    state: "live", real_money: true, enabled: true, halted: false, halt_reason: null,
+    balance: 10.25, pnl_since_start: 0.57, decisions: 1, fills: 1, fill_rate: 1, mean_slippage_cents: 1,
+    settled: 1, live_net_per_contract: 0.57, live_low95_cents: null, paper_net_per_contract: 0.58,
+    paper_low95_cents: null, latency_median_s: 120,
+    gates: {
+      execution: { state: "pending", fills: 1, bar: 50, mean_slippage_cents: null },
+      edge: { state: "pending", settled: 1, bar: 150, low95_cents: null, stage3_unlocked: false },
+    },
+    daily_stop_usd: 2, floor_usd: 5,
+    orders: [{ id: 7, created_at: "2026-11-24T15:00:00Z", series: "KXWTI15M", ticker: "KXWTI15M-26NOV241000-00",
+      side: "yes", status: "settled", skip_reason: null, contracts_requested: 1, contracts_filled: 1,
+      frozen_quote: 0.4, live_ask: 0.41, fill_price: 0.41, fee_usd: 0.02, outcome: 1, pnl: 0.57 }],
+  };
+
+  function serveAll() {
+    const book = (equity: number, ret: number, ahead: number) => payload({
+      scoreboard: { ...EMPTY_SCORE, equity, return_pct: ret, spy_return_pct: 1, ahead_pts: ahead },
+      positions: [{ symbol: "Cash", qty: null, side: null, market_value: equity, pct_of_book: 100, unrealized_pl: null, idea: null }],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+      if (url.includes("/api/kalshi-demo")) return json({ state: "not_connected", demo: true, note: "n", live_pilot: KALSHI });
+      if (url.includes("/api/portfolio/books")) return json({ books: [] });
+      if (url.includes("/api/portfolio/closed")) return json({ state: "live", as_of: null, trades: [] });
+      if (url.includes("/api/admin/me")) return new Response("{}", { status: 401 });
+      if (url.includes("book=big")) return json(book(1000000, 2, 1));
+      return json(book(104820, 4.82, 3.82));
+    }));
+  }
+
+  it("summarises all three books in the selector, each linking to its ?book=", async () => {
+    serveAll();
+    pageAt("/portfolio?book=big");
+    const nav = within(await screen.findByRole("navigation", { name: "Books" }));
+    await waitFor(() => expect(nav.getByRole("link", { name: /Kalshi live/ })).toHaveTextContent("$10.25"));
+    const main = nav.getByRole("link", { name: /Main book/ });
+    expect(main).toHaveAttribute("href", "/portfolio?book=main");
+    expect(main).toHaveTextContent("$104,820");
+    expect(main).toHaveTextContent("+4.8%");
+    expect(main).toHaveTextContent("+3.8 pts");
+    const big = nav.getByRole("link", { name: /\$1M book/ });
+    expect(big).toHaveAttribute("href", "/portfolio?book=big");
+    expect(big).toHaveAttribute("aria-current", "page");
+    expect(big).toHaveTextContent("$1,000,000");
+    const kalshi = nav.getByRole("link", { name: /Kalshi live/ });
+    expect(kalshi).toHaveAttribute("href", "/portfolio?book=kalshi");
+    expect(within(kalshi).getByText("REAL MONEY")).toBeInTheDocument();
+  });
+
+  it("gives a paper book Performance, Positions and a Trade card", async () => {
+    serveAll();
+    pageAt("/portfolio?book=main");
+    for (const name of ["Performance", "Positions", "Trade"]) {
+      expect(await screen.findByRole("region", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("has no Trade card on the Kalshi book, only Performance and Positions", async () => {
+    serveAll();
+    pageAt("/portfolio?book=kalshi");
+    expect(await screen.findByRole("region", { name: "Kalshi account" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Performance" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Positions" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Trade" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Trade" })).toBeNull();
+  });
+
+  it("opens the matching card's view from an old ?tab= link, and ignores trade on Kalshi", async () => {
+    serveAll();
+    pageAt("/portfolio?book=main&tab=performance");
+    expect(await screen.findByRole("dialog", { name: "Performance" })).toBeInTheDocument();
+    cleanup();
+    pageAt("/portfolio?book=kalshi&tab=trade");
+    await screen.findByRole("region", { name: "Positions" });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

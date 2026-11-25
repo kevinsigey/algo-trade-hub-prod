@@ -24,16 +24,19 @@ import { DashCard, Fig, FilterBox, money, PEEK, PeekRows, price, REFRESH_MS, Seg
  * account, today's movers, positions and by-idea as cards: each card shows
  * a number and the top rows, and opens to the full sortable list. Positions
  * carry no idea information; By idea is where it lives. */
+/** The book's holdings as the cards read them: per-ticker rows, the aggregate and cash. */
+export function bookRows(data: PortfolioPayload) {
+  const rows = data.positions.filter((p) => p.symbol !== "Cash");
+  const aggRows = data.positions_aggregate?.length ? data.positions_aggregate.map(aggregateToRow) : rows;
+  return { rows, aggRows, cashRow: data.positions.find((p) => p.symbol === "Cash") };
+}
+
 export default function BookTab({ data, liveIdeas, book }: {
   data: PortfolioPayload;
   liveIdeas: { id: number; title: string; size_pct: number | null }[];
   book: string;
 }) {
-  const rows = data.positions.filter((p) => p.symbol !== "Cash");
-  const aggRows = data.positions_aggregate?.length
-    ? data.positions_aggregate.map(aggregateToRow)
-    : rows;
-  const cashRow = data.positions.find((p) => p.symbol === "Cash");
+  const { rows, aggRows, cashRow } = bookRows(data);
   return (
     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
       <CompositionCard data={data} aggRows={aggRows} cashRow={cashRow} />
@@ -47,7 +50,7 @@ export default function BookTab({ data, liveIdeas, book }: {
 
 type Segment = { label: string; pct: number; color: string };
 
-function useSegments(data: PortfolioPayload, aggRows: PositionRow[], cashRow: PositionRow | undefined,
+export function useSegments(data: PortfolioPayload, aggRows: PositionRow[], cashRow: PositionRow | undefined,
                      grouping: "sector" | "idea"): Segment[] {
   return useMemo(() => {
     let out: Segment[];
@@ -72,7 +75,7 @@ function useSegments(data: PortfolioPayload, aggRows: PositionRow[], cashRow: Po
   }, [grouping, data.composition, aggRows, cashRow]);
 }
 
-function SegmentBar({ segments, tall }: { segments: Segment[]; tall?: boolean }) {
+export function SegmentBar({ segments, tall }: { segments: Segment[]; tall?: boolean }) {
   const total = segments.reduce((sum, s) => sum + s.pct, 0) || 1;
   return (
     <div className={`flex w-full overflow-hidden rounded ${tall ? "h-8" : "h-6"}`} role="img"
@@ -91,7 +94,7 @@ function SegmentBar({ segments, tall }: { segments: Segment[]; tall?: boolean })
 
 /** Composition: the whole book as one bar, its top slices under it; opens
  * to the sector/idea toggle and the ticker treemap. */
-function CompositionCard({ data, aggRows, cashRow }: {
+export function CompositionCard({ data, aggRows, cashRow }: {
   data: PortfolioPayload; aggRows: PositionRow[]; cashRow: PositionRow | undefined;
 }) {
   const sectors = useSegments(data, aggRows, cashRow, "sector");
@@ -157,7 +160,7 @@ function AccountCard({ data }: { data: PortfolioPayload }) {
 }
 
 /** Today's biggest dollar moves, so a bad day reads as "which names", not just a total. */
-function MoversCard({ rows }: { rows: PositionRow[] }) {
+export function MoversCard({ rows }: { rows: PositionRow[] }) {
   const { up, down, known } = useMemo(() => dayMovers(rows), [rows]);
   const all = useMemo(() => dayMovers(rows, rows.length), [rows]);
   const total = known && rows.every((r) => r.day_pl != null) ? rows.reduce((a, r) => a + (r.day_pl ?? 0), 0) : null;
@@ -238,7 +241,7 @@ function PositionsCard({ rows, cashRow }: { rows: PositionRow[]; cashRow: Positi
   );
 }
 
-function PositionsTable({ rows, cashRow }: { rows: PositionRow[]; cashRow: PositionRow | undefined }) {
+export function PositionsTable({ rows, cashRow }: { rows: PositionRow[]; cashRow: PositionRow | undefined }) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "value", desc: true });
   const [heatmap, setHeatmap] = useState(false);
   const [q, setQ] = useState("");
@@ -360,7 +363,7 @@ const IdeaName = ({ c, raised }: { c: Card; raised?: boolean }) => (c.id != null
  * largest ideas; opens to one expandable row per idea -- value, weight
  * against its set size, today, open and realized P&L, return -- each
  * expanding to the idea's own slice of each ticker. */
-function ByIdeaCard({ rows, equity, liveIdeas, book }: {
+export function ByIdeaCard({ rows, equity, liveIdeas, book }: {
   rows: PositionRow[];
   equity: number | null;
   liveIdeas: { id: number; title: string; size_pct: number | null }[];

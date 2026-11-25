@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Ideas from "@/pages/Ideas";
@@ -46,6 +46,8 @@ describe("Portfolio ↔ Workshop", () => {
   it("lists the live auto-trading ideas with links, signed in, through the signed fetch", async () => {
     const f = route({ "/api/portfolio": { body: PORTFOLIO }, "/api/workshop/ideas": { body: IDEAS } });
     render(<MemoryRouter><Portfolio /></MemoryRouter>);
+    // By idea sits in the Positions card's open view.
+    fireEvent.click(await screen.findByRole("button", { name: "Open Positions" }));
     const link = await screen.findByRole("link", { name: "TEST: 1 share XLE" });
     // The By-idea box lists live ideas even before they hold anything, linked to their Workshop page.
     expect(link).toHaveAttribute("href", "/workshop/12");

@@ -26,7 +26,7 @@ export const PEEK = 5;
  * open control.
  */
 export function DashCard({ title, value, valueClass = "text-white", sub, meta, hint, detail, detailTitle,
-                           detailActions, children, className = "" }: {
+                           detailActions, defaultOpen = false, children, className = "" }: {
   title: string;
   value?: ReactNode;
   valueClass?: string;
@@ -36,10 +36,12 @@ export function DashCard({ title, value, valueClass = "text-white", sub, meta, h
   detail?: ReactNode;
   detailTitle?: string;
   detailActions?: ReactNode;
+  /** Open the detail on first render (a legacy ?tab= link). */
+  defaultOpen?: boolean;
   children?: ReactNode;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section aria-label={title}
              className={`relative flex min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-900/60 p-3 transition-colors ${detail ? "hover:border-slate-600 hover:bg-slate-900" : ""} ${className}`}>
