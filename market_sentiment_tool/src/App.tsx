@@ -4,8 +4,6 @@ import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } fr
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
 import Macro from "@/pages/Macro";
-import JobsNowcast from "@/pages/JobsNowcast";
-import Cpi from "@/pages/Cpi";
 import OilLayout from "@/components/OilLayout";
 import Hormuz from "@/pages/Hormuz";
 import Oil from "@/pages/Oil";
@@ -426,8 +424,8 @@ function App() {
               Same component, same /api/scoreboard read, address bar updated to the real path. */}
           <Route path="/shadow-scoreboard" element={<Navigate to="/journal?view=backtests" replace />} />
           <Route path="/macro" element={<Macro />} />
-          <Route path="/jobs" element={<JobsNowcast />} />
-          <Route path="/cpi" element={<Cpi />} />
+          <Route path="/jobs" element={<Navigate to="/macro" replace />} />
+          <Route path="/cpi" element={<Navigate to="/macro" replace />} />
           <Route path="/oil" element={<OilLayout />}>
             <Route index element={<Oil />} />
             <Route path="hormuz" element={<Hormuz />} />

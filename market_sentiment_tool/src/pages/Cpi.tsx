@@ -18,18 +18,28 @@ import { STATUS_WORDS, skillText, totals, viewRows, type Status } from "@/lib/jo
 const STATUS_TONE: Record<Status, Tone> = { waiting: "quiet", early: "quiet", ahead: "good", behind: "bad", promoted: "good" };
 const CPI = new Set(["cpi_nowcast", "kalshi_implied_cpi"]);
 
-export default function Cpi() {
+/** The /api/journal read the CPI view and the Macro card both need. */
+export function useCpiJournal() {
   const [data, setData] = useState<JournalResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getJson<JournalResponse>("/api/journal").then(setData).catch((e: Error) => setError(e.message));
   }, []);
+  return { data, error };
+}
 
+export const cpiRows = (data: JournalResponse) => viewRows(data.forecasters.filter((s) => CPI.has(s.forecaster)));
+
+export default function Cpi() {
+  const { data, error } = useCpiJournal();
   if (error) return <div className="p-8 text-rose-300">CPI forecasts unavailable: {error}</div>;
   if (!data) return <div className="p-8 text-slate-400">Loading…</div>;
+  return <CpiContent data={data} />;
+}
 
-  const rows = viewRows(data.forecasters.filter((s) => CPI.has(s.forecaster)));
+export function CpiContent({ data }: { data: JournalResponse }) {
+  const rows = cpiRows(data);
   const t = totals(rows);
 
   return (

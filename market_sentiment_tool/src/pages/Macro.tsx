@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Landmark } from "lucide-react";
 import { getJson } from "@/lib/getJson";
 import { Badge } from "@/components/ui/badge";
+import Cpi from "@/pages/Cpi";
+import { FullView } from "@/components/Panel";
+import { JobsNowcast } from "@/pages/JobsNowcast";
 import { recordVerdict, type MacroCard, type MacroResponse } from "@/lib/macro";
 
 /**
@@ -108,10 +111,17 @@ function TrailChart({ card }: { card: MacroCard }) {
   );
 }
 
+function Wrap({ to, className, children }: { to?: string; className: string; children: ReactNode }) {
+  return to ? <Link to={to} className={className}>{children}</Link> : <div className={className}>{children}</div>;
+}
+
 function CardView({ card }: { card: MacroCard }) {
   const rec = card.record;
-  return (
-    <Link to={card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
+  // /jobs and /cpi redirect here now; their full pages open in a FullView from the card itself.
+  const full = card.detail_href === "/jobs" ? <JobsNowcast /> : card.detail_href === "/cpi" ? <Cpi /> : null;
+  const [open, setOpen] = useState(false);
+  const body = (
+    <Wrap to={full ? undefined : card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{card.title}</h2>
@@ -208,8 +218,17 @@ function CardView({ card }: { card: MacroCard }) {
           </div>
         </div>
       )}
-      <p className="mt-4 text-xs font-medium text-primary">Open the full page →</p>
-    </Link>
+      <p className="mt-4 text-xs font-medium text-primary">{full ? "Open full view →" : "Open the full page →"}</p>
+    </Wrap>
+  );
+  if (!full) return body;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${card.title}`} aria-haspopup="dialog" className="block w-full text-left">
+        {body}
+      </button>
+      {open && <FullView title={card.title} onClose={() => setOpen(false)}>{full}</FullView>}
+    </>
   );
 }
 

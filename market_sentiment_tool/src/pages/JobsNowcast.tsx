@@ -23,7 +23,7 @@ const seriesButtonClass = (isActive: boolean) => {
   return "border-slate-800 bg-slate-900/50 text-slate-400 hover:text-slate-200 hover:border-slate-700";
 };
 
-export default function JobsNowcast() {
+export function JobsNowcast() {
   const [series, setSeries] = useState<JobsSeries>("payrolls");
   const { rows, loading, error } = useJobsScorecard(series);
   const points = useMemo(() => toChartPoints(rows), [rows]);
@@ -162,3 +162,5 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
     </div>
   );
 }
+
+export default JobsNowcast;
