@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -222,6 +222,7 @@ export default function IdeaRecord() {
   const [pubError, setPubError] = useState(!id);
   const [adm, setAdm] = useState<IdeaDetail | null>(null);
   const [admDone, setAdmDone] = useState(false);
+  const seen = useRef(new Set<Tab>()).current;
 
   useEffect(() => {
     if (!id) return;
@@ -254,6 +255,7 @@ export default function IdeaRecord() {
   const asked = params.get("tab");
   const tab: Tab = tabs.includes(asked as Tab) ? (asked as Tab) : !data && tabs.length > 1 ? "test" : "record";
   const pick = (t: Tab) => setParams((p) => { p.set("tab", t); return p; }, { replace: true });
+  seen.add(tab);
   const verdict = data ? (data.verdict_now ?? data.latest_verdict) : null;
 
   return (
@@ -346,8 +348,9 @@ export default function IdeaRecord() {
       </div>
       <div className="mt-3" role="tabpanel">
         {tab === "record" && (data ? <RecordTab data={data} /> : <p className="text-sm text-slate-400">Not published yet: the public record starts when you publish it (Lifecycle tab).</p>)}
-        {tab === "test" && adm && <IdeaTestTab id={id} data={adm} reload={loadAdm} />}
-        {tab === "lifecycle" && adm && <IdeaLifecycleTab id={id} data={adm} reload={loadAdm} />}
+        {/* Opened owner tabs stay mounted (hidden) so an unsaved edit survives a tab switch. */}
+        {adm && seen.has("test") && <div hidden={tab !== "test"}><IdeaTestTab id={id} data={adm} reload={loadAdm} /></div>}
+        {adm && seen.has("lifecycle") && <div hidden={tab !== "lifecycle"}><IdeaLifecycleTab id={id} data={adm} reload={loadAdm} /></div>}
       </div>
     </div>
   );

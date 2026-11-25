@@ -1636,7 +1636,14 @@ export function IdeaTestTab({ id, data, reload }: { id: string; data: IdeaDetail
         </section>
       </div>
       {editOpen && (draft || drafting) && (
-        <FullView title="Draft" onClose={() => setEditOpen(false)}>
+        <FullView title="Draft" onClose={() => {
+          // The editor autosaves its edits; carry them into the draft so reopening shows them.
+          try {
+            const saved = localStorage.getItem(`workshop-draft-${id}`);
+            if (saved) setDraft((d) => (d ? { ...d, spec: JSON.parse(saved) as IdeaSpec } : d));
+          } catch { void 0; }
+          setEditOpen(false);
+        }}>
           {spinner}
           {draft?.play && (
             <section className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm" aria-label="Matched play">

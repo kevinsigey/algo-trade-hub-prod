@@ -252,6 +252,20 @@ describe("Idea page Test and Lifecycle tabs stay short", () => {
   });
 });
 
+describe("Idea page tabs keep their state", () => {
+  it("an edit typed in the draft editor survives a switch to Record and back", async () => {
+    serve({ "/api/workshop/ideas/2": { body: { idea: { id: 2, title: "Bonds", plain_words: "Short QQQ", created_at: "" }, runs: [] } },
+            "/api/workshop/draft": { body: { spec: { ...SPEC, hold: ["GLD"], short: [] }, model: "x/y:free" } } });
+    render(<MemoryRouter initialEntries={["/ideas/2?tab=test&draft=1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("Short (tickers, comma separated)"), { target: { value: "SPY" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Record" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Test" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit draft" }));
+    expect(await screen.findByLabelText("Short (tickers, comma separated)")).toHaveValue("SPY");
+  });
+});
+
 describe("Workshop live-paper gate", () => {
   it("shows why the gate is waiting and keeps Go live off", async () => {
     serve({
