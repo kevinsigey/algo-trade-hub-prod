@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Macro from "@/pages/Macro";
 import { recordVerdict } from "@/lib/macro";
 import * as api from "@/lib/getJson";
 
 vi.mock("@/lib/getJson", () => ({ getJson: vi.fn() }));
+vi.mock("@/components/RequireAdmin", () => ({ sessionToken: async () => null }));
+vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+/** /api/macro answers with the board; the CPI card's /api/journal read gets an empty journal. */
+const board = (payload: unknown) =>
+  vi.mocked(api.getJson).mockImplementation((async (url: string) =>
+    url.includes("journal") ? { forecasters: [] } : payload) as never);
 
 const CARD = {
   key: "cpi", title: "CPI", predicts: "Next CPI release (headline)", detail_href: "/cpi",
@@ -19,12 +25,12 @@ const CARD = {
 
 describe("Macro page", () => {
   beforeEach(() => {
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [CARD] });
+    board({ as_of: "2026-11-01", quick: [], cards: [CARD] });
   });
 
   it("leads with the call, carries the display-only honesty line, and demotes at small samples", async () => {
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    expect(await screen.findByText("CPI")).toBeInTheDocument();
+    expect((await screen.findAllByText("CPI")).length).toBeGreaterThan(0);
     expect(screen.getByText(/not a board of opportunities/)).toBeInTheDocument();
     expect(screen.getByText(/Too early to say — 12 settled/)).toBeInTheDocument();
     expect(screen.getByText(/62%/)).toBeInTheDocument();
@@ -48,7 +54,7 @@ describe("Macro page", () => {
         record: null,
       },
     } as const;
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs] });
+    board({ as_of: "2026-11-01", quick: [], cards: [jobs] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
     expect(await screen.findByRole("img", { name: /Recent prints: our nowcast/ })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Ours 31% versus Kalshi 36%/ })).toBeInTheDocument();
@@ -81,7 +87,7 @@ describe("Macro jobs card U3 fold", () => {
           gate_status: null, promotion_status: null, diagnostics_flags: [] },
       },
     } as const;
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs] });
+    board({ as_of: "2026-11-01", quick: [], cards: [jobs] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
     expect(await screen.findByText(/Unemployment \(KXU3\)/)).toBeInTheDocument();
     expect(screen.getByText(/KXU3-26NOV-T4\.5/)).toBeInTheDocument();
@@ -95,11 +101,25 @@ describe("Macro card grid (2026-11-03 redesign)", () => {
       trail_kind: "value", trail: [] } as const;
     const ppi = { ...CARD, key: "ppi", title: "PPI", detail_href: "/journal", display_only: false,
       record: { ...CARD.record, source: "journal" } } as const;
-    vi.mocked(api.getJson).mockResolvedValue({ as_of: "2026-11-01", quick: [], cards: [jobs, CARD, ppi] });
+    board({ as_of: "2026-11-01", quick: [], cards: [jobs, CARD, ppi] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    expect(await screen.findByText("Jobs nowcast")).toBeInTheDocument();
-    expect(screen.getByText("CPI")).toBeInTheDocument();
+    // Jobs nowcast and CPI each appear twice: the summary DashCard above and the engine card below.
+    expect(await screen.findByText("PPI")).toBeInTheDocument();
+    expect(screen.getAllByText("Jobs nowcast")).toHaveLength(2);
+    expect(screen.getAllByText("CPI")).toHaveLength(2);
     expect(screen.getByText("PPI")).toBeInTheDocument();
     expect(screen.queryByText("Quick")).not.toBeInTheDocument();
+  });
+});
+
+describe("Macro Jobs and CPI cards", () => {
+  it("open the jobs and CPI pages in a full view", async () => {
+    board({ as_of: "2026-11-01", quick: [], cards: [] });
+    render(<MemoryRouter><Macro /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "Open Jobs nowcast" }));
+    expect(await screen.findByRole("heading", { name: "Jobs nowcast vs Kalshi", level: 1 })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(await screen.findByRole("button", { name: "Open CPI" }));
+    expect(await screen.findByRole("heading", { name: "Inflation (CPI)", level: 1 })).toBeInTheDocument();
   });
 });

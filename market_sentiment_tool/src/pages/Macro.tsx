@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Landmark } from "lucide-react";
 import { getJson } from "@/lib/getJson";
 import { Badge } from "@/components/ui/badge";
+import { CpiContent, cpiRows, useCpiJournal } from "@/pages/Cpi";
+import { JobsNowcast } from "@/pages/JobsNowcast";
+import { DashCard } from "@/pages/portfolio/shared";
+import { useJobsScorecard } from "@/hooks/useJobsScorecard";
+import { summarizeScorecard } from "@/lib/jobsScorecard";
+import { totals } from "@/lib/journalView";
 import { recordVerdict, type MacroCard, type MacroResponse } from "@/lib/macro";
 
 /**
@@ -108,10 +114,16 @@ function TrailChart({ card }: { card: MacroCard }) {
   );
 }
 
+function Wrap({ to, className, children }: { to?: string; className: string; children: ReactNode }) {
+  return to ? <Link to={to} className={className}>{children}</Link> : <div className={className}>{children}</div>;
+}
+
 function CardView({ card }: { card: MacroCard }) {
   const rec = card.record;
+  // /jobs and /cpi redirect here now; their full pages open from the cards above.
+  const here = card.detail_href === "/jobs" || card.detail_href === "/cpi";
   return (
-    <Link to={card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
+    <Wrap to={here ? undefined : card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{card.title}</h2>
@@ -208,8 +220,28 @@ function CardView({ card }: { card: MacroCard }) {
           </div>
         </div>
       )}
-      <p className="mt-4 text-xs font-medium text-primary">Open the full page →</p>
-    </Link>
+      {!here && <p className="mt-4 text-xs font-medium text-primary">Open the full page →</p>}
+    </Wrap>
+  );
+}
+
+/** Jobs nowcast and CPI: one headline number each; the full page opens in place. */
+function JobsCpiCards() {
+  const jobs = useJobsScorecard("payrolls");
+  const cpi = useCpiJournal();
+  const j = summarizeScorecard(jobs.rows);
+  const t = cpi.data ? totals(cpiRows(cpi.data)) : null;
+  return (
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <DashCard title="Jobs nowcast" detailTitle="Jobs nowcast vs Kalshi"
+                value={j.nowcastMae !== null ? `${Math.round(j.nowcastMae)}k` : "—"}
+                sub={jobs.error ? "unavailable" : j.kalshiMae !== null ? `typical miss · Kalshi ${Math.round(j.kalshiMae)}k` : "typical miss"}
+                detail={<JobsNowcast />} />
+      <DashCard title="CPI" detailTitle="Inflation (CPI)"
+                value={t ? t.scored : "—"}
+                sub={cpi.error ? "unavailable" : t ? `scored of ${t.frozen} locked in` : "loading"}
+                detail={cpi.data ? <CpiContent data={cpi.data} /> : <p className="text-slate-400">{cpi.error ? `CPI forecasts unavailable: ${cpi.error}` : "Loading…"}</p>} />
+    </div>
   );
 }
 
@@ -228,6 +260,7 @@ export default function Macro() {
         <h1 className="text-2xl font-bold tracking-tight text-white">Macro predictions</h1>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">Jobs, CPI and PPI — each engine's call and record on one screen. Click a card for the full page.</p>
+      <JobsCpiCards />
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">Macro dashboard unavailable: {error}</p>}
       {!data && !error && <p className="mt-4 text-sm text-muted-foreground">Loading the macro board…</p>}
       {data && (
