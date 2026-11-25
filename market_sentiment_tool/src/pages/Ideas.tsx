@@ -495,8 +495,7 @@ export default function Ideas() {
   const shadowRows = shadowGroups.map((g) => ({
     key: g.key,
     label: <Link to={to(g.ideas[0].id)} className="inline-block min-w-[8rem] max-w-full truncate align-bottom hover:underline underline-offset-2">{g.ideas[0].title}</Link>,
-    // The bet's name is the part that gives way: capped, and hidden on narrow screens, so the title always reads.
-    aside: <span className="hidden max-w-[12rem] truncate align-bottom lg:inline-block">{`${g.label}${g.ideas.length > 1 ? ` · ${g.ideas.length}` : ""}`}</span>,
+    // The bet's name and tickers live in the full view; the row keeps title + result.
     // The result line is long; cap it so the title keeps its room (full text on hover).
     value: <span className="inline-block max-w-[9rem] truncate align-bottom xl:max-w-[14rem]" title={g.ideas[0].result_line ?? undefined}>{g.ideas[0].result_line ?? "—"}</span>,
   }));
