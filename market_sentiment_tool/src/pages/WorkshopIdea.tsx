@@ -1484,7 +1484,7 @@ export function IdeaTestTab({ id, data, reload }: { id: string; data: IdeaDetail
       })
       .finally(() => {
         setDrafting(false);
-        setParams(dropParam, { replace: true });
+        setParams((p) => dropParam(p, "draft"), { replace: true });
       });
   }, [setParams]);
 
