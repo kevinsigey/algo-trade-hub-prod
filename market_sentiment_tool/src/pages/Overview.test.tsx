@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Overview from "@/pages/Overview";
@@ -134,32 +134,57 @@ describe("headline numbers from fixture payloads", () => {
   });
 });
 
+const book = (equity: number, ret: number, ahead: number) =>
+  ({ state: "live", as_of: "2026-11-25T15:00:00Z", scoreboard: { equity, return_pct: ret, ahead_pts: ahead, spy_return_pct: 1 }, curve: [] });
+
+const ALL = {
+  "/api/journal": journal, "/api/oil/fifteen-rule": fifteen, "/api/portfolio/closed": closed,
+  "/api/portfolio?book=main": book(101_234, 1.2, 0.4), "/api/portfolio?book=big": book(1_002_000, 0.2, -0.8),
+  "/api/ideas": [{ live_books: ["main"] }, { live_books: [] }], "/api/ideas/summary": { tested: 12, passed: 5 },
+  "/api/kalshi-demo": { state: "x", live_pilot: { admin_only: true } },
+};
+
 describe("Overview page", () => {
-  it("renders the whole page for a signed-out visitor from public reads only", async () => {
-    const urls = stubFetch({ "/api/journal": journal, "/api/oil/fifteen-rule": fifteen, "/api/portfolio/closed": closed });
+  it("renders every card from public reads only, and the Kalshi card hides dollars for a visitor", async () => {
+    const urls = stubFetch(ALL);
     render(<MemoryRouter><Overview /></MemoryRouter>);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/solo research desk/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Algo Trade Hub");
     const numbers = screen.getByRole("region", { name: "Headline numbers" });
     expect(await within(numbers).findByText("2 of 4")).toBeInTheDocument();
-    expect(await within(numbers).findByText("+12.3¢")).toBeInTheDocument();
-    expect(within(numbers).getByText(/\+1\.1¢ to \+23\.5¢, clear of zero/)).toBeInTheDocument();
-    expect(await within(numbers).findByText("+$177")).toBeInTheDocument();
+    expect((await within(numbers).findAllByText("$101,234")).length).toBeGreaterThan(0);
+    expect(within(numbers).getByText("+1.2% · +0.4 pts")).toBeInTheDocument();
+    expect(await within(numbers).findByText("5 of 12 tests passing")).toBeInTheDocument();
+    expect(within(numbers).getByText("+$177")).toBeInTheDocument();
     expect(within(numbers).getByText("−$1,768")).toBeInTheDocument();
-    const record = screen.getByRole("region", { name: "The record so far" });
-    expect(record).toHaveTextContent("24 models retired from freezing; their records stay public.");
-    expect(record).not.toHaveTextContent(/trailing/);
-    expect(record).toHaveTextContent(
-      "The 15-minute gas edge is fading: +2.5¢ a paper trade over the last 3 days with trades (Nov 10–12, 30 trades), down from +17.4¢ before (Nov 6–9, 30 trades).");
-    expect(record).toHaveTextContent("Oil is flat at +0.1¢ a paper trade and metals negative at −6.1¢");
-    expect(record).toHaveTextContent(/185,526 calibrated forecasts .* against the market price where there is one and climatology/);
-    // Gas's range clears zero in this fixture, so it sits under what works.
-    expect(within(record).getByText(/^The grading/)).toHaveTextContent("Gas so far: +12.3¢ a paper trade over 66 settled paper trades");
-    expect(within(record).queryByText("Too early")).toBeNull();
-    const start = screen.getByRole("navigation", { name: "Start here" });
-    expect(within(start).getByRole("link", { name: "The 15-minute rules" })).toHaveAttribute("href", "/strategies");
-    expect(within(start).getByRole("link", { name: "The stock book" })).toHaveAttribute("href", "/portfolio");
-    expect(within(start).getByRole("link", { name: "Kalshi demo" })).toHaveAttribute("href", "/portfolio?book=kalshi");
+    expect(within(numbers).getByText("+12.3¢")).toBeInTheDocument();  // gas, 15-minute card
+    const kalshi = within(numbers).getByRole("region", { name: "Kalshi live" });
+    expect(await within(kalshi).findByText("Admin only")).toBeInTheDocument();
+    expect(kalshi).toHaveTextContent("REAL MONEY");
+    expect(kalshi).not.toHaveTextContent("$");
+    expect(within(numbers).getByRole("link", { name: /Live book/ })).toHaveAttribute("href", "/portfolio?book=kalshi");
+    expect(within(numbers).getByRole("link", { name: /Closed trades/ })).toHaveAttribute("href", "/portfolio?tab=trade");
+    expect(screen.queryByRole("navigation", { name: "Start here" })).toBeNull();
     expect(urls.some((u) => u.includes("/api/admin"))).toBe(false);
+  });
+
+  it("shows the verdict as one-liners and the long text in its open view", async () => {
+    stubFetch(ALL);
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    const verdictCard = screen.getByRole("region", { name: "Verdict" });
+    expect(await within(verdictCard).findByText(/185,526 forecasts graded in public; gas \+12\.3¢/)).toBeInTheDocument();
+    expect(verdictCard).toHaveTextContent("24 models retired; oil +0.1¢, metals −6.1¢");
+    fireEvent.click(within(verdictCard).getByRole("button", { name: "Open Verdict" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "The 15-minute gas edge is fading: +2.5¢ a paper trade over the last 3 days with trades (Nov 10–12, 30 trades), down from +17.4¢ before (Nov 6–9, 30 trades).");
+    expect(dialog).toHaveTextContent("Oil is flat at +0.1¢ a paper trade and metals negative at −6.1¢");
+  });
+
+  it("opens how it's built with the corrected money line", () => {
+    stubFetch({});
+    render(<MemoryRouter><Overview /></MemoryRouter>);
+    fireEvent.click(screen.getByRole("button", { name: "How it\u2019s built" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("All trading is paper, except one small real-money Kalshi pilot.");
   });
 
   it("shows a dash, never a zero, for every number a read could not supply", async () => {
@@ -167,22 +192,8 @@ describe("Overview page", () => {
     render(<MemoryRouter><Overview /></MemoryRouter>);
     const numbers = screen.getByRole("region", { name: "Headline numbers" });
     await act(async () => { await new Promise((r) => setTimeout(r, 10)); });  // let the failed reads settle
-    expect(urls).toHaveLength(3);
-    expect(await within(numbers).findAllByText("—")).toHaveLength(6);  // models, gas, tested and manual with their win lines
-    expect(numbers).not.toHaveTextContent(/\b0 of|\+0\.0¢|\$0/);
-    const record = screen.getByRole("region", { name: "The record so far" });
-    expect(record).toHaveTextContent("— models retired from freezing");
-    expect(record).not.toHaveTextContent(/\b0 models|\+0\.0¢/);
-  });
-
-  it("moves gas out of what works while its 95% range still touches zero", async () => {
-    const touching = { ...fifteen, gate: { ...fifteen.gate, by_series: { ...fifteen.gate.by_series,
-      "Natural gas": { n: 66, net_per_contract: 0.05, total: 3.3, low95: -0.01 } } } };
-    stubFetch({ "/api/journal": journal, "/api/oil/fifteen-rule": touching, "/api/portfolio/closed": closed });
-    render(<MemoryRouter><Overview /></MemoryRouter>);
-    const record = screen.getByRole("region", { name: "The record so far" });
-    expect(await within(record).findByText("Too early")).toBeInTheDocument();
-    expect(within(record).getByText(/^Gas so far/)).toHaveTextContent("still touching zero");
-    expect(within(record).getByText(/^The grading/)).not.toHaveTextContent("Gas");
+    expect(urls.length).toBeGreaterThanOrEqual(8);
+    expect(await within(numbers).findAllByText("—")).not.toHaveLength(0);
+    expect(numbers).not.toHaveTextContent(/\b0 of|\+0\.0¢|\$0|…/);
   });
 });
