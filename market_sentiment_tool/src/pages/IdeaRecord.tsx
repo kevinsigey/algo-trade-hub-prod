@@ -6,9 +6,8 @@ import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YA
 import { PlayCheckButton } from "@/components/PlayCheck";
 import { getJson } from "@/lib/getJson";
 import { fmtUsd } from "@/lib/paperPortfolio";
-import { claimLabel, STATUS_LABEL, verdictTone, type PublicIdeaDetail } from "@/lib/workshop";
+import { claimLabel, STATUS_LABEL, toneClass, verdictTone, type PublicIdeaDetail } from "@/lib/workshop";
 import { PaperLine, signedPct } from "@/pages/Ideas";
-import { toneClass } from "@/pages/Workshop";
 
 const pct = (v: number | null | undefined, digits = 1) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}%`);
 

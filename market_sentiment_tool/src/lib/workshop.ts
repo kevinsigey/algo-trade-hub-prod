@@ -638,6 +638,12 @@ export function claimLabel(claim: Claim): string {
 
 export const CLAIM_OPTIONS = Object.keys(CLAIMS) as Claim[];
 
+export const toneClass = {
+  ok: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+  bad: "border-rose-500/40 bg-rose-500/10 text-rose-300",
+  flat: "border-slate-600/60 bg-slate-700/20 text-slate-300",
+} as const;
+
 export function verdictTone(v: Verdict | null): "ok" | "bad" | "flat" {
   if (v === "PASS") return "ok";
   if (v === "FAIL") return "bad";
