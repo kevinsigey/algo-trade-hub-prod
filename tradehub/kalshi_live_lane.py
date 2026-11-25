@@ -359,16 +359,16 @@ def _fill_count(order: dict) -> int:
         return 0
 
 
-def _recross(portfolio, d: dict, contracts: int,
-             base_row: dict) -> tuple[dict, int, float, float] | None:
-    """The 2026-11-25 amendment's one bounded re-cross: after an
-    unfilled IOC, re-read the book once and re-send once -- only while
-    the window is still outside the close buffer, the edge still
-    clears the raw bar at the fresh ask, and the fresh ask sits inside
-    the same slippage cap (the cap does not move). Returns (order,
-    filled, fresh ask, limit) when a second send went out, else None.
-    A create that raises propagates: the caller records it and the
-    first send's unfilled record stands."""
+def _recross_quote(portfolio, d: dict) -> tuple[float, float] | None:
+    """Whether the 2026-11-25 amendment's one bounded re-cross may
+    send, and at what: (fresh ask, limit) when the window is still
+    outside the close buffer, the edge still clears the raw bar at the
+    fresh ask, and the fresh ask sits inside the same slippage cap
+    (the cap does not move) -- else None. The close buffer is checked
+    before the book read and again after it (CodeRabbit on PR #620):
+    a slow read must not let the send land inside the buffer. The send
+    itself stays with the caller, which persists the re-cross identity
+    on the row before it goes out."""
     if _utcnow() >= _dt(d["close_time"]) - CANCEL_BUFFER:
         return None
     cross = _live_cross_raw(portfolio, d["ticker"], d["side"],
@@ -380,14 +380,9 @@ def _recross(portfolio, d: dict, contracts: int,
         return None
     if price - float(d["cost"]) > max_slippage():
         return None
-    limit = limit_price(price, float(d["cost"]))
-    order = portfolio.create_order(
-        ticker=d["ticker"], side=d["side"], count=contracts,
-        limit_price_cents=int(round(limit * 100)),
-        client_order_id=base_row["client_order_id"] + RECROSS_SUFFIX,
-        expiration_ts=int(_dt(d["close_time"]).timestamp()),
-        time_in_force="immediate_or_cancel")
-    return order, _fill_count(order), price, limit
+    if _utcnow() >= _dt(d["close_time"]) - CANCEL_BUFFER:
+        return None
+    return price, limit_price(price, float(d["cost"]))
 
 
 class _ProdBook:
@@ -1026,9 +1021,15 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         if contracts < 1:
             skip("skipped_cap", "daily_contract_cap")
             continue
+        # Cost accounting reserves at the worst either send can pay --
+        # frozen + the slippage cap -- not at the ask (CodeRabbit on PR
+        # #620): the limit carries +1c over the ask, and the re-cross's
+        # limit can reach the cap, so reserving at the ask could let a
+        # fill land a hard ceiling a few cents over its line.
+        reserve = float(d["cost"]) + max_slippage()
         room = max_notional_per_day_usd() - notional_today
-        if contracts * price > room:
-            contracts = int(room // price) if price > 0 else 0
+        if contracts * reserve > room:
+            contracts = int(room // reserve) if reserve > 0 else 0
             if contracts < 1:
                 skip("skipped_cap", "daily_notional_cap")
                 continue
@@ -1042,8 +1043,8 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                     continue
         else:
             room_w = WINDOW_CAP_PCT * balance - window["cost"]
-            if contracts * price > room_w:
-                contracts = int(room_w // price) if price > 0 else 0
+            if contracts * reserve > room_w:
+                contracts = int(room_w // reserve) if reserve > 0 else 0
                 if contracts < 1:
                     skip("skipped_cap", "window_cap")
                     continue
@@ -1075,9 +1076,9 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         # Reserve before the exchange write and keep it if create raises:
         # a response can be lost after acceptance.
         contracts_today += contracts
-        notional_today += contracts * price
+        notional_today += contracts * reserve
         window["contracts"] += contracts
-        window["cost"] += contracts * price
+        window["cost"] += contracts * reserve
         sent_at = now
         limit1 = limit_price(price, float(d["cost"]))
         try:
@@ -1123,20 +1124,53 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
             # decision's contracts are already reserved above -- the
             # first IOC filled nothing, so the re-send is the same
             # exposure, never a second one, and never a third attempt.
-            try:
-                recross = _recross(portfolio, d, contracts, base_row)
-            except Exception as exc:  # noqa: BLE001 -- the unfilled record stands
-                recross = None
-                patch["last_error"] = f"recross: {exc}"[:500]
-            if recross is None:
+            quote2 = _recross_quote(portfolio, d)
+            if quote2 is None:
                 patch["skip_reason"] = "ioc_unfilled"
             else:
-                order2, filled2, price2, limit2 = recross
+                price2, limit2 = quote2
+                # The re-cross identity is persisted BEFORE the send
+                # (CodeRabbit on PR #620): if the exchange accepts and
+                # the response is lost, the row stays pending under the
+                # -r1 identity and reconciliation settles which -- the
+                # same treatment the first send's error path gets.
+                identity = {"attempts": 2,
+                            "client_order_id": base_row["client_order_id"] + RECROSS_SUFFIX,
+                            "live_ask": price2}
+                if row.get("id") is not None:
+                    _update(supa, row, identity)
+                row.update(identity)
                 summary["recrossed"] += 1
-                patch["attempts"] = 2
+                try:
+                    order2 = portfolio.create_order(
+                        ticker=d["ticker"], side=d["side"], count=contracts,
+                        limit_price_cents=int(round(limit2 * 100)),
+                        client_order_id=identity["client_order_id"],
+                        expiration_ts=int(_dt(d["close_time"]).timestamp()),
+                        time_in_force="immediate_or_cancel")
+                except Exception as exc:  # noqa: BLE001 -- reconcile owns the claim
+                    summary["errors"].append(f"recross {d['target']}: {exc}")
+                    if row.get("id") is not None:
+                        _update(supa, row, {"last_error": f"recross: {exc}"[:500],
+                                            "sent_at": patch["sent_at"],
+                                            "latency_s": patch["latency_s"]})
+                    _alert(supa, target=d["target"], event="recross_error",
+                           title=f"Kalshi live re-cross error: {d['ticker']}",
+                           body=(f"The live lane's re-cross for {d['ticker']} "
+                                 f"({d['side']} x{contracts} @ {price2}) raised: "
+                                 f"{exc}. That is either an exchange refusal or a "
+                                 "response lost after acceptance; the claim stays "
+                                 "pending under the re-cross identity and "
+                                 "reconciliation settles which. "
+                                 "Real money account."),
+                           evidence={"ticker": d["ticker"], "side": d["side"],
+                                     "contracts": contracts, "live_ask": price2,
+                                     "error": str(exc)[:300]})
+                    summary["placed"] += 1
+                    continue
+                patch.update(identity)
+                filled2 = _fill_count(order2)
                 patch["kalshi_order_id"] = order2.get("order_id")
-                patch["client_order_id"] = base_row["client_order_id"] + RECROSS_SUFFIX
-                patch["live_ask"] = price2
                 if filled2 > 0:
                     summary["recross_filled"] += 1
                     filled = filled2

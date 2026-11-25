@@ -35,6 +35,7 @@ class FakeLivePortfolio:
         # the flat attributes above apply.
         self.fill_counts: list[str] | None = None
         self.ask_cents_list: list[float] | None = None
+        self.raise_on_calls: set[int] | None = None  # 1-based create calls
 
     def assert_live_host(self):
         if self.refuse:
@@ -59,6 +60,8 @@ class FakeLivePortfolio:
 
     def create_order(self, **kw):
         self.placed.append(kw)
+        if self.raise_on_calls and len(self.placed) in self.raise_on_calls:
+            raise RuntimeError("response lost after acceptance")
         fill_count = (self.fill_counts.pop(0) if self.fill_counts
                       else self.fill_count)
         return {"order_id": f"ord-{len(self.placed)}",
@@ -267,19 +270,66 @@ def test_recross_never_a_third_attempt(db):
     assert row.get("filled_attempt") is None
 
 
+def test_recross_error_keeps_the_claim_pending_under_the_recross_identity(db):
+    """CodeRabbit on PR #620: a re-cross whose response is lost after
+    acceptance must not be written off as unfilled -- the row stays
+    pending under the -r1 identity and reconciliation settles which."""
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    portfolio.raise_on_calls = {2}
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert summary["placed"] == 1 and summary["unfilled"] == 0
+    assert any("recross" in e for e in summary["errors"])
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "pending"
+    assert row["attempts"] == 2
+    assert row["client_order_id"].endswith("-r1")
+    assert "recross:" in (row.get("last_error") or "")
+
+
+def test_reservations_use_the_worst_payable_not_the_ask(db, monkeypatch):
+    """CodeRabbit on PR #620: cost accounting reserves at frozen + cap
+    (the worst either send can pay), so a ceiling between the ask cost
+    and the cap cost refuses the order instead of letting a fill at
+    the limit land over the line."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_NOTIONAL_PER_DAY_USD", "0.42")
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    seed_open(db, [decision()])  # frozen .40, ask .40, reserve .43
+    summary = lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert summary["skipped_cap"] == 1
+    row = db.db[lane.ORDERS][0]
+    assert row["skip_reason"] == "daily_notional_cap"
+
+
 def test_runner_loop_repeats_passes_inside_the_budget(monkeypatch):
     from tradehub.scripts import kalshi_live_run as runner
-    passes = []
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
     monkeypatch.setattr(runner, "load_local_env", lambda: None)
     monkeypatch.setattr(runner, "KalshiLivePortfolio", object)
     monkeypatch.setattr(runner, "get_client", lambda: object())
+    passes: list[float] = []
     monkeypatch.setattr(runner, "run_once",
-                        lambda supa, portfolio, now: passes.append(1) or {})
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+                        lambda supa, portfolio, now: passes.append(clock["t"]) or {})
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(runner.time, "sleep", fake_sleep)
     monkeypatch.setattr(runner.sys, "argv",
                         ["kalshi_live_run", "--loop", "0.35", "--interval", "0.1"])
     assert runner.main() == 0
-    assert len(passes) >= 3  # ~0.35s of budget at a 0.1s interval
+    # Passes at t=0, .1, .2, .3 exactly, with a requested sleep of the
+    # full interval between each pair -- a loop that dropped its pacing
+    # would spin at t=0 and fail both assertions.
+    assert passes == [0.0, 0.1, 0.2, 0.30000000000000004]
+    assert sleeps == [0.1, 0.1, 0.1]
     # No --loop: exactly one pass.
     passes.clear()
     monkeypatch.setattr(runner.sys, "argv", ["kalshi_live_run"])
