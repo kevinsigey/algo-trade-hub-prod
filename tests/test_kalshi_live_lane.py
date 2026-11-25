@@ -31,6 +31,10 @@ class FakeLivePortfolio:
         self.live_ask_cents = 40.0
         self.live_market = True
         self.fill_count = "1.00"
+        # Per-call schedules (issue #619 tests): popped in order, then
+        # the flat attributes above apply.
+        self.fill_counts: list[str] | None = None
+        self.ask_cents_list: list[float] | None = None
 
     def assert_live_host(self):
         if self.refuse:
@@ -44,7 +48,8 @@ class FakeLivePortfolio:
     def get_market_data(self, ticker):
         if not self.live_market:
             return None
-        ask = self.live_ask_cents
+        ask = (self.ask_cents_list.pop(0) if self.ask_cents_list
+               else self.live_ask_cents)
         return {"market": {
             "yes_ask_dollars": f"{ask / 100:.4f}",
             "yes_bid_dollars": f"{(ask - 2) / 100:.4f}",
@@ -54,8 +59,10 @@ class FakeLivePortfolio:
 
     def create_order(self, **kw):
         self.placed.append(kw)
+        fill_count = (self.fill_counts.pop(0) if self.fill_counts
+                      else self.fill_count)
         return {"order_id": f"ord-{len(self.placed)}",
-                "fill_count": self.fill_count,
+                "fill_count": fill_count,
                 "remaining_count": "0.00"}
 
     def get_orders(self, status=None, ticker=None):
@@ -179,11 +186,105 @@ def test_places_one_contract_under_45(db):
     assert row["status"] == "filled"
     assert row["contracts_requested"] == 1
     assert row["contracts_filled"] == 1
-    assert row["fill_price"] == 0.40
+    # The fake's response carries no fill price, so the lane records the
+    # limit as the worst case -- since the 2026-11-25 amendment that
+    # limit is the ask + 1c (41c here), not the ask itself.
+    assert portfolio.placed[0]["limit_price_cents"] == 41
+    assert row["fill_price"] == 0.41
+    assert row["attempts"] == 1 and row["filled_attempt"] == 1
     assert row["fee_usd"] == 0.02
     assert row["client_order_id"] == f"kl-{row['ticker']}"
     assert row["latency_s"] == 120.0
     assert any(a["evidence"]["event"] == "fill" for a in alerts(db))
+
+
+# -- the 2026-11-25 execution amendment (issue #619) --------------------------
+
+def test_limit_price_helper():
+    assert lane.limit_price(0.40, 0.40) == 0.41
+    # ask + 1c would breach frozen + 3c: the limit is the cap itself.
+    assert lane.limit_price(0.425, 0.40) == 0.43
+
+
+def test_limit_is_capped_when_ask_plus_a_cent_breaches(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.live_ask_cents = 42.5  # edge .125 clears; 2.5c over frozen
+    seed_open(db, [decision()])
+    lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed[0]["limit_price_cents"] == 43
+
+
+def test_recross_fills_on_the_second_send(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00", "1.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert portfolio.placed[1]["client_order_id"].endswith("-r1")
+    assert summary["recrossed"] == 1 and summary["recross_filled"] == 1
+    assert summary["filled"] == 1 and summary["unfilled"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "filled"
+    assert row["attempts"] == 2 and row["filled_attempt"] == 2
+    assert row["client_order_id"].endswith("-r1")
+    assert row["contracts_filled"] == 1
+
+
+def test_recross_stops_when_the_edge_is_gone(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 50.0]  # fresh edge .05 < the bar
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    assert summary["recrossed"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+
+
+def test_recross_stops_at_the_slippage_cap(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 44.0]  # 4c over frozen: cap binds
+    seed_open(db, [decision()])
+    lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+
+
+def test_recross_never_a_third_attempt(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00", "0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert summary["recrossed"] == 1 and summary["recross_filled"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 2
+    assert row.get("filled_attempt") is None
+
+
+def test_runner_loop_repeats_passes_inside_the_budget(monkeypatch):
+    from tradehub.scripts import kalshi_live_run as runner
+    passes = []
+    monkeypatch.setattr(runner, "load_local_env", lambda: None)
+    monkeypatch.setattr(runner, "KalshiLivePortfolio", object)
+    monkeypatch.setattr(runner, "get_client", lambda: object())
+    monkeypatch.setattr(runner, "run_once",
+                        lambda supa, portfolio, now: passes.append(1) or {})
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    monkeypatch.setattr(runner.sys, "argv",
+                        ["kalshi_live_run", "--loop", "0.35", "--interval", "0.1"])
+    assert runner.main() == 0
+    assert len(passes) >= 3  # ~0.35s of budget at a 0.1s interval
+    # No --loop: exactly one pass.
+    passes.clear()
+    monkeypatch.setattr(runner.sys, "argv", ["kalshi_live_run"])
+    assert runner.main() == 0
+    assert len(passes) == 1
 
 
 def test_second_pass_on_same_decision_places_nothing(db):
@@ -480,12 +581,13 @@ def test_fill_price_and_fee_from_order_response(db):
     row = db.db[lane.ORDERS][0]
     assert row["fill_price"] == 0.39 and row["fee_usd"] == 0.03
     assert row["slippage"] == -0.01 and not row.get("last_error")
-    # Missing fields fall back to the limit, flagged.
+    # Missing fields fall back to the limit, flagged -- the limit being
+    # the amended ask + 1c since 2026-11-25.
     db2 = DB()
     seed_open(db2, [decision()])
     lane.run_once(db2, FakeLivePortfolio(), NOW)
     row = db2.db[lane.ORDERS][0]
-    assert row["fill_price"] == 0.40
+    assert row["fill_price"] == 0.41
     assert row["last_error"] == "fill_price_from_limit,fee_estimated"
 
 

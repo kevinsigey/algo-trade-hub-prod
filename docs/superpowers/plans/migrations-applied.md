@@ -123,7 +123,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 
 | 97 | `20261123000001_kalshi_live_orders.sql` (applied 2026-11-23 by Muse to the VPS-local database only, on Kevin's ruling of 2026-11-23 (issue #590: the Kalshi live micro-pilot), creating the live lane's record -- kalshi_live_orders, one row per (series, target, lane) under a unique constraint that is the never-order-twice guarantee, carrying the frozen quote, live ask, fill and slippage, fee, latency, outcome, P&L and the paper twin's P&L -- plus kalshi_live_state, the lane's persistent halt/gate state (halts are never lifted automatically). Read back: both tables exist with row security on, the kalshi_live_orders_series_target_lane_key unique constraint is in place, 0 rows. The lane ships with KALSHI_LIVE_ENABLED unset; Kevin places the live key and enables it himself. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
 
-**Watermark: `20261123000001_kalshi_live_orders.sql`**
+| 98 | `20261125000001_kalshi_live_attempts.sql` (applied 2026-11-25 by Muse to the VPS-local database only, on Kevin's direction of 2026-11-25 (issue #619: the live lane's execution amendment), adding `kalshi_live_orders.attempts` (integer, not null, default 0 -- the sends on a row: 1 first send, 2 the one bounded re-cross; among sent rows, 0 reads as pre-amendment) and `kalshi_live_orders.filled_attempt` (integer, nullable -- which send filled). Together they are the pre/post-amendment split the 150-trade edge check reads. Read back: both columns present with the expected types and default. Row 98 on this branch -- PR #602 carries its own row 98 for a different filename, and when both branches land the merge keeps both rows and the watermark takes the newest filename on disk. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
+
+**Watermark: `20261125000001_kalshi_live_attempts.sql`**
 
 ## How to record a new one
 

@@ -76,6 +76,16 @@ CEILING_PER_DAY_CONTRACTS = 100
 CEILING_PER_DAY_NOTIONAL_USD = 25.0
 CEILING_SLIPPAGE = 0.03
 
+# Execution amendment (Kevin, 2026-11-25, issue #619; preregistration
+# amendment of the same date): sends carry 1c of aggression inside the
+# cap, and one bounded re-cross follows an unfilled IOC. What gets
+# decided never changes -- only how sends happen. The amendment's
+# ledger marks are the orders table's attempts / filled_attempt
+# columns: a sent row with attempts >= 1 was sent under the amended
+# execution; legacy rows carry 0.
+AGGRESSION = 0.01
+RECROSS_SUFFIX = "-r1"
+
 SENT_STATUSES = ("placed", "filled", "unfilled", "settled")
 
 
@@ -148,6 +158,15 @@ def max_slippage() -> float:
     """The most the live ask may sit above the frozen quote before the
     cross is refused (the pilot's fixed 3c term)."""
     return _env_ceiling("KALSHI_LIVE_MAX_SLIPPAGE", CEILING_SLIPPAGE)
+
+
+def limit_price(ask: float, frozen: float) -> float:
+    """The send limit under the 2026-11-25 execution amendment: the live
+    ask + 1c, never above frozen + the slippage cap. Kalshi matches at
+    the resting price, so the extra cent costs nothing when the book
+    holds; it only rescues a 1c uptick race. If ask + 1c would breach
+    the cap, the limit is the cap itself."""
+    return round(min(ask + AGGRESSION, frozen + max_slippage()), 2)
 
 
 # -- reads / writes -----------------------------------------------------------
@@ -331,6 +350,44 @@ def _live_cross_raw(portfolio, ticker: str, side: str,
     if no_ask is None:
         return None
     return no_ask, yes_bid - p
+
+
+def _fill_count(order: dict) -> int:
+    try:
+        return int(float(order.get("fill_count")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _recross(portfolio, d: dict, contracts: int,
+             base_row: dict) -> tuple[dict, int, float, float] | None:
+    """The 2026-11-25 amendment's one bounded re-cross: after an
+    unfilled IOC, re-read the book once and re-send once -- only while
+    the window is still outside the close buffer, the edge still
+    clears the raw bar at the fresh ask, and the fresh ask sits inside
+    the same slippage cap (the cap does not move). Returns (order,
+    filled, fresh ask, limit) when a second send went out, else None.
+    A create that raises propagates: the caller records it and the
+    first send's unfilled record stands."""
+    if _utcnow() >= _dt(d["close_time"]) - CANCEL_BUFFER:
+        return None
+    cross = _live_cross_raw(portfolio, d["ticker"], d["side"],
+                            d.get("model_prob"))
+    if cross is None:
+        return None
+    price, edge = cross
+    if edge < rule.MIN_EDGE - 1e-9:
+        return None
+    if price - float(d["cost"]) > max_slippage():
+        return None
+    limit = limit_price(price, float(d["cost"]))
+    order = portfolio.create_order(
+        ticker=d["ticker"], side=d["side"], count=contracts,
+        limit_price_cents=int(round(limit * 100)),
+        client_order_id=base_row["client_order_id"] + RECROSS_SUFFIX,
+        expiration_ts=int(_dt(d["close_time"]).timestamp()),
+        time_in_force="immediate_or_cancel")
+    return order, _fill_count(order), price, limit
 
 
 class _ProdBook:
@@ -796,6 +853,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     fake with the same surface)."""
     summary: dict[str, Any] = {
         "candidates": 0, "placed": 0, "filled": 0, "unfilled": 0,
+        "recrossed": 0, "recross_filled": 0,
         "skipped_cap": 0, "skipped_no_depth": 0, "failed": 0,
         "settled": 0, "prod_recorded": 0, "prod_settled": 0, "errors": [],
     }
@@ -1021,10 +1079,11 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
         window["contracts"] += contracts
         window["cost"] += contracts * price
         sent_at = now
+        limit1 = limit_price(price, float(d["cost"]))
         try:
             order = portfolio.create_order(
                 ticker=d["ticker"], side=d["side"], count=contracts,
-                limit_price_cents=int(round(price * 100)),
+                limit_price_cents=int(round(limit1 * 100)),
                 client_order_id=base_row["client_order_id"],
                 expiration_ts=int(_dt(d["close_time"]).timestamp()),
                 time_in_force="immediate_or_cancel")
@@ -1045,25 +1104,53 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                              "contracts": contracts, "live_ask": price,
                              "error": str(exc)[:300]})
             continue
-        filled = 0
-        try:
-            filled = int(float(order.get("fill_count")))
-        except (TypeError, ValueError):
-            filled = 0
+        filled = _fill_count(order)
         latency = (sent_at - _dt(d["frozen_at"])).total_seconds()
         patch = {"kalshi_order_id": order.get("order_id"),
                  "sent_at": _iso(sent_at), "latency_s": round(latency, 1),
-                 "contracts_filled": filled,
+                 "contracts_filled": filled, "attempts": 1,
                  "status": "filled" if filled > 0 else "unfilled"}
         if filled > 0:
-            fill_price, fee, flag = _executed(order, d["side"], filled, price)
+            patch["filled_attempt"] = 1
+            fill_price, fee, flag = _executed(order, d["side"], filled, limit1)
             patch["fill_price"] = fill_price
             patch["fee_usd"] = fee
             patch["slippage"] = round(fill_price - float(d["cost"]), 4)
             if flag:
                 patch["last_error"] = flag
         else:
-            patch["skip_reason"] = "ioc_unfilled"
+            # One bounded re-cross (2026-11-25 amendment): the same
+            # decision's contracts are already reserved above -- the
+            # first IOC filled nothing, so the re-send is the same
+            # exposure, never a second one, and never a third attempt.
+            try:
+                recross = _recross(portfolio, d, contracts, base_row)
+            except Exception as exc:  # noqa: BLE001 -- the unfilled record stands
+                recross = None
+                patch["last_error"] = f"recross: {exc}"[:500]
+            if recross is None:
+                patch["skip_reason"] = "ioc_unfilled"
+            else:
+                order2, filled2, price2, limit2 = recross
+                summary["recrossed"] += 1
+                patch["attempts"] = 2
+                patch["kalshi_order_id"] = order2.get("order_id")
+                patch["client_order_id"] = base_row["client_order_id"] + RECROSS_SUFFIX
+                patch["live_ask"] = price2
+                if filled2 > 0:
+                    summary["recross_filled"] += 1
+                    filled = filled2
+                    patch["contracts_filled"] = filled2
+                    patch["status"] = "filled"
+                    patch["filled_attempt"] = 2
+                    fill_price, fee, flag = _executed(order2, d["side"], filled2, limit2)
+                    patch["fill_price"] = fill_price
+                    patch["fee_usd"] = fee
+                    patch["slippage"] = round(fill_price - float(d["cost"]), 4)
+                    if flag:
+                        patch["last_error"] = flag
+                else:
+                    patch["skip_reason"] = "ioc_unfilled"
         if row.get("id") is not None:
             _update(supa, row, patch)
         row.update(patch)
@@ -1075,7 +1162,9 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                    body=(f"Bought {filled} x {d['ticker']} ({d['side']}) "
                          f"at {patch['fill_price']} against a frozen {d['cost']} "
                          f"(slippage {patch['slippage']:+.4f}), fee "
-                         f"${patch['fee_usd']:.2f}. Held to settlement. "
+                         f"${patch['fee_usd']:.2f}."
+                         f"{' Filled on the re-cross.' if patch.get('filled_attempt') == 2 else ''}"
+                         " Held to settlement. "
                          "Real money account."),
                    evidence={"ticker": d["ticker"], "side": d["side"],
                              "filled": filled,
@@ -1142,6 +1231,12 @@ def build_scoreboard(supa, now: datetime) -> dict:
         "fills": len(filled_rows),
         "fill_rate": (round(len(filled_rows) / len(sent), 4)
                       if sent else None),
+        # The 2026-11-25 execution amendment's ledger: second sends and
+        # the fills they rescued (rows from before the amendment carry
+        # attempts 0 / null and count as neither).
+        "recrossed": sum(1 for r in rows if (r.get("attempts") or 0) >= 2),
+        "recross_filled": sum(1 for r in rows
+                              if r.get("filled_attempt") == 2),
         "mean_slippage_cents": (round(sum(slips) / len(slips), 2)
                                 if slips else None),
         "settled": len(settled),
