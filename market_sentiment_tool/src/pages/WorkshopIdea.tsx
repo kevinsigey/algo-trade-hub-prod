@@ -1324,7 +1324,7 @@ export function SummaryHeader({ data }: { data: IdeaDetail }) {
       {latest ? (
         <>
           <span className={`rounded-lg border-2 px-3 py-0.5 text-lg font-extrabold ${toneClass[verdictTone(latest.verdict_now ?? latest.verdict)]}`}>{latest.verdict_now ?? latest.verdict}</span>
-          <span className="min-w-0 flex-1 text-sm text-slate-200">{latest.result.headline}</span>
+          <span className="min-w-[14rem] flex-1 text-sm text-slate-200">{latest.result.headline}</span>
           {latest.verdict_now != null && latest.verdict_now !== latest.verdict && (
             <span className="text-xs text-amber-300">as run {latest.verdict} · reads {latest.verdict_now} under the current bar</span>
           )}
