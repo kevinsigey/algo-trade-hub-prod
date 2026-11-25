@@ -162,7 +162,7 @@ export function KalshiBox({ k }: { k: KalshiRead }) {
         <h2 className="text-xs font-medium text-slate-400">Kalshi account</h2>
         <span className={REAL_MONEY_BADGE}>REAL MONEY</span>
       </div>
-      <div className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-white">{money(p.balance)}</div>
+      <div className="mt-0.5 font-display text-[1.75rem] font-semibold leading-none tabular-nums tracking-tight text-white">{money(p.balance)}</div>
       {k.error && <p className="mt-1 text-[11px] text-rose-300">Refresh failed — showing the last report.</p>}
       <dl className="mt-2 divide-y divide-slate-800/70 text-xs">
         {rows.map(([label, value, cls, hint]) => (
@@ -210,6 +210,7 @@ function PnlChart({ curve }: { curve: { t: string; cum: number }[] }) {
   const color = end >= 0 ? "#34d399" : "#fb7185";
   return (
     <svg role="img" aria-label={`Cumulative realized P&L, ending ${fmtUsd(end, { signed: true })}`} className="h-full w-full">
+      {[10, 36.7, 63.3, 90].map((g) => <line key={g} x1="0%" x2="100%" y1={`${g}%`} y2={`${g}%`} stroke="#1e293b" strokeDasharray="3 3" />)}
       <line x1="0%" x2="100%" y1={`${y(0)}%`} y2={`${y(0)}%`} stroke="#64748b" strokeDasharray="4 3" />
       <text x="1%" y={`${y(0) - 2}%`} fontSize="10" fill="#64748b">$0</text>
       {pts.slice(1).map((p, i) => (

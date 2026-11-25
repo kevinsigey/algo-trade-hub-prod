@@ -6,6 +6,7 @@ import { KalshiBox, KalshiMain, useKalshiPilot, type KalshiRead } from "@/pages/
 import { useApi } from "@/hooks/usePaperPortfolio";
 import type { BookHeadline, BooksPayload, PortfolioPayload } from "@/lib/paperPortfolio";
 import { adminCall, REFRESH_MS } from "@/pages/portfolio/shared";
+import { WarningsStrip } from "@/pages/portfolio/Header";
 import { AccountBox, BookSelector, type PaperRead } from "@/pages/portfolio/Rail";
 import PaperMain, { type OpenCard } from "@/pages/portfolio/Main";
 
@@ -36,12 +37,17 @@ export default function Portfolio() {
   const paper: Record<string, PaperRead> = { main, big };
 
   return (
-    <div className="mx-auto max-w-[100rem] px-4 py-4 md:px-6">
-      <h1 className="text-xl font-bold md:text-2xl tracking-tight text-white">Portfolio</h1>
+    <div className="mx-auto max-w-[100rem] px-4 py-3 md:px-6">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <h1 className="text-xl font-bold md:text-2xl tracking-tight text-white">Portfolio</h1>
+        {book !== "kalshi" && paper[book].data?.scoreboard && paper[book].data?.state !== "not_connected" && (
+          <WarningsStrip book={book} data={paper[book].data!} />
+        )}
+      </div>
       <div className="mt-2 grid gap-2 md:mt-3 md:gap-3 md:grid-cols-[18.5rem_minmax(0,1fr)]">
         <aside aria-label="Selected book" className="min-w-0 space-y-2 md:self-start">
           <BookSelector book={book} books={books} paper={paper} kalshi={kalshi} />
-          {book === "kalshi" ? <KalshiBox k={kalshi} /> : <AccountBox book={book} read={paper[book]} />}
+          {book === "kalshi" ? <KalshiBox k={kalshi} /> : <AccountBox read={paper[book]} />}
         </aside>
         <div className="flex min-w-0 flex-col">
           {book === "kalshi"

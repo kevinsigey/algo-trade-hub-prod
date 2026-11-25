@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  Area, AreaChart, Bar, BarChart, Cell, ComposedChart, Line, LineChart, ReferenceDot,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, ReferenceDot,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
@@ -36,7 +36,7 @@ import {
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
 import {
-  DashCard, dayLabel, Fig, FilterBox, MiniBars, PEEK, PeekRows, REFRESH_MS, Segments, Spark, tooltipStyle,
+  DashCard, dayLabel, Fig, FilterBox, GRID_STROKE, MiniBars, PEEK, PeekRows, REFRESH_MS, Segments, Spark, tooltipStyle,
 } from "./shared";
 
 /** Tab 2: Performance as a dashboard (Kevin, 2026-11-13): a grid of cards,
@@ -100,6 +100,7 @@ function CurveCard({ data, range, rangeControl }: { data: PortfolioPayload; rang
       <div className="h-[46vh] min-h-64" aria-label={`Portfolio vs SPY and QQQ, ${range}`}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} stroke={GRID_STROKE} strokeDasharray="3 3" />
             <XAxis dataKey="t" tickFormatter={(t: string) => dayLabel(etDay(t))} stroke="#64748b" fontSize={11} minTickGap={40} />
             <YAxis tickFormatter={(v: number) => `${v.toFixed(1)}%`} stroke="#64748b" fontSize={11} width={46} domain={["auto", "auto"]} />
             <Tooltip contentStyle={tooltipStyle} formatter={(v: number, name: string) => [fmtPct(v), seriesName(name)]}
@@ -113,6 +114,7 @@ function CurveCard({ data, range, rangeControl }: { data: PortfolioPayload; rang
       <div className="mt-1 h-24" aria-label={`Drawdown, ${range}`}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={chart} margin={{ top: 2, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} stroke={GRID_STROKE} strokeDasharray="3 3" />
             <XAxis dataKey="t" hide />
             <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} stroke="#64748b" fontSize={11} width={46} domain={["auto", 0]} />
             <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [fmtPct(v), "Drawdown"]} labelFormatter={(t: string) => ctDateTime(t)} />
@@ -129,7 +131,7 @@ function CurveCard({ data, range, rangeControl }: { data: PortfolioPayload; rang
               sub={<>SPY {fmtPct(last?.spy_pct)} · vs SPY <span className={tone(vsSpy)}>{fmtPts(vsSpy)}</span>
                 {vsQqq != null && <> · QQQ {fmtPct(lastQqq?.qqq_pct)} · vs QQQ <span className={tone(vsQqq)}>{fmtPts(vsQqq)}</span></>}</>}
               detail={detail} detailTitle="Performance vs SPY & QQQ" detailActions={rangeControl}>
-      <Spark data={chart} height={96} lines={[
+      <Spark data={chart} height={96} grid lines={[
         { key: "portfolio_pct", color: "#34d399", width: 2 },
         { key: "spy_pct", color: "#94a3b8", dashed: true },
         { key: "qqq_pct", color: "#38bdf8", dashed: true },
@@ -220,6 +222,7 @@ function DailyDetail({ daily }: { daily: DailyReturn[] }) {
       <div className="h-[40vh] min-h-56" aria-label="Daily returns against SPY and QQQ">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={daily} margin={{ top: 16, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} stroke={GRID_STROKE} strokeDasharray="3 3" />
             <XAxis dataKey="date" tickFormatter={dayLabel} stroke="#64748b" fontSize={11} minTickGap={24} />
             <YAxis tickFormatter={(v: number) => `${v.toFixed(1)}%`} stroke="#64748b" fontSize={11} width={46} domain={["auto", "auto"]} />
             <Tooltip contentStyle={tooltipStyle} formatter={(v: number, name: string) => [fmtPct(v), seriesName(name)]} labelFormatter={(d: string) => dayLabel(d)} />
@@ -363,6 +366,7 @@ function SplitCard({ trades }: { trades: ClosedTrade[] }) {
                   <div className="h-[46vh] min-h-56" aria-label="Cumulative realized P&L, tested ideas against discretionary trades">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={points} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid vertical={false} stroke={GRID_STROKE} strokeDasharray="3 3" />
                         <XAxis dataKey="t" tickFormatter={(t: string) => dayLabel(etDay(t))} stroke="#64748b" fontSize={11} minTickGap={32} />
                         <YAxis tickFormatter={(v: number) => fmtUsd(v, { whole: true })} stroke="#64748b" fontSize={11} width={60} domain={["auto", "auto"]} />
                         <Tooltip contentStyle={tooltipStyle} formatter={(v: number, name: string) => [fmtUsd(v, { signed: true }), name === "tested" ? "Tested ideas" : "Discretionary"]}

@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import Portfolio from "@/pages/Portfolio";
 import { concentration, curveRange } from "@/lib/paperPortfolio";
-import { checkChips } from "@/pages/portfolio/Header";
+import { checkHeadline, checkIssues } from "@/pages/portfolio/Header";
 import type { ActivityPayload, BooksPayload, PortfolioPayload, PositionRow } from "@/lib/paperPortfolio";
 
 // Portfolio's admin reads go through the signed fetch, which loads the
@@ -652,6 +652,8 @@ describe("Portfolio circuit breaker", () => {
     serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 },
                     breaker: state({ tripped: true, reasons: ["daily loss 3%"] }) }));
     page(<Portfolio />);
+    // A rose pill in the header; the reasons are in its view.
+    fireEvent.click(await screen.findByRole("button", { name: "Open Warnings" }));
     expect(await screen.findByText(/Circuit breaker tripped: daily loss 3%/)).toBeInTheDocument();
   });
 });
@@ -668,10 +670,14 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 98839, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/Today −\$1,161/)).toBeInTheDocument();
-    expect(screen.getByText(/After hours −\$84 since 4:00 PM/)).toBeInTheDocument();
-    expect(screen.getByText("After hours", { selector: "span" })).toBeInTheDocument();
-    expect(screen.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
+    const account = within(await screen.findByRole("region", { name: "Account" }));
+    expect(await account.findByText("−$1,161")).toBeInTheDocument();
+    expect(account.getByText("−1.2%")).toBeInTheDocument();
+    expect(account.getByText(/−\$84 \(−0\.1%\) since 4:00 PM/)).toBeInTheDocument();
+    expect(account.getByText("After hours", { selector: "span" })).toBeInTheDocument();
+    expect(account.getByText(/SPY \+0\.1%/)).toBeInTheDocument();
+    // The bars are gone: the gap to SPY is a tinted line under the big figure.
+    expect(account.getByText("−1.1 pts vs SPY")).toBeInTheDocument();
   });
 
   it("shows the premarket segment in the header before the open", async () => {
@@ -686,7 +692,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100500, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/Premarket \+\$500/)).toBeInTheDocument();
+    expect(await screen.findByText("+$500")).toBeInTheDocument();
     expect(screen.getByText("Premarket", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText(/SPY \+0\.3%/)).toBeInTheDocument();
   });
@@ -706,7 +712,8 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     page(<Portfolio />);
     expect(await screen.findByText(/QQQ −0\.5%/)).toBeInTheDocument();
     expect(screen.getByText(/QQQ \+5\.0%/)).toBeInTheDocument();
-    expect(screen.getByText("−8.5 pts")).toBeInTheDocument();
+    // The gap to QQQ rides in the QQQ figure's tooltip.
+    expect(screen.getByTitle("−8.5 pts vs QQQ")).toBeInTheDocument();
   });
 
   it("labels a closed day with its own day, not Today, and no after-hours tag", async () => {
@@ -721,7 +728,8 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       positions: [{ symbol: "Cash", qty: null, side: null, market_value: 100200, pct_of_book: 100, unrealized_pl: null, idea: null }],
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/Fri \+\$200/)).toBeInTheDocument();
+    expect(await screen.findByText("+$200")).toBeInTheDocument();
+    expect(screen.getByText("Fri")).toBeInTheDocument();
     expect(screen.queryByText("After hours", { selector: "span" })).toBeNull();
   });
 
@@ -734,11 +742,13 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       ],
     }));
     page(<Portfolio />);
-    const positions = within(await screen.findByRole("region", { name: "Positions" }));
-    expect(positions.getByText("MU")).toBeInTheDocument();
-    expect(positions.queryByText("Chips")).toBeNull();
-    openCard("Positions");
-    expect(screen.getByText("Chips")).toBeInTheDocument(); // the By-idea row carries it
+    const positionsRegion = await screen.findByRole("region", { name: "Positions" });
+    const rows = within(positionsRegion.querySelector("[data-peek]") as HTMLElement);
+    expect(rows.getByText("MU")).toBeInTheDocument();
+    expect(rows.queryByText("Chips")).toBeNull();
+    // The idea lives in the donut's legend and the By idea card, not on the row.
+    expect(within(positionsRegion).getByLabelText("Thesis slices")).toHaveTextContent("Chips");
+    expect(region("By idea").getByText("Chips")).toBeInTheDocument();
   });
 
   it("expands a manual holding's slices under its per-symbol card key", async () => {
@@ -751,7 +761,6 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     }));
     page(<Portfolio />);
     await screen.findByRole("region", { name: "Positions" });
-    openCard("Positions");
     expect(await screen.findByText("GLD (manual)")).toBeInTheDocument();
     openCard("By idea");
     fireEvent.click(screen.getByRole("button", { name: "Slices of GLD (manual)" }));
@@ -761,7 +770,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText(/10 sh/)).toBeInTheDocument();
   });
 
-  it("reads 'All within limits' on the warnings strip when nothing needs attention", async () => {
+  it("reads 'all clear' on the Portfolio check pill when nothing needs attention", async () => {
     session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -779,26 +788,32 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       })), { status: 200 });
     }));
     page(<Portfolio />);
-    expect(await screen.findByText(/All within limits/)).toBeInTheDocument();
-    expect(screen.getByText("pass")).toBeInTheDocument();
+    const pill = await screen.findByRole("button", { name: "Open Portfolio check" });
+    expect(pill).toHaveTextContent("Portfolio check · all clear");
+    expect(pill).toHaveTextContent(/pass/i);
   });
 });
 
-describe("checkChips unresolved inputs", () => {
+describe("checkIssues unresolved inputs", () => {
   const base = {
     book: "main", as_of: "2026-11-09T19:00:00Z", equity: 100000, cash: 0, cash_pct: 0, invested: 100000,
     sleeves: [], clusters: {}, recent_checks: [], targets_updated_at: null, series_refreshed_at: null,
   };
-  it("chips an unassigned holding over the 5% cap instead of reading all-clear", () => {
-    const chips = checkChips({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 7.5 }], unpriced: [] });
-    expect(chips).toEqual(["XYZ unassigned 7.5% / 5%"]);
+  it("lists an unassigned holding over the 5% cap instead of reading all-clear", () => {
+    const issues = checkIssues({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 7.5 }], unpriced: [] });
+    expect(issues.map((i) => [i.who, i.issue, i.size])).toEqual([["XYZ", "unassigned", "7.5% / 5%"]]);
   });
-  it("chips unpriced holdings -- the check never priced them", () => {
-    const chips = checkChips({ ...base, unassigned: [], unpriced: ["ABC"] });
-    expect(chips).toEqual(["ABC unpriced — not checked"]);
+  it("lists unpriced holdings -- the check never priced them", () => {
+    const issues = checkIssues({ ...base, unassigned: [], unpriced: ["ABC"] });
+    expect(issues.map((i) => [i.who, i.issue, i.size])).toEqual([["ABC", "unpriced", "not checked"]]);
   });
   it("stays quiet when everything resolved within limits", () => {
-    expect(checkChips({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 3 }], unpriced: [] })).toEqual([]);
+    expect(checkIssues({ ...base, unassigned: [{ symbol: "XYZ", weight_pct: 3 }], unpriced: [] })).toEqual([]);
+  });
+  it("heads the card with a count: one shared issue is named, mixed issues are 'issues'", () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ symbol: `S${i}`, weight_pct: 6 }));
+    expect(checkHeadline(checkIssues({ ...base, unassigned: six, unpriced: [] }))).toBe("6 unassigned");
+    expect(checkHeadline(checkIssues({ ...base, unassigned: six.slice(0, 1), unpriced: ["ABC"] }))).toBe("2 issues");
   });
 });
 
@@ -909,18 +924,21 @@ describe("Portfolio check card", () => {
       return new Response("{}", { status: 200 });
     }));
     page(<Portfolio />);
-    // The card is a warnings strip now: resting state is the over-cap chip,
-    // and the detail stays shut until the strip is opened.
-    expect(await screen.findByText("GLD over cap 13.0% / 12%")).toBeInTheDocument();
-    const strip = within(screen.getByRole("region", { name: "Warnings" }));
-    expect(strip.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
-    expect(strip.queryByText(/0\.83/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Portfolio check").closest("button") as HTMLElement);
+    // The card at rest: a headline count and the issue row; the detail stays
+    // shut until the card is opened.
+    const pill = await screen.findByRole("button", { name: "Open Portfolio check" });
+    expect(pill).toHaveTextContent("Portfolio check · 2 issues");
+    expect(screen.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
+    fireEvent.click(pill);
+    const strip = within(screen.getByRole("dialog", { name: "Portfolio check" }));
+    // The issue rows lead the view.
+    expect(strip.getByText("Gold cluster")).toBeInTheDocument();
+    expect(strip.getByText("13.0% / 12%")).toBeInTheDocument();
     // Inside the drawer: GLD (over its cap) and XLP (capped) earn bars with
     // floor / target / cap ticks; NVDA (ok, uncapped) earns no bar, though
     // it does sit in the member table. GLD reads twice: its bar and its
     // member-table row.
-    expect(strip.getAllByText("GLD")).toHaveLength(2);
+    expect(strip.getAllByText("GLD")).toHaveLength(3);
     // GLD's bar value and the gold chip carry the same 13.0% (same position).
     expect(strip.getAllByText("13.0%")).toHaveLength(2);
     expect(strip.getAllByTitle("floor 2%")).toHaveLength(2);
@@ -1252,9 +1270,13 @@ describe("Portfolio dashboard cards (Kevin, 2026-11-13)", () => {
     await screen.findByRole("region", { name: "Positions" });
     // The Account box moved to the left column; the rest sit in the Positions view.
     expect(screen.getByRole("region", { name: "Account" })).toBeInTheDocument();
-    const cards = ["Composition", "Today's movers", "By idea"];
-    for (const name of cards) expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    const cards = ["Composition", "Today's movers"];
+    for (const name of [...cards, "By thesis"]) expect(screen.getByRole("region", { name })).toBeInTheDocument();
     await eachCardOpensAndCloses(cards);
+    // By idea sits under Positions on the page now, not in its open view.
+    closeTop();
+    expect(screen.getByRole("region", { name: "By idea" })).toBeInTheDocument();
+    await eachCardOpensAndCloses(["By idea"]);
   });
 
   it("renders every Trade card signed in, with the ticket open on the page, and opens each list", async () => {
