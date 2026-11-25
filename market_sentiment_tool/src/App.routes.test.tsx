@@ -375,3 +375,20 @@ describe("the commodities page name", () => {
     expect(screen.queryByRole("link", { name: /^oil$/i })).not.toBeInTheDocument();
   });
 });
+
+describe("retired /portfolio/closed", () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  it("lands on the Portfolio Trade full view, keeping the book", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ email: "a@b.c" }), { status: 200 });
+      if (url.includes("/api/portfolio/closed")) return new Response(JSON.stringify({ state: "live", as_of: null, trades: [] }), { status: 200 });
+      const sb = { start_at: null, equity: 1, return_pct: null, spy_return_pct: null, ahead_pts: null, max_drawdown_pct: null, sharpe: null, win_rate: null };
+      return new Response(JSON.stringify({ state: "live", as_of: null, scoreboard: sb, curve: [], composition: [], positions: [] }), { status: 200 });
+    }));
+    window.history.pushState({}, "", "/portfolio/closed?book=big");
+    render(<App />);
+    expect(await screen.findByRole("dialog", { name: /Trade/ })).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe("/portfolio?book=big&tab=trade");
+  });
+});

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useSearchParams } from "react-router-dom";
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
@@ -18,7 +18,6 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Weather from "@/pages/Weather";
 import { NoOrdersBanner } from "@/components/NoOrdersBanner";
 import Portfolio from "@/pages/Portfolio";
-import ClosedTrades from "@/pages/ClosedTrades";
 import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
 import Login, { RecoveryRedirect } from "@/pages/Login";
@@ -46,7 +45,6 @@ import {
   Ship,
   Handshake,
   HeartPulse,
-  History,
   KeyRound,
   Landmark,
   LayoutDashboard,
@@ -79,7 +77,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
   { label: "Trading", items: [
     { to: "/", label: "Overview", icon: House, end: true },
     { to: "/portfolio", label: "Portfolio", icon: LayoutDashboard },
-    { to: "/portfolio/closed", label: "Trades and Orders", icon: History },
     { to: "/strategies", label: "Strategies", icon: Target },
     { to: "/valuation", label: "Guidance", icon: Scale },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
@@ -157,6 +154,12 @@ function compactUsd(v: number): string {
  * the rail's collapse control, which the overlay does not have. `onNavigate` is the overlay's way
  * of saying "the reader picked a page": the drawer closes, so a new page is never read through it.
  */
+/** The retired Trades and Orders page: it now lives in the Portfolio Trade card. */
+const ClosedRedirect = () => {
+  const [params] = useSearchParams();
+  return <Navigate to={`/portfolio?book=${params.get("book") === "big" ? "big" : "main"}&tab=trade`} replace />;
+};
+
 const SidebarBody = ({ onNavigate, collapsed = false, onToggle }: {
   onNavigate?: () => void; collapsed?: boolean; onToggle?: () => void;
 }) => {
@@ -382,7 +385,7 @@ function App() {
               duplicated the journal's standings and is retired into a redirect. */}
           <Route path="/" element={<Overview />} />
           <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/portfolio/closed" element={<ClosedTrades />} />
+          <Route path="/portfolio/closed" element={<ClosedRedirect />} />
           <Route path="/ideas" element={<Ideas />} />
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/ideas/:id" element={<IdeaRecord />} />
