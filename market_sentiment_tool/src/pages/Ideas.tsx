@@ -494,8 +494,9 @@ export default function Ideas() {
   }));
   const shadowRows = shadowGroups.map((g) => ({
     key: g.key,
-    label: <Link to={to(g.ideas[0].id)} className="hover:underline underline-offset-2">{g.ideas[0].title}</Link>,
-    aside: `${g.label}${g.ideas.length > 1 ? ` · ${g.ideas.length}` : ""}`,
+    label: <Link to={to(g.ideas[0].id)} className="inline-block min-w-[8rem] max-w-full truncate align-bottom hover:underline underline-offset-2">{g.ideas[0].title}</Link>,
+    // The bet's name is the part that gives way: capped, and hidden on narrow screens, so the title always reads.
+    aside: <span className="hidden max-w-[12rem] truncate align-bottom lg:inline-block">{`${g.label}${g.ideas.length > 1 ? ` · ${g.ideas.length}` : ""}`}</span>,
     value: g.ideas[0].result_line ?? "—",
   }));
   const activity = admin && dash
@@ -509,7 +510,7 @@ export default function Ideas() {
         key: String(i.id),
         label: <Link to={to(i.id)} className="hover:underline underline-offset-2">{i.title}</Link>,
         aside: i.published_at.slice(0, 10),
-        value: verdictChip(i.verdict_now ?? i.latest_verdict, i.verdict_now ?? i.latest_verdict),
+        value: (i.verdict_now ?? i.latest_verdict) ? verdictChip(i.verdict_now ?? i.latest_verdict, i.verdict_now ?? i.latest_verdict) : "",
       }));
 
   return (
@@ -587,7 +588,7 @@ export default function Ideas() {
         <ListCard title="Trading now" meta={`${trading.length} on a paper book`} rows={tradingRows} empty="Nothing is trading live." full={all} />
         <div className="grid gap-3 lg:grid-cols-2">
           <ListCard title="In shadow" meta="by bet" rows={shadowRows} empty="Nothing in shadow." full={all} />
-          <ListCard title="Latest test activity" rows={activity} empty="No saved runs yet."
+          <ListCard title={admin && dash ? "Latest test activity" : "Newest ideas"} rows={activity} empty="No saved runs yet."
                     full={<PeekRows rows={activity} empty="No saved runs yet." />} />
         </div>
       </div>
