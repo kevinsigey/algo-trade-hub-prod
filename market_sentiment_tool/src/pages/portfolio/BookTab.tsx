@@ -385,7 +385,7 @@ export function ByIdeaCard({ rows, equity, liveIdeas, book }: {
               sub={split ? <>Tested <span className={tone(split.tested.pnl)}>{signed(split.tested.pnl)}</span> · Disc. <span className={tone(split.discretionary.pnl)}>{signed(split.discretionary.pnl)}</span></> : undefined}
               detail={<ByIdeaTable cards={cards} rows={rows} realizedByIdea={realizedByIdea} closed={closed} />}
               detailTitle={`By idea · ${cards.length} ideas`}>
-      <ul className="divide-y divide-slate-800/70 text-xs tabular-nums" data-peek="">
+      <ul className="divide-y divide-slate-800/70 text-xs tabular-nums max-md:[&_li:nth-child(n+3)]:hidden" data-peek="">
         {cards.slice(0, PEEK).map((c) => (
           <li key={c.idea} className={`flex items-baseline gap-2 py-1 ${c.id == null && c.idea.endsWith("(manual)") ? "text-slate-400" : "text-slate-200"}`}>
             <span className="min-w-0 font-medium"><IdeaName c={c} raised /></span>

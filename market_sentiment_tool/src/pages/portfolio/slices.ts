@@ -60,18 +60,18 @@ export function slices(positions: PositionRow[]): Slice[] {
 /** The legend: every thesis that is not core always shows (small ones too), the biggest
  * core parts fill the rest of `n` rows, and the leftover small core parts fold into
  * "Core · other (N)". */
-export function legendSlices(all: Slice[], n = 8): Slice[] {
+export function legendSlices(all: Slice[], n = 10): Slice[] {
   const isCore = (s: Slice) => s.key.startsWith("core-");
-  const core = all.filter(isCore);
-  const room = Math.max(0, n - (all.length - core.length));
-  // Folding takes a row of its own, so a fold shows one fewer core part.
-  const rest = core.length > room ? core.slice(Math.max(0, room - 1)) : [];
-  // One leftover part reads as itself, not as an "other (1)".
-  const folded = rest.length > 1 ? rest : [];
-  const shown = all.filter((s) => !folded.includes(s));
-  if (!folded.length) return shown;
-  return [...shown, {
-    key: "core-other", label: `Core · other (${folded.length})`, color: "#475569",
-    pct: folded.reduce((a, s) => a + s.pct, 0), value: folded.reduce((a, s) => a + s.value, 0),
-  }];
+  const fold = (parts: Slice[], key: string, label: string): Slice[] =>
+    parts.length > 1 ? [{ key, label: `${label} (${parts.length})`, color: "#475569",
+      pct: parts.reduce((a, s) => a + s.pct, 0), value: parts.reduce((a, s) => a + s.value, 0) }] : parts;
+  // Every thesis of 1% or more keeps its row; slivers share one, so core parts get the room.
+  const other = all.filter((s) => !isCore(s));
+  const big = other.filter((s) => s.pct >= 1);
+  const tiny = fold(other.filter((s) => s.pct < 1), "theses-other", "Other theses");
+  const core = all.filter(isCore).sort((a, b) => b.pct - a.pct);
+  const room = Math.max(0, n - big.length - tiny.length);
+  const coreShown = core.length > room ? core.slice(0, Math.max(0, room - 1)) : core;
+  const coreRest = fold(core.slice(coreShown.length), "core-other", "Core · other");
+  return [...coreShown, ...big, ...coreRest, ...tiny];
 }

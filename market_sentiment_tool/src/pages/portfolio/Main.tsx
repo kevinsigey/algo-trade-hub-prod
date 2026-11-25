@@ -130,6 +130,7 @@ function SliceTip({ active, payload }: { active?: boolean; payload?: { payload: 
 /** The book by thesis as a donut with its biggest slices beside it. */
 function ThesisDonut({ all }: { all: Slice[] }) {
   const legend = legendSlices(all);
+  const corePct = all.filter((s) => s.key.startsWith("core-")).reduce((a, s) => a + s.pct, 0);
   if (all.length === 0) return null;
   return (
     <div className="flex items-center gap-3">
@@ -146,15 +147,20 @@ function ThesisDonut({ all }: { all: Slice[] }) {
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <ul className="grid min-w-0 flex-1 gap-x-3 gap-y-0.5 text-xs tabular-nums text-slate-300 md:grid-cols-2" aria-label="Thesis slices">
+      <div className="min-w-0 flex-1">
+      {corePct > 0 && (
+        <p className="mb-0.5 text-[11px] text-slate-400">Core thesis <span className="font-semibold text-slate-200">{corePct.toFixed(0)}%</span> · split by sector and holding</p>
+      )}
+      <ul className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-0.5 text-xs tabular-nums text-slate-300" aria-label="Thesis slices">
         {legend.map((s) => (
           <li key={s.key} className="flex items-baseline gap-1.5">
             <span className="h-2 w-2 shrink-0 self-center rounded-sm" style={{ background: s.color }} aria-hidden="true" />
-            <span className="min-w-0 truncate" title={s.tag ? `${s.label} (${s.tag})` : s.label}>{s.label}</span>
+            <span className="min-w-0 truncate" title={s.tag ? `${s.label} (${s.tag})` : s.label}>{s.label.replace(/^Core · /, "")}</span>
             <span className="ml-auto shrink-0 text-slate-500">{s.pct.toFixed(0)}%</span>
           </li>
         ))}
       </ul>
+      </div>
     </div>
   );
 }
