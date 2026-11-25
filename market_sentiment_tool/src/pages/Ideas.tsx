@@ -309,7 +309,7 @@ function AllIdeas({ ideas, rows, admin, to }: { ideas: PublicIdea[]; rows: IdeaR
   return (
     <div>
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <Segments label="Filter" options={views} value={view} onChange={setView} render={(v) => `${VIEW_LABEL[v]}${v === "removed" ? ` · ${removed.length}` : ""}`} />
+        <Segments label="Filter" options={views} value={view} onChange={(v) => setView(v as View)} render={(v) => `${VIEW_LABEL[v]}${v === "removed" ? ` · ${removed.length}` : ""}`} />
         {view === "standing" && (
           <span className="flex items-center gap-2">
             <label htmlFor="ideas-sort" className="text-slate-400">Sort</label>
