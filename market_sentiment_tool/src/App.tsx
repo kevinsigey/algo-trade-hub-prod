@@ -1,17 +1,14 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 // Pages
 import Overview from "@/pages/Overview";
 import Crypto from "@/pages/Crypto";
 import Macro from "@/pages/Macro";
-import JobsNowcast from "@/pages/JobsNowcast";
-import Cpi from "@/pages/Cpi";
 import OilLayout from "@/components/OilLayout";
 import Hormuz from "@/pages/Hormuz";
 import Oil from "@/pages/Oil";
 import Journal from "@/pages/Journal";
 import Thesis from "@/pages/Thesis";
-import ThesisScoreboard from "@/pages/ThesisScoreboard";
 import Health from "@/pages/Health";
 import MachineKeys from "@/pages/MachineKeys";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -22,10 +19,8 @@ import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
 import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
-import Workshop from "@/pages/Workshop";
 import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
-import WorkshopIdea from "@/pages/WorkshopIdea";
 import Strategies from "@/pages/Strategies";
 import Valuation from "@/pages/Valuation";
 import { RequireAdmin, useAdminSession } from "@/components/RequireAdmin";
@@ -40,12 +35,9 @@ import {
   ChevronDown,
   House,
   CloudSun,
-  FlaskConical,
   Fuel,
-  Ship,
   Handshake,
   HeartPulse,
-  KeyRound,
   Landmark,
   LayoutDashboard,
   Lightbulb,
@@ -80,25 +72,21 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/strategies", label: "Strategies", icon: Target },
     { to: "/valuation", label: "Guidance", icon: Scale },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
-    { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
   { label: "Markets", items: [
     { to: "/oil", label: "Commodities", icon: Fuel, end: true },
-    { to: "/oil/hormuz", label: "Hormuz tracker", icon: Ship, sub: true },
     { to: "/crypto", label: "Crypto", icon: LineChart },
     { to: "/macro", label: "Macro predictions", icon: Landmark },
     { to: "/weather", label: "Weather", icon: CloudSun },
   ] },
   { label: "Track record", items: [
     { to: "/journal", label: "Model Tracker", icon: BookOpen },
-    { to: "/thesis", label: "Thesis Tracker", icon: Target },
-    { to: "/thesis-scoreboard", label: "Thesis Scoreboard", icon: Scale },
+    { to: "/thesis", label: "Thesis", icon: Target },
   ] },
   { label: "Admin", items: [
     { to: "/screening", label: "Screening", icon: ListFilter },
     { to: "/deals", label: "Deals and IPOs", icon: Handshake },
     { to: "/health", label: "Health", icon: HeartPulse },
-    { to: "/machine-keys", label: "Machine keys", icon: KeyRound },
   ] },
 ];
 
@@ -372,6 +360,15 @@ function Guarded({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={useLocation().pathname}>{children}</ErrorBoundary>;
 }
 
+/** The Workshop idea page lives on as the owner's Test tab of the idea (keeps ?draft=1 from the new-idea flow). */
+function WorkshopIdeaRedirect() {
+  const { id } = useParams();
+  const { search } = useLocation();
+  const q = new URLSearchParams(search);
+  q.set("tab", "test");
+  return <Navigate to={`/ideas/${id}?${q}`} replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -391,13 +388,13 @@ function App() {
           <Route path="/ideas/:id" element={<IdeaRecord />} />
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
+          <Route path="/workshop" element={<Navigate to="/ideas" replace />} />
           <Route path="/agent" element={<Navigate to="/ideas" replace />} />
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />
           <Route path="/debates" element={<RequireAdmin><Navigate to="/valuation" replace /></RequireAdmin>} />
           <Route path="/valuation" element={<RequireAdmin><Valuation /></RequireAdmin>} />
-          <Route path="/workshop/:id" element={<RequireAdmin><WorkshopIdea /></RequireAdmin>} />
+          <Route path="/workshop/:id" element={<WorkshopIdeaRedirect />} />
           {/* /lab was the Prediction Lab; the journal replaced it (v2 spec §9). A redirect, not a 404, so
               bookmarks and links keep working. */}
           <Route path="/lab" element={<Navigate to="/journal" replace />} />
@@ -409,7 +406,7 @@ function App() {
           <Route path="/crypto" element={<Crypto />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/thesis" element={<RequireAdmin><Thesis /></RequireAdmin>} />
-          <Route path="/thesis-scoreboard" element={<RequireAdmin><ThesisScoreboard /></RequireAdmin>} />
+          <Route path="/thesis-scoreboard" element={<Navigate to="/thesis" replace />} />
           {/* Merged into the Model Tracker (Kevin's call, 2026-11-02): the scoreboard and the
               models catalogue were two admin tabs presenting the /api/scoreboard dataset next
               to the Tracker's forward record. Both names now land on the Tracker's Backtests
@@ -435,8 +432,8 @@ function App() {
               Same component, same /api/scoreboard read, address bar updated to the real path. */}
           <Route path="/shadow-scoreboard" element={<Navigate to="/journal?view=backtests" replace />} />
           <Route path="/macro" element={<Macro />} />
-          <Route path="/jobs" element={<JobsNowcast />} />
-          <Route path="/cpi" element={<Cpi />} />
+          <Route path="/jobs" element={<Navigate to="/macro" replace />} />
+          <Route path="/cpi" element={<Navigate to="/macro" replace />} />
           <Route path="/oil" element={<OilLayout />}>
             <Route index element={<Oil />} />
             <Route path="hormuz" element={<Hormuz />} />

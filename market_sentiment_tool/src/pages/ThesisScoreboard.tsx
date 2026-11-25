@@ -1,7 +1,5 @@
-import { AlertTriangle, Loader2 } from "lucide-react";
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useThesisScoreboard } from "@/hooks/useThesisScoreboard";
+import { DashCard } from "@/pages/portfolio/shared";
 import type { ClaimBlock, Scoreboard } from "@/lib/thesisTracker";
 
 const dash = (value: string | number | null | undefined) =>
@@ -153,71 +151,8 @@ function RegimePanel({ board }: { board: Scoreboard }) {
   );
 }
 
-export default function ThesisScoreboard() {
-  const { board, loading, error } = useThesisScoreboard();
-
+function PlayKinds({ board }: { board: Scoreboard }) {
   return (
-    <div className="min-h-screen bg-slate-950 px-8 py-10 text-slate-100">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-8">
-        <div className="space-y-2 border-b border-slate-900 pb-8">
-          <h1 className="text-2xl font-bold tracking-tight text-white">
-            Thesis Scoreboard
-          </h1>
-          <p className="max-w-3xl text-sm text-slate-400">
-            Claims A, B and C against their frozen falsifier windows — graded counts, hit rates
-            with intervals, and the countdowns. Play kinds keep separate ledgers; the whisper and
-            the money flow are graded separately and never combined.
-          </p>
-        </div>
-
-        {loading ? (
-          <div className="flex items-center gap-2 py-8 text-slate-400">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading scoreboard…
-          </div>
-        ) : error ? (
-          <div className="flex items-center gap-2 py-8 text-red-300">
-            <AlertTriangle className="h-4 w-4" /> {error}
-          </div>
-        ) : !board ? (
-          <p className="py-8 text-sm text-slate-400">
-            The tracker is not seeded yet — no theses, claims or regime inputs are recorded.
-          </p>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
-              <span>
-                Governing event-lab unit{" "}
-                <span className="font-mono text-white">{usd(board.sizing.governing_unit.unit)}</span>{" "}
-                ({board.sizing.governing_unit.source})
-              </span>
-              <span className="text-slate-500">·</span>
-              <span>
-                Grader{" "}
-                {board.sizing.health.last_grader_ok ? (
-                  <span className="text-emerald-300">healthy</span>
-                ) : (
-                  <span className="text-red-300">not ok</span>
-                )}{" "}
-                · last run {fmtDay(board.sizing.health.last_grader_run_at)}
-              </span>
-              <span className="text-slate-500">·</span>
-              <span>
-                Play kind (c){" "}
-                {board.sizing.config.play_kind_c_live ? (
-                  <span className="text-white">live</span>
-                ) : (
-                  <span className="text-slate-300">shadow only</span>
-                )}
-              </span>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-3">
-              {board.claims.map((claim) => (
-                <ClaimCard key={claim.claim} claim={claim} />
-              ))}
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-2">
               <Card className="border-slate-800 bg-slate-900/40">
                 <CardHeader>
                   <CardTitle className="text-lg text-white">Play kinds — separate ledgers</CardTitle>
@@ -256,7 +191,11 @@ export default function ThesisScoreboard() {
                   )}
                 </CardContent>
               </Card>
+  );
+}
 
+function Signals({ board }: { board: Scoreboard }) {
+  return (
               <Card className="border-slate-800 bg-slate-900/40">
                 <CardHeader>
                   <CardTitle className="text-lg text-white">Pre-print signals — graded separately</CardTitle>
@@ -291,10 +230,11 @@ export default function ThesisScoreboard() {
                   </table>
                 </CardContent>
               </Card>
-            </div>
+  );
+}
 
-            <RegimePanel board={board} />
-
+function Registry({ board }: { board: Scoreboard }) {
+  return (
             <Card className="border-slate-800 bg-slate-900/40">
               <CardHeader>
                 <CardTitle className="text-lg text-white">Thesis registry</CardTitle>
@@ -326,7 +266,11 @@ export default function ThesisScoreboard() {
                 </table>
               </CardContent>
             </Card>
+  );
+}
 
+function BreachLog({ board }: { board: Scoreboard }) {
+  return (
             <Card className="border-slate-800 bg-slate-900/40">
               <CardHeader>
                 <CardTitle className="text-lg text-white">Breach log</CardTitle>
@@ -380,9 +324,60 @@ export default function ThesisScoreboard() {
                 )}
               </CardContent>
             </Card>
-          </>
-        )}
+  );
+}
+
+/** The scoreboard as dashboard cards; every card opens the full block it summarises. */
+export function ScoreboardCards({ board }: { board: Scoreboard }) {
+  const refusals = board.breaches.refusals.length + board.breaches.stale_files.length;
+  const kinds = Object.keys(board.play_kinds).length;
+  return (
+    <>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-300">
+              <span>
+                Governing event-lab unit{" "}
+                <span className="font-mono text-white">{usd(board.sizing.governing_unit.unit)}</span>{" "}
+                ({board.sizing.governing_unit.source})
+              </span>
+              <span className="text-slate-500">·</span>
+              <span>
+                Grader{" "}
+                {board.sizing.health.last_grader_ok ? (
+                  <span className="text-emerald-300">healthy</span>
+                ) : (
+                  <span className="text-red-300">not ok</span>
+                )}{" "}
+                · last run {fmtDay(board.sizing.health.last_grader_run_at)}
+              </span>
+              <span className="text-slate-500">·</span>
+              <span>
+                Play kind (c){" "}
+                {board.sizing.config.play_kind_c_live ? (
+                  <span className="text-white">live</span>
+                ) : (
+                  <span className="text-slate-300">shadow only</span>
+                )}
+              </span>
+            </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        {board.claims.map((claim) => (
+          <DashCard key={claim.claim} title={`Claim ${claim.claim}`} value={pct(claim.rate)}
+                    meta={<StateChip state={claim.state} />} hint={claim.metric}
+                    sub={`${claim.graded} graded · deadline ${fmtDay(claim.deadline)}`}
+                    detail={<ClaimCard claim={claim} />} />
+        ))}
       </div>
-    </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <DashCard title="Play kinds" value={kinds} sub="separate ledgers" detail={<PlayKinds board={board} />} />
+        <DashCard title="Pre-print signals" value={pct(board.signals.whisper.rate)}
+                  sub="whisper hit rate" detail={<Signals board={board} />} />
+        <DashCard title="Regime" value={pct(board.regime.odds.stalemate)} sub="stalemate odds"
+                  detail={<RegimePanel board={board} />} />
+        <DashCard title="Thesis registry" value={board.theses.length} sub="theses" detail={<Registry board={board} />} />
+        <DashCard title="Breach log" value={refusals} sub="blocks and stale files" detail={<BreachLog board={board} />} />
+      </div>
+    </>
   );
 }

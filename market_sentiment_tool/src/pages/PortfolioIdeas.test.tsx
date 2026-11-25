@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Ideas from "@/pages/Ideas";
@@ -68,8 +68,16 @@ describe("Portfolio ↔ Workshop", () => {
 
 describe("Public Ideas record", () => {
   it("shows the whole Workshop record, not just what is published", async () => {
+    session.token = null;
     route({ "/api/ideas/summary": { body: { tested: 10, passed: 1, failed: 8, not_enough_data: 1, published: 1 } }, "/api/ideas": { body: [] } });
     render(<MemoryRouter><Ideas /></MemoryRouter>);
-    expect(await screen.findByText("Workshop record: 10 ideas tested · 1 passed · 8 failed · 1 not enough data · 1 published here")).toBeInTheDocument();
+    // The record counts moved into the Tests card: its figures are one click in.
+    fireEvent.click(await screen.findByRole("button", { name: "Open Tests under the current bar" }));
+    const view = within(await screen.findByRole("dialog"));
+    expect(view.getByText("Ideas tested").nextSibling).toHaveTextContent("10");
+    expect(view.getByText("Pass").nextSibling).toHaveTextContent("1");
+    expect(view.getByText("Fail").nextSibling).toHaveTextContent("8");
+    expect(view.getByText("Not enough data").nextSibling).toHaveTextContent("1");
+    expect(view.getByText("Published here").nextSibling).toHaveTextContent("1");
   });
 });

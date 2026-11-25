@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Valuation from "@/pages/Valuation";
@@ -94,6 +94,8 @@ describe("Guidance tab — Batch 2 verdict chip + decision view", () => {
   it("puts the verdict element on the name's own row", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    // The names list leads; a row opens in place to its sheet and verdict.
+    fireEvent.click(within(await screen.findByTestId("name-row-AMGN")).getByRole("button"));
     const chip = await screen.findByTestId("verdict-chip-AMGN");
     expect(chip).toHaveTextContent("Debate: Act at the mid band · short · 62% confidence");
     expect(chip).toHaveTextContent("Dissent: The guide is conservative and improving.");

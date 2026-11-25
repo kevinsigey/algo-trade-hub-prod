@@ -77,7 +77,7 @@ describe("the Trading HQ menu and routes", () => {
     await at("/");
     expect(screen.getByRole("heading", { name: /solo research desk/, level: 1 })).toBeInTheDocument();
     for (const label of ["Trading", "Markets", "Track record", "Admin"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /trades and orders/i })).toHaveAttribute("href", "/portfolio/closed");
+    expect(screen.queryByRole("link", { name: /trades and orders/i })).toBeNull(); // folded into Portfolio (audit step 4)
     expect(screen.getByRole("link", { name: /^portfolio$/i })).toHaveAttribute("href", "/portfolio");
     expect(screen.getByRole("link", { name: /^overview$/i })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: /model tracker/i })).toHaveAttribute("href", "/journal");
