@@ -243,7 +243,7 @@ function WorkshopRows({ rows }: { rows: IdeaRow[] }) {
     <ul className="mt-3 space-y-2">
       {rows.map((i) => (
         <li key={i.id} className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 hover:border-slate-600">
-          <Link to={`/workshop/${i.id}`} className="flex items-center justify-between gap-3 py-2.5 hover:text-white">
+          <Link to={`/ideas/${i.id}`} className="flex items-center justify-between gap-3 py-2.5 hover:text-white">
             <span className="text-slate-200">{i.title}</span>
             <span className="flex shrink-0 flex-wrap items-center justify-end gap-3 text-xs text-slate-400">
               {i.runs} {i.runs === 1 ? "run" : "runs"}
@@ -453,7 +453,7 @@ function ToneCard() {
 export default function Ideas() {
   const session = useAdminSession();
   const admin = session === "admin";
-  const to = (id: number) => (admin ? `/workshop/${id}` : `/ideas/${id}`);
+  const to = (id: number) => `/ideas/${id}`;
   const { data, error, loading } = useApi<PublicIdea[]>("/api/ideas");
   const { data: summary } = useApi<{ tested: number; passed: number; failed: number; not_enough_data: number; published: number }>("/api/ideas/summary");
   const { data: criticSummary } = useApi<{ counts: { PAUSE: number; WATCH: number; HOLD: number }; units: number; worst: { idea_id: number; title: string | null; book: string; degradation: number }[] }>("/api/ideas/critic-summary");

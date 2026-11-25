@@ -300,6 +300,40 @@ describe("Tracked ideas (Kevin, 2026-11-02)", () => {
   });
 });
 
+describe("Idea page lists stay at 5 rows (DESIGN-RULES 3)", () => {
+  const mkRun = (n: number) => ({ variation: n, verdict: "FAIL", created_at: "2026-10-30T00:00:00Z", headline: `Run headline ${n}`, p: 0.3, bar: 0.05, claim: "beats_benchmark" });
+  const mkTrade = (n: number) => ({ symbol: `T${n}`, qty: 1, entry_price: 1, exit_price: 2, pnl: 1, return_pct: 1, exited_at: "2026-11-10T15:00:00Z", held_days: 1, idea: "x" });
+  const page = () => render(<MemoryRouter initialEntries={["/ideas/1"]}><Routes><Route path="/ideas/:id" element={<IdeaRecord />} /></Routes></MemoryRouter>);
+
+  it("shows the newest 5 runs and 5 paper trades, and Show all has the rest", async () => {
+    serve({ ...ROWS[1], plain_words: "Gold.", shadow: null, runs: [1, 2, 3, 4, 5, 6, 7].map(mkRun), trades: [1, 2, 3, 4, 5, 6, 7].map(mkTrade) });
+    page();
+    const runs = await screen.findByRole("region", { name: "Every backtest run" });
+    expect(within(runs).getAllByRole("listitem")).toHaveLength(5);
+    expect(within(runs).getByText("Run headline 7")).toBeInTheDocument();
+    expect(within(runs).queryByText("Run headline 1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all Every backtest run" }));
+    expect(await within(screen.getByRole("dialog")).findByText("Run headline 1")).toBeInTheDocument();
+    cleanup();
+    serve({ ...ROWS[1], plain_words: "Gold.", shadow: null, runs: [], trades: [1, 2, 3, 4, 5, 6, 7].map(mkTrade) });
+    page();
+    const trades = await screen.findByRole("region", { name: "Paper trades on this idea" });
+    expect(within(trades).getAllByRole("listitem")).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "Show all Paper trades on this idea" }));
+    expect(await within(screen.getByRole("dialog")).findByText("T7")).toBeInTheDocument();
+  });
+
+  it("leads with the three stats and the paper chart before any tab", async () => {
+    serve({ ...ROWS[1], plain_words: "Gold.", runs: [], trades: [], latest_verdict: "PASS",
+            shadow: { ...LIVE, curve: [{ t: "2026-11-03", idea: 0.1, bench: 0.2 }, { t: "2026-11-04", idea: 0.5, bench: 0.3 }], exits: [] } });
+    page();
+    expect(await screen.findByText("Verdict now")).toBeInTheDocument();
+    expect(screen.getByText("Paper return vs benchmark").nextSibling).toHaveTextContent("+4.2% vs +6.1%");
+    expect(screen.getByRole("region", { name: "Paper or forward record" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Record" })).toHaveAttribute("aria-selected", "true");
+  });
+});
+
 describe("betLead", () => {
   const idea = (id: number, status: string, value: number) =>
     ({ id, status, result_value: value, live_books: status === "live" ? ["big"] : [] }) as unknown as PublicIdea;
@@ -339,7 +373,7 @@ describe("Ideas, signed in as the owner (the old Workshop list)", () => {
     });
   };
 
-  it("lists every idea, drafts included, linked to the workshop page, through the signed fetch", async () => {
+  it("lists every idea, drafts included, linked to the idea page, through the signed fetch", async () => {
     const f = admin();
     render(<MemoryRouter><Ideas /></MemoryRouter>);
     const all = await showAll("In shadow");
@@ -349,7 +383,7 @@ describe("Ideas, signed in as the owner (the old Workshop list)", () => {
     expect(all.getByText("as run PASS")).toBeInTheDocument();  // A2: the chip reads the current bar, the as-run verdict beside it
     expect(all.getByText("FAIL")).toBeInTheDocument();
     expect(all.getByText(/Trial 3 of 15 in random-lab-gen-3 · lab trial 54/)).toBeInTheDocument();  // A3
-    expect(all.getByRole("link", { name: /Gold when rates rise/ })).toHaveAttribute("href", "/workshop/1");
+    expect(all.getByRole("link", { name: /Gold when rates rise/ })).toHaveAttribute("href", "/ideas/1");
     const call = f.mock.calls.find(([u]) => String(u).includes("/api/workshop/ideas"));
     expect((call?.[1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
   });
@@ -417,16 +451,23 @@ describe("Ideas, signed in as the owner (the old Workshop list)", () => {
 });
 
 describe("Workshop routes", () => {
-  it("/workshop lands on Ideas, the nav has no Workshop entry, and /workshop/1 stays admin only", async () => {
+  it("/workshop lands on Ideas and the nav has no Workshop entry", async () => {
     serveRoutes({ "/api/ideas": [] });
     window.history.pushState({}, "", "/workshop");
     await act(async () => { render(<App />); });
     expect(await screen.findByRole("heading", { name: "Ideas" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^workshop$/i })).not.toBeInTheDocument();
-    cleanup();
+  });
+
+  it("/workshop/1 sends a visitor to the public idea page: no Test or Lifecycle tab, no owner requests", async () => {
+    const f = serveRoutes({ "/api/ideas/1": { id: 1, title: "Gold", plain_words: "Gold beats stocks", status: "backtest", kind: "long_only", claim: null, variations: 1, runs: [], trades: [], shadow: null } });
     window.history.pushState({}, "", "/workshop/1");
     await act(async () => { render(<App />); });
-    expect(screen.getByRole("heading", { name: "Admin only" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Record" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/ideas/1");
+    expect(screen.queryByRole("tab", { name: "Test" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Lifecycle" })).not.toBeInTheDocument();
+    expect(f.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/api/workshop"))).toEqual([]);
   });
 });
 
