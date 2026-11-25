@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 
 import { ApiError } from "@/lib/workshop";
 import { ctDateTime } from "@/lib/format";
@@ -17,6 +16,7 @@ import {
   type ClosedPayload,
   type ManualAction,
 } from "@/lib/paperPortfolio";
+import WorkingOrdersAndResults from "@/pages/ClosedTrades";
 import { adminCall, DashCard, FilterBox, MiniBars, PEEK, PeekRows, pollWhileVisible, price, REFRESH_MS, Segments } from "./shared";
 
 /** Tab 3: Trade as a dashboard (Kevin, 2026-11-13). The order ticket sits
@@ -32,6 +32,7 @@ export default function TradeTab({ book }: { book: string }) {
       <StagedOrders book={book} />
       <OrdersBox book={book} />
       <ClosedTradesBox book={book} />
+      <WorkingOrdersAndResults book={book} />
     </div>
   );
 }
@@ -84,11 +85,11 @@ function nextSort<K extends string>(sort: SortState<K> | null, key: K): SortStat
 /** Every closed trade on this book, newest exit first — the full list the
  * spec puts under the ticket (the Performance tab carries the same list
  * with its range stats; here it is the complete record). */
-type ClosedSortKey = "exited_at" | "symbol" | "idea" | "qty" | "entry" | "exit" | "return" | "pnl";
+type ClosedSortKey = "exited_at" | "symbol" | "idea" | "qty" | "entry" | "exit" | "return" | "held" | "pnl";
 const CLOSED_READERS: Record<ClosedSortKey, (t: ClosedPayload["trades"][number]) => number | string | null> = {
   exited_at: (t) => t.exited_at, symbol: (t) => t.symbol, idea: (t) => t.idea,
   qty: (t) => t.qty, entry: (t) => t.entry_price, exit: (t) => t.exit_price,
-  return: (t) => t.return_pct, pnl: (t) => t.pnl,
+  return: (t) => t.return_pct, held: (t) => t.held_days, pnl: (t) => t.pnl,
 };
 
 function ClosedTradesBox({ book }: { book: string }) {
@@ -150,7 +151,7 @@ function ClosedTable({ trades: all }: { trades: ClosedPayload["trades"] }) {
             <tr>
               {head("exited_at", "Exit")}{head("symbol", "Symbol")}{head("idea", "Idea")}
               {head("qty", "Qty", "right")}{head("entry", "Entry", "right")}{head("exit", "Exit price", "right")}
-              {head("return", "Return", "right")}{head("pnl", "P&L", "right")}
+              {head("return", "Return", "right")}{head("held", "Held", "right")}{head("pnl", "P&L", "right")}
             </tr>
           </thead>
           <tbody>
@@ -163,6 +164,7 @@ function ClosedTable({ trades: all }: { trades: ClosedPayload["trades"] }) {
                 <td className="py-1.5 pr-3 text-right">{price(t.entry_price)}</td>
                 <td className="py-1.5 pr-3 text-right">{price(t.exit_price)}</td>
                 <td className="py-1.5 pr-3 text-right">{fmtPct(t.return_pct)}</td>
+                <td className="py-1.5 pr-3 text-right">{t.held_days}d</td>
                 <td className={`py-1.5 text-right font-medium ${t.pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{fmtUsd(t.pnl, { signed: true })}</td>
               </tr>
             ))}
@@ -519,9 +521,6 @@ function OrdersTable({ orders, book, stale }: { orders: ActivityOrder[]; book: s
         <Segments<OrderFilter> label="Order status" options={ORDER_FILTERS} value={filter} onChange={setFilter}
                   render={(f) => f[0].toUpperCase() + f.slice(1)} />
         {stale && <span className="text-xs text-amber-300">stale — broker read failed</span>}
-        <Link to={`/portfolio/closed?book=${book}`} aria-label="All orders and trades" className="ml-auto inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
-          All <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-        </Link>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[38rem] text-left text-xs tabular-nums">

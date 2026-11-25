@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -21,18 +21,20 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: null } }) } },
 }));
 
-import ClosedTrades from "./ClosedTrades";
+import TradeTab from "./portfolio/TradeTab";
 
-describe("Trades and Orders page", () => {
+// The old Trades and Orders page now lives in the Trade full view (TradeTab).
+describe("Trade full view: orders and closed trades", () => {
   it("shows open orders, the recent tape, and the closed-trades section together", () => {
     state.payload = payload;
-    render(<MemoryRouter><ClosedTrades /></MemoryRouter>);
-    expect(screen.getByText(/Open orders · 1/)).toBeInTheDocument();
-    expect(screen.getByText(/Recent orders · 1/)).toBeInTheDocument();
-    expect(screen.getByText(/Closed trades · 0/)).toBeInTheDocument();
-    expect(screen.getByText("GLD")).toBeInTheDocument();
-    expect(screen.getByText("XLE")).toBeInTheDocument();
+    render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: "Open Open orders" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Recent orders" })).toBeInTheDocument();
+    expect(screen.getByText(/GLD/)).toBeInTheDocument();
+    expect(screen.getByText(/buy XLE/)).toBeInTheDocument();
     expect(screen.getByText("No closed trades yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Open orders" }));
+    expect(within(screen.getByRole("dialog")).getByText("Workshop idea")).toBeInTheDocument();
   });
 
   it("splits closed results into tested ideas and discretionary trades, with reasons", () => {
@@ -50,7 +52,7 @@ describe("Trades and Orders page", () => {
                          reasons: [{ reason: "no reason recorded", trades: 1, pnl: -1752 }] },
       },
     };
-    render(<MemoryRouter><ClosedTrades /></MemoryRouter>);
+    render(<MemoryRouter><TradeTab book="main" /></MemoryRouter>);
     expect(screen.getByText("Results by kind")).toBeInTheDocument();
     expect(screen.getByText("Tested ideas")).toBeInTheDocument();
     expect(screen.getAllByText("+$268.50").length).toBeGreaterThan(0);

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-import ClosedTrades from "@/pages/ClosedTrades";
 import Portfolio from "@/pages/Portfolio";
 import { concentration, curveRange } from "@/lib/paperPortfolio";
 import { checkChips } from "@/pages/portfolio/Header";
@@ -477,40 +476,43 @@ describe("Portfolio hand orders (signed-in only)", () => {
   });
 });
 
-describe("ClosedTrades", () => {
+/** The activity feed answers its own URL; every other read gets the book payload. */
+function serveActivity(act: object, urls: string[] = []) {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("/api/portfolio/activity")) return new Response(JSON.stringify(act), { status: 200 });
+    if (url.includes("/api/portfolio/closed")) return new Response(JSON.stringify({ state: "live", as_of: null, trades: (act as ActivityPayload).trades }), { status: 200 });
+    if (url.includes("/api/admin/me")) return new Response(JSON.stringify({ detail: "admin only" }), { status: 401 });
+    return new Response(JSON.stringify(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 } })), { status: 200 });
+  }));
+}
+
+describe("Trade full view: what Trades and Orders held", () => {
   it("has an empty state", async () => {
-    serve({ state: "live", as_of: "2026-11-10T20:41:00Z", open: [], recent: [], trades: [] } satisfies ActivityPayload);
-    page(<ClosedTrades />);
+    serveActivity({ state: "live", as_of: "2026-11-10T20:41:00Z", open: [], recent: [], trades: [] } satisfies ActivityPayload);
+    pageAt("/portfolio?tab=trade");
     expect(await screen.findByText("No closed trades yet.")).toBeInTheDocument();
     expect(screen.getByText("No working orders right now.")).toBeInTheDocument();
   });
 
-  it("shows each trade's result", async () => {
-    serve({
+  it("shows each trade's result, with the hold in the full table", async () => {
+    serveActivity({
       state: "live", as_of: "2026-11-10T20:41:00Z", open: [], recent: [],
       trades: [{ symbol: "GLD", qty: 10, entry_price: 200, exit_price: 225, entered_at: "2026-11-02T15:00:00Z",
                  exited_at: "2026-11-05T15:00:00Z", pnl: 250, return_pct: 12.5, held_days: 3, idea: "No idea yet (manual)" }],
     } satisfies ActivityPayload);
-    page(<ClosedTrades />);
-    expect((await screen.findAllByText("+$250.00")).length).toBe(2); // the row and the total
-    expect(screen.getByText("+12.5%")).toBeInTheDocument();
-    // The summary line carries the hold; the full table opens from the panel.
-    expect(screen.getByText(/· 3d/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open Closed trades · 1 in full" }));
-    expect(within(screen.getByRole("dialog")).getByText("3d")).toBeInTheDocument();
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("GLD")).toBeInTheDocument();
+    expect(openCard("Closed trades").getByText("3d")).toBeInTheDocument();
   });
 
-  it("reads the $1M book's activity when the URL names it, and the toggle keeps the book", async () => {
+  it("reads the $1M book's activity when the URL names it", async () => {
     const urls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      urls.push(String(input));
-      return new Response(JSON.stringify({ state: "live", as_of: "2026-11-10T20:41:00Z", book: "big", open: [], recent: [], trades: [] }), { status: 200 });
-    }));
-    render(<MemoryRouter initialEntries={["/portfolio/closed?book=big"]}><ClosedTrades /></MemoryRouter>);
+    serveActivity({ state: "live", as_of: "2026-11-10T20:41:00Z", book: "big", open: [], recent: [], trades: [] }, urls);
+    pageAt("/portfolio?book=big&tab=trade");
     expect(await screen.findByText("No closed trades yet.")).toBeInTheDocument();
     expect(urls.some((u) => u.includes("/api/portfolio/activity?book=big"))).toBe(true);
-    expect(screen.getByRole("link", { name: "$1M book" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Main book" })).toHaveAttribute("href", "/portfolio/closed?book=main");
   });
 });
 
