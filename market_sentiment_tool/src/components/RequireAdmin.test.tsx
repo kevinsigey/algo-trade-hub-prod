@@ -75,7 +75,7 @@ describe("the Trading HQ menu and routes", () => {
   it("makes the overview the home page and groups the menu", async () => {
     stub(401);
     await at("/");
-    expect(screen.getByRole("heading", { name: /solo research desk/, level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Algo Trade Hub/, level: 1 })).toBeInTheDocument();
     for (const label of ["Trading", "Markets", "Track record", "Admin"]) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /trades and orders/i })).toBeNull(); // folded into Portfolio (audit step 4)
     expect(screen.getByRole("link", { name: /^portfolio$/i })).toHaveAttribute("href", "/portfolio");
