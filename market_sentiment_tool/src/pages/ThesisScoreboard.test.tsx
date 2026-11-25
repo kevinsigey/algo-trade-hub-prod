@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import ThesisScoreboard from "@/pages/ThesisScoreboard";
+import Thesis from "@/pages/Thesis";
 import type { Scoreboard } from "@/lib/thesisTracker";
 
 const hook = vi.hoisted(() => ({
@@ -12,6 +12,13 @@ const hook = vi.hoisted(() => ({
 vi.mock("@/hooks/useThesisScoreboard", () => ({
   useThesisScoreboard: () => hook,
 }));
+vi.mock("@/components/RequireAdmin", () => ({ sessionToken: async () => null }));
+vi.mock("@/hooks/useThesisCards", () => ({ useThesisCards: () => ({ cards: [], loading: false, error: null }) }));
+/** A scoreboard block sits behind its dashboard card: click it, then read inside the open view. */
+const open = (card: string) => {
+  fireEvent.click(screen.getByRole("button", { name: `Open ${card}` }));
+  return within(screen.getByRole("dialog"));
+};
 
 const BOARD: Scoreboard = {
   generated_at: "2026-11-16T18:00:00+00:00",
@@ -88,44 +95,57 @@ const BOARD: Scoreboard = {
   },
 };
 
+const close = () => fireEvent.keyDown(document, { key: "Escape" });
+
 describe("Thesis scoreboard page", () => {
   it("renders claims with countdowns, rates and intervals", () => {
     hook.board = BOARD;
     hook.loading = false;
     hook.error = null;
-    render(<ThesisScoreboard />);
-    expect(screen.getByText(/Claim A/)).toBeTruthy();
-    expect(screen.getByText(/36 of 40 prints remaining/)).toBeTruthy();
-    expect(screen.getByText(/75\.0%/)).toBeTruthy();
-    expect(screen.getByText(/4 of 4 clusters remaining/)).toBeTruthy();
-    expect(screen.getByText(/4 of 5 fires remaining/)).toBeTruthy();
+    render(<Thesis />);
+    const a = open("Claim A");
+    expect(a.getByText(/Claim A — classification_separation/)).toBeTruthy();
+    expect(a.getByText(/36 of 40 prints remaining/)).toBeTruthy();
+    expect(a.getByText(/75\.0%/)).toBeTruthy();
+    close();
+    expect(open("Claim B").getByText(/4 of 4 clusters remaining/)).toBeTruthy();
+    close();
+    expect(open("Claim C").getByText(/4 of 5 fires remaining/)).toBeTruthy();
   });
 
   it("keeps play kinds and signals in separate ledgers", () => {
     hook.board = BOARD;
-    render(<ThesisScoreboard />);
-    expect(screen.getByText("(a)")).toBeTruthy();
-    expect(screen.getByText("(b)")).toBeTruthy();
-    expect(screen.getByText("Whisper sign")).toBeTruthy();
-    expect(screen.getByText("Money flow")).toBeTruthy();
+    render(<Thesis />);
+    const kinds = open("Play kinds");
+    expect(kinds.getByText("(a)")).toBeTruthy();
+    expect(kinds.getByText("(b)")).toBeTruthy();
     // $100 appears twice by design: Claim C's net and kind (a)'s P&L.
-    expect(screen.getAllByText("$100")).toHaveLength(2);
+    expect(kinds.getAllByText("$100")).toHaveLength(1);
+    close();
+    const signals = open("Pre-print signals");
+    expect(signals.getByText("Whisper sign")).toBeTruthy();
+    expect(signals.getByText("Money flow")).toBeTruthy();
+    close();
+    expect(open("Claim C").getAllByText("$100")).toHaveLength(1);
   });
 
   it("shows the regime panel, the cash gauge and the breach log", () => {
     hook.board = BOARD;
-    render(<ThesisScoreboard />);
-    expect(screen.getByText(/no figure recorded yet/)).toBeTruthy();
-    expect(screen.getByText("flickering")).toBeTruthy();
-    expect(screen.getByText("breach")).toBeTruthy();
-    expect(screen.getByText(/post-trade cash share 8\.1%/)).toBeTruthy();
-    expect(screen.getByText("research/nvda.md")).toBeTruthy();
+    render(<Thesis />);
     expect(screen.getByText(/Governing event-lab unit/)).toBeTruthy();
+    const regime = open("Regime");
+    expect(regime.getByText(/no figure recorded yet/)).toBeTruthy();
+    expect(regime.getByText("flickering")).toBeTruthy();
+    expect(regime.getByText("breach")).toBeTruthy();
+    close();
+    const log = open("Breach log");
+    expect(log.getByText(/post-trade cash share 8\.1%/)).toBeTruthy();
+    expect(log.getByText("research/nvda.md")).toBeTruthy();
   });
 
   it("says plainly when the tracker is not seeded", () => {
     hook.board = null;
-    render(<ThesisScoreboard />);
+    render(<Thesis />);
     expect(screen.getByText(/not seeded yet/)).toBeTruthy();
   });
 });
