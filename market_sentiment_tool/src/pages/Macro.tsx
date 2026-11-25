@@ -3,12 +3,9 @@ import { Link } from "react-router-dom";
 import { Landmark } from "lucide-react";
 import { getJson } from "@/lib/getJson";
 import { Badge } from "@/components/ui/badge";
-import { CpiContent, cpiRows, useCpiJournal } from "@/pages/Cpi";
+import Cpi from "@/pages/Cpi";
+import { FullView } from "@/components/Panel";
 import { JobsNowcast } from "@/pages/JobsNowcast";
-import { DashCard } from "@/pages/portfolio/shared";
-import { useJobsScorecard } from "@/hooks/useJobsScorecard";
-import { summarizeScorecard } from "@/lib/jobsScorecard";
-import { totals } from "@/lib/journalView";
 import { recordVerdict, type MacroCard, type MacroResponse } from "@/lib/macro";
 
 /**
@@ -120,10 +117,11 @@ function Wrap({ to, className, children }: { to?: string; className: string; chi
 
 function CardView({ card }: { card: MacroCard }) {
   const rec = card.record;
-  // /jobs and /cpi redirect here now; their full pages open from the cards above.
-  const here = card.detail_href === "/jobs" || card.detail_href === "/cpi";
-  return (
-    <Wrap to={here ? undefined : card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
+  // /jobs and /cpi redirect here now; their full pages open in a FullView from the card itself.
+  const full = card.detail_href === "/jobs" ? <JobsNowcast /> : card.detail_href === "/cpi" ? <Cpi /> : null;
+  const [open, setOpen] = useState(false);
+  const body = (
+    <Wrap to={full ? undefined : card.detail_href} className="block rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition hover:border-foreground/30">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{card.title}</h2>
@@ -220,28 +218,17 @@ function CardView({ card }: { card: MacroCard }) {
           </div>
         </div>
       )}
-      {!here && <p className="mt-4 text-xs font-medium text-primary">Open the full page →</p>}
+      <p className="mt-4 text-xs font-medium text-primary">{full ? "Open full view →" : "Open the full page →"}</p>
     </Wrap>
   );
-}
-
-/** Jobs nowcast and CPI: one headline number each; the full page opens in place. */
-function JobsCpiCards() {
-  const jobs = useJobsScorecard("payrolls");
-  const cpi = useCpiJournal();
-  const j = summarizeScorecard(jobs.rows);
-  const t = cpi.data ? totals(cpiRows(cpi.data)) : null;
+  if (!full) return body;
   return (
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      <DashCard title="Jobs nowcast" detailTitle="Jobs nowcast vs Kalshi"
-                value={j.nowcastMae !== null ? `${Math.round(j.nowcastMae)}k` : "—"}
-                sub={jobs.error ? "unavailable" : j.kalshiMae !== null ? `typical miss · Kalshi ${Math.round(j.kalshiMae)}k` : "typical miss"}
-                detail={<JobsNowcast />} />
-      <DashCard title="CPI" detailTitle="Inflation (CPI)"
-                value={t ? t.scored : "—"}
-                sub={cpi.error ? "unavailable" : t ? `scored of ${t.frozen} locked in` : "loading"}
-                detail={cpi.data ? <CpiContent data={cpi.data} /> : <p className="text-slate-400">{cpi.error ? `CPI forecasts unavailable: ${cpi.error}` : "Loading…"}</p>} />
-    </div>
+    <>
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${card.title}`} aria-haspopup="dialog" className="block w-full text-left">
+        {body}
+      </button>
+      {open && <FullView title={card.title} onClose={() => setOpen(false)}>{full}</FullView>}
+    </>
   );
 }
 
@@ -260,7 +247,6 @@ export default function Macro() {
         <h1 className="text-2xl font-bold tracking-tight text-white">Macro predictions</h1>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">Jobs, CPI and PPI — each engine's call and record on one screen. Click a card for the full page.</p>
-      <JobsCpiCards />
       {error && <p role="alert" className="mt-4 text-sm text-rose-300">Macro dashboard unavailable: {error}</p>}
       {!data && !error && <p className="mt-4 text-sm text-muted-foreground">Loading the macro board…</p>}
       {data && (

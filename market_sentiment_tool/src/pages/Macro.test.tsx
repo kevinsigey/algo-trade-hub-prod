@@ -30,7 +30,7 @@ describe("Macro page", () => {
 
   it("leads with the call, carries the display-only honesty line, and demotes at small samples", async () => {
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    expect((await screen.findAllByText("CPI")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("CPI")).toBeInTheDocument();
     expect(screen.getByText(/not a board of opportunities/)).toBeInTheDocument();
     expect(screen.getByText(/Too early to say — 12 settled/)).toBeInTheDocument();
     expect(screen.getByText(/62%/)).toBeInTheDocument();
@@ -103,10 +103,8 @@ describe("Macro card grid (2026-11-03 redesign)", () => {
       record: { ...CARD.record, source: "journal" } } as const;
     board({ as_of: "2026-11-01", quick: [], cards: [jobs, CARD, ppi] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    // Jobs nowcast and CPI each appear twice: the summary DashCard above and the engine card below.
-    expect(await screen.findByText("PPI")).toBeInTheDocument();
-    expect(screen.getAllByText("Jobs nowcast")).toHaveLength(2);
-    expect(screen.getAllByText("CPI")).toHaveLength(2);
+    expect(await screen.findByText("Jobs nowcast")).toBeInTheDocument();
+    expect(screen.getByText("CPI")).toBeInTheDocument();
     expect(screen.getByText("PPI")).toBeInTheDocument();
     expect(screen.queryByText("Quick")).not.toBeInTheDocument();
   });
@@ -114,9 +112,11 @@ describe("Macro card grid (2026-11-03 redesign)", () => {
 
 describe("Macro Jobs and CPI cards", () => {
   it("open the jobs and CPI pages in a full view", async () => {
-    board({ as_of: "2026-11-01", quick: [], cards: [] });
+    const jobs = { ...CARD, key: "jobs", title: "Jobs nowcast", detail_href: "/jobs", display_only: false,
+      trail_kind: "value", trail: [] } as const;
+    board({ as_of: "2026-11-01", quick: [], cards: [jobs, CARD] });
     render(<MemoryRouter><Macro /></MemoryRouter>);
-    fireEvent.click(screen.getByRole("button", { name: "Open Jobs nowcast" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Jobs nowcast" }));
     expect(await screen.findByRole("heading", { name: "Jobs nowcast vs Kalshi", level: 1 })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(await screen.findByRole("button", { name: "Open CPI" }));
