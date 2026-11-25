@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { useHealth } from "@/hooks/useHealth";
 import { adminJson } from "@/lib/workshop";
@@ -56,6 +57,7 @@ export default function Health() {
             Health
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400">{HEALTH_INTRO}</p>
+          <Link to="/machine-keys" className="mt-2 inline-block text-xs font-medium text-sky-400 hover:text-sky-300">Machine keys →</Link>
         </header>
 
         {loading ? (

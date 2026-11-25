@@ -43,11 +43,9 @@ import {
   CloudSun,
   FlaskConical,
   Fuel,
-  Ship,
   Handshake,
   HeartPulse,
   History,
-  KeyRound,
   Landmark,
   LayoutDashboard,
   Lightbulb,
@@ -87,7 +85,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
   ] },
   { label: "Markets", items: [
     { to: "/oil", label: "Commodities", icon: Fuel, end: true },
-    { to: "/oil/hormuz", label: "Hormuz tracker", icon: Ship, sub: true },
     { to: "/crypto", label: "Crypto", icon: LineChart },
     { to: "/macro", label: "Macro predictions", icon: Landmark },
     { to: "/weather", label: "Weather", icon: CloudSun },
@@ -101,7 +98,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/screening", label: "Screening", icon: ListFilter },
     { to: "/deals", label: "Deals and IPOs", icon: Handshake },
     { to: "/health", label: "Health", icon: HeartPulse },
-    { to: "/machine-keys", label: "Machine keys", icon: KeyRound },
   ] },
 ];
 
