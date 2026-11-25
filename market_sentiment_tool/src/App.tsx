@@ -20,7 +20,6 @@ import IdeaRecord from "@/pages/IdeaRecord";
 import Ideas from "@/pages/Ideas";
 import Login, { RecoveryRedirect } from "@/pages/Login";
 import { GoatCounterTracker } from "@/components/GoatCounterTracker";
-import Workshop from "@/pages/Workshop";
 import Screening from "@/pages/Screening";
 import Deals from "@/pages/Deals";
 import WorkshopIdea from "@/pages/WorkshopIdea";
@@ -38,7 +37,6 @@ import {
   ChevronDown,
   House,
   CloudSun,
-  FlaskConical,
   Fuel,
   Handshake,
   HeartPulse,
@@ -78,7 +76,6 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { to: "/strategies", label: "Strategies", icon: Target },
     { to: "/valuation", label: "Guidance", icon: Scale },
     { to: "/ideas", label: "Ideas", icon: Lightbulb },
-    { to: "/workshop", label: "Workshop", icon: FlaskConical },
   ] },
   { label: "Markets", items: [
     { to: "/oil", label: "Commodities", icon: Fuel, end: true },
@@ -380,7 +377,7 @@ function App() {
           <Route path="/ideas/:id" element={<IdeaRecord />} />
           <Route path="/predictions" element={<Navigate to="/" replace />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/workshop" element={<RequireAdmin><Workshop /></RequireAdmin>} />
+          <Route path="/workshop" element={<Navigate to="/ideas" replace />} />
           <Route path="/agent" element={<Navigate to="/ideas" replace />} />
           <Route path="/screening" element={<RequireAdmin><Screening /></RequireAdmin>} />
           <Route path="/deals" element={<RequireAdmin><Deals /></RequireAdmin>} />

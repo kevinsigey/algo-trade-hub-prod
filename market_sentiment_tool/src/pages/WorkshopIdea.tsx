@@ -8,7 +8,6 @@ import { PlayCheckButton } from "@/components/PlayCheck";
 import TickerListInput from "@/components/TickerListInput";
 import { ctDateTime } from "@/lib/format";
 import { PaperLine } from "@/pages/Ideas";
-import { toneClass } from "@/pages/Workshop";
 import {
   ApiError,
   CLAIM_OPTIONS,
@@ -47,6 +46,7 @@ import {
   type LeapsPanelData,
   type Run,
   type RunAutopsy,
+  toneClass,
 } from "@/lib/workshop";
 
 const field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm text-white focus:border-emerald-400 focus:outline-none";

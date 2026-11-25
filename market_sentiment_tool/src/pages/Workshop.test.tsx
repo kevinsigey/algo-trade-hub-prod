@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import App from "@/App";
 import { claimLabel, conditionText, legText, rulesText } from "@/lib/workshop";
-import Workshop, { TradeLabels } from "@/pages/Workshop";
 import WorkshopIdea, { DraftEditor, VerdictCard } from "@/pages/WorkshopIdea";
 
 const session = vi.hoisted(() => ({ token: "jwt" as string | null }));
@@ -80,15 +79,6 @@ describe("workshop copy", () => {
 });
 
 describe("Workshop pages", () => {
-  it("lists ideas with their latest verdict and sends the bearer token", async () => {
-    const f = serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "FAIL" }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
-    expect(screen.getByLabelText("Type an idea in plain words")).toBeInTheDocument();
-    expect(screen.getByText("4 runs")).toBeInTheDocument();
-    expect((f.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer jwt" });
-  });
 
   it("shows a verdict with the shuffle result and the variation count", async () => {
     serve({ "/api/workshop/ideas/1": { body: { idea: { id: 1, title: "Gold", plain_words: "Gold beats stocks when rates rise", created_at: "" }, runs: [RUN] } } });
@@ -101,13 +91,6 @@ describe("Workshop pages", () => {
     expect(screen.getByRole("button", { name: "Try a variation" })).toBeInTheDocument();
   });
 
-  it("shows which trial of its search an idea is, in the list and on its page (A3)", async () => {
-    const batch = { id: "random-lab-gen-3", trial: 54, size: 15, position: 3 };
-    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "TXN + MU wrap", created_at: "", runs: 1, latest_verdict: "PASS", batch }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText(/Trial 3 of 15 in random-lab-gen-3 · lab trial 54/)).toBeInTheDocument();
-  });
 
   it("shows the run's search stamp in its verdict card (A3)", async () => {
     const run = { ...RUN, result: { ...RUN.result, batch: { id: "spec-e", trial: 2, position: 2, of: 4 } } };
@@ -179,16 +162,6 @@ describe("Workshop pages", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("is admin only", async () => {
-    session.token = null;
-    serve({ "/api/portfolio": { body: { state: "not_connected", as_of: null, scoreboard: {}, curve: [], composition: [], positions: [] } } });
-    window.history.pushState({}, "", "/workshop");
-    await act(async () => {
-      render(<App />);
-    });
-    expect(screen.getByRole("heading", { name: "Admin only" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /workshop/i })).toHaveAttribute("href", "/workshop");
-  });
 });
 
 
@@ -290,22 +263,6 @@ describe("Workshop live-paper gate", () => {
     await waitFor(() => expect(posts(f).map(([u]) => u)).toContainEqual(expect.stringContaining("/api/workshop/ideas/1/publish")));
   });
 });
-
-describe("Workshop trade labels", () => {
-  it("relabels a fill to an idea", async () => {
-    const f = serve({
-      "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 1, latest_verdict: "PASS" }] },
-      "/api/workshop/fills": { body: { state: "live", fills: [{ order_id: "o-1", symbol: "GLD", side: "buy", qty: 10, price: 300, at: "2026-11-02T15:00:00Z", tag: null, idea_id: null, idea: "No idea yet (manual)", history: [] }] } },
-      "/api/workshop/labels": { body: {} },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Trade labels" }));
-    const pick = await screen.findByLabelText("Idea for GLD buy 10 on 2026-11-02");
-    fireEvent.change(pick, { target: { value: "1" } });
-    await waitFor(() => expect(posts(f)).toContainEqual([expect.stringContaining("/api/workshop/labels"), JSON.stringify({ order_id: "o-1", idea_id: 1 })]));
-  });
-});
-
 
 describe("Workshop editor: shorts and orders", () => {
   it("posts short legs and the order type with the run", async () => {
@@ -832,65 +789,7 @@ describe("Workshop verdict clarity (critique L4)", () => {
   });
 });
 
-describe("Workshop dashboard and labeling queue", () => {
-  it("leads with totals, not lists", async () => {
-    serve({
-      "/api/workshop/ideas": { body: [] },
-      "/api/screening/screens": { body: [] },
-      "/api/workshop/dashboard": { body: {
-        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
-        runs: { total: 90, saved: 61, latest_verdicts: { PASS: 40, FAIL: 11 }, recent: [] },
-        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [{ idea: "Live one", pnl: 100, trades: 2 }] },
-        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    expect(await screen.findByText("Tests kept")).toBeInTheDocument();
-    expect(screen.getByText("61")).toBeInTheDocument();
-    expect(screen.getByText("Needs labeling")).toBeInTheDocument();
-    expect(await screen.findByText("Closed paper P&L by idea")).toBeInTheDocument();
-  });
-
-  it("shows only the fills that need a label", async () => {
-    const fills = [
-      { order_id: "a", symbol: "GLD", side: "buy", qty: 3, price: 10, at: "2026-11-02T00:00:00Z", tag: "idea-1-auto-x", idea_id: 1, idea: "One", history: [] },
-      { order_id: "b", symbol: "SPY", side: "buy", qty: 1, price: 10, at: "2026-11-02T00:00:00Z", tag: "ext-9", idea_id: null, idea: null, history: [] },
-      { order_id: "c", symbol: "QQQ", side: "sell", qty: 2, price: 10, at: "2026-11-02T00:00:00Z", tag: null, idea_id: null, idea: null, history: [] },
-    ];
-    serve({ "/api/workshop/fills": { body: { state: "live", fills } } });
-    render(<TradeLabels ideas={[]} />);
-    expect(await screen.findByText(/QQQ sell 2/)).toBeInTheDocument();
-    expect(screen.queryByText(/GLD buy 3/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/SPY buy 1/)).not.toBeInTheDocument();
-    expect(screen.getByText(/2 fills already attributed/)).toBeInTheDocument();
-  });
-});
-
 describe("A2 — verdicts under the current bar", () => {
-  it("the ideas list chip reads the current-bar standing, with the as-run verdict beside it", async () => {
-    serve({ "/api/workshop/ideas": { body: [{ id: 1, title: "Gold when rates rise", created_at: "", runs: 4, latest_verdict: "PASS", verdict_now: "FAIL" }] } });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("tab", { name: "Ideas" }));
-    expect(await screen.findByText("Gold when rates rise")).toBeInTheDocument();
-    expect(screen.getByText("FAIL")).toBeInTheDocument();
-    expect(screen.getByText("as run PASS")).toBeInTheDocument();
-  });
-
-  it("the dashboard tile counts verdicts under the current bar and shows the as-run tally", async () => {
-    serve({
-      "/api/workshop/ideas": { body: [] },
-      "/api/screening/screens": { body: [] },
-      "/api/workshop/dashboard": { body: {
-        ideas: { total: 53, live: 3, live_big: 1, tracking: 28, published: 0, draft: 20, killed: 1 },
-        runs: { total: 98, saved: 61, latest_verdicts: { PASS: 12, FAIL: 30 }, latest_verdicts_as_run: { PASS: 45, FAIL: 10 }, recent: [] },
-        fills: { state: "live", total: 30, attributed: 12, needs_label: 2, closed_pnl_by_idea: [] },
-        screens: { total: 2, promoted: 1 }, manual_actions_open: 1 } },
-    });
-    render(<MemoryRouter><Workshop /></MemoryRouter>);
-    expect(await screen.findByText("Latest verdicts, current bar")).toBeInTheDocument();
-    expect(screen.getByText("12 PASS")).toBeInTheDocument();
-    expect(screen.getByText(/as run 45 PASS/)).toBeInTheDocument();
-  });
-
   it("an old-bar PASS run on the idea page says what it reads under the current bar, and why", async () => {
     const legacy = { ...RUN, verdict: "PASS", verdict_now: "FAIL", p_ok: false, wf_ok: true, p: 0.029,
       result: { ...RUN.result, verdict: "PASS",
