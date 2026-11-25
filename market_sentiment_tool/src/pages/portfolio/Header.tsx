@@ -7,10 +7,6 @@ import { ctDateTime } from "@/lib/format";
 import {
   breakerLabel,
   concentration,
-  fmtPct,
-  fmtPts,
-  fmtUsd,
-  stateLabel,
   tone,
   type PortfolioCheckState,
   type PortfolioPayload,
@@ -20,7 +16,7 @@ import { adminCall, money, pollWhileVisible, signed } from "./shared";
 
 /** The account's figures (cash, buying power, exposure, P&L, margin,
  * breaker) -- the Book tab's Account card shows them; the header stays one row. */
-export function accountFigures(data: PortfolioPayload): { label: string; value: string; className?: string }[] {
+export function accountFigures(data: PortfolioPayload): { label: string; value: string; className?: string; hint: string }[] {
   const a = data.account;
   const cashRow = data.positions.find((p) => p.symbol === "Cash");
   const investedPct = cashRow?.pct_of_book == null ? null : 100 - cashRow.pct_of_book;
@@ -30,103 +26,20 @@ export function accountFigures(data: PortfolioPayload): { label: string; value: 
   const unrealized = rows.length > 0 && rows.every((p) => p.unrealized_pl != null)
     ? rows.reduce((sum, p) => sum + (p.unrealized_pl ?? 0), 0) : null;
   return [
-    { label: "Cash", value: money(a?.cash ?? cashRow?.market_value) },
-    { label: "Buying power", value: money(a?.buying_power) },
-    { label: "Invested", value: investedPct == null ? "—" : `${investedPct.toFixed(0)}%` },
-    { label: "Long value", value: money(a?.long_value) },
-    { label: "Short value", value: money(a?.short_value) },
-    { label: "Unrealized P&L", value: signed(unrealized), className: tone(unrealized) },
-    { label: "Realized P&L", value: signed(a?.realized_pl), className: tone(a?.realized_pl) },
-    { label: "Maintenance margin", value: money(a?.maintenance_margin) },
-    { label: "Positions", value: String(data.positions_aggregate?.length ?? rows.length) },
+    { label: "Cash", value: money(a?.cash ?? cashRow?.market_value), hint: "Uninvested cash in the account." },
+    { label: "Buying power", value: money(a?.buying_power), hint: "How much the broker would let this account buy right now, margin included." },
+    { label: "Invested", value: investedPct == null ? "—" : `${investedPct.toFixed(0)}%`, hint: "Share of the book held in positions rather than cash." },
+    { label: "Long value", value: money(a?.long_value), hint: "Market value of everything held long." },
+    { label: "Short value", value: money(a?.short_value), hint: "Market value of everything sold short." },
+    { label: "Unrealized P&L", value: signed(unrealized), className: tone(unrealized), hint: "Open profit or loss on positions still held; locked in only when sold." },
+    { label: "Realized P&L", value: signed(a?.realized_pl), className: tone(a?.realized_pl), hint: "Profit or loss locked in by closed trades." },
+    { label: "Maintenance margin", value: money(a?.maintenance_margin), hint: "The equity the broker requires to keep the positions open; falling below it triggers a margin call." },
+    { label: "Positions", value: String(data.positions_aggregate?.length ?? rows.length), hint: "Tickers held right now, one line per ticker." },
     ...(data.breaker ? [{
-      label: "Circuit breaker", value: breakerLabel(data.breaker),
+      label: "Circuit breaker", value: breakerLabel(data.breaker), hint: "Safety stop: when tripped, new opening orders are refused; closing and protective orders still pass.",
       className: data.breaker.tripped ? "text-rose-400" : "text-slate-100",
     }] : []),
   ];
-}
-
-/** The header, one tight row (Kevin, 2026-11-13): net liquidation value,
- * today split at the 4:00 PM ET close with SPY/QQQ beside it, since start
- * against both, and how fresh the page is. */
-export function PortfolioHeader({ data, lastUpdatedAt, stale }: {
-  data: PortfolioPayload;
-  lastUpdatedAt: number | null;
-  stale: boolean;
-}) {
-  const s = data.scoreboard;
-  const a = data.account;
-  const t = data.today;
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const ago = lastUpdatedAt == null ? null : Math.max(0, Math.round((nowMs - lastUpdatedAt) / 1000));
-
-  return (
-    <header className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
-      <div className="flex items-baseline gap-2">
-        <span className="text-xs text-slate-400">Net liquidation value</span>
-        <span className="font-display text-2xl font-semibold tabular-nums tracking-tight text-white">{money(s.equity)}</span>
-      </div>
-      {t && t.state !== "no_prior" && (t.regular_pl != null || (t.state === "premarket" && t.premarket_pl != null)) ? (
-        <div className="text-sm tabular-nums text-slate-200">
-          {t.state === "premarket" && t.premarket_pl != null ? (
-            <>
-              <span className={tone(t.premarket_pl)}>
-                Premarket {signed(t.premarket_pl)} ({fmtPct(t.premarket_pct)})
-              </span>
-              {t.spy_premarket_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_premarket_pct)}</span>}
-              {t.qqq_premarket_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_premarket_pct)}</span>}
-              <span className="ml-2 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
-                Premarket
-              </span>
-            </>
-          ) : (
-            <>
-          <span className={tone(t.regular_pl)}>
-            {t.is_today === false ? (t.day_label ?? "Today") : "Today"} {signed(t.regular_pl)} ({fmtPct(t.regular_pct)})
-          </span>
-          {t.spy_regular_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_regular_pct)}</span>}
-          {t.qqq_regular_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_regular_pct)}</span>}
-          {t.state === "after_hours" && t.after_hours_pl != null && (
-            <>
-              <span className={tone(t.after_hours_pl)}>{" "}· After hours {signed(t.after_hours_pl)} since 4:00 PM</span>
-              {t.spy_after_hours_pct != null && <span className="text-slate-400"> · SPY {fmtPct(t.spy_after_hours_pct)}</span>}
-              {t.qqq_after_hours_pct != null && <span className="text-slate-400"> · QQQ {fmtPct(t.qqq_after_hours_pct)}</span>}
-              <span className="ml-2 rounded border border-sky-500/40 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
-                After hours
-              </span>
-            </>
-          )}
-            </>
-          )}
-        </div>
-      ) : (
-        <div className={`text-sm font-medium tabular-nums ${tone(a?.day_pl)}`}>
-          {a?.day_pl == null ? "Today —" : `${signed(a.day_pl)} (${fmtPct(a.day_pl_pct)}) today`}
-        </div>
-      )}
-      <div className="text-xs tabular-nums text-slate-400">
-        Since start <span className={tone(s.return_pct)}>{fmtPct(s.return_pct)}</span>
-        {" "}· SPY {fmtPct(s.spy_return_pct)}
-        {" "}· vs SPY <span className={tone(s.ahead_pts)}>{fmtPts(s.ahead_pts)}</span>
-        {s.qqq_return_pct != null && (
-          <>
-            {" "}· QQQ {fmtPct(s.qqq_return_pct)}
-            {" "}· vs QQQ <span className={tone(s.ahead_qqq_pts)}>{fmtPts(s.ahead_qqq_pts)}</span>
-          </>
-        )}
-      </div>
-      <div className="ml-auto flex items-baseline gap-3 text-[11px]">
-        <span className={data.state === "live" ? "text-emerald-300" : "text-amber-300"}>{stateLabel(data.state, data.as_of)}</span>
-        {ago != null && (
-          <span className={stale ? "text-amber-300" : "text-slate-500"}>Updated {ago} s ago{stale ? " · stale" : ""}</span>
-        )}
-      </div>
-    </header>
-  );
 }
 
 const CHECK_STATUS_TONE: Record<string, string> = {

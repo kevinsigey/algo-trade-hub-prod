@@ -139,7 +139,7 @@ function CurveCard({ data, range, rangeControl }: { data: PortfolioPayload; rang
   );
 }
 
-function Legend({ items }: { items: [string, string][] }) {
+export function Legend({ items }: { items: [string, string][] }) {
   return (
     <div className="mt-1 flex flex-wrap gap-4 text-[11px] text-slate-400">
       {items.map(([c, l]) => <span key={l} className="inline-flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: c }} />{l}</span>)}

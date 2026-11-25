@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import Portfolio from "@/pages/Portfolio";
@@ -43,6 +43,28 @@ function show(pilot: unknown) {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Kalshi live book", () => {
+  it("shows no curve, only the starts-after line, with fewer than 2 settled trades", async () => {
+    show(PILOT); // one settled order
+    expect(await screen.findByText("graph starts after 2 settled trades")).toBeInTheDocument();
+  });
+
+  it("draws the curve from $0 with the end value labelled once 2 trades settle", async () => {
+    const second = { ...PILOT.orders[0], id: 9, pnl: -0.2, window_close: "2026-11-24T16:15:00Z" };
+    show({ ...PILOT, orders: [...PILOT.orders, second] });
+    expect(await screen.findByRole("img", { name: "Cumulative realized P&L, ending +$0.37" })).toBeInTheDocument();
+    expect(screen.getByText("$0")).toBeInTheDocument();
+  });
+
+  it("headlines Positions with the fill count and lists only filled orders", async () => {
+    const skipped = { ...PILOT.orders[0], id: 8, status: "skipped_no_depth", skip_reason: "no_depth", contracts_filled: 0, pnl: null, fill_price: null };
+    show({ ...PILOT, orders: [skipped, ...PILOT.orders] });
+    expect(await screen.findByText(/^fills · \d+ in the latest \d+ orders$/)).toBeInTheDocument();
+    expect(screen.getByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
+    expect(screen.queryByText(/skipped/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
+    expect(screen.getByText("skipped no depth")).toBeInTheDocument();
+  });
+
   it("renders the tab link with its REAL MONEY badge", async () => {
     show({ admin_only: true });
     const link = await screen.findByRole("link", { name: /Kalshi live/ });
@@ -52,9 +74,12 @@ describe("Kalshi live book", () => {
 
   it("admin payload shows balance, state and the orders table", async () => {
     show(PILOT);
-    expect(await screen.findByText("KXWTI15M-26NOV241000-00")).toBeInTheDocument();
+    expect(await screen.findByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
     expect(screen.getAllByText("$10.25").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Running")).toBeInTheDocument();
+    // The orders table is the Positions card's open view.
+    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
+    expect(screen.getByText("KXWTI15M-26NOV241000-00")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Slippage" })).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getByText("1.0¢")).toBeInTheDocument();
   });
@@ -66,6 +91,6 @@ describe("Kalshi live book", () => {
 
   it("empty state explains why there are no orders", async () => {
     show({ ...PILOT, orders: [] });
-    expect(await screen.findByText(/No orders yet: the lane only buys when the oil & gas rule clears its 10-point bar\./)).toBeInTheDocument();
+    expect(await screen.findByText(/No fills yet\..*the lane only buys when the oil & gas rule clears its 10-point bar\./)).toBeInTheDocument();
   });
 });

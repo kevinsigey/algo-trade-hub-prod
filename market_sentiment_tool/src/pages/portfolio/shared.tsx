@@ -26,7 +26,7 @@ export const PEEK = 5;
  * open control.
  */
 export function DashCard({ title, value, valueClass = "text-white", sub, meta, hint, detail, detailTitle,
-                           detailActions, children, className = "" }: {
+                           detailActions, defaultOpen = false, children, className = "" }: {
   title: string;
   value?: ReactNode;
   valueClass?: string;
@@ -36,10 +36,12 @@ export function DashCard({ title, value, valueClass = "text-white", sub, meta, h
   detail?: ReactNode;
   detailTitle?: string;
   detailActions?: ReactNode;
+  /** Open the detail on first render (a legacy ?tab= link). */
+  defaultOpen?: boolean;
   children?: ReactNode;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section aria-label={title}
              className={`relative flex min-w-0 flex-col rounded-lg border border-slate-800 bg-slate-900/60 p-3 transition-colors ${detail ? "hover:border-slate-600 hover:bg-slate-900" : ""} ${className}`}>
@@ -53,7 +55,7 @@ export function DashCard({ title, value, valueClass = "text-white", sub, meta, h
         </div>
       )}
       {sub != null && <div className="mt-1 truncate text-xs tabular-nums text-slate-400">{sub}</div>}
-      {children != null && <div className="mt-2 min-h-0 flex-1">{children}</div>}
+      {children != null && <div className="mt-2 flex min-h-0 flex-1 flex-col">{children}</div>}
       {detail && (
         <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${title}`} aria-haspopup="dialog"
                 title={hint}
@@ -85,7 +87,8 @@ export function Fig({ label, value, className = "text-white", hint }: {
 export function Spark<T extends object>({ data, lines, height = 48 }: {
   data: T[];
   lines: { key: keyof T & string; color: string; dashed?: boolean; width?: number }[];
-  height?: number;
+  /** Pixels, or "100%" to fill a positioned parent. */
+  height?: number | string;
 }) {
   if (data.length < 2) return <div style={{ height }} className="flex items-center text-xs text-slate-500">—</div>;
   return (
