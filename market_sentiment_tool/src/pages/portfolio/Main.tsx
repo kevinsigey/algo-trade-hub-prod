@@ -8,7 +8,6 @@ import {
   type ClosedPayload, type PortfolioPayload,
 } from "@/lib/paperPortfolio";
 import { bookRows, ByIdeaCard, CompositionCard, MoversCard, PositionsTable } from "./BookTab";
-import { WarningsStrip } from "./Header";
 import PerformanceTab, { Legend } from "./PerformanceTab";
 import TradeTab, { ManualActions } from "./TradeTab";
 import { adminCall, DashCard, Fig, money, PEEK, PeekRows, pollWhileVisible, REFRESH_MS, Segments, signed, Spark, tooltipStyle } from "./shared";
@@ -28,12 +27,11 @@ export default function PaperMain({ data, book, liveIdeas, open }: {
 }) {
   return (
     <div className="flex flex-1 flex-col gap-2">
-      <div className="grid flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid flex-1 gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <PerformanceCard data={data} book={book} open={open === "performance"} />
         <div className="flex min-w-0 flex-col gap-2">
           <PositionsCard data={data} open={open === "positions"} />
           <ByIdeaCard rows={bookRows(data).rows} equity={data.scoreboard.equity} liveIdeas={liveIdeas} book={book} />
-          <WarningsStrip book={book} data={data} />
         </div>
       </div>
       <div className="flex flex-wrap items-start gap-2">
@@ -148,7 +146,7 @@ function ThesisDonut({ all }: { all: Slice[] }) {
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <ul className="min-w-0 flex-1 space-y-0.5 text-xs tabular-nums text-slate-300" aria-label="Thesis slices">
+      <ul className="grid min-w-0 flex-1 gap-x-3 gap-y-0.5 text-xs tabular-nums text-slate-300 md:grid-cols-2" aria-label="Thesis slices">
         {legend.map((s) => (
           <li key={s.key} className="flex items-baseline gap-1.5">
             <span className="h-2 w-2 shrink-0 self-center rounded-sm" style={{ background: s.color }} aria-hidden="true" />

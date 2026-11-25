@@ -57,12 +57,21 @@ export function slices(positions: PositionRow[]): Slice[] {
     .map((s) => (s.color ? s : { ...s, color: IDEA_COLORS[next++ % IDEA_COLORS.length] }));
 }
 
-/** The legend's slices: the biggest `n`, the rest folded into one "Other" slice. */
-export function legendSlices(all: Slice[], n = 5): Slice[] {
-  if (all.length <= n + 1) return all;
-  const rest = all.slice(n);
-  return [...all.slice(0, n), {
-    key: "other", label: "Other", color: "#475569",
-    pct: rest.reduce((a, s) => a + s.pct, 0), value: rest.reduce((a, s) => a + s.value, 0),
+/** The legend: every thesis that is not core always shows (small ones too), the biggest
+ * core parts fill the rest of `n` rows, and the leftover small core parts fold into
+ * "Core · other (N)". */
+export function legendSlices(all: Slice[], n = 8): Slice[] {
+  const isCore = (s: Slice) => s.key.startsWith("core-");
+  const core = all.filter(isCore);
+  const room = Math.max(0, n - (all.length - core.length));
+  // Folding takes a row of its own, so a fold shows one fewer core part.
+  const rest = core.length > room ? core.slice(Math.max(0, room - 1)) : [];
+  // One leftover part reads as itself, not as an "other (1)".
+  const folded = rest.length > 1 ? rest : [];
+  const shown = all.filter((s) => !folded.includes(s));
+  if (!folded.length) return shown;
+  return [...shown, {
+    key: "core-other", label: `Core · other (${folded.length})`, color: "#475569",
+    pct: folded.reduce((a, s) => a + s.pct, 0), value: folded.reduce((a, s) => a + s.value, 0),
   }];
 }

@@ -34,13 +34,18 @@ describe("slices", () => {
     expect(slices([])).toEqual([]);
   });
 
-  it("legendSlices folds everything past the top five into Other", () => {
-    const many = slices(Array.from({ length: 9 }, (_, i) => row(`S${i}`, 100 - i, `Idea ${i}`)));
-    const legend = legendSlices(many);
-    expect(legend).toHaveLength(6);
-    expect(legend[5].label).toBe("Other");
-    expect(legend[5].pct).toBeCloseTo(many.slice(5).reduce((a, s) => a + s.pct, 0));
-    expect(legendSlices(many.slice(0, 6))).toHaveLength(6);
+  it("legendSlices always lists non-core theses, fills with the biggest core parts, and folds the rest", () => {
+    const core = Array.from({ length: 10 }, (_, i) => row(`C${i}`, 1000 - i * 10, CORE, `Sector ${i}`));
+    const small = [row("E", 1, "Event Lab (T2)", "Energy"), row("U", 1, null), row("Cash", 1, null)];
+    const legend = legendSlices(slices([...core, ...small]));
+    const labels = legend.map((s) => s.label);
+    expect(legend).toHaveLength(8);
+    expect(labels).toEqual(expect.arrayContaining(["Event Lab", "Unassigned", "Cash", "Core · Sector 0", "Core · Sector 3"]));
+    expect(labels).not.toContain("Core · Sector 4");
+    const other = legend.find((s) => s.label === "Core · other (6)");
+    expect(other?.pct).toBeCloseTo(slices([...core, ...small]).filter((s) => /Sector [4-9]/.test(s.label)).reduce((a, s) => a + s.pct, 0));
+    // Few slices: nothing folds.
+    expect(legendSlices(slices(core.slice(0, 3)))).toHaveLength(3);
   });
 });
 

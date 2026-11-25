@@ -198,7 +198,7 @@ export function AccountBox({ read }: { read: PaperRead }) {
       <details open={detailsOpen} onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
                className="mt-2 border-t border-slate-800 pt-1">
         <summary className="cursor-pointer py-1 text-xs text-slate-400 md:hidden">Details</summary>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <dl className="grid grid-cols-3 gap-x-2 gap-y-1 text-xs">
           {accountFigures(data).map((f) => (
             <div key={f.label} className="min-w-0" title={f.hint}>
               <dt className="cursor-help truncate text-[11px] text-slate-500 underline decoration-dotted decoration-slate-700 underline-offset-2">{f.label}</dt>

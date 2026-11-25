@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { TriangleAlert } from "lucide-react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
+
+import { FullView } from "@/components/Panel";
 
 import { ctDateTime } from "@/lib/format";
 import {
@@ -10,7 +12,7 @@ import {
   type PortfolioPayload,
 } from "@/lib/paperPortfolio";
 import { ApiError } from "@/lib/workshop";
-import { adminCall, DashCard, money, pollWhileVisible, signed } from "./shared";
+import { adminCall, money, pollWhileVisible, signed } from "./shared";
 
 /** The account's figures (cash, buying power, exposure, P&L, margin,
  * breaker) -- the Book tab's Account card shows them; the header stays one row. */
@@ -99,11 +101,11 @@ export function checkHeadline(issues: CheckIssue[]): string {
 }
 
 /**
- * The Portfolio check card (2026-11-25 polish; a chip strip before): a headline
- * count in the status colour and at most three short rows (name, issue, size
- * against cap). "Show all" -- the whole card -- opens the full check: sleeve
- * bars, the member table and recent outcomes. With nothing to report it is
- * one line, "All clear". The circuit-breaker alert and the
+ * The Portfolio check pill, in the page header beside the title: "Portfolio
+ * check · 6 unassigned ›" in the status colour, or "all clear" in emerald. It
+ * opens one view with the warnings (circuit breaker, sector concentration), the
+ * issue rows, and the full check: sleeve bars, member table, recent outcomes.
+ * A second pill shows only when a warning is present. The circuit-breaker alert and the
  * concentration warning ride above it, as before. One engine with the
  * preflight and activation gates, so the strip can never disagree with
  * them. Signed-in only for the check itself: signed out, it renders
@@ -112,6 +114,7 @@ export function checkHeadline(issues: CheckIssue[]): string {
 export function WarningsStrip({ book, data }: { book: string; data: PortfolioPayload }) {
   const [state, setState] = useState<PortfolioCheckState | null>(null);
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -142,46 +145,61 @@ export function WarningsStrip({ book, data }: { book: string; data: PortfolioPay
   const issues = state ? checkIssues(state) : [];
   const last = state?.recent_checks[0];
 
+  const tripped = !!data.breaker?.tripped;
+  const warnCount = (tripped ? 1 : 0) + heavy.length;
+  const checkTone = !state ? "" : issues.length === 0 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+    : issues.some((i) => i.over) ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300";
+  const pill = "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400";
+
   return (
-    <div className="space-y-1.5 empty:hidden" role="region" aria-label="Warnings">
-      {data.breaker?.tripped && (
-        <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-1.5 text-sm text-rose-200">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span title="New opening orders are refused; closing and protective orders still pass">Circuit breaker tripped: {data.breaker.reasons.join("; ")}. Opening orders refused.</span>
-        </p>
+    <div className="flex flex-wrap items-center gap-2 empty:hidden" role="region" aria-label="Warnings">
+      {state && (
+        <button type="button" aria-haspopup="dialog" aria-label="Open Portfolio check" onClick={() => setOpen(true)}
+                title="Open for the issues, sleeve bars, the member table and recent outcomes" className={`${pill} ${checkTone}`}>
+          Portfolio check · {issues.length === 0 ? "all clear" : checkHeadline(issues)}
+          {issues.length === 0 && last && <span className={`uppercase ${CHECK_OUTCOME_TONE[last.outcome ?? "unavailable"]}`} title="The last check's outcome">· {last.outcome ?? "unavailable"}</span>}
+          <ChevronRight className="h-3 w-3" aria-hidden="true" />
+        </button>
       )}
-      {heavy.map((h) => (
-        <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-200">
-          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span title="Positions in one sector tend to move together">{h.sector} {h.pct.toFixed(0)}% of invested</span>
-        </p>
-      ))}
-      {!state && failed && (
-        <p className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
-          Portfolio check unavailable — retrying.
-        </p>
+      {warnCount > 0 && (
+        <button type="button" aria-haspopup="dialog" aria-label="Open Warnings" onClick={() => setOpen(true)}
+                className={`${pill} ${tripped ? "border-rose-500/50 bg-rose-500/10 text-rose-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+          <TriangleAlert className="h-3 w-3" aria-hidden="true" />
+          {tripped ? "Circuit breaker tripped" : `${warnCount} warning${warnCount === 1 ? "" : "s"}`}
+          <ChevronRight className="h-3 w-3" aria-hidden="true" />
+        </button>
       )}
-      {state && (issues.length === 0 ? (
-        <DashCard title="Portfolio check" detail={<CheckDetail state={state} />} detailTitle="Portfolio check"
-                  hint="Open for sleeve bars, the member table and recent outcomes"
-                  meta={<><span className="font-semibold text-emerald-300">All clear</span>
-                    {last && <span className={`uppercase ${CHECK_OUTCOME_TONE[last.outcome ?? "unavailable"]}`} title="The last check's outcome"> · {last.outcome ?? "unavailable"}</span>}</>} />
-      ) : (
-        <DashCard title="Portfolio check" detail={<CheckDetail state={state} />} detailTitle="Portfolio check"
-                  hint="Open for sleeve bars, the member table and recent outcomes"
-                  value={checkHeadline(issues)} valueClass={issues.some((i) => i.over) ? "text-rose-300" : "text-amber-300"}>
-          <ul className="divide-y divide-slate-800/70 text-xs tabular-nums">
-            {issues.slice(0, 3).map((i) => (
-              <li key={i.key} className="flex items-baseline gap-2 py-1">
-                <span className="min-w-0 truncate font-medium text-slate-200">{i.who}</span>
-                <span className="shrink-0 text-slate-500">{i.issue}</span>
-                <span className={`ml-auto shrink-0 ${i.over ? "text-rose-300" : "text-amber-300"}`}>{i.size}</span>
-              </li>
+      {!state && failed && <span className="text-xs text-slate-400">Portfolio check unavailable — retrying.</span>}
+      {open && (
+        <FullView title="Portfolio check" onClose={() => setOpen(false)}>
+          <div className="space-y-2">
+            {tripped && (
+              <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/50 px-3 py-1.5 text-sm text-rose-200">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span title="New opening orders are refused; closing and protective orders still pass">Circuit breaker tripped: {data.breaker?.reasons.join("; ")}. Opening orders refused.</span>
+              </p>
+            )}
+            {heavy.map((h) => (
+              <p key={h.sector} className="flex items-start gap-2 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs text-amber-200">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span title="Positions in one sector tend to move together">{h.sector} {h.pct.toFixed(0)}% of invested</span>
+              </p>
             ))}
-          </ul>
-          <p className="mt-1 text-xs text-slate-400">Show all{issues.length > 3 ? ` ${issues.length}` : ""}</p>
-        </DashCard>
-      ))}
+            {issues.length > 0 && (
+              <ul className="divide-y divide-slate-800/70 text-xs tabular-nums">
+                {issues.map((i) => (
+                  <li key={i.key} className="flex items-baseline gap-2 py-1">
+                    <span className="min-w-0 truncate font-medium text-slate-200">{i.who}</span>
+                    <span className="shrink-0 text-slate-500">{i.issue}</span>
+                    <span className={`ml-auto shrink-0 ${i.over ? "text-rose-300" : "text-amber-300"}`}>{i.size}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {state && <CheckDetail state={state} />}
+          </div>
+        </FullView>
+      )}
     </div>
   );
 }

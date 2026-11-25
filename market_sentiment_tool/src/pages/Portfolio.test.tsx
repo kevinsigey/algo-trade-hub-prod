@@ -652,6 +652,8 @@ describe("Portfolio circuit breaker", () => {
     serve(payload({ scoreboard: { ...EMPTY_SCORE, equity: 100000 },
                     breaker: state({ tripped: true, reasons: ["daily loss 3%"] }) }));
     page(<Portfolio />);
+    // A rose pill in the header; the reasons are in its view.
+    fireEvent.click(await screen.findByRole("button", { name: "Open Warnings" }));
     expect(await screen.findByText(/Circuit breaker tripped: daily loss 3%/)).toBeInTheDocument();
   });
 });
@@ -768,7 +770,7 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
     expect(screen.getByText(/10 sh/)).toBeInTheDocument();
   });
 
-  it("reads 'All clear' on the Portfolio check card when nothing needs attention", async () => {
+  it("reads 'all clear' on the Portfolio check pill when nothing needs attention", async () => {
     session.token = "jwt";
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -786,9 +788,9 @@ describe("Portfolio redesign (header, warnings strip, tabs)", () => {
       })), { status: 200 });
     }));
     page(<Portfolio />);
-    const card = within(await screen.findByRole("region", { name: "Portfolio check" }));
-    expect(card.getByText("All clear")).toBeInTheDocument();
-    expect(card.getByText(/pass/)).toBeInTheDocument();
+    const pill = await screen.findByRole("button", { name: "Open Portfolio check" });
+    expect(pill).toHaveTextContent("Portfolio check · all clear");
+    expect(pill).toHaveTextContent(/pass/i);
   });
 });
 
@@ -924,20 +926,19 @@ describe("Portfolio check card", () => {
     page(<Portfolio />);
     // The card at rest: a headline count and the issue row; the detail stays
     // shut until the card is opened.
-    const card = within(await screen.findByRole("region", { name: "Portfolio check" }));
-    expect(card.getByText("2 issues")).toBeInTheDocument();
-    expect(card.getByText("Gold cluster")).toBeInTheDocument();
-    expect(card.getByText("GLD")).toBeInTheDocument();
-    expect(card.getByText("13.0% / 12%")).toBeInTheDocument();
-    expect(card.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
-    expect(card.queryByText(/0\.83/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open Portfolio check" }));
+    const pill = await screen.findByRole("button", { name: "Open Portfolio check" });
+    expect(pill).toHaveTextContent("Portfolio check · 2 issues");
+    expect(screen.queryByText(/over GLD's cap of 12%/)).not.toBeInTheDocument();
+    fireEvent.click(pill);
     const strip = within(screen.getByRole("dialog", { name: "Portfolio check" }));
+    // The issue rows lead the view.
+    expect(strip.getByText("Gold cluster")).toBeInTheDocument();
+    expect(strip.getByText("13.0% / 12%")).toBeInTheDocument();
     // Inside the drawer: GLD (over its cap) and XLP (capped) earn bars with
     // floor / target / cap ticks; NVDA (ok, uncapped) earns no bar, though
     // it does sit in the member table. GLD reads twice: its bar and its
     // member-table row.
-    expect(strip.getAllByText("GLD")).toHaveLength(2);
+    expect(strip.getAllByText("GLD")).toHaveLength(3);
     // GLD's bar value and the gold chip carry the same 13.0% (same position).
     expect(strip.getAllByText("13.0%")).toHaveLength(2);
     expect(strip.getAllByTitle("floor 2%")).toHaveLength(2);
