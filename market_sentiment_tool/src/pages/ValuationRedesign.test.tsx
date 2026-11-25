@@ -166,6 +166,10 @@ function serve(summary: unknown = SUMMARY, sheets: unknown[] = SHEETS,
   return fetchMock;
 }
 
+async function openCard(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `Open ${name}` }));
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -195,6 +199,12 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
   it("leads with the movers: revisions ranked with held pinned, migrations, held status", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    // The Movers card leads the card grid, ahead of the football field.
+    const moversCard = await screen.findByRole("region", { name: "Movers" });
+    const fieldCard = screen.getByRole("region", { name: "Football field" });
+    expect(moversCard.compareDocumentPosition(fieldCard)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await openCard("Movers");
     const movers = await screen.findByTestId("movers");
     const capex = within(movers).getByTestId("mover-CVS-capex");
     expect(capex).toHaveTextContent("+12.5%");
@@ -205,15 +215,12 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
     expect(within(movers).getByTestId("mover-AMGN-fcf")).toHaveTextContent("-20.0%");
     expect(within(movers).getByTestId("migration-CVS")).toHaveTextContent(/band migration/i);
     expect(within(movers).getByTestId("held-status")).toHaveTextContent("CVS");
-    // The movers section renders before the grid in the document.
-    const grid = screen.getByTestId("band-grid");
-    expect(movers.compareDocumentPosition(grid)
-      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("says plainly when there is no previous snapshot for movers", async () => {
     serve(SUMMARY, SHEETS, { ...BOARD, movers: null });
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Movers");
     const movers = await screen.findByTestId("movers");
     expect(movers).toHaveTextContent(/no previous completed snapshot/i);
   });
@@ -221,6 +228,7 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
   it("renders every banded name once on the grid with its distance headline", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     for (const t of ["AMGN", "CVS", "LLY", "XYZ"]) {
       expect(within(grid).getAllByTestId(`grid-row-${t}`)).toHaveLength(1);
@@ -241,6 +249,7 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
   it("grid sorts by market cap within the pinned groups and filters by zone status", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     fireEvent.click(within(grid).getByTestId("grid-sort-cap"));
     const order = within(grid).getAllByTestId(/^grid-row-/)
@@ -261,14 +270,14 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
   it("queues held names with no band, with the reason and the way into the sheet", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    // The card carries the count; the worklist sits behind it.
+    expect(await screen.findByRole("region", { name: "Missing a band" })).toHaveTextContent("1");
+    await openCard("Missing a band");
     const queue = await screen.findByTestId("missing-band-queue");
-    // The default view is the summary line: it NAMES the held name
-    // and gives the count; the worklist sits behind the expander.
+    // The summary line NAMES the held name and gives the count.
     const summary = within(queue).getByTestId("queue-summary");
     expect(summary).toHaveTextContent("AAPL");
     expect(summary).toHaveTextContent(/1 name has no band/i);
-    expect(within(queue).queryByTestId("queue-row-AAPL")).toBeNull();
-    fireEvent.click(within(queue).getByTestId("queue-expand"));
     const row = within(queue).getByTestId("queue-row-AAPL");
     expect(row).toHaveTextContent(/held/i);
     expect(row).toHaveTextContent(/no full-year guide on file/i);
@@ -278,20 +287,22 @@ describe("Guidance rebuild — freshness, movers, grid, queue", () => {
   it("opening a sheet from the queue is idempotent — a second click never closes it", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Missing a band");
     const queue = await screen.findByTestId("missing-band-queue");
-    fireEvent.click(within(queue).getByTestId("queue-expand"));
     const open = within(queue).getByTestId("queue-open-AAPL");
     fireEvent.click(open);
-    // The falsifier text lives in the unbanded row AND, once expanded,
-    // in the sheet detail — two copies while the sheet is open.
-    expect((await screen.findAllByText(/no band to falsify/i)).length).toBe(2);
+    // The sheet opens in place under its row and carries the falsifier.
+    const sheet = await screen.findByTestId("queue-sheet-AAPL");
+    expect(within(sheet).getAllByText(/no band to falsify/i).length).toBe(1);
     fireEvent.click(open);
-    expect(screen.getAllByText(/no band to falsify/i).length).toBe(2);
+    expect(screen.getByTestId("queue-sheet-AAPL")).toBeInTheDocument();
+    expect(within(screen.getByTestId("queue-sheet-AAPL")).getAllByText(/no band to falsify/i).length).toBe(1);
   });
 
   it("renders the sheets and tables when the board block does not ride the load", async () => {
     serve(SUMMARY, SHEETS, null);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Fact sheets");
     expect(await screen.findByTestId("reference-table")).toBeInTheDocument();
     expect(screen.queryByTestId("band-grid")).toBeNull();
     expect(screen.getByText(/board block did not ride this load/i)).toBeInTheDocument();
@@ -302,7 +313,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("pins conjunctions at the top of the attention feed", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    fireEvent.click(await screen.findByTestId("reference-toggle"));
+    await openCard("Needs attention");
     const feed = await screen.findByTestId("attention-feed");
     const items = within(feed).getAllByTestId(/feed-item-/);
     expect(items[0]).toHaveTextContent("AMGN");
@@ -314,7 +325,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("renders the honest empty state when nothing changed", async () => {
     serve({ ...SUMMARY, feed: [] });
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    fireEvent.click(await screen.findByTestId("reference-toggle"));
+    await openCard("Needs attention");
     const feed = await screen.findByTestId("attention-feed");
     expect(feed).toHaveTextContent(/nothing changed/i);
   });
@@ -323,7 +334,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
     serve({ ...SUMMARY, feed: [], feed_state: "no_previous_snapshot",
       previous_snapshot_id: null });
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    fireEvent.click(await screen.findByTestId("reference-toggle"));
+    await openCard("Needs attention");
     const feed = await screen.findByTestId("attention-feed");
     expect(feed).toHaveTextContent(/no previous completed snapshot/i);
     expect(feed).not.toHaveTextContent(/nothing changed/i);
@@ -332,7 +343,7 @@ describe("Guidance rebuild — the attention feed (kept surface)", () => {
   it("keeps the full reference table intact inside a disclosure, rows == served banded sheets", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    fireEvent.click(await screen.findByTestId("reference-toggle"));
+    await openCard("Fact sheets");
     const ref = await screen.findByTestId("reference-table");
     const eps = within(ref).getByTestId("basis-eps");
     const rev = within(ref).getByTestId("basis-revenue");
@@ -360,6 +371,7 @@ describe("Guidance presentation fix — one-screen default (2026-11-16)", () => 
   it("renders only the first eight rows full; the rest ride compact and expand in place", async () => {
     serve(SUMMARY, SHEETS, BOARD10);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     // Every banded name is present — nothing dropped, nothing paged.
     expect(within(grid).getAllByTestId(/^grid-row-/)).toHaveLength(10);
@@ -383,6 +395,7 @@ describe("Guidance presentation fix — one-screen default (2026-11-16)", () => 
   it("changing the sort re-selects which eight rows render full", async () => {
     serve(SUMMARY, SHEETS, BOARD10);
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     fireEvent.click(within(grid).getByTestId("grid-sort-cap"));
     const compact = (t: string) =>
@@ -395,17 +408,31 @@ describe("Guidance presentation fix — one-screen default (2026-11-16)", () => 
     expect(compact("R5")).toBe("true");
   });
 
-  it("keeps the attention feed and reference table behind the Reference toggle", async () => {
+  it("keeps the attention feed and reference table behind their cards", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
-    const toggle = await screen.findByTestId("reference-toggle");
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await screen.findByTestId("valuation-summary");
     expect(screen.queryByTestId("attention-feed")).toBeNull();
     expect(screen.queryByTestId("reference-table")).toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await openCard("Needs attention");
     expect(await screen.findByTestId("attention-feed")).toBeInTheDocument();
-    expect(screen.getByTestId("reference-table")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await openCard("Fact sheets");
+    expect(await screen.findByTestId("reference-table")).toBeInTheDocument();
+  });
+
+  it("caps the names list at five rows with a Show all control that opens every sheet", async () => {
+    serve(SUMMARY, SHEETS, BOARD10);
+    render(<MemoryRouter><Valuation /></MemoryRouter>);
+    const list = await screen.findByTestId("names-list");
+    // Ten banded names on the board; the page shows five.
+    expect(within(list).getAllByTestId(/^name-row-/)).toHaveLength(5);
+    // Held first, then classified, then the most below guidance value.
+    expect(within(list).getAllByTestId(/^name-row-/)[0]).toHaveAttribute("data-testid", "name-row-CVS");
+    expect(within(list).getByTestId("name-distance-CVS")).toHaveTextContent("-7.1%");
+    fireEvent.click(within(list).getByTestId("names-show-all"));
+    const ref = await screen.findByTestId("reference-table");
+    expect(within(ref).getByTestId("basis-eps")).toHaveTextContent("AMGN");
   });
 });
 
@@ -413,6 +440,7 @@ describe("Guidance tiles — the in-place ribbon (2026-11-16)", () => {
   it("opens the full fact sheet in a ribbon under the tile, not at the bottom tables", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     fireEvent.click(within(grid).getByTestId("grid-row-AMGN"));
     const ribbon = await screen.findByTestId("ribbon-AMGN");
@@ -430,6 +458,7 @@ describe("Guidance tiles — the in-place ribbon (2026-11-16)", () => {
   it("moves with the selection and closes from its own control", async () => {
     serve();
     render(<MemoryRouter><Valuation /></MemoryRouter>);
+    await openCard("Football field");
     const grid = await screen.findByTestId("band-grid");
     fireEvent.click(within(grid).getByTestId("grid-row-AMGN"));
     expect(await screen.findByTestId("ribbon-AMGN")).toBeInTheDocument();
