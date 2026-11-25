@@ -572,6 +572,8 @@ def workshop_track(idea_id: int, body: _TrackIn, _admin: dict = Depends(admin.re
 def workshop_go_live(idea_id: int, body: _LiveIn, _admin: dict = Depends(admin.require_admin),
                      supabase=Depends(get_supabase)):
     _api._bust_ideas_cache()
+    if _found(supabase, idea_id)["idea"].get("untracked_at"):
+        raise HTTPException(status_code=409, detail="removed from tracking -- a removed idea cannot go live")
     if body.book != "main":
         _book_or_400(body.book)
         act = workshop_store.activation(supabase, body.book, idea_id)
@@ -649,6 +651,12 @@ def workshop_untrack(idea_id: int, _admin: dict = Depends(admin.require_admin),
     if idea.get("untracked_at"):
         raise HTTPException(status_code=409, detail="already removed from tracking")
     if idea.get("live_at") and not idea.get("killed_at"):
+        raise HTTPException(status_code=409, detail="a live idea is killed, not removed from tracking")
+    # Live state on the other book lives in book_activations, not on the
+    # idea row (CodeRabbit on PR #602): an idea live there is refused the
+    # same way -- it is killed on that book, not removed.
+    act = workshop_store.activation(supabase, "big", idea_id)
+    if act and act.get("live_at") and not act.get("killed_at"):
         raise HTTPException(status_code=409, detail="a live idea is killed, not removed from tracking")
     try:
         return workshop_store.untrack(supabase, idea_id)

@@ -271,6 +271,32 @@ def test_untrack_is_once_refuses_live_and_stops_tracking(passed):
     assert c.post("/api/workshop/ideas/99/untrack").status_code == 404
 
 
+def test_untrack_refuses_an_idea_live_on_the_big_book(passed):
+    """CodeRabbit on PR #602: big-book live state lives in book_activations,
+    not on the idea row -- an idea live there (and not killed there) is
+    refused removal exactly like a main-book live idea."""
+    c, db, i, _, _ = passed
+    db.table("book_activations").insert(
+        {"book": "big", "idea_id": i, "live_at": "2026-11-01T00:00:00Z",
+         "live_run_id": 1, "size_pct": 5, "gate": {}}).execute()
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    db.db["book_activations"][0]["killed_at"] = "2026-11-02T00:00:00Z"
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 200
+
+
+def test_a_removed_idea_cannot_go_live_on_either_book(passed):
+    """CodeRabbit on PR #602: removal and go-live exclude each other -- the
+    route refuses, and the store write itself requires untracked_at null."""
+    c, db, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 200
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5})
+    assert r.status_code == 409 and "removed from tracking" in r.json()["detail"]
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "big"})
+    assert r.status_code == 409 and "removed from tracking" in r.json()["detail"]
+    with pytest.raises(workshop_store.AlreadySet):
+        workshop_store.go_live(db, i, 1, 5, {})
+
+
 def test_track_needs_a_pass_and_is_once(passed):
     c, db, i, _, _ = passed
     r = c.post(f"/api/workshop/ideas/{i}/track", json={})

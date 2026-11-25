@@ -1033,15 +1033,17 @@ function LifecycleSteps({ idea, runs, passed }: { idea: IdeaDetail["idea"]; runs
   ];
   const next = idea.killed_at
     ? "This idea was killed. Its record is final."
-    : idea.live_at
-      ? "Live on paper. Its orders, the auto-orders switch and the kill button are below."
-      : idea.tracked_at
-        ? "Tracking now: the forward record grows every trading day. Going live unlocks below once the gate clears — 63 new trading days and a size."
-        : passed
-          ? "Next step: start tracking. The forward record begins today and is what the live gate will read. Publishing is separate and optional."
-          : runs.length > 0
-            ? "The latest run did not pass, so this idea can't be tracked or go live yet. Try a variation, or re-run the test."
-            : "Run the test first. A pass unlocks tracking.";
+    : idea.untracked_at
+      ? "Removed from tracking: its forward record has stopped. The record below stays as it stands."
+      : idea.live_at
+        ? "Live on paper. Its orders, the auto-orders switch and the kill button are below."
+        : idea.tracked_at
+          ? "Tracking now: the forward record grows every trading day. Going live unlocks below once the gate clears — 63 new trading days and a size."
+          : passed
+            ? "Next step: start tracking. The forward record begins today and is what the live gate will read. Publishing is separate and optional."
+            : runs.length > 0
+              ? "The latest run did not pass, so this idea can't be tracked or go live yet. Try a variation, or re-run the test."
+              : "Run the test first. A pass unlocks tracking.";
   return (
     <div>
       <ol className="flex flex-wrap items-center gap-2" aria-label="Lifecycle steps">
@@ -1115,14 +1117,19 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
         <div>
           <h2 className="text-sm font-semibold text-white">Tracking</h2>
           <p className="mt-1 text-xs text-slate-400">
-            Tracking since {idea.tracked_at.slice(0, 10)} — every trading day, the hub records what this rule would
-            have done, next to SPY. No orders are placed while tracking; this record is what the live gate reads.
+            {idea.untracked_at ? (
+              <>Tracked since {idea.tracked_at.slice(0, 10)} — recording stopped when the idea was removed from
+              tracking. The record below is final.</>
+            ) : (
+              <>Tracking since {idea.tracked_at.slice(0, 10)} — every trading day, the hub records what this rule would
+              have done, next to SPY. No orders are placed while tracking; this record is what the live gate reads.</>
+            )}
           </p>
           {shadow && <div className="mt-2"><PaperLine live={shadow} /></div>}
         </div>
       )}
 
-      {trackable && !idea.tracked_at && (
+      {trackable && !idea.tracked_at && !idea.untracked_at && (
         <div>
           <h2 className="text-sm font-semibold text-white">Tracking</h2>
           <p className="mt-1 text-xs text-slate-400">
@@ -1156,7 +1163,7 @@ export function LifecyclePanel({ id, detail, onChange }: { id: string; detail: I
         </div>
       )}
 
-      {passed && !idea.live_at && (
+      {passed && !idea.live_at && !idea.untracked_at && (
         <GatePanel id={id} onChange={onChange}
           heading="Live-paper gate"
           intro="The claim must still hold on at least 63 trading days the backtest never saw, and each position must be 25% of the account or less."
@@ -1314,6 +1321,7 @@ function lifecycleLabel(data: IdeaDetail): string {
   const i = data.idea;
   if (i.killed_at) return `Killed ${ctDateTime(i.killed_at)}`;
   if (i.live_at) return `Live on paper since ${ctDateTime(i.live_at)}${i.size_pct != null ? ` · ${i.size_pct}% size` : ""}${i.auto_orders ? " · auto-orders on" : ""}`;
+  if (i.untracked_at) return `Removed from tracking ${ctDateTime(i.untracked_at)}`;
   if (i.tracked_at) return `Tracking since ${ctDateTime(i.tracked_at)} · not live yet`;
   if (i.published_at) return `Published ${ctDateTime(i.published_at)} · not live yet`;
   return "In testing · not published";

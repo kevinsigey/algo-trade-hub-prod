@@ -19,9 +19,13 @@ class AlreadySet(Exception):
     """The lifecycle step already happened (or the idea does not exist); nothing changed."""
 
 
-def _set_once(supa, idea_id: int, column: str, extra: dict | None = None) -> dict:
+def _set_once(supa, idea_id: int, column: str, extra: dict | None = None,
+              require_null: tuple[str, ...] = ()) -> dict:
     patch = {column: datetime.now(UTC).isoformat(), **(extra or {})}
-    rows = supa.table(IDEAS).update(patch).eq("id", idea_id).is_(column, "null").execute().data
+    query = supa.table(IDEAS).update(patch).eq("id", idea_id).is_(column, "null")
+    for guard in require_null:
+        query = query.is_(guard, "null")
+    rows = query.execute().data
     if not rows:
         raise AlreadySet(column)
     return rows[0]
@@ -32,7 +36,10 @@ def publish(supa, idea_id: int) -> dict:
 
 
 def go_live(supa, idea_id: int, run_id: int, size_pct: float, gate: dict) -> dict:
-    return _set_once(supa, idea_id, "live_at", {"live_run_id": run_id, "size_pct": size_pct, "gate": gate})
+    # The exclusion lives in the write (CodeRabbit on PR #602): a removed
+    # idea can never go live, even if the route check raced the removal.
+    return _set_once(supa, idea_id, "live_at", {"live_run_id": run_id, "size_pct": size_pct, "gate": gate},
+                     require_null=("untracked_at",))
 
 
 def track(supa, idea_id: int, run_id: int) -> dict:
@@ -50,8 +57,10 @@ def untrack(supa, idea_id: int) -> dict:
     every other lifecycle step. The idea leaves the tracked set -- the shadow job
     and the weekly critic stop recording it -- and leaves the standing set on the
     Ideas record. Nothing is deleted: runs, shadow days, labels and fills keep
-    their idea id, so historical attribution is never orphaned."""
-    return _set_once(supa, idea_id, "untracked_at")
+    their idea id, so historical attribution is never orphaned. The write
+    itself requires live_at to still be null, so a go-live that lands first
+    wins the race and this raises AlreadySet instead of removing a live idea."""
+    return _set_once(supa, idea_id, "untracked_at", require_null=("live_at",))
 
 
 def _all_ideas(supa) -> list[dict]:
