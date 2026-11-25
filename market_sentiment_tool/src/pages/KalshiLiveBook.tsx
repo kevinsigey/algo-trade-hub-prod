@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { sessionToken } from "@/components/RequireAdmin";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import { fmtUsd, tone } from "@/lib/paperPortfolio";
-import { DashCard, Fig, PEEK, PeekRows, REFRESH_MS } from "@/pages/portfolio/shared";
+import { DashCard, Fig, PEEK, PeekRows, REFRESH_MS, Spark } from "@/pages/portfolio/shared";
 import type { KalshiDemoPayload, KalshiLivePilot, KalshiLivePilotAdminOnly } from "@/lib/kalshiDemo";
 
 export const REAL_MONEY_BADGE = "rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300";
@@ -86,7 +86,7 @@ export function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
                 <td className="py-1 pr-2 font-semibold text-white">{o.ticker}</td>
                 <td className="py-1 pr-2 text-slate-200">{o.side.toUpperCase()}</td>
                 <td className="py-1 pr-2 text-slate-200">
-                  {o.status}{o.skip_reason ? <span className="text-slate-500"> · {o.skip_reason}</span> : null}
+                  {nice(o.status)}{o.skip_reason ? <span className="text-slate-500"> · {nice(o.skip_reason)}</span> : null}
                 </td>
                 <td className="py-1 pr-2 text-right text-slate-200">{o.contracts_filled}/{o.contracts_requested ?? "—"}</td>
                 <td className="py-1 pr-2 text-right text-slate-200">{cents(o.frozen_quote)}</td>
@@ -176,20 +176,62 @@ export function KalshiBox({ k }: { k: KalshiRead }) {
   );
 }
 
+const nice = (v: string) => v.replace(/_/g, " ");
+
+type Order = KalshiLivePilot["orders"][number];
+
+/** "KXBRENT15M-26NOV250130-30" + side + fill -> "Brent 15m · 01:30 · YES 30¢". */
+export function marketName(o: Order): string {
+  const m = /^KX([A-Z]+)(\d+[MH])?$/.exec(o.series ?? "");
+  // Short symbols (WTI) stay upper-case; longer ones read as words (Brent).
+  const base = m ? (m[1].length <= 3 ? m[1] : m[1][0] + m[1].slice(1).toLowerCase()) : o.series || o.ticker;
+  const name = m?.[2] ? `${base} ${m[2].toLowerCase()}` : base;
+  const t = /-\d{2}[A-Z]{3}\d{2}(\d{2})(\d{2})/.exec(o.ticker);
+  const at = t ? ` · ${t[1]}:${t[2]}` : "";
+  const px = o.fill_price == null ? "" : ` ${(o.fill_price * 100).toFixed(0)}¢`;
+  return `${name}${at} · ${o.side.toUpperCase()}${px}`;
+}
+
+/** Cumulative realized P&L, one step per settled order in window-close order.
+ * Fewer than two points is no curve: the card says so instead of a flat line. */
+export function pnlCurve(orders: Order[]): { t: string; cum: number }[] {
+  let cum = 0;
+  return orders
+    .filter((o) => o.pnl != null)
+    .sort((a, b) => String(a.window_close ?? a.created_at ?? "").localeCompare(String(b.window_close ?? b.created_at ?? "")))
+    .map((o) => ({ t: String(o.window_close ?? o.created_at ?? ""), cum: (cum += o.pnl as number) }));
+}
+
 /** Kalshi's two main cards, in the same frame as the paper books: Performance
- * (the pilot's P&L and progress) and Positions (its orders). No Trade card. */
+ * (the pilot's P&L curve and progress) and Positions (open positions and recent
+ * fills). No Trade card. */
 export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | "positions" }) {
   const p = k.pilot;
   if (!p) return null;
   const orders = p.orders;
   const gate = p.gates;
+  const curve = pnlCurve(orders);
+  const fills = orders.filter((o) => o.contracts_filled > 0);
+  const openCount = Array.isArray(p.positions) ? p.positions.length : typeof p.positions === "number" ? p.positions : null;
   return (
-    <div className="grid gap-2 lg:grid-cols-2">
+    <div className="grid flex-1 gap-2 lg:grid-cols-2">
       <DashCard title="Performance" value={signed(p.pnl_since_start)} valueClass={tone(p.pnl_since_start)}
                 sub="P&L since start" meta={<span className={REAL_MONEY_BADGE}>REAL MONEY</span>}
                 hint="The live pilot's scoreboard: P&L, fills and the two gates it must clear"
                 defaultOpen={open === "performance"} detailTitle="Live pilot" detail={<LivePilotCard pilot={p} />}>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+        <div className="relative min-h-[150px] flex-1">
+          {curve.length >= 2 ? (
+            <div className="absolute inset-0">
+              <Spark data={curve} height="100%" lines={[{ key: "cum", color: "#34d399", width: 2 }]} />
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+              <span className="text-2xl">—</span>
+              <span className="text-xs">graph starts after 2 settled trades</span>
+            </div>
+          )}
+        </div>
+        <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-2">
           <Fig label="Live balance" value={money(p.balance)} />
           <Fig label="Fill rate" value={`${p.fills}/${p.decisions} · ${pct(p.fill_rate)}`} hint="Orders that filled, over orders decided" />
           <Fig label="Settled trades" value={String(p.settled)} />
@@ -198,22 +240,23 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
           <Fig label="Edge gate" value={`${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}`} hint="Needs 150 settled trades" />
         </dl>
       </DashCard>
-      <DashCard title="Positions" value={orders.length} sub="orders" hint="Open and past live orders, newest first"
+      <DashCard title="Positions" value={openCount ?? "—"} sub="open positions"
+                hint="Open positions, then recent fills. Open for every order, skipped ones included."
                 defaultOpen={open === "positions"} detailTitle={`Live orders · ${orders.length}`}
                 detail={orders.length ? <OrdersTable orders={orders} /> : undefined}>
-        {orders.length ? (
-          <>
-            <PeekRows rows={orders.slice(0, PEEK).map((o, i) => ({
-              key: String(o.id ?? `${o.ticker}-${i}`), label: o.ticker,
-              aside: `${o.side.toUpperCase()} · ${o.status}`, value: signed(o.pnl), valueClass: tone(o.pnl),
-            }))} />
-            <p className="mt-1 text-xs text-slate-400">Show all {orders.length}</p>
-          </>
+        <h3 className="text-[11px] text-slate-500">Open positions</h3>
+        <p className="text-xs text-slate-300">{openCount ? `${openCount} open` : openCount === 0 ? "None open" : "—"}</p>
+        <h3 className="mt-2 text-[11px] text-slate-500">Recent fills</h3>
+        {fills.length ? (
+          <PeekRows rows={fills.slice(0, PEEK).map((o, i) => ({
+            key: String(o.id ?? `${o.ticker}-${i}`), label: marketName(o), value: signed(o.pnl), valueClass: tone(o.pnl),
+          }))} />
         ) : (
           <p className="text-xs text-slate-400">
-            Live since {et(LIVE_SINCE)}. No orders yet: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
+            No fills yet. Live since {et(LIVE_SINCE)}: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
           </p>
         )}
+        {orders.length > 0 && <p className="mt-1 text-xs text-slate-400">Show all {orders.length}</p>}
       </DashCard>
     </div>
   );

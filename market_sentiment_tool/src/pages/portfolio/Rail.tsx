@@ -27,9 +27,9 @@ function todayPct(d: PortfolioPayload | null): number | null {
 const diff = (a: number | null | undefined, b: number | null | undefined) =>
   a == null || b == null ? null : a - b;
 
-function Line({ label, value, cls }: { label: string; value: string; cls?: string }) {
+function Line({ label, value, cls, wide }: { label: string; value: string; cls?: string; wide?: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-1 md:justify-start">
+    <div className={`${wide ? "hidden md:flex" : "flex"} items-baseline justify-between gap-1 md:justify-start`}>
       <span className="truncate text-slate-500">{label}</span>
       <span className={`tabular-nums ${cls ?? "text-slate-300"}`}>{value}</span>
     </div>
@@ -44,8 +44,8 @@ function SelectorCard({ to, active, title, badge, value, children }: {
           className={`block min-w-0 rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${active ? "border-emerald-500/50 bg-emerald-500/10" : "border-slate-800 bg-slate-900/60 hover:border-slate-600"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-2">
         <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span className={`text-xs ${active ? "font-semibold text-white" : "text-slate-200"}`}>{title}</span>
-          {badge && <span className={REAL_MONEY_BADGE}>REAL MONEY</span>}
+          <span className={`text-xs ${active ? "font-semibold text-white" : "text-slate-200"}`}>{badge ? <><span className="md:hidden">Kalshi</span><span className="hidden md:inline">{title}</span></> : title}</span>
+          {badge && <span className={`${REAL_MONEY_BADGE} max-md:px-1 max-md:text-[8px]`}>REAL MONEY</span>}
         </span>
         {value != null && <span className="font-display text-base font-semibold tabular-nums text-white">{value}</span>}
       </div>
@@ -80,8 +80,8 @@ export function BookSelector({ book, books, paper, kalshi }: {
             ) : (
               <>
                 <Line label="Since start" value={fmtPct(ret)} cls={tone(ret)} />
-                <Line label="Today" value={fmtPct(today)} cls={tone(today)} />
-                <Line label="vs SPY" value={fmtPts(d?.scoreboard?.ahead_pts)} cls={tone(d?.scoreboard?.ahead_pts)} />
+                <Line wide label="Today" value={fmtPct(today)} cls={tone(today)} />
+                <Line wide label="vs SPY" value={fmtPts(d?.scoreboard?.ahead_pts)} cls={tone(d?.scoreboard?.ahead_pts)} />
               </>
             )}
           </SelectorCard>
@@ -134,7 +134,7 @@ function Compare({ book, spy, qqq, vsSpy: gapSpy, vsQqq: gapQqq }: {
   const vsSpy = gapSpy !== undefined ? gapSpy : diff(book, spy);
   const vsQqq = gapQqq !== undefined ? gapQqq : diff(book, qqq);
   return (
-    <div className="space-y-1 text-[11px] tabular-nums">
+    <div className="space-y-0.5 text-[11px] tabular-nums md:space-y-1">
       {row("Book", book, book != null && book < 0 ? "bg-rose-400" : "bg-emerald-400", tone(book))}
       {spy != null && row("SPY", spy, "bg-slate-400", "text-slate-400", vsSpy, "Gap: book minus SPY, in percentage points")}
       {qqq != null && row("QQQ", qqq, "bg-sky-400", "text-slate-400", vsQqq, "Gap: book minus QQQ, in percentage points")}
@@ -197,6 +197,8 @@ function BlockWithHead({ head, tag, tagClass, book, spy, qqq, vsSpy, vsQqq }: {
 export function AccountBox({ book, read }: { book: string; read: PaperRead }) {
   const { data, lastUpdatedAt, stale } = read;
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [detailsOpen, setDetailsOpen] = useState(
+    () => typeof window === "undefined" || !window.matchMedia || window.matchMedia("(min-width: 768px)").matches);
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -214,20 +216,25 @@ export function AccountBox({ book, read }: { book: string; read: PaperRead }) {
         )}
       </div>
       <div className={`mt-1 text-[11px] ${data.state === "live" ? "text-emerald-300" : "text-amber-300"}`}>{stateLabel(data.state, data.as_of)}</div>
-      <div className="mt-2 space-y-2.5 border-t border-slate-800 pt-2">
+      <div className="mt-2 space-y-2 border-t border-slate-800 pt-2 md:space-y-2.5">
         <TodayBlocks data={data} />
         <BlockWithHead head={<span className={tone(s.return_pct)}>Since start {fmtPct(s.return_pct)}</span>}
                        book={s.return_pct} spy={s.spy_return_pct} qqq={s.qqq_return_pct}
                        vsSpy={s.ahead_pts} vsQqq={s.qqq_return_pct != null ? s.ahead_qqq_pts ?? null : undefined} />
       </div>
-      <dl className="mt-2 divide-y divide-slate-800/70 border-t border-slate-800 pt-1 text-xs">
-        {accountFigures(data).map((f) => (
-          <div key={f.label} className="flex items-baseline justify-between gap-2 py-[2px]" title={f.hint}>
-            <dt className="cursor-help text-slate-400 underline decoration-dotted decoration-slate-600 underline-offset-2">{f.label}</dt>
-            <dd className={`text-right font-semibold tabular-nums ${f.className ?? "text-slate-100"}`}>{f.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {/* Open on desktop; a closed "Details" expander on a phone. */}
+      <details open={detailsOpen} onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
+               className="mt-2 border-t border-slate-800 pt-1">
+        <summary className="cursor-pointer py-1 text-xs text-slate-400 md:hidden">Details</summary>
+        <dl className="divide-y divide-slate-800/70 text-xs">
+          {accountFigures(data).map((f) => (
+            <div key={f.label} className="flex items-baseline justify-between gap-2 py-[2px]" title={f.hint}>
+              <dt className="cursor-help text-slate-400 underline decoration-dotted decoration-slate-600 underline-offset-2">{f.label}</dt>
+              <dd className={`text-right font-semibold tabular-nums ${f.className ?? "text-slate-100"}`}>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
       <WarningsStrip book={book} data={data} />
     </section>
   );

@@ -24,8 +24,8 @@ export default function PaperMain({ data, book, liveIdeas, open }: {
   open: OpenCard;
 }) {
   return (
-    <div className="grid gap-2">
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    <div className="flex flex-1 flex-col gap-2">
+      <div className="grid flex-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <PerformanceCard data={data} book={book} open={open === "performance"} />
         <PositionsCard data={data} book={book} liveIdeas={liveIdeas} open={open === "positions"} />
       </div>
@@ -60,16 +60,20 @@ function PerformanceCard({ data, book, open }: { data: PortfolioPayload; book: s
                 {vsQqq != null && <> · QQQ {fmtPct(lastQqq?.qqq_pct)} · vs QQQ <span className={tone(vsQqq)}>{fmtPts(vsQqq)}</span></>}</>}
               meta="since start" hint="Return curve vs SPY and QQQ. Open for risk, daily returns, attribution, tested vs discretionary, realized by week and closed trades."
               defaultOpen={open} detailTitle="Performance" detail={<PerformanceTab data={data} book={book} />}>
-      <Spark data={chart} height={150} lines={[
-        { key: "portfolio_pct", color: "#34d399", width: 2 },
-        { key: "spy_pct", color: "#94a3b8", dashed: true },
-        { key: "qqq_pct", color: "#38bdf8", dashed: true },
-      ]} />
-      <Legend items={[["#34d399", "Book"], ["#94a3b8", "SPY"], ["#38bdf8", "QQQ"]]} />
-      <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-2 sm:grid-cols-6">
+      <div className="relative min-h-[100px] flex-1 md:min-h-[150px]">
+        <div className="absolute inset-0">
+          <Spark data={chart} height="100%" lines={[
+            { key: "portfolio_pct", color: "#34d399", width: 2 },
+            { key: "spy_pct", color: "#94a3b8", dashed: true },
+            { key: "qqq_pct", color: "#38bdf8", dashed: true },
+          ]} />
+        </div>
+      </div>
+      <div className="hidden md:block"><Legend items={[["#34d399", "Book"], ["#94a3b8", "SPY"], ["#38bdf8", "QQQ"]]} /></div>
+      <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-2 md:grid-cols-6">
         <Fig label="Max drawdown" value={fmtPct(s.max_drawdown_pct)} hint="Deepest fall from a running high, all time." />
         <Fig label="Volatility" value={fmtPct(volatilityPct(daily))} hint="Standard deviation of daily returns, annualized." />
-        <Fig label="Sharpe" value={young ? "after 1 mo" : s.sharpe == null ? "—" : s.sharpe.toFixed(2)} hint="Return per unit of risk, annualized. Shown from 20 trading days." />
+        <Fig label="Sharpe" value={young || s.sharpe == null ? "—" : s.sharpe.toFixed(2)} hint={young ? "Not enough history yet: shown after 1 month (20 trading days)." : "Return per unit of risk, annualized."} />
         <Fig label="Best day" value={best ? fmtPct(best.portfolio_pct) : "—"} className={tone(best?.portfolio_pct)} hint="Best close-to-close day." />
         <Fig label="Worst day" value={worst ? fmtPct(worst.portfolio_pct) : "—"} className={tone(worst?.portfolio_pct)} hint="Worst close-to-close day." />
         <Fig label="Realized" value={signed(realized)} className={tone(realized)} hint="Profit or loss locked in by closed trades." />
@@ -105,7 +109,8 @@ function PositionsCard({ data, book, liveIdeas, open }: {
                 </div>
               )}>
       <SegmentBar segments={sectors} />
-      <div className="mt-2">
+      {/* On a phone the list peeks at 3 rows; "Show all" has every one. */}
+      <div className="mt-2 max-md:[&_li:nth-child(n+4)]:hidden">
         <PeekRows empty="No open positions. Cash only." rows={top.map((r) => ({
           key: `${r.symbol}-${r.idea ?? ""}`, label: contractLabel(r.symbol) ?? r.symbol,
           aside: `${money(r.market_value)} · ${r.pct_of_book == null ? "—" : `${r.pct_of_book.toFixed(1)}%`}`,

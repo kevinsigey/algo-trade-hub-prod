@@ -55,7 +55,7 @@ export function DashCard({ title, value, valueClass = "text-white", sub, meta, h
         </div>
       )}
       {sub != null && <div className="mt-1 truncate text-xs tabular-nums text-slate-400">{sub}</div>}
-      {children != null && <div className="mt-2 min-h-0 flex-1">{children}</div>}
+      {children != null && <div className="mt-2 flex min-h-0 flex-1 flex-col">{children}</div>}
       {detail && (
         <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${title}`} aria-haspopup="dialog"
                 title={hint}
@@ -87,7 +87,8 @@ export function Fig({ label, value, className = "text-white", hint }: {
 export function Spark<T extends object>({ data, lines, height = 48 }: {
   data: T[];
   lines: { key: keyof T & string; color: string; dashed?: boolean; width?: number }[];
-  height?: number;
+  /** Pixels, or "100%" to fill a positioned parent. */
+  height?: number | string;
 }) {
   if (data.length < 2) return <div style={{ height }} className="flex items-center text-xs text-slate-500">—</div>;
   return (

@@ -37,13 +37,13 @@ export default function Portfolio() {
 
   return (
     <div className="mx-auto max-w-[100rem] px-4 py-4 md:px-6">
-      <h1 className="text-2xl font-bold tracking-tight text-white">Portfolio</h1>
-      <div className="mt-3 grid items-start gap-3 md:grid-cols-[18.5rem_minmax(0,1fr)]">
-        <aside aria-label="Selected book" className="min-w-0 space-y-2">
+      <h1 className="text-xl font-bold md:text-2xl tracking-tight text-white">Portfolio</h1>
+      <div className="mt-2 grid gap-2 md:mt-3 md:gap-3 md:grid-cols-[18.5rem_minmax(0,1fr)]">
+        <aside aria-label="Selected book" className="min-w-0 space-y-2 md:self-start">
           <BookSelector book={book} books={books} paper={paper} kalshi={kalshi} />
           {book === "kalshi" ? <KalshiBox k={kalshi} /> : <AccountBox book={book} read={paper[book]} />}
         </aside>
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-col">
           {book === "kalshi"
             ? <KalshiView k={kalshi} open={open === "performance" || open === "positions" ? open : undefined} />
             : <PaperView book={book} read={paper[book]} error={(book === "big" ? big : main).error} open={open} />}

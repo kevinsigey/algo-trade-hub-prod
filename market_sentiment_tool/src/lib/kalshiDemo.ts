@@ -28,6 +28,8 @@ export interface KalshiLivePilot {
   };
   daily_stop_usd: number;
   floor_usd: number;
+  /** Open positions: a list or a count, depending on the payload; absent on older ones. */
+  positions?: unknown[] | number | null;
   orders: Array<{
     id: number | null;
     created_at: string | null;

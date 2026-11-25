@@ -991,8 +991,8 @@ describe("Portfolio per-ticker aggregate (2026-11-12 review bugs)", () => {
     }));
     pageAt("/portfolio?tab=performance");
     // Both day-count guards hold at 8 trading days: Sharpe and beta to SPY
-    // (the page card shows Sharpe too, so three in all).
-    expect(await screen.findAllByText("after 1 mo")).toHaveLength(3);
+    // (the page card shows a dash with the reason as its hint).
+    expect(await screen.findAllByText("after 1 mo")).toHaveLength(2);
     expect(screen.queryByText("-10.01")).toBeNull();
     expect(screen.getByText("58%")).toBeInTheDocument();
   });
