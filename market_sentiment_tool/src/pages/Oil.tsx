@@ -11,7 +11,9 @@ import { FifteenRuleRecord } from "@/components/FifteenRuleRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
 import { LiveChip } from "@/components/LiveChip";
 import { NextRelease } from "@/components/NextRelease";
-import { Stat } from "@/components/Stat";
+import { FifteenDeclineMonitor, type DeclineRow } from "@/components/FifteenDeclineMonitor";
+import { FifteenSettlements } from "@/components/FifteenSettlements";
+import { DashCard } from "@/pages/portfolio/shared";
 import type { FrozenForecast, JournalFeed, JournalResponse } from "@/lib/journal";
 import { STATUS_WORDS, skillText, totals, split, viewRows, type Status, type ViewRow } from "@/lib/journalView";
 import { buyBelowLimit, cents } from "@/lib/oilFees";
@@ -139,7 +141,7 @@ function DirectionChart({ rows, livePrice, ourLevel, marketLevel }: {
     });
   const marketPts = rows.filter((r) => r.market !== null);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="mt-3 w-full" role="img" aria-label="Chance of settling above each price: us versus Kalshi">
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 h-36 w-full" role="img" aria-label="Chance of settling above each price: us versus Kalshi">
       {ourLevel != null && marketLevel != null && (
         <rect x={X(Math.min(ourLevel, marketLevel))} width={Math.abs(X(ourLevel) - X(marketLevel))}
               y={PT - 2} height={H - PT - PB + 2} fill="rgb(251 191 36 / 0.08)" />
@@ -179,7 +181,7 @@ const LIVE_REFRESH_MS = 30 * 1000;
 function LiveHero() {
   const [live, setLive] = useState<LiveLadder | null>(null);
   const [tick, setTick] = useState(0);
-  const [howOpen, setHowOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), LIVE_REFRESH_MS);
@@ -187,51 +189,84 @@ function LiveHero() {
   }, []);
 
   useEffect(() => {
-    getJson<LiveLadder>("/api/oil/hourly-live").then(setLive).catch(() => setLive(null));
+    getJson<LiveLadder>("/api/oil/hourly-live").then((r) => { setLive(r); setFailed(false); }).catch(() => setFailed(true));
   }, [tick]);
 
-  if (!live) {
+  const title = "Live next hour";
+  if (!live || failed) {
     return (
-      <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-        <h2 className="text-lg font-semibold text-white">Next hour</h2>
-        <p className="mt-1 text-sm text-slate-400">Reading the live market…</p>
-      </section>
+      <DashCard title={title}>
+        <p className="text-sm text-slate-400">{failed ? "The live ladder is unavailable right now." : "Reading the live market…"}</p>
+      </DashCard>
     );
   }
   if (live.state !== "live" || !live.rows || !live.event) {
     return (
-      <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/60 p-5">
-        <div className="flex flex-wrap items-baseline gap-x-3">
-          <h2 className="text-lg font-semibold text-white">Next hour</h2>
-          {live.event && <span className="text-sm text-slate-400">{eventLabel(live.event)}</span>}
-        </div>
-        <p className="mt-1 text-sm text-slate-400">
+      <DashCard title={title} meta={live.event ? eventLabel(live.event) : undefined}>
+        <p className="text-sm text-slate-400">
           {live.reason ?? "The live ladder is unavailable right now."}
           {live.price_age_minutes != null && <> The last print is {Math.round(live.price_age_minutes)} minutes old.</>}
         </p>
-      </section>
+      </DashCard>
     );
   }
   const rows = live.rows;
+  const asOf = live.as_of ? new Date(live.as_of) : null;
+  const best = live.best ?? null;
+  // Zoom to the action: strikes where our probability runs 0.5%-99.5%,
+  // plus one strike of run-off at each end so the curves land. Across
+  // all 76 strikes the curves pin to the corners and read as no graph.
+  const sorted = [...rows].sort((a, b) => a.strike - b.strike);
+  const inBand = sorted.filter((r) => r.ours >= 0.005 && r.ours <= 0.995);
+  let chartRows = inBand;
+  if (inBand.length >= 2) {
+    const before = sorted[sorted.indexOf(inBand[0]) - 1];
+    const after = sorted[sorted.indexOf(inBand[inBand.length - 1]) + 1];
+    chartRows = [before, ...inBand, after].filter(Boolean) as LiveRow[];
+  }
+  if (chartRows.length < 4) chartRows = sorted;
+  return (
+    <DashCard title={title} detailTitle={`Next hour — ${eventLabel(live.event)}`}
+              meta={<><LiveChip /> <span>{eventLabel(live.event)} · closes in ~{Math.max(0, Math.round(live.minutes_to_close ?? 0))} min</span>
+                {live.price_age_minutes != null && live.price_age_minutes >= 2 && <span className="text-amber-300"> · price {Math.round(live.price_age_minutes)} min old</span>}</>}
+              detail={<HourDetail live={live} asOf={asOf} />}>
+      <div className="grid items-center gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <DirectionChart rows={chartRows} livePrice={live.live_price} ourLevel={live.our_level} marketLevel={live.market_level} />
+        <div aria-label="Trade verdict" className="tabular-nums">
+          {best ? (
+            <>
+              <div className={`text-2xl font-bold ${best.side === "yes" ? "text-emerald-300" : "text-rose-300"}`}>
+                {best.side === "yes" ? "▲" : "▼"} {pickLabel(best)}
+              </div>
+              <p className="text-xs text-slate-300">
+                {best.side === "yes" ? "YES" : "NO"} ≤ {cents(buyBelowLimit(best.prob))} · cost {cents(best.cost)} · +{best.net_pts.toFixed(1)} pts
+              </p>
+            </>
+          ) : (
+            <div className="text-xl font-semibold text-slate-200">No trade</div>
+          )}
+        </div>
+      </div>
+    </DashCard>
+  );
+}
+
+/** The hour's FullView: the range, the full verdict, the strike board, the 50% levels and how to read the graph. */
+function HourDetail({ live, asOf }: { live: LiveLadder; asOf: Date | null }) {
+  const [howOpen, setHowOpen] = useState(false);
+  const rows = live.rows ?? [];
   const levelText = (v: number | null | undefined) => (v === null || v === undefined ? "outside the ladder" : `$${v.toFixed(2)}`);
   const gap = live.our_level != null && live.market_level != null ? live.our_level - live.market_level : null;
-  const asOf = live.as_of ? new Date(live.as_of) : null;
   return (
-    <section aria-label="Live next hour" className="rounded-xl border border-slate-700 bg-slate-900/70 p-5">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <LiveChip />
-        <h2 className="text-xl font-semibold text-white">Next hour — {eventLabel(live.event)}</h2>
-        <span className="text-xs text-slate-500">
-          closes in ~{Math.max(0, Math.round(live.minutes_to_close ?? 0))} min
-          {asOf && <> · recomputed {asOf.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" })} ET</>}
-        </span>
+    <div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        {asOf && <span>recomputed {asOf.toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" })} ET, every 30 seconds</span>}
         {live.geo && (
-          <span className="ml-auto rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300">
+          <span className="rounded-full border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300">
             Hormuz stress {live.geo.stress_score} · shadow σ ×{live.geo.k.toFixed(2)}{live.geo.partial ? " · partial feeds" : ""}
           </span>
         )}
       </div>
-
       <RangeBand rows={rows} />
       <TradeVerdict best={live.best ?? null} closest={live.closest ?? null} priceAge={live.price_age_minutes ?? null} />
       <StrikeBoard rows={rows} best={live.best ?? null} ourLevel={live.our_level ?? null} />
@@ -251,7 +286,7 @@ function LiveHero() {
         </div>
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">WTI live</div>
-          <div className="mt-1 text-2xl font-bold tabular-nums text-slate-100">${live.live_price?.toFixed(2)}</div>
+          <div className="mt-1 text-2xl font-bold tabular-nums text-slate-100">{live.live_price == null ? "—" : `$${live.live_price.toFixed(2)}`}</div>
           <div className="mt-1 text-xs text-slate-500">
             {live.price_source === "hyperliquid"
               ? "Hyperliquid oil perp, live but not what Kalshi settles on"
@@ -262,24 +297,8 @@ function LiveHero() {
         </div>
       </div>
 
-      {(() => {
-        // Zoom to the action: strikes where our probability runs 0.5%-99.5%,
-        // plus one strike of run-off at each end so the curves land. Across
-        // all 76 strikes the curves pin to the corners and read as no graph.
-        const sorted = [...rows].sort((a, b) => a.strike - b.strike);
-        const inBand = sorted.filter((r) => r.ours >= 0.005 && r.ours <= 0.995);
-        let chartRows = inBand;
-        if (inBand.length >= 2) {
-          const before = sorted[sorted.indexOf(inBand[0]) - 1];
-          const after = sorted[sorted.indexOf(inBand[inBand.length - 1]) + 1];
-          chartRows = [before, ...inBand, after].filter(Boolean) as LiveRow[];
-        }
-        if (chartRows.length < 4) chartRows = sorted;
-        return <DirectionChart rows={chartRows} livePrice={live.live_price} ourLevel={live.our_level} marketLevel={live.market_level} />;
-      })()}
-
       <button type="button" aria-expanded={howOpen} onClick={() => setHowOpen((v) => !v)}
-              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
+              className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white">
         How to read this graph
         <ChevronDown className={`h-3.5 w-3.5 transition-transform ${howOpen ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
@@ -287,14 +306,11 @@ function LiveHero() {
         <div className="mt-2 max-w-3xl space-y-1.5 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2.5 text-[13px] leading-relaxed text-slate-300">
           <div>Each curve reads left to right as price rises: at any price on the bottom axis, the curve's height is the chance the hour <span className="text-white">settles above that price</span>. High on the left (cheap prices are almost surely cleared), low on the right.</div>
           <div><span className="font-semibold text-amber-300">Amber is us</span>, <span className="font-semibold text-slate-300">dashed grey is Kalshi</span> (dots mark the strikes Kalshi actually quotes — early in the hour only the strikes near the money carry quotes). Where a curve crosses the dotted 50% line is that side's coin-flip level, marked at the top.</div>
-          <div>The <span className="font-semibold text-white">white line is the live WTI print</span>. The shaded band between the two coin-flip levels is where the two centres disagree; the 80% ranges at the top are read off these same curves, at the 90% and 10% heights. A centre gap is not a direction call — the model has no direction view.</div>
+          <div>The <span className="font-semibold text-white">white line is the live WTI print</span>. The shaded band between the two coin-flip levels is where the two centres disagree; the 80% ranges are read off these same curves, at the 90% and 10% heights. A centre gap is not a direction call — the model has no direction view.</div>
         </div>
       )}
-
-      <p className="mt-3 text-[11px] text-slate-600">
-        Recomputed every 30 seconds. Inside the last 20 minutes, this is already the next hour.
-      </p>
-    </section>
+      <p className="mt-3 text-[11px] text-slate-600">Inside the last 20 minutes, this is already the next hour.</p>
+    </div>
   );
 }
 
@@ -587,6 +603,26 @@ function FrozenRecord({ ours, market }: { ours: JournalFeed | null; market: Jour
   );
 }
 
+/** The scored rows of a record, as the open view shows them. */
+function RecordRows({ rows }: { rows: ViewRow[] }) {
+  return (
+    <div className="space-y-6">
+      {rows.map((row) => (
+        <section key={row.key} aria-label={row.label} className="border-t border-slate-800 pt-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <h3 className="text-lg font-semibold text-slate-100">{row.label}</h3>
+            <div className="flex items-center gap-3">
+              <span className="text-lg tabular-nums text-slate-100">{skillText(row.skill)}</span>
+              <Chip tone={STATUS_TONE[row.status]}>{STATUS_WORDS[row.status]}</Chip>
+            </div>
+          </div>
+          <JournalDetail row={row} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function RecordSection({ title, rows }: { title: string; rows: ViewRow[] }) {
   const [open, setOpen] = useState(false);
   if (rows.length === 0) return null;
@@ -603,29 +639,25 @@ function RecordSection({ title, rows }: { title: string; rows: ViewRow[] }) {
         <ChevronDown className={`ml-auto h-5 w-5 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
       {open && (
-        <div className="space-y-6 px-4 pb-4">
-          {rows.map((row) => (
-            <section key={row.key} aria-label={row.label} className="border-t border-slate-800 pt-4">
-              <div className="flex items-baseline justify-between gap-4">
-                <h3 className="text-lg font-semibold text-slate-100">{row.label}</h3>
-                <div className="flex items-center gap-3">
-                  <span className="text-lg tabular-nums text-slate-100">{skillText(row.skill)}</span>
-                  <Chip tone={STATUS_TONE[row.status]}>{STATUS_WORDS[row.status]}</Chip>
-                </div>
-              </div>
-              <JournalDetail row={row} />
-            </section>
-          ))}
-        </div>
+        <div className="px-4 pb-4"><RecordRows rows={rows} /></div>
       )}
     </section>
   );
 }
 
+interface RuleHead {
+  forward?: { n: number; net_per_contract: number | null };
+  gate?: { forward?: { n: number; net_per_contract: number | null } };
+  decline?: DeclineRow[];
+}
+
+const cent1 = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
+
 export default function Oil() {
   const [data, setData] = useState<JournalResponse | null>(null);
   const [ours, setOurs] = useState<JournalFeed | null>(null);
   const [market, setMarket] = useState<JournalFeed | null>(null);
+  const [rule, setRule] = useState<RuleHead | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -635,7 +667,8 @@ export default function Oil() {
   }, []);
 
   useEffect(() => {
-    getJson<JournalResponse>("/api/journal").then(setData).catch((e: Error) => setError(e.message));
+    getJson<JournalResponse>("/api/journal").then((d) => { setData(d); setError(null); }).catch((e: Error) => setError(e.message));
+    getJson<RuleHead>("/api/oil/fifteen-rule").then(setRule).catch(() => setRule(null));
   }, [tick]);
 
   useEffect(() => {
@@ -655,51 +688,72 @@ export default function Oil() {
     }
   }, [data, tick]);
 
-  if (error) return <div className="p-8 text-rose-300">Commodities forecasts unavailable: {error}</div>;
-  if (!data) return <div className="p-8 text-slate-400">Loading…</div>;
-
-  const rows = viewRows(data.forecasters.filter((s) => OIL.has(s.forecaster)));
-  const hourlySplit = split(viewRows(data.forecasters.filter((s) => OIL_HOURLY.has(s.forecaster))));
+  const forecasters = data?.forecasters ?? [];
+  const rows = viewRows(forecasters.filter((s) => OIL.has(s.forecaster)));
+  const hourlySplit = split(viewRows(forecasters.filter((s) => OIL_HOURLY.has(s.forecaster))));
   const hourlyRows = [...hourlySplit.results, ...hourlySplit.waiting];
-  const fifteenRows = viewRows(data.forecasters.filter((s) => OIL_15M.has(s.forecaster)));
+  const fifteenRows = viewRows(forecasters.filter((s) => OIL_15M.has(s.forecaster)));
   const t = totals(rows);
+  const t15 = totals(fifteenRows);
+  const th = totals(hourlyRows);
+  const num = (v: number) => (data ? v.toLocaleString() : "—");
+
+  // The decline monitor's headline: the v1 rule's P&L per trade over the window, weighted by trades.
+  const decline = rule?.decline ?? [];
+  const dTrades = decline.reduce((n, r) => n + r.live.trades, 0);
+  const dPnl = decline.reduce((n, r) => n + r.live.trades * (r.live.pnl_per_trade ?? 0), 0);
+  const fwd = rule?.gate?.forward ?? rule?.forward;
+  const noRule = !rule ? "unavailable" : undefined;
 
   return (
-    // Stacked at every width (Kevin, 2026-11-08): the split xl grid squeezed the
-    // 15-minute calls into a narrow column; the hour module now sits underneath it.
     <div className="flex flex-col gap-3">
-      {/* Reading order follows the page: the 15-minute read, the hour, then the record. */}
-      <div className="min-w-0"><FifteenMinutePanel /></div>
-      <div className="min-w-0"><LiveHero /></div>
-      <div className="flex min-w-0 flex-col gap-3">
+      {/* Reading order: the live 15-minute read, the live hour, then the record as a row of cards. */}
+      <FifteenMinutePanel />
+      <LiveHero />
 
       <section aria-label="Track record" className="space-y-2">
-        <h2 className="text-lg font-semibold text-white">Track record</h2>
-        <section aria-label="Totals" className="grid gap-2 sm:grid-cols-2">
-          <Stat value={t.frozen} label="forecasts locked in" />
-          <Stat value={t.scored} label="scored so far" />
-        </section>
-        {t.frozen === 0 && <p className="text-slate-400">Nothing locked in yet. The next one locks 2 hours before the settlement.</p>}
-        <NextRelease family="oil" title="Next settlement" />
-        <FrozenRecord ours={ours} market={market} />
-        <RecordSection title="15-minute settlements" rows={fifteenRows} />
-        <section aria-label="15-minute trade rule" className="border border-slate-800">
-          <h3 className="px-4 pt-3 text-base font-semibold text-white">15-minute trade rule</h3>
-          <p className="px-4 text-xs text-slate-500">
-            the paper record of trading the forecasts above
-          </p>
-          <div className="px-4 pb-2">
-            <FifteenRuleRecord />
-          </div>
-        </section>
-        <RecordSection title="Hourly settlements" rows={hourlyRows} />
-        <RecordSection title="Daily settlement" rows={rows} />
-        <p className="text-sm text-slate-400">
-          The other paper trades built on these forecasts — the oil and crypto gap desks among them — are on{" "}
-          <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
-        </p>
+        <h2 className="text-sm font-semibold text-white">Track record</h2>
+        {error && <p className="text-sm text-rose-300">Commodities forecasts unavailable: {error}</p>}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+          <DashCard title="Forecasts" value={num(t.frozen)} sub={!data ? undefined : t.frozen === 0 ? "Nothing locked in yet" : `locked in · ${t.scored} scored`}
+                    hint="Forecasts locked in, and how many have settled and been scored."
+                    detailTitle="Forecasts: the frozen record and daily settlements"
+                    detail={data && (
+                      <div className="space-y-3">
+                        <NextRelease family="oil" title="Next settlement" />
+                        <FrozenRecord ours={ours} market={market} />
+                        <RecordSection title="Daily settlement" rows={rows} />
+                      </div>
+                    )} />
+          <DashCard title="15-minute settlements" value={fifteenRows.length ? num(t15.scored) : "—"} sub={fifteenRows.length ? `scored · ${t15.frozen} locked in` : undefined}
+                    hint="The 15-minute forecasts graded against Kalshi's own price once their windows settle."
+                    detail={data && <><FifteenSettlements /><RecordRows rows={fifteenRows} /></>} />
+          <DashCard title="Hourly settlements" value={hourlyRows.length ? num(th.scored) : "—"} sub={hourlyRows.length ? `scored · ${th.frozen} locked in` : undefined}
+                    hint="The hourly forecasts graded once each hour settles."
+                    detail={data && <RecordRows rows={hourlyRows} />} />
+          <DashCard title="Decline monitor" value={dTrades > 0 ? cent1(dPnl / dTrades) : "—"} valueClass={dTrades > 0 && dPnl < 0 ? "text-rose-300" : "text-white"}
+                    sub={noRule ?? (dTrades > 0 ? `per trade · ${dTrades} trades · 2 wks` : undefined)}
+                    hint="Day by day, per market: the live rule, the blend and the volatility-regime challenger, so a decline shows the day it starts."
+                    detail={rule && <FifteenDeclineMonitor rows={decline} />} />
+          <DashCard title="15-minute trade rule" value={fwd && fwd.net_per_contract != null ? cent1(fwd.net_per_contract) : "—"}
+                    valueClass={fwd && (fwd.net_per_contract ?? 0) < 0 ? "text-rose-300" : "text-white"}
+                    sub={noRule ?? (fwd ? `per trade · ${fwd.n} trades` : undefined)}
+                    hint="The paper record of trading the 15-minute forecasts."
+                    detailTitle="15-minute trade rule"
+                    detail={
+                      <div>
+                        <p className="text-xs text-slate-500">the paper record of trading the forecasts</p>
+                        <FifteenRuleRecord />
+                        <p className="mt-3 text-sm text-slate-400">
+                          The other paper trades built on these forecasts — the oil and crypto gap desks among them — are on{" "}
+                          <Link to="/strategies" className="text-emerald-300 underline-offset-2 hover:underline">Strategies</Link>.
+                        </p>
+                      </div>
+                    }>
+            <Link to="/strategies" className="relative z-10 text-xs text-emerald-300 underline-offset-2 hover:underline">Full record on Strategies →</Link>
+          </DashCard>
+        </div>
       </section>
-      </div>
     </div>
   );
 }
