@@ -94,6 +94,12 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
                  and ((order_type in ("stop", "trailing_stop", "stop_limit")
                        and time_in_force in ("day", "gtc"))
                       or (order_type == "limit" and time_in_force == "gtc")))
+    # The rest-tag contract holds on its own, not only via the protective
+    # fence: a market order or an opg stop-limit under a rest tag is not a
+    # protective shape, so the fence below would never see it.
+    if (SITE_REST_TAG.match(client_order_id) or IDEA_SITE_REST_TAG.match(client_order_id)) and not site_rest:
+        raise ValueError("a site resting tag sanctions only a stop, stop-limit or trailing stop "
+                         "on day or gtc, or a gtc limit order, with no order class")
     if protective and not ((sanctioned and time_in_force == "gtc"
                             and order_type in ("stop", "trailing_stop", "stop_limit", "limit"))
                            or gtc_limit or site_rest):

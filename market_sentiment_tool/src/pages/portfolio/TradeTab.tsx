@@ -637,10 +637,19 @@ function OrderForm({ book }: { book: string }) {
     };
   }, []);
 
-  if (!signedIn) return null;
-
   const cleaned = cleanOcc(symbol);
   const isOcc = OCC_INPUT.test(cleaned);
+  // Stop types are shares-only: when the symbol turns out to be a contract,
+  // a stop-family selection would otherwise ride into an option order with
+  // neither price set. Fall back to a plain market order.
+  useEffect(() => {
+    if (isOcc && (orderType === "stop" || orderType === "stop_limit" || orderType === "trailing_stop")) {
+      setOrderType("market");
+    }
+  }, [isOcc, orderType]);
+
+  if (!signedIn) return null;
+
   const contractText = isOcc ? contractLabel(cleaned) : null;
   const comboReady = comboLegs.every((l) => OCC_INPUT.test(cleanOcc(l.symbol))) && netLimit.trim() !== "";
   const canPlace = kind === "combo" ? comboReady : Boolean(symbol.trim());
@@ -706,7 +715,7 @@ function OrderForm({ book }: { book: string }) {
 
   return (
     <DashCard title="Place an order by hand" className="md:col-span-2 xl:col-span-4"
-              meta={<span title="Paper account. Tag an idea and the order lands in its log. Paste an OCC contract (e.g. SPY261113P00570000) for an option; every short leg must be covered.">Paper · market, limit, stop, trailing stop · options by OCC</span>}>
+              meta={<span title="Paper account. Tag an idea and the order lands in its log. Paste an OCC contract (e.g. SPY261113P00570000) for an option; every short leg must be covered.">Paper · stops included</span>}>
       <div className="flex gap-2" role="group" aria-label="Order kind">
         <button type="button" onClick={() => setKind("single")} className={kindBtnCls(kind === "single")}>Single</button>
         <button type="button" onClick={() => setKind("combo")} className={kindBtnCls(kind === "combo")}>Combo (spread)</button>

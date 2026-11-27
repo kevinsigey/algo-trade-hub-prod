@@ -468,7 +468,8 @@ def activity(supa, now: datetime | None = None, book_name: str | None = None) ->
     rows = [_order_row(o, titles) for o in orders]
     # This payload is public: an unexecuted order's price says where a position's stop sits (or sat),
     # so only the signed-in open-orders endpoint shows it.
-    rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None} for r in rows]
+    rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None,
+                                                "trail_percent": None, "trail_price": None} for r in rows]
     closed_payload = closed(supa, now, book_name=name)
     return {"state": "live", "as_of": now.isoformat(), "book": name,
             "open": [r for r in rows if r["status"] not in _TERMINAL],

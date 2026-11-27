@@ -469,6 +469,9 @@ def test_site_rest_tag_refuses_non_resting_shapes(keys, monkeypatch):
     monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
     s = Session(Resp(200))
     for kw in ({"order_type": "market", "time_in_force": "gtc"},
+               {"order_type": "market", "time_in_force": "day"},  # not protective: the rest-tag gate itself refuses it
+               {"order_type": "stop_limit", "time_in_force": "opg", "stop_price": 10.0,
+                "limit_price": 9.5},  # same: opg is no resting shape under a rest tag
                {"order_type": "stop", "time_in_force": "opg", "stop_price": 10.0},
                {"order_type": "limit", "time_in_force": "gtc", "limit_price": 10.0,
                 "order_class": "oco", "take_profit_price": 12.0, "stop_price": 9.0}):

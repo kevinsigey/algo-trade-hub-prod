@@ -317,16 +317,21 @@ def test_activity_endpoint_splits_open_recent_and_trades(client_with, monkeypatc
          "qty": "79", "filled_qty": "0", "type": "stop", "time_in_force": "gtc", "status": "held",
          "limit_price": None, "stop_price": "65.55", "filled_avg_price": None,
          "submitted_at": "2026-11-02T13:00:00Z", "filled_at": None},
+        {"id": "o4", "client_order_id": "manual-rest-TTWO", "symbol": "TTWO", "side": "sell",
+         "qty": "200", "filled_qty": "0", "type": "trailing_stop", "time_in_force": "gtc", "status": "held",
+         "limit_price": None, "stop_price": None, "trail_percent": "5", "trail_price": None,
+         "filled_avg_price": None, "submitted_at": "2026-11-27T15:00:00Z", "filled_at": None},
     ]
     monkeypatch.setattr(service, "paper_get", alpaca(orders=orders))
     c = client_with(FakeSupabase())
     body = c.get("/api/portfolio/activity").json()
     assert body["state"] == "live"
-    assert [o["symbol"] for o in body["open"]] == ["GLD", "XLE"]  # accepted + held are working
+    assert [o["symbol"] for o in body["open"]] == ["GLD", "XLE", "TTWO"]  # accepted + held are working
     assert body["open"][0]["source"] == "Workshop idea"  # unpublished in the fake store
     assert body["open"][1]["source"] == "Machine order"
     assert body["recent"][1]["source"] == "Manual" and body["recent"][1]["filled_avg_price"] == 68.10
     assert body["open"][1]["stop_price"] is None  # public: a resting stop is not advertised
+    assert body["open"][2]["trail_percent"] is None  # ... and neither is a resting trail
     assert body["trades"] == []
     monkeypatch.setattr(service, "paper_get", raise_(AccountNotConnected("no keys")))
     assert c.get("/api/portfolio/activity").json() == {

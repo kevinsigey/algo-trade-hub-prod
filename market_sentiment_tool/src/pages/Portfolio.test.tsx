@@ -456,6 +456,22 @@ describe("Portfolio hand orders (signed-in only)", () => {
       time_in_force: "gtc", trail_percent: 5, book: "main" }]);
   });
 
+  it("falls back to a market order when the symbol turns out to be a contract", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "stop_limit" } });
+    // Pasting a contract must not carry the share-only stop type into the option order.
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "SPY261113P00570000" } });
+    expect(await screen.findByText("SPY Nov 13 2026 $570 put")).toBeInTheDocument();
+    await waitFor(() => expect((screen.getByLabelText("Type") as HTMLSelectElement).value).toBe("market"));
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: buy 1 SPY261113P00570000 \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted[0].order_type).toBe("market");
+  });
+
   it("places a stop-limit with both prices through the ticket", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);

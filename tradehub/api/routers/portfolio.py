@@ -455,6 +455,12 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
             raise HTTPException(status_code=422, detail="trail_price must be positive")
         if body.stop_price is not None or body.limit_price is not None:
             raise HTTPException(status_code=422, detail="a trailing stop takes no stop_price or limit_price")
+    if body.order_type == "market" and (body.limit_price is not None or body.stop_price is not None
+                                        or body.trail_percent is not None or body.trail_price is not None):
+        raise HTTPException(status_code=422, detail="a market order takes no limit, stop or trail price")
+    if body.order_type == "limit" and (body.stop_price is not None or body.trail_percent is not None
+                                       or body.trail_price is not None):
+        raise HTTPException(status_code=422, detail="a limit order takes only a limit_price")
     resting = body.order_type in ("stop", "stop_limit", "trailing_stop") or body.time_in_force == "gtc"
     if resting:
         tag = f"idea-{body.idea_id}-manual-rest-" if body.idea_id is not None else "manual-rest-"

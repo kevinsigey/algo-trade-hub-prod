@@ -139,6 +139,10 @@ def test_stop_shape_refusals(api):
             {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "stop", "stop_price": 65.0,
              "time_in_force": "opg"},  # stops cannot ride the open
             {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "market", "time_in_force": "gtc"},
+            {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "market",
+             "stop_price": 65.0},  # protective fields refuse on a market order, never silently drop
+            {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "limit", "limit_price": 90.0,
+             "trail_percent": 5},  # ... and on a limit order
             {"symbol": "SPY261113P00570000", "qty": 1, "side": "sell", "order_type": "stop",
              "stop_price": 5.0}):  # stops are shares-only
         assert client.post("/api/portfolio/orders", json=payload).status_code == 422, payload
