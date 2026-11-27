@@ -123,7 +123,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 
 | 97 | `20261123000001_kalshi_live_orders.sql` (applied 2026-11-23 by Muse to the VPS-local database only, on Kevin's ruling of 2026-11-23 (issue #590: the Kalshi live micro-pilot), creating the live lane's record -- kalshi_live_orders, one row per (series, target, lane) under a unique constraint that is the never-order-twice guarantee, carrying the frozen quote, live ask, fill and slippage, fee, latency, outcome, P&L and the paper twin's P&L -- plus kalshi_live_state, the lane's persistent halt/gate state (halts are never lifted automatically). Read back: both tables exist with row security on, the kalshi_live_orders_series_target_lane_key unique constraint is in place, 0 rows. The lane ships with KALSHI_LIVE_ENABLED unset; Kevin places the live key and enables it himself. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
 
-**Watermark: `20261123000001_kalshi_live_orders.sql`**
+| 98 | `20261124000001_ideas_untracked.sql` (applied 2026-11-24 by Muse to the VPS-local database only, on Kevin's direction of 2026-11-24 (issue #601: a way to remove old ideas from tracking), adding `ideas.untracked_at` -- one set-once lifecycle column beside published_at / tracked_at / live_at / killed_at. When set, the idea leaves the tracked set (the shadow job and the weekly critic stop recording it) and the standing set on the Ideas record; nothing is deleted, so runs, shadow days, labels and fills keep their attribution. Read back: the column exists as `timestamp with time zone`. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
+
+**Watermark: `20261124000001_ideas_untracked.sql`**
 
 ## How to record a new one
 
