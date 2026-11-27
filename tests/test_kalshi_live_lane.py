@@ -209,6 +209,14 @@ def test_limit_price_helper():
     assert lane.limit_price(0.425, 0.40) == 0.43
 
 
+def test_limit_never_rounds_above_the_reserve(monkeypatch):
+    """CodeRabbit on PR #620: a fractional cap floors to the cent, so the
+    limit never sits above frozen + cap (the reserved cost)."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_SLIPPAGE", "0.025")
+    assert lane.limit_price(0.42, 0.40) == 0.42
+    assert lane.limit_price(0.40, 0.40) == 0.41
+
+
 def test_limit_is_capped_when_ask_plus_a_cent_breaches(db):
     portfolio = FakeLivePortfolio(balance_cents=1000)
     portfolio.live_ask_cents = 42.5  # edge .125 clears; 2.5c over frozen
@@ -320,7 +328,16 @@ def test_runner_loop_repeats_passes_inside_the_budget(monkeypatch):
     passes: list[float] = []
     monkeypatch.setattr(runner, "run_once",
                         lambda supa, portfolio, now: passes.append(clock["t"]) or {})
-    monkeypatch.setattr(runner.time, "monotonic", lambda: clock["t"])
+    reads = {"n": 0}
+
+    def fake_monotonic():
+        # A loop that stopped sleeping would never advance the clock:
+        # fail instead of hanging.
+        reads["n"] += 1
+        assert reads["n"] < 1000, "runner loop is not sleeping"
+        return clock["t"]
+
+    monkeypatch.setattr(runner.time, "monotonic", fake_monotonic)
     monkeypatch.setattr(runner.time, "sleep", fake_sleep)
     monkeypatch.setattr(runner.sys, "argv",
                         ["kalshi_live_run", "--loop", "0.35", "--interval", "0.1"])
@@ -1033,3 +1050,61 @@ def test_paused_series_get_no_new_live_decisions(monkeypatch):
     assert "KXNATGAS15M" in lane.PAUSED_SERIES
     assert "KXNATGAS15M" not in seen
     assert {"KXWTI15M", "KXBRENT15M"} <= set(seen)
+
+
+def test_recross_not_sent_when_the_identity_write_runs_into_the_close_buffer(db, monkeypatch):
+    """CodeRabbit on PR #620: the clock is re-read after the -r1 identity
+    write; inside the close buffer nothing is sent and the row keeps the
+    first attempt's identity, unfilled."""
+    clock = {"t": NOW}
+    real_update = lane._update
+
+    def slow_update(supa, row, patch):
+        if patch.get("attempts") == 2:
+            clock["t"] = NOW + timedelta(minutes=9, seconds=30)  # 30s to close
+        return real_update(supa, row, patch)
+
+    monkeypatch.setattr(lane, "_update", slow_update)
+    monkeypatch.setattr(lane, "_utcnow", lambda: clock["t"])
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    assert summary["recrossed"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+    assert not row["client_order_id"].endswith("-r1")
+
+
+def test_adopted_recross_fill_marks_the_second_attempt(db):
+    """CodeRabbit on PR #620: a pending -r1 row adopted from the exchange
+    carries filled_attempt 2, so the scoreboard counts it."""
+    seed_rows(db, [order_row(status="pending", kalshi_order_id=None, live_ask=0.40,
+                             attempts=2, client_order_id="kl-a-r1",
+                             target="kalshi:KXWTI15M-a", ticker="KXWTI15M-a",
+                             window_close=(NOW + timedelta(minutes=5)).isoformat())])
+    portfolio = FakeLivePortfolio()
+    portfolio.get_orders = lambda **kw: [
+        {"order_id": "o-a", "client_order_id": "kl-a-r1", "status": "executed",
+         "fill_count": "1.00", "average_fill_price": "0.4100",
+         "average_fee_paid": "0.0200"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "filled" and row["filled_attempt"] == 2
+    assert row["fill_price"] == 0.41 and "last_error" not in row
+
+
+def test_earlier_unfilled_claims_count_at_the_worst_payable(db, monkeypatch):
+    """CodeRabbit on PR #620: across passes, a claim with no known fill
+    counts at frozen + cap, not its ask. .43 + .43 > .85 refuses; the old
+    ask-based count (.40 + .43) would have placed."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_NOTIONAL_PER_DAY_USD", "0.85")
+    seed_rows(db, [order_row(status="unfilled", live_ask=0.40, client_order_id="kl-old",
+                             created_at=NOW.isoformat())])
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert summary["skipped_cap"] == 1

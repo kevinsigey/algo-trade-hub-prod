@@ -166,7 +166,18 @@ def limit_price(ask: float, frozen: float) -> float:
     the resting price, so the extra cent costs nothing when the book
     holds; it only rescues a 1c uptick race. If ask + 1c would breach
     the cap, the limit is the cap itself."""
-    return round(min(ask + AGGRESSION, frozen + max_slippage()), 2)
+    cap_cents = math.floor((frozen + max_slippage()) * 100 + 1e-9)
+    return min(round(ask + AGGRESSION, 2), cap_cents / 100)
+
+
+def worst_payable(row: dict) -> float:
+    """Per-contract cost a row counts against the daily and window caps
+    across passes: its actual fill price once known, else the most any
+    send can pay (frozen + the slippage cap), never the ask (CodeRabbit
+    on PR #620)."""
+    if row.get("fill_price") is not None:
+        return float(row["fill_price"])
+    return float(row.get("frozen_quote") or 0) + max_slippage()
 
 
 # -- reads / writes -----------------------------------------------------------
@@ -601,9 +612,12 @@ def _resolve_adopted(order: dict, row: dict) -> dict:
     if filled <= 0:
         return {"status": "unfilled", "contracts_filled": 0,
                 "skip_reason": "ioc_unfilled"}
-    limit = float(row.get("live_ask") or row["frozen_quote"])
+    frozen = float(row["frozen_quote"])
+    limit = limit_price(float(row.get("live_ask") or frozen), frozen)
     price, fee, flag = _executed(order, row["side"], filled, limit)
     patch = {"status": "filled", "contracts_filled": filled,
+             "filled_attempt": 2 if str(row.get("client_order_id") or "").endswith(
+                 RECROSS_SUFFIX) else 1,
              "fill_price": price, "fee_usd": fee,
              "slippage": round(price - float(row["frozen_quote"]), 4)}
     if flag:
@@ -951,8 +965,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
     contracts_today = sum(int(r.get("contracts_requested") or 0)
                           for r in todays)
     notional_today = sum(
-        int(r.get("contracts_requested") or 0)
-        * float(r.get("live_ask") or r.get("frozen_quote") or 0)
+        int(r.get("contracts_requested") or 0) * worst_payable(r)
         for r in todays)
     open_by_window: dict[str, dict] = {}
     for r in rows:
@@ -961,8 +974,7 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                                             {"contracts": 0, "cost": 0.0})
             n = int(r.get("contracts_filled") or r.get("contracts_requested") or 0)
             agg["contracts"] += n
-            agg["cost"] += n * float(r.get("fill_price") or r.get("live_ask")
-                                     or r.get("frozen_quote") or 0)
+            agg["cost"] += n * worst_payable(r)
 
     decisions = [d for d in raw_open_decisions(supa, now)
                  if _dt(d["close_time"]) > now + CANCEL_BUFFER
@@ -1140,6 +1152,15 @@ def run_once(supa, portfolio, now: datetime) -> dict[str, Any]:
                 if row.get("id") is not None:
                     _update(supa, row, identity)
                 row.update(identity)
+                if _utcnow() >= _dt(d["close_time"]) - CANCEL_BUFFER:
+                    # The identity write ran into the close buffer: send
+                    # nothing and put the first attempt's identity back.
+                    patch.update({"attempts": 1,
+                                  "client_order_id": base_row["client_order_id"],
+                                  "live_ask": price,
+                                  "skip_reason": "ioc_unfilled"})
+                    quote2 = None
+            if quote2 is not None:
                 summary["recrossed"] += 1
                 try:
                     order2 = portfolio.create_order(
