@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from tradehub.api import admin, main
 from tradehub.api.dependencies import get_supabase
+from tradehub.workshop import store as workshop_store
 from tradehub.workshop.data import UnknownSymbol
 from workshop_fake import DB
 
@@ -151,6 +152,7 @@ def test_lifecycle_routes_need_admin():
     c = TestClient(main.app)
     for method, path in [("get", "/api/workshop/ideas/1/gate"), ("post", "/api/workshop/ideas/1/publish"),
                          ("post", "/api/workshop/ideas/1/live"), ("post", "/api/workshop/ideas/1/kill"),
+                         ("post", "/api/workshop/ideas/1/untrack"),
                          ("post", "/api/workshop/labels")]:
         assert getattr(c, method)(path).status_code == 401, path
 
@@ -250,6 +252,62 @@ def test_publish_and_kill_are_once(passed):
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 200
     assert c.post(f"/api/workshop/ideas/{i}/kill").status_code == 409
     assert c.post("/api/workshop/ideas/99/publish").status_code == 404
+
+
+def test_untrack_is_once_refuses_live_and_stops_tracking(passed):
+    """Issue #601: removing an idea from tracking is set-once, refuses a live
+    idea (killing is its only exit), and takes it out of the tracked set the
+    shadow job and the critic read."""
+    c, db, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/track", json={}).status_code == 200
+    assert [x["id"] for x in workshop_store.tracked_ideas(db)] == [i]
+    db.db["ideas"][0]["live_at"] = "2026-11-01T00:00:00Z"
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    db.db["ideas"][0]["live_at"] = None
+    r = c.post(f"/api/workshop/ideas/{i}/untrack")
+    assert r.status_code == 200 and r.json()["untracked_at"]
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    assert workshop_store.tracked_ideas(db) == []
+    assert c.post("/api/workshop/ideas/99/untrack").status_code == 404
+
+
+def test_untrack_refuses_an_idea_live_on_the_big_book(passed):
+    """CodeRabbit on PR #602: big-book live state lives in book_activations,
+    not on the idea row -- an idea live there (and not killed there) is
+    refused removal exactly like a main-book live idea."""
+    c, db, i, _, _ = passed
+    db.table("book_activations").insert(
+        {"book": "big", "idea_id": i, "live_at": "2026-11-01T00:00:00Z",
+         "live_run_id": 1, "size_pct": 5, "gate": {}}).execute()
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 409
+    db.db["book_activations"][0]["killed_at"] = "2026-11-02T00:00:00Z"
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 200
+
+
+def test_untrack_allows_an_idea_that_went_live_and_was_killed(passed):
+    """The write-time live guard (PR #602 fix round) must not over-refuse:
+    an idea whose live chapter already closed by a kill is removable --
+    go_live can never fire on it again, so there is no race to lose.
+    Caught by the #601 cleanup itself: the live-then-killed probes and
+    the Nov 5 wind-down record were refused at write time."""
+    c, db, i, _, _ = passed
+    db.db["ideas"][0]["live_at"] = "2026-11-01T00:00:00Z"
+    db.db["ideas"][0]["killed_at"] = "2026-11-02T00:00:00Z"
+    r = c.post(f"/api/workshop/ideas/{i}/untrack")
+    assert r.status_code == 200 and r.json()["untracked_at"]
+
+
+def test_a_removed_idea_cannot_go_live_on_either_book(passed):
+    """CodeRabbit on PR #602: removal and go-live exclude each other -- the
+    route refuses, and the store write itself requires untracked_at null."""
+    c, db, i, _, _ = passed
+    assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 200
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5})
+    assert r.status_code == 409 and "removed from tracking" in r.json()["detail"]
+    r = c.post(f"/api/workshop/ideas/{i}/live", json={"size_pct": 5, "book": "big"})
+    assert r.status_code == 409 and "removed from tracking" in r.json()["detail"]
+    with pytest.raises(workshop_store.AlreadySet):
+        workshop_store.go_live(db, i, 1, 5, {})
 
 
 def test_track_needs_a_pass_and_is_once(passed):

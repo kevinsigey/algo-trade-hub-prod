@@ -65,6 +65,58 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("LifecyclePanel — remove from tracking (issue #601)", () => {
+  it("posts the removal and refreshes; a live idea gets no button", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    serve(calls);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onChange = vi.fn();
+    const base = detail(MAIN_LIVE);
+    const notLive = { ...base, idea: { ...base.idea, live_at: null } };
+    render(
+      <MemoryRouter>
+        <LifecyclePanel id="7" detail={notLive} onChange={onChange} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove from tracking" }));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/api/workshop/ideas/7/untrack"))).toBe(true));
+    expect(onChange).toHaveBeenCalled();
+  });
+
+  it("shows the removed state and no button once removed", () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    serve(calls);
+    const base = detail(MAIN_LIVE);
+    const removed = { ...base, idea: { ...base.idea, live_at: null, untracked_at: "2026-11-24T00:00:00Z" } };
+    render(
+      <MemoryRouter>
+        <LifecyclePanel id="7" detail={removed} onChange={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Removed 2026-11-24/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove from tracking" })).not.toBeInTheDocument();
+  });
+
+  it("gives the removed state precedence over the tracking state everywhere", () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    serve(calls);
+    const base = detail(MAIN_LIVE);
+    // Tracked (per the fixture) and then removed: no live-tracking text,
+    // no start-tracking control, and the steps line reads as removed.
+    const removed = { ...base, idea: { ...base.idea, live_at: null, untracked_at: "2026-11-24T00:00:00Z" } };
+    render(
+      <MemoryRouter>
+        <LifecyclePanel id="7" detail={removed} onChange={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Removed from tracking: its forward record has stopped/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tracking now/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/every trading day, the hub records/)).not.toBeInTheDocument();
+    expect(screen.getByText(/recording stopped when the idea was removed/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start tracking" })).not.toBeInTheDocument();
+  });
+});
+
 describe("LifecyclePanel — the $1M book block", () => {
   it("runs the same gate for the second book and goes live with book=big at its own size", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];

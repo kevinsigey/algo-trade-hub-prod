@@ -278,6 +278,7 @@ export interface Idea {
   tracked_run_id?: number | null;
   live_at?: string | null;
   killed_at?: string | null;
+  untracked_at?: string | null;
   size_pct?: number | null;
   auto_orders?: boolean;
 }
@@ -425,6 +426,7 @@ export interface IdeaRow {
   tracked_at: string | null;
   live_at: string | null;
   killed_at: string | null;
+  untracked_at: string | null;
 }
 
 /** The one-click play check (Kevin, 2026-11-02): the idea's target book at a
@@ -744,10 +746,12 @@ export interface PublicIdea {
   gate_overridden?: boolean;
   registry?: { test_number: number | null; tests_total: number | null };
   variations: number;
-  status: "backtest" | "tracking" | "live" | "killed";
+  status: "backtest" | "tracking" | "live" | "killed" | "untracked";
   live_at: string | null;
   tracked_at: string | null;
   killed_at: string | null;
+  /** Removed from tracking (issue #601): set once; the idea no longer stands. */
+  untracked_at?: string | null;
   /** The books this idea is live on right now (subset of ["main", "big"]). */
   live_books?: string[];
   live: ShadowSummary | null;
@@ -802,6 +806,7 @@ export const STATUS_LABEL: Record<PublicIdea["status"], string> = {
   tracking: "Tracking — forward record running",
   live: "Live on paper",
   killed: "Killed",
+  untracked: "Removed from tracking",
 };
 
 export interface WorkshopDashboard {

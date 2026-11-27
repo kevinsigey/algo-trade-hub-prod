@@ -7,6 +7,8 @@ import OilLayout from "@/components/OilLayout";
 import type { JournalFeed, JournalResponse, JournalScore } from "@/lib/journal";
 import { copyWords } from "@/test/copyWords";
 
+vi.mock("@/lib/supabase", () => ({ supabase: {} }));
+
 function score(over: Partial<JournalScore> = {}): JournalScore {
   return {
     forecaster: "oil_wti", forecaster_version: "wti-v1", cadence: "daily", baseline: "market", n_targets: 0,
@@ -42,11 +44,12 @@ describe("/oil", () => {
     ]);
     const { container } = render(<MemoryRouter><Oil /></MemoryRouter>);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Track record" })).toBeTruthy());
-    // The record sits behind the Daily dropdown now (2026-11-02 dashboard pass).
+    // The record sits behind the Forecasts card, then its Daily dropdown.
+    fireEvent.click(screen.getByRole("button", { name: "Open Forecasts" }));
     fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
     expect(screen.queryByText(/S&P/)).toBeNull();
-    expect(screen.getByText(/Nothing locked in yet/)).toBeTruthy();
+    expect(screen.getAllByText(/Nothing locked in yet/).length).toBeGreaterThan(0);
     // The budget grows with the page: the 2026-11-03 Commodities redesign adds the
     // live hero and its labels, and the 2026-11-09 clarity pass adds the trade-rule
     // section's heading and label -- still headings and labels, never essays.
@@ -58,6 +61,7 @@ describe("/oil", () => {
     render(<MemoryRouter><Oil /></MemoryRouter>);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Track record" })).toBeTruthy());
     expect(screen.getByRole("heading", { name: "15-minute trade rule" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open 15-minute trade rule" }));
     expect(screen.getByText(/paper record of trading the forecasts/)).toBeTruthy();
   });
 
@@ -65,7 +69,8 @@ describe("/oil", () => {
     serve([score({ n_targets: 30, n_settled: 30, brier: 0.09, brier_baseline: 0.07, bss: -0.2 }),
            score({ forecaster: "baseline_persistence_oil", n_targets: 2 })]);
     render(<MemoryRouter><Oil /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByRole("button", { name: /Daily settlement/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open Forecasts" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Open Forecasts" }));
     fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
     expect(screen.getAllByText("Behind").length).toBeGreaterThan(0);
@@ -80,10 +85,13 @@ describe("/oil", () => {
     ]);
     render(<MemoryRouter><Oil /></MemoryRouter>);
     // Both records are dropdowns now; the hourly rows live under their own.
-    await waitFor(() => expect(screen.getByRole("button", { name: /Hourly settlements/ })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: /Hourly settlements/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open Hourly settlements" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Open Hourly settlements" }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (hourly, old delayed feed)" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Forecasts" }));
+    fireEvent.click(screen.getByRole("button", { name: /Daily settlement/ }));
     expect(screen.getByRole("heading", { name: "WTI crude oil (daily settlement)" })).toBeTruthy();
   });
 
@@ -112,6 +120,7 @@ describe("/oil", () => {
     render(<MemoryRouter><Oil /></MemoryRouter>);
     // The frozen record hides behind its dropdown (Kevin, 2026-11-03): the
     // page leads with the live prediction; the locked-in ladder opens on click.
+    fireEvent.click(await screen.findByRole("button", { name: "Open Forecasts" }));
     fireEvent.click(await screen.findByRole("button", { name: /Frozen record/ }));
     expect(await screen.findByText(/Our 50% level:/)).toBeTruthy();
     // Twice: once in the call, once as the ladder's strike row.
@@ -183,7 +192,39 @@ describe("/oil 15-minute panel", () => {
     render(<MemoryRouter><Oil /></MemoryRouter>);
     expect(await screen.findByText(/70% down/)).toBeInTheDocument();
     expect(screen.getByText("No trade")).toBeInTheDocument();
-    expect(screen.getByText("no window open right now")).toBeInTheDocument();
+    // A shut window is one muted line, not a row of prose.
+    expect(screen.getByText("closed")).toBeInTheDocument();
+  });
+});
+
+describe("/oil dashboard default view", () => {
+  const live = (label: string, series: string) => ({
+    series, label, state: "live", close_time: "2026-11-05T05:30:00+00:00", minutes_left: 10,
+    open_price: 10, price: 10.1, prob_up: 0.6, market: 0.55, best: null,
+  });
+
+  it("shows the six series tiles, and the trade rule links to Strategies", async () => {
+    const labels = ["WTI", "Brent", "Natural gas", "Gold", "Silver", "Copper"];
+    serve([score()], {}, undefined, { state: "live", markets: labels.map((l, i) =>
+      i < 3 ? live(l, `S${i}`) : { series: `S${i}`, label: l, state: "unavailable", reason: "no window open right now" }) });
+    render(<MemoryRouter><Oil /></MemoryRouter>);
+    const panel = await screen.findByRole("region", { name: "Next 15 minutes" });
+    await waitFor(() => expect(panel.querySelectorAll("li").length).toBe(6));
+    for (const l of labels) expect(panel.textContent).toContain(l);
+    expect(panel.textContent).toContain("closed"); // shut windows are one muted line
+    await screen.findByRole("heading", { name: "Track record" });
+    const rule = screen.getByRole("region", { name: "15-minute trade rule" });
+    expect(rule.querySelector('a[href="/strategies"]')?.textContent).toMatch(/Full record on Strategies/);
+  });
+
+  it("one failing feed leaves the rest of the page up", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => String(url).includes("/api/oil/fifteen-live")
+      ? { ok: true, json: async () => ({ state: "live", markets: [live("WTI", "S0")] }) } as Response
+      : { ok: false, status: 503, json: async () => ({ detail: "down" }) } as Response));
+    render(<MemoryRouter><Oil /></MemoryRouter>);
+    expect(await screen.findByRole("region", { name: "Next 15 minutes" })).toBeInTheDocument();
+    expect(await screen.findByText(/Commodities forecasts unavailable: down/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Forecasts" })).toBeInTheDocument();
   });
 });
 
@@ -201,10 +242,14 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     });
     render(<MemoryRouter><Oil /></MemoryRouter>);
     expect(await screen.findByText("Live")).toBeInTheDocument();
+    expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Chance of settling above each price/ })).toBeInTheDocument();
+    // The levels, range and board sit behind the card.
+    expect(screen.queryByText(/Our 80% range/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     expect(screen.getByText("$101.35")).toBeInTheDocument();
     expect(screen.getByText("$101.10")).toBeInTheDocument();
     expect(screen.getByText(/Hormuz stress 2/)).toBeInTheDocument();
-    expect(screen.getByText(/closes in ~40 min/)).toBeInTheDocument();
     // The top leads with the range now (Kevin, 2026-11-04): our 80% range
     // off this ladder starts at the 90% crossing, $100.20, and direction is
     // a No call -- the model centres on the live print.
@@ -213,7 +258,6 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     expect(screen.getByText(/Kalshi's 80% range/)).toBeInTheDocument();
     expect(screen.getByText(/No call/)).toBeInTheDocument();
     expect(screen.queryByText(/we lean higher than Kalshi/)).toBeNull();
-    expect(screen.getByRole("img", { name: /Chance of settling above each price/ })).toBeInTheDocument();
   });
 
   const quotedRows = [
@@ -230,6 +274,8 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     serve([score()], {}, { ...base, best: { strike: 101, side: "yes", prob: 0.62, cost: 0.56, edge_pts: 6, net_pts: 4.3 }, price_age_minutes: 0 });
     render(<MemoryRouter><Oil /></MemoryRouter>);
     expect(await screen.findByText(/▲ Above \$101\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/YES ≤ 60\.3c · cost 56c · \+4\.3 pts/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     // Buy-below for a 62% model price under the quadratic fee is 60.3c.
     expect(screen.getByText(/Buy YES below 60\.3c/)).toBeInTheDocument();
     expect(screen.getByText(/now 56c · model says 62% · \+4\.3 pts after fee at the ask/)).toBeInTheDocument();
@@ -244,6 +290,7 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     serve([score()], {}, { ...base, best: { strike: 102, side: "no", prob: 0.82, cost: 0.8, edge_pts: 5, net_pts: 3.9 } });
     render(<MemoryRouter><Oil /></MemoryRouter>);
     expect(await screen.findByText(/▼ Below \$102\.00/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     expect(screen.getByText(/Buy NO below 80\.9c/)).toBeInTheDocument();
     expect(screen.getByText(/now 80c/)).toBeInTheDocument();
   });
@@ -252,24 +299,28 @@ describe("/oil live hero (2026-11-03 Commodities redesign)", () => {
     serve([score()], {}, { ...base, best: null, closest: { strike: 101, side: "yes", prob: 0.58, cost: 0.56, edge_pts: 2, net_pts: 0.3 } });
     render(<MemoryRouter><Oil /></MemoryRouter>);
     expect(await screen.findByText("No trade")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     expect(screen.getByText(/Closest: Above \$101\.00, YES at 56c, model 58%/)).toBeInTheDocument();
   });
 
   it("names the live perp as a stand-in for the feed Kalshi settles on", async () => {
     serve([score()], {}, { ...base, best: null, closest: null, price_source: "hyperliquid", price_age_minutes: 0 });
     render(<MemoryRouter><Oil /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Live next hour" }));
     expect(await screen.findByText(/Hyperliquid oil perp, live but not what Kalshi settles on/)).toBeInTheDocument();
   });
 
   it("warns that a stale price can be the whole gap", async () => {
     serve([score()], {}, { ...base, best: null, closest: null, price_age_minutes: 11 });
     render(<MemoryRouter><Oil /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Live next hour" }));
     expect(await screen.findByText(/WTI price is 11 min old/)).toBeInTheDocument();
   });
 
   it("shows no price for a side Kalshi isn't quoting", async () => {
     serve([score()], {}, { ...base, rows: [{ strike: 101, ours: 0.6, market: null, yes_bid: null, yes_ask: null }] });
     render(<MemoryRouter><Oil /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Live next hour" }));
     expect(await screen.findByText(/All 1 strikes/)).toBeInTheDocument();
     const row = screen.getByText(/\$101\.00/).closest("tr")!;
     expect(row.textContent).toContain("60%");
@@ -305,6 +356,7 @@ describe("/oil live hero", () => {
     // sit on top of each other, so the lanes must differ.
     const ys = new Set([us.getAttribute("y"), kalshi.getAttribute("y"), wti.getAttribute("y")]);
     expect(ys.size).toBe(3);
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     expect(screen.getByText(/print 13 min old/)).toBeTruthy();
     expect(container.querySelectorAll("circle").length).toBeGreaterThan(0); // Kalshi's quoted points
   });
@@ -313,6 +365,7 @@ describe("/oil live hero", () => {
     serve([score()], {}, livePayload());
     render(<MemoryRouter><Oil /></MemoryRouter>);
     await screen.findByText("Us $95.79");
+    fireEvent.click(screen.getByRole("button", { name: "Open Live next hour" }));
     fireEvent.click(screen.getByRole("button", { name: /How to read this graph/ }));
     expect(screen.getByText(/settles above that price/)).toBeTruthy();
     expect(screen.getByText(/white line is the live WTI print/)).toBeTruthy();
