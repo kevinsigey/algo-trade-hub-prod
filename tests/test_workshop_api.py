@@ -284,6 +284,19 @@ def test_untrack_refuses_an_idea_live_on_the_big_book(passed):
     assert c.post(f"/api/workshop/ideas/{i}/untrack").status_code == 200
 
 
+def test_untrack_allows_an_idea_that_went_live_and_was_killed(passed):
+    """The write-time live guard (PR #602 fix round) must not over-refuse:
+    an idea whose live chapter already closed by a kill is removable --
+    go_live can never fire on it again, so there is no race to lose.
+    Caught by the #601 cleanup itself: the live-then-killed probes and
+    the Nov 5 wind-down record were refused at write time."""
+    c, db, i, _, _ = passed
+    db.db["ideas"][0]["live_at"] = "2026-11-01T00:00:00Z"
+    db.db["ideas"][0]["killed_at"] = "2026-11-02T00:00:00Z"
+    r = c.post(f"/api/workshop/ideas/{i}/untrack")
+    assert r.status_code == 200 and r.json()["untracked_at"]
+
+
 def test_a_removed_idea_cannot_go_live_on_either_book(passed):
     """CodeRabbit on PR #602: removal and go-live exclude each other -- the
     route refuses, and the store write itself requires untracked_at null."""
