@@ -309,7 +309,9 @@ type OpenOrder = {
   alpaca_order_id: string | null; client_order_id: string | null; symbol: string | null;
   side: string | null; type: string | null; time_in_force: string | null;
   qty: number | null; filled_qty: number | null; limit_price: number | null;
-  stop_price: number | null; status: string | null; submitted_at: string | null;
+  stop_price: number | null; trail_percent?: number | null; trail_price?: number | null;
+  trailing_stop_price?: number | null;
+  status: string | null; submitted_at: string | null;
 };
 
 /**
@@ -325,7 +327,7 @@ type OpenOrder = {
 type StagedSortKey = "symbol" | "side" | "type" | "qty" | "price" | "tif" | "status";
 const STAGED_READERS: Record<StagedSortKey, (o: OpenOrder) => number | string | null> = {
   symbol: (o) => o.symbol, side: (o) => o.side, type: (o) => o.type, qty: (o) => o.qty,
-  price: (o) => o.stop_price ?? o.limit_price, tif: (o) => o.time_in_force, status: (o) => o.status,
+  price: (o) => o.stop_price ?? o.limit_price ?? o.trailing_stop_price ?? null, tif: (o) => o.time_in_force, status: (o) => o.status,
 };
 
 function StagedOrders({ book }: { book: string }) {
@@ -383,7 +385,31 @@ function StagedOrders({ book }: { book: string }) {
   };
 
   if (orders === null || sortedOrders === null) return null;
-  const price = (o: OpenOrder) => o.stop_price ?? o.limit_price;
+  const price = (o: OpenOrder) => o.stop_price ?? o.limit_price ?? o.trailing_stop_price ?? null;
+  // What the Price cell says (issue #623): a stop-limit names both prices, and
+  // a trailing stop shows the stop it would trigger at now, with its trail.
+  const priceCell = (o: OpenOrder) => {
+    if (o.type === "trailing_stop") {
+      const trail = o.trail_percent != null ? `trail ${o.trail_percent}%`
+        : o.trail_price != null ? `trail $${o.trail_price.toFixed(2)}` : "trailing";
+      return (
+        <>
+          {o.trailing_stop_price != null ? `≈ $${o.trailing_stop_price.toFixed(2)}` : "—"}
+          <span className="block text-[10px] text-slate-500">{trail}</span>
+        </>
+      );
+    }
+    if (o.type === "stop_limit" && o.stop_price != null && o.limit_price != null) {
+      return (
+        <>
+          ${o.stop_price.toFixed(2)}
+          <span className="block text-[10px] text-slate-500">limit ${o.limit_price.toFixed(2)}</span>
+        </>
+      );
+    }
+    const p = price(o);
+    return p != null ? `$${p.toFixed(2)}` : "—";
+  };
   const head = (key: StagedSortKey, label: string) => (
     <SortHead label={label} sortKey={key} sort={sort}
               onSort={(k) => setSort((s) => nextSort(s, k))} />
@@ -407,7 +433,7 @@ function StagedOrders({ book }: { book: string }) {
               <td className="py-1.5 pr-3">{o.side}</td>
               <td className="py-1.5 pr-3">{o.type}</td>
               <td className="py-1.5 pr-3 tabular-nums">{o.filled_qty ? `${o.filled_qty}/` : ""}{o.qty}</td>
-              <td className="py-1.5 pr-3 tabular-nums">{price(o) != null ? `$${price(o)!.toFixed(2)}` : "—"}</td>
+              <td className="py-1.5 pr-3 tabular-nums">{priceCell(o)}</td>
               <td className="py-1.5 pr-3">{o.time_in_force}</td>
               <td className="py-1.5">{o.status}</td>
               <td className="whitespace-nowrap py-1.5 pl-3 text-right">
@@ -578,6 +604,9 @@ function OrderForm({ book }: { book: string }) {
   const [side, setSide] = useState("buy");
   const [orderType, setOrderType] = useState("market");
   const [limitPrice, setLimitPrice] = useState("");
+  const [stopPrice, setStopPrice] = useState("");
+  const [trailMode, setTrailMode] = useState("percent");
+  const [trailValue, setTrailValue] = useState("");
   const [tif, setTif] = useState("day");
   const [intent, setIntent] = useState("open");
   const [kind, setKind] = useState("single");
@@ -608,10 +637,19 @@ function OrderForm({ book }: { book: string }) {
     };
   }, []);
 
-  if (!signedIn) return null;
-
   const cleaned = cleanOcc(symbol);
   const isOcc = OCC_INPUT.test(cleaned);
+  // Stop types are shares-only: when the symbol turns out to be a contract,
+  // a stop-family selection would otherwise ride into an option order with
+  // neither price set. Fall back to a plain market order.
+  useEffect(() => {
+    if (isOcc && (orderType === "stop" || orderType === "stop_limit" || orderType === "trailing_stop")) {
+      setOrderType("market");
+    }
+  }, [isOcc, orderType]);
+
+  if (!signedIn) return null;
+
   const contractText = isOcc ? contractLabel(cleaned) : null;
   const comboReady = comboLegs.every((l) => OCC_INPUT.test(cleanOcc(l.symbol))) && netLimit.trim() !== "";
   const canPlace = kind === "combo" ? comboReady : Boolean(symbol.trim());
@@ -651,6 +689,15 @@ function OrderForm({ book }: { book: string }) {
           symbol: symbol.trim().toUpperCase(), qty: Number(qty), side, order_type: orderType, time_in_force: tif,
         };
         if (orderType === "limit") body.limit_price = Number(limitPrice);
+        if (orderType === "stop") body.stop_price = Number(stopPrice);
+        if (orderType === "stop_limit") {
+          body.stop_price = Number(stopPrice);
+          body.limit_price = Number(limitPrice);
+        }
+        if (orderType === "trailing_stop") {
+          if (trailMode === "percent") body.trail_percent = Number(trailValue);
+          else body.trail_price = Number(trailValue);
+        }
         summary = `${side} ${qty} ${body.symbol as string}`;
       }
       if (ideaId) body.idea_id = Number(ideaId);
@@ -668,7 +715,7 @@ function OrderForm({ book }: { book: string }) {
 
   return (
     <DashCard title="Place an order by hand" className="md:col-span-2 xl:col-span-4"
-              meta={<span title="Paper account. Tag an idea and the order lands in its log. Paste an OCC contract (e.g. SPY261113P00570000) for an option; every short leg must be covered.">Paper · market or limit · options by OCC</span>}>
+              meta={<span title="Paper account. Tag an idea and the order lands in its log. Paste an OCC contract (e.g. SPY261113P00570000) for an option; every short leg must be covered.">Paper · stops included</span>}>
       <div className="flex gap-2" role="group" aria-label="Order kind">
         <button type="button" onClick={() => setKind("single")} className={kindBtnCls(kind === "single")}>Single</button>
         <button type="button" onClick={() => setKind("combo")} className={kindBtnCls(kind === "combo")}>Combo (spread)</button>
@@ -688,21 +735,51 @@ function OrderForm({ book }: { book: string }) {
           </select>
         </label>
         <label className={labelCls}>Type
-          <select aria-label="Type" className={inputCls} value={orderType} onChange={(e) => setOrderType(e.target.value)}>
+          <select aria-label="Type" className={inputCls} value={orderType} onChange={(e) => {
+            const next = e.target.value;
+            setOrderType(next);
+            // Keep the TIF valid for the new type: a market order cannot rest
+            // gtc, and the stop family cannot ride opg/cls.
+            if (next === "market" && tif === "gtc") setTif("day");
+            if ((next === "stop" || next === "stop_limit" || next === "trailing_stop")
+                && (tif === "opg" || tif === "cls")) setTif("day");
+          }}>
             <option value="market">Market</option>
             <option value="limit">Limit</option>
+            {!isOcc && <option value="stop">Stop</option>}
+            {!isOcc && <option value="stop_limit">Stop-limit</option>}
+            {!isOcc && <option value="trailing_stop">Trailing stop</option>}
           </select>
         </label>
-        {orderType === "limit" && (
+        {(orderType === "limit" || orderType === "stop_limit") && (
           <label className={labelCls}>Limit price
             <input aria-label="Limit price" className={`${inputCls} w-28`} type="number" min={0} step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
           </label>
         )}
+        {(orderType === "stop" || orderType === "stop_limit") && (
+          <label className={labelCls}>Stop price
+            <input aria-label="Stop price" className={`${inputCls} w-28`} type="number" min={0} step="0.01" value={stopPrice} onChange={(e) => setStopPrice(e.target.value)} />
+          </label>
+        )}
+        {orderType === "trailing_stop" && (
+          <>
+            <label className={labelCls}>Trail by
+              <select aria-label="Trail by" className={inputCls} value={trailMode} onChange={(e) => setTrailMode(e.target.value)}>
+                <option value="percent">Percent</option>
+                <option value="price">Amount ($)</option>
+              </select>
+            </label>
+            <label className={labelCls}>{trailMode === "percent" ? "Trail %" : "Trail $"}
+              <input aria-label="Trail value" className={`${inputCls} w-28`} type="number" min={0} step="0.01" value={trailValue} onChange={(e) => setTrailValue(e.target.value)} />
+            </label>
+          </>
+        )}
         <label className={labelCls}>Time in force
           <select aria-label="Time in force" className={inputCls} value={isOcc ? "day" : tif} onChange={(e) => setTif(e.target.value)}>
             <option value="day">Day</option>
-            {!isOcc && <option value="opg">At the open</option>}
-            {!isOcc && <option value="cls">At the close</option>}
+            {!isOcc && orderType !== "market" && <option value="gtc">Good till cancelled</option>}
+            {!isOcc && (orderType === "market" || orderType === "limit") && <option value="opg">At the open</option>}
+            {!isOcc && (orderType === "market" || orderType === "limit") && <option value="cls">At the close</option>}
           </select>
         </label>
         {isOcc && (

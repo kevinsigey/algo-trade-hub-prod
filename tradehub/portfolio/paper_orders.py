@@ -11,6 +11,12 @@
   order under a gtc tag is still refused, and a GTC limit under any other tag is still refused. Option
   orders ride the same family through the machine door (single-leg limits via submit, combos via
   submit_mleg carrying time_in_force "gtc"); Alpaca takes no GTC market option orders.
+- A fourth family (2026-11-27, Kevin via the trading chat, issue #623): hand-placed resting orders
+  from the site Trade ticket carry `manual-rest-...` (or `idea-<n>-manual-rest-...` when tagged to
+  an idea). Those tags sanction the protective shapes a hand order may take -- stop, stop-limit and
+  trailing stop on a day or gtc time in force, and a gtc limit -- because the ticket is Kevin's own
+  hand, fenced by his admin session at the route. A market order, an opg/cls protective order, or
+  anything carrying an order class under a rest tag is still refused.
 - Nothing is sent unless the book's kill switch is exactly "on" (TRADEHUB_PAPER_ORDERS for the main
   book, TRADEHUB_PAPER_ORDERS_BIG for the $1M book; each idea has its own switch too).
 - Rule orders: market or limit, at the open (opg), at the close (cls) or during the day (day). Protective orders
@@ -31,6 +37,8 @@ TIMES_IN_FORCE = ("opg", "cls", "day", "gtc")
 STOP_TAG = re.compile(r"^idea-\d+-stop-")
 MACHINE_STOP_TAG = re.compile(r"^ext-\d+-stop-")
 MACHINE_GTC_TAG = re.compile(r"^ext-\d+-gtc-")
+SITE_REST_TAG = re.compile(r"^manual-rest-")
+IDEA_SITE_REST_TAG = re.compile(r"^idea-\d+-manual-rest-")
 ORDER_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
@@ -63,6 +71,7 @@ def _price(p: float) -> str:
 def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id: str, *,
            order_type: str = "market", time_in_force: str = "opg", limit_price: float | None = None,
            stop_price: float | None = None, trail_percent: float | None = None,
+           trail_price: float | None = None,
            order_class: str | None = None, take_profit_price: float | None = None,
            extended_hours: bool = False,
            book: str | None = None, position_intent: str | None = None,
@@ -73,15 +82,30 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
     if extended_hours:
         if order_type != "limit" or time_in_force not in ("day", "gtc"):
             raise ValueError("extended-hours orders must be day or gtc limit orders")
+    # A day stop_limit is a plain rule order, not a protective one (pinned by
+    # test_stop_limit_day_allowed_with_plain_tag): it joins the protective
+    # fence only when it rests past the day, via the gtc clause.
     protective = order_type in ("stop", "trailing_stop") or time_in_force == "gtc" or order_class is not None
     sanctioned = STOP_TAG.match(client_order_id) or MACHINE_STOP_TAG.match(client_order_id)
     gtc_limit = (MACHINE_GTC_TAG.match(client_order_id) and time_in_force == "gtc"
                  and order_type == "limit")
+    site_rest = ((SITE_REST_TAG.match(client_order_id) or IDEA_SITE_REST_TAG.match(client_order_id))
+                 and order_class is None
+                 and ((order_type in ("stop", "trailing_stop", "stop_limit")
+                       and time_in_force in ("day", "gtc"))
+                      or (order_type == "limit" and time_in_force == "gtc")))
+    # The rest-tag contract holds on its own, not only via the protective
+    # fence: a market order or an opg stop-limit under a rest tag is not a
+    # protective shape, so the fence below would never see it.
+    if (SITE_REST_TAG.match(client_order_id) or IDEA_SITE_REST_TAG.match(client_order_id)) and not site_rest:
+        raise ValueError("a site resting tag sanctions only a stop, stop-limit or trailing stop "
+                         "on day or gtc, or a gtc limit order, with no order class")
     if protective and not ((sanctioned and time_in_force == "gtc"
-                            and order_type in ("stop", "trailing_stop", "limit")) or gtc_limit):
+                            and order_type in ("stop", "trailing_stop", "stop_limit", "limit"))
+                           or gtc_limit or site_rest):
         raise ValueError("stops and good-till-cancelled orders are only sanctioned protective orders "
-                         "(an idea- stop tag, a machine ext- stop tag, or a machine ext- gtc tag "
-                         "on a limit order)")
+                         "(an idea- stop tag, a machine ext- stop tag, a machine ext- gtc tag "
+                         "on a limit order, or a site manual-rest tag on a hand-placed resting order)")
     # Single-leg option orders carry an explicit open/close intent (2026-11-09):
     # Alpaca evaluates a short leg by its intent, so opens and closes never blur.
     # The key joins the body ONLY when an intent is given -- a share order's body
@@ -97,8 +121,14 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         raise ValueError("a limit order needs a limit price")
     if order_type == "stop" and not stop_price:
         raise ValueError("a stop order needs a stop price")
-    if order_type == "trailing_stop" and not trail_percent:
-        raise ValueError("a trailing stop needs a trail percent")
+    if order_type == "trailing_stop":
+        # Alpaca trails by percent or by dollar amount, never both (issue #623).
+        if (trail_percent is None) == (trail_price is None):
+            raise ValueError("a trailing stop needs exactly one of a trail percent or a trail price")
+        if trail_percent is not None and not 0 < trail_percent < 100:
+            raise ValueError("a trail percent must be between 0 and 100")
+        if trail_price is not None and trail_price <= 0:
+            raise ValueError("a trail price must be positive")
     if order_type == "stop_limit" and (stop_price is None or limit_price is None):
         raise ValueError("a stop-limit order needs a stop price and a limit price")
     if int(qty) != qty or qty < 1:
@@ -118,7 +148,10 @@ def submit(symbol: str, qty: int, side: Literal["buy", "sell"], client_order_id:
         body["stop_price"] = _price(stop_price)
         body["limit_price"] = _price(limit_price)
     if order_type == "trailing_stop":
-        body["trail_percent"] = f"{trail_percent:g}"
+        if trail_percent is not None:
+            body["trail_percent"] = f"{trail_percent:g}"
+        else:
+            body["trail_price"] = _price(trail_price)
     if extended_hours:
         body["extended_hours"] = True
     if position_intent is not None:

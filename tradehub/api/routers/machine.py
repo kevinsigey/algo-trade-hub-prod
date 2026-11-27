@@ -28,7 +28,10 @@ router = APIRouter()
 # staged mirror book had no way to rest its stops): order_type "stop" + stop_price + gtc is
 # the one protective shape the door takes, fenced to shares actually held (stop_capacity),
 # namespaced to the ext-<key>-stop- tag family paper_orders sanctions, and priced for the
-# notional cap at the stop. order_class and trailing stops still 422 here. GTC share limits
+# notional cap at the stop. Stop-limit and trailing stops joined 2026-11-27 (issue #623) on
+# the same protective terms -- gtc only, the same held-shares fence and stop- tag family,
+# a trailing stop carrying exactly one of trail_percent / trail_price. order_class still
+# 422s here. GTC share limits
 # joined 2026-11-10 (Kevin: resting exits must not expire daily): a limit order with
 # time_in_force "gtc" is the second resting shape, namespaced to the ext-<key>-gtc- tag
 # family; GTC market orders and GTC splits still 422 in validate_order. GTC option limits
@@ -59,6 +62,10 @@ class _MachineOrderIn(BaseModel):
     # enforces the sign per shape (single-leg limits stay positive).
     limit_price: float | None = None
     stop_price: float | None = Field(default=None, gt=0)
+    # Trailing stops (issue #623, 2026-11-27): a trailing_stop carries exactly
+    # one of these -- percent (of the high-water mark) or a dollar amount.
+    trail_percent: float | None = Field(default=None, gt=0)
+    trail_price: float | None = Field(default=None, gt=0)
     idea_id: int | None = None
     # Attribution (2026-11-11): an order with no idea_id must state why it
     # exists. validate_order refuses a placement that carries neither, and the
@@ -135,6 +142,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
+            "trail_percent": body.trail_percent, "trail_price": body.trail_price,
             "split": body.split, "extended_hours": body.extended_hours,
             "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
@@ -193,8 +201,13 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
                 "portfolio_check": result["portfolio_check"],
                 "tracker": tracker, "link_note": note}
     submit_kwargs = {}
-    if body.order_type == "stop":
+    if body.order_type in ("stop", "stop_limit"):
         submit_kwargs["stop_price"] = body.stop_price
+    if body.order_type == "trailing_stop":
+        if body.trail_percent is not None:
+            submit_kwargs["trail_percent"] = body.trail_percent
+        if body.trail_price is not None:
+            submit_kwargs["trail_price"] = body.trail_price
 
     def submit_one(qty: int, client_order_id: str):
         # extended_hours joins the call ONLY when set -- an order without
@@ -202,7 +215,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         # intent precedent in paper_orders).
         return paper_orders.submit(symbol, qty, body.side, client_order_id,
                                    order_type=body.order_type, time_in_force=body.time_in_force,
-                                   limit_price=body.limit_price if body.order_type == "limit" else None,
+                                   limit_price=body.limit_price if body.order_type in ("limit", "stop_limit") else None,
                                    **({"extended_hours": True} if body.extended_hours else {}),
                                    book=book, **submit_kwargs)
 
@@ -289,7 +302,7 @@ def place_machine_order(body: _MachineOrderIn, authorization: str | None = Heade
         return response
 
     if not body.split:
-        if body.order_type == "stop":
+        if body.order_type in ("stop", "stop_limit", "trailing_stop"):
             client_order_id = f"ext-{key['id']}-stop-{body.client_order_id}"
         elif body.time_in_force == "gtc":  # validate_order has fenced this to limit orders
             client_order_id = f"ext-{key['id']}-gtc-{body.client_order_id}"
@@ -420,6 +433,7 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
     spec = {"symbol": body.symbol, "qty": body.qty, "side": body.side,
             "order_type": body.order_type, "time_in_force": body.time_in_force,
             "limit_price": body.limit_price, "stop_price": body.stop_price,
+            "trail_percent": body.trail_percent, "trail_price": body.trail_price,
             "split": body.split, "extended_hours": body.extended_hours,
             "position_intent": body.position_intent, "exit_claim": body.exit,
             "legs": [leg.model_dump() for leg in body.legs] if body.legs else None,
@@ -515,7 +529,8 @@ def preflight_machine_order(body: _MachineOrderIn, authorization: str | None = H
             breaker = breakers.check(supabase, book)
         except Exception:  # noqa: BLE001
             breaker = None
-    namespaced = (f"ext-{key['id']}-stop-{body.client_order_id}" if body.order_type == "stop"
+    namespaced = (f"ext-{key['id']}-stop-{body.client_order_id}"
+                  if body.order_type in ("stop", "stop_limit", "trailing_stop")
                   else f"ext-{key['id']}-gtc-{body.client_order_id}" if body.time_in_force == "gtc"
                   else f"ext-{key['id']}-{body.client_order_id}")
     if body.split:

@@ -439,6 +439,78 @@ describe("Portfolio hand orders (signed-in only)", () => {
     expect(posted).toEqual([{ symbol: "XLE", qty: 3, side: "buy", order_type: "market", time_in_force: "day", book: "main" }]);
   });
 
+  it("places a trailing stop by percent through the ticket (issue #623)", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "ttwo" } });
+    fireEvent.change(screen.getByLabelText("Shares"), { target: { value: "200" } });
+    fireEvent.change(screen.getByLabelText("Side"), { target: { value: "sell" } });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "trailing_stop" } });
+    fireEvent.change(screen.getByLabelText("Trail value"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Time in force"), { target: { value: "gtc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: sell 200 TTWO \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted).toEqual([{ symbol: "TTWO", qty: 200, side: "sell", order_type: "trailing_stop",
+      time_in_force: "gtc", trail_percent: 5, book: "main" }]);
+  });
+
+  it("falls back to a market order when the symbol turns out to be a contract", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "stop_limit" } });
+    // Pasting a contract must not carry the share-only stop type into the option order.
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "SPY261113P00570000" } });
+    expect(await screen.findByText("SPY Nov 13 2026 $570 put")).toBeInTheDocument();
+    await waitFor(() => expect((screen.getByLabelText("Type") as HTMLSelectElement).value).toBe("market"));
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: buy 1 SPY261113P00570000 \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted[0].order_type).toBe("market");
+  });
+
+  it("places a stop-limit with both prices through the ticket", async () => {
+    const posted: Record<string, unknown>[] = [];
+    serveRoutes(true, posted);
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Place an order by hand")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Symbol"), { target: { value: "xle" } });
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "stop_limit" } });
+    fireEvent.change(screen.getByLabelText("Stop price"), { target: { value: "65" } });
+    fireEvent.change(screen.getByLabelText("Limit price"), { target: { value: "64.50" } });
+    fireEvent.click(screen.getByRole("button", { name: "Place order" }));
+    expect(await screen.findByText(/Order sent: buy 1 XLE \(manual-abc123\)/)).toBeInTheDocument();
+    expect(posted).toEqual([{ symbol: "XLE", qty: 1, side: "buy", order_type: "stop_limit",
+      time_in_force: "day", stop_price: 65, limit_price: 64.5, book: "main" }]);
+  });
+
+  it("shows a resting trailing stop with its computed stop price in the staged panel", async () => {
+    session.token = "jwt";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
+      if (url.includes("/api/portfolio/open-orders")) {
+        return json({ orders: [{
+          alpaca_order_id: "a7", client_order_id: "manual-rest-abc123", symbol: "TTWO",
+          side: "sell", type: "trailing_stop", time_in_force: "gtc", qty: 200, filled_qty: 0,
+          limit_price: null, stop_price: null, trail_percent: 5, trail_price: null,
+          trailing_stop_price: 218.5, status: "new", submitted_at: "2026-11-27T15:00:00Z",
+        }] });
+      }
+      if (url.includes("/api/admin/me")) return json({ email: "k@example.com" });
+      if (url.includes("/api/workshop/ideas")) return json([]);
+      return json(payload({}));
+    }));
+    pageAt("/portfolio?tab=trade");
+    expect(await screen.findByText("Staged orders")).toBeInTheDocument();
+    const full = openCard("Staged orders");
+    expect(full.getByText("≈ $218.50")).toBeInTheDocument();
+    expect(full.getByText("trail 5%")).toBeInTheDocument();
+  });
+
   it("places a single-leg option order with an intent and a day time-in-force", async () => {
     const posted: Record<string, unknown>[] = [];
     serveRoutes(true, posted);

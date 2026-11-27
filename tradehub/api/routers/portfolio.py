@@ -249,6 +249,11 @@ class _OrderIn(BaseModel):
     side: str | None = None
     order_type: str = "market"
     limit_price: float | None = None
+    # Native stops (issue #623, 2026-11-27): the share path takes stop_price
+    # (stop, stop-limit), and a trailing stop trails by percent or by price.
+    stop_price: float | None = None
+    trail_percent: float | None = None
+    trail_price: float | None = None
     time_in_force: str = "day"
     idea_id: int | None = None
     book: str = "main"
@@ -388,13 +393,17 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     """Place one paper order by hand (Kevin, signed in). This is the critique's signed-in order
     endpoint -- deliberately NOT a machine API: the only credential is Kevin's admin session,
     and the only order path is paper_orders.submit, so the paper host, the TRADEHUB_PAPER_ORDERS
-    switch and the protective-order tag rules all still apply. Plain market/limit only; stops
-    and GTC orders remain the hub's own protective orders, never hand-placed.
+    switch and the protective-order tag rules all still apply.
+    Native stops (Kevin, 2026-11-27, issue #623): the ticket now places stop, stop-limit
+    and trailing-stop share orders, and GTC rests -- the monitored-stop workaround the
+    trading chat ran by hand is what this retires. Resting shapes (the stop family, and
+    a limit on gtc) ride the manual-rest tag family paper_orders sanctions for hand
+    orders; plain market/limit orders keep the manual tags they have always carried.
     With an idea_id the client_order_id carries the `idea-<n>-` tag, so the order shows in that
     idea's order log and fills like an auto order does.
     Option orders (2026-11-09) -- a single-leg OCC symbol, or legs[] for a combo --
     take the _place_form_option_order path: the machine API's shared validation,
-    so a naked short is refused here exactly as it is there."""
+    so a naked short is refused here exactly as it is there. Stop shapes are shares-only."""
     from uuid import uuid4
 
     from tradehub.portfolio import option_orders, paper_orders
@@ -402,6 +411,10 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
     from tradehub.workshop.spec import TICKER
 
     _book_or_400(body.book)
+    if body.order_type in ("stop", "stop_limit", "trailing_stop") and (
+            body.legs or option_orders.is_option_symbol(body.symbol)):
+        raise HTTPException(status_code=422,
+                            detail="stop orders are for shares; option orders keep their market/limit shapes")
     if body.legs or option_orders.is_option_symbol(body.symbol):
         return _place_form_option_order(body, user)
     symbol = (body.symbol or "").strip().upper()
@@ -411,20 +424,56 @@ def place_portfolio_order(body: _OrderIn, user: dict = Depends(admin.require_adm
         raise HTTPException(status_code=422, detail="side must be buy or sell")
     if body.qty is None or body.qty < 1:
         raise HTTPException(status_code=422, detail="qty must be at least 1")
-    if body.order_type not in ("market", "limit"):
-        raise HTTPException(status_code=422, detail="hand-placed orders are market or limit only")
-    if body.time_in_force not in ("opg", "cls", "day"):
-        raise HTTPException(status_code=422, detail="time_in_force must be opg, cls or day")
+    if body.order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
+        raise HTTPException(status_code=422, detail="unsupported order_type")
+    if body.time_in_force not in ("opg", "cls", "day", "gtc"):
+        raise HTTPException(status_code=422, detail="time_in_force must be opg, cls, day or gtc")
+    if body.time_in_force in ("opg", "cls") and body.order_type not in ("market", "limit"):
+        raise HTTPException(status_code=422, detail="opg/cls orders are market or limit only")
+    if body.time_in_force == "gtc" and body.order_type == "market":
+        raise HTTPException(status_code=422, detail="a market order cannot rest good-till-cancelled")
     if body.order_type == "limit" and body.limit_price is None:
         raise HTTPException(status_code=422, detail="a limit order needs a limit_price")
     if body.limit_price is not None and body.limit_price <= 0:
         raise HTTPException(status_code=422, detail="limit_price must be positive")
-    tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
+    if body.order_type == "stop":
+        if body.stop_price is None or body.stop_price <= 0:
+            raise HTTPException(status_code=422, detail="a stop order needs a positive stop_price")
+        if body.limit_price is not None or body.trail_percent is not None or body.trail_price is not None:
+            raise HTTPException(status_code=422, detail="a stop order takes only a stop_price")
+    if body.order_type == "stop_limit":
+        if body.stop_price is None or body.stop_price <= 0 or body.limit_price is None:
+            raise HTTPException(status_code=422, detail="a stop-limit order needs a stop_price and a limit_price")
+        if body.trail_percent is not None or body.trail_price is not None:
+            raise HTTPException(status_code=422, detail="trail fields are for trailing stops")
+    if body.order_type == "trailing_stop":
+        if (body.trail_percent is None) == (body.trail_price is None):
+            raise HTTPException(status_code=422, detail="a trailing stop needs exactly one of trail_percent or trail_price")
+        if body.trail_percent is not None and not 0 < body.trail_percent < 100:
+            raise HTTPException(status_code=422, detail="trail_percent must be between 0 and 100")
+        if body.trail_price is not None and body.trail_price <= 0:
+            raise HTTPException(status_code=422, detail="trail_price must be positive")
+        if body.stop_price is not None or body.limit_price is not None:
+            raise HTTPException(status_code=422, detail="a trailing stop takes no stop_price or limit_price")
+    if body.order_type == "market" and (body.limit_price is not None or body.stop_price is not None
+                                        or body.trail_percent is not None or body.trail_price is not None):
+        raise HTTPException(status_code=422, detail="a market order takes no limit, stop or trail price")
+    if body.order_type == "limit" and (body.stop_price is not None or body.trail_percent is not None
+                                       or body.trail_price is not None):
+        raise HTTPException(status_code=422, detail="a limit order takes only a limit_price")
+    resting = body.order_type in ("stop", "stop_limit", "trailing_stop") or body.time_in_force == "gtc"
+    if resting:
+        tag = f"idea-{body.idea_id}-manual-rest-" if body.idea_id is not None else "manual-rest-"
+    else:
+        tag = f"idea-{body.idea_id}-manual-" if body.idea_id is not None else "manual-"
     client_order_id = tag + uuid4().hex[:12]
     try:
         order = paper_orders.submit(symbol, body.qty, body.side, client_order_id,
                                     order_type=body.order_type, time_in_force=body.time_in_force,
-                                    limit_price=body.limit_price if body.order_type == "limit" else None,
+                                    limit_price=body.limit_price if body.order_type in ("limit", "stop_limit") else None,
+                                    stop_price=body.stop_price if body.order_type in ("stop", "stop_limit") else None,
+                                    trail_percent=body.trail_percent if body.order_type == "trailing_stop" else None,
+                                    trail_price=body.trail_price if body.order_type == "trailing_stop" else None,
                                     book=body.book)
     except paper_orders.OrdersDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

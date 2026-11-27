@@ -45,7 +45,8 @@ def test_a_market_order_goes_through_submit_with_a_manual_tag(api):
     assert body["placed_by"] == "kevin@example.com"
     assert body["client_order_id"].startswith("manual-")
     assert sent == [{"symbol": "XLE", "qty": 3, "side": "buy", "client_order_id": body["client_order_id"],
-                     "order_type": "market", "time_in_force": "day", "limit_price": None, "book": "main"}]
+                     "order_type": "market", "time_in_force": "day", "limit_price": None,
+                     "stop_price": None, "trail_percent": None, "trail_price": None, "book": "main"}]
 
 
 def test_an_idea_order_carries_the_idea_tag(api):
@@ -75,6 +76,75 @@ def test_protective_shapes_are_refused(api):
                     {"symbol": "XLE", "qty": 1, "side": "buy", "time_in_force": "gtc"},
                     {"symbol": "not a ticker!", "qty": 1, "side": "buy"},
                     {"symbol": "XLE", "qty": 1, "side": "hold"}):
+        assert client.post("/api/portfolio/orders", json=payload).status_code == 422, payload
+    assert sent == []
+
+
+# ── native stops (issue #623, 2026-11-27) ────────────────────────────────────
+
+def test_a_stop_places_with_a_rest_tag_and_its_stop_price(api):
+    client, sent = api
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "TTWO", "qty": 200, "side": "sell", "order_type": "stop",
+                          "stop_price": 207.0, "time_in_force": "gtc"})
+    assert r.status_code == 200
+    assert r.json()["client_order_id"].startswith("manual-rest-")
+    assert sent[0]["order_type"] == "stop" and sent[0]["stop_price"] == 207.0
+    assert sent[0]["time_in_force"] == "gtc"
+
+
+def test_a_stop_limit_places_with_both_prices(api):
+    client, sent = api
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "XLE", "qty": 5, "side": "sell", "order_type": "stop_limit",
+                          "stop_price": 65.0, "limit_price": 64.5, "time_in_force": "day"})
+    assert r.status_code == 200
+    assert sent[0]["stop_price"] == 65.0 and sent[0]["limit_price"] == 64.5
+
+
+def test_a_trailing_stop_places_by_percent_or_by_price(api):
+    client, sent = api
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "TTWO", "qty": 200, "side": "sell", "order_type": "trailing_stop",
+                          "trail_percent": 5, "time_in_force": "gtc"})
+    assert r.status_code == 200 and sent[0]["trail_percent"] == 5 and sent[0]["trail_price"] is None
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "TTWO", "qty": 200, "side": "sell", "order_type": "trailing_stop",
+                          "trail_price": 3.25, "time_in_force": "day"})
+    assert r.status_code == 200 and sent[1]["trail_price"] == 3.25 and sent[1]["trail_percent"] is None
+
+
+def test_an_idea_tagged_stop_and_a_gtc_limit_ride_the_rest_family(api):
+    client, sent = api
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "stop",
+                          "stop_price": 80.0, "idea_id": 12})
+    assert r.status_code == 200
+    assert r.json()["client_order_id"].startswith("idea-12-manual-rest-")
+    r = client.post("/api/portfolio/orders",
+                    json={"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "limit",
+                          "limit_price": 90.0, "time_in_force": "gtc"})
+    assert r.status_code == 200
+    assert r.json()["client_order_id"].startswith("manual-rest-")
+
+
+def test_stop_shape_refusals(api):
+    client, sent = api
+    for payload in (
+            {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "trailing_stop"},  # neither trail field
+            {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "trailing_stop",
+             "trail_percent": 5, "trail_price": 3.0},  # both trail fields
+            {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "trailing_stop", "trail_percent": 150},
+            {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "stop_limit", "stop_price": 65.0},  # no limit
+            {"symbol": "XLE", "qty": 1, "side": "sell", "order_type": "stop", "stop_price": 65.0,
+             "time_in_force": "opg"},  # stops cannot ride the open
+            {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "market", "time_in_force": "gtc"},
+            {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "market",
+             "stop_price": 65.0},  # protective fields refuse on a market order, never silently drop
+            {"symbol": "XLE", "qty": 1, "side": "buy", "order_type": "limit", "limit_price": 90.0,
+             "trail_percent": 5},  # ... and on a limit order
+            {"symbol": "SPY261113P00570000", "qty": 1, "side": "sell", "order_type": "stop",
+             "stop_price": 5.0}):  # stops are shares-only
         assert client.post("/api/portfolio/orders", json=payload).status_code == 422, payload
     assert sent == []
 

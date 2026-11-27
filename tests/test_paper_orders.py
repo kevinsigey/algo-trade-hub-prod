@@ -411,3 +411,74 @@ def test_a_machine_gtc_tag_is_the_third_sanctioned_protective_family(keys, monke
         with pytest.raises(ValueError):
             paper_orders.submit("IBIT", 5, "sell", tag, session=s, **kw)
     assert len(s.calls) == 1
+
+
+# ── native stops (issue #623, 2026-11-27) ────────────────────────────────────
+
+def test_a_trailing_stop_by_price_posts_trail_price(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-t1"}))
+    paper_orders.submit("TTWO", 200, "sell", "manual-rest-abc123", order_type="trailing_stop",
+                        time_in_force="gtc", trail_price=3.25, session=s)
+    body = s.calls[0]["json"]
+    assert body["type"] == "trailing_stop" and body["trail_price"] == "3.25"
+    assert "trail_percent" not in body
+
+
+def test_a_trailing_stop_by_percent_still_posts_trail_percent(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-t2"}))
+    paper_orders.submit("XLE", 10, "sell", "ext-1-stop-run-1", order_type="trailing_stop",
+                        time_in_force="gtc", trail_percent=5, session=s)
+    body = s.calls[0]["json"]
+    assert body["trail_percent"] == "5" and "trail_price" not in body
+
+
+def test_a_trailing_stop_needs_exactly_one_trail(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200))
+    for kw in ({}, {"trail_percent": 5, "trail_price": 3.0}, {"trail_percent": 150}):
+        with pytest.raises(ValueError):
+            paper_orders.submit("XLE", 10, "sell", "manual-rest-abc123",
+                                order_type="trailing_stop", time_in_force="gtc", session=s, **kw)
+    assert s.calls == []
+
+
+def test_a_stop_limit_posts_both_prices_under_the_machine_stop_tag(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-sl"}))
+    paper_orders.submit("XLE", 10, "sell", "ext-1-stop-run-1", order_type="stop_limit",
+                        time_in_force="gtc", stop_price=65.0, limit_price=64.5, session=s)
+    body = s.calls[0]["json"]
+    assert body["type"] == "stop_limit" and body["stop_price"] == "65.00" and body["limit_price"] == "64.50"
+
+
+def test_site_rest_tag_sanctions_hand_resting_orders(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200, {"id": "o-r1"}))
+    paper_orders.submit("TTWO", 200, "sell", "manual-rest-abc123", order_type="stop",
+                        time_in_force="day", stop_price=207.0, session=s)
+    assert s.calls[0]["json"]["type"] == "stop"
+    s2 = Session(Resp(200, {"id": "o-r2"}))
+    paper_orders.submit("XLE", 5, "buy", "idea-9-manual-rest-def456", order_type="limit",
+                        time_in_force="gtc", limit_price=90.0, session=s2)
+    assert s2.calls[0]["json"]["time_in_force"] == "gtc"
+
+
+def test_site_rest_tag_refuses_non_resting_shapes(keys, monkeypatch):
+    monkeypatch.setenv("TRADEHUB_PAPER_ORDERS", "on")
+    s = Session(Resp(200))
+    for kw in ({"order_type": "market", "time_in_force": "gtc"},
+               {"order_type": "market", "time_in_force": "day"},  # not protective: the rest-tag gate itself refuses it
+               {"order_type": "stop_limit", "time_in_force": "opg", "stop_price": 10.0,
+                "limit_price": 9.5},  # same: opg is no resting shape under a rest tag
+               {"order_type": "stop", "time_in_force": "opg", "stop_price": 10.0},
+               {"order_type": "limit", "time_in_force": "gtc", "limit_price": 10.0,
+                "order_class": "oco", "take_profit_price": 12.0, "stop_price": 9.0}):
+        with pytest.raises(ValueError):
+            paper_orders.submit("XLE", 1, "buy", "manual-rest-abc123", session=s, **kw)
+    # And a stop under a plain manual tag is still nobody's sanctioned order.
+    with pytest.raises(ValueError):
+        paper_orders.submit("XLE", 1, "sell", "manual-abc123", order_type="stop",
+                            time_in_force="gtc", stop_price=10.0, session=s)
+    assert s.calls == []

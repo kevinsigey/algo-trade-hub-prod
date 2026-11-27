@@ -436,6 +436,7 @@ def _order_row(o: dict, titles: dict[int, str]) -> dict:
             "filled_qty": num("filled_qty"), "type": o.get("type") or o.get("order_type"),
             "time_in_force": o.get("time_in_force"), "status": o.get("status"),
             "limit_price": num("limit_price"), "stop_price": num("stop_price"),
+            "trail_percent": num("trail_percent"), "trail_price": num("trail_price"),
             "filled_avg_price": num("filled_avg_price"),
             "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
             "asset": "option" if _OPTION_SYMBOL.match(asset_symbol or "") else "stock",
@@ -467,7 +468,8 @@ def activity(supa, now: datetime | None = None, book_name: str | None = None) ->
     rows = [_order_row(o, titles) for o in orders]
     # This payload is public: an unexecuted order's price says where a position's stop sits (or sat),
     # so only the signed-in open-orders endpoint shows it.
-    rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None} for r in rows]
+    rows = [r if r["status"] == "filled" else {**r, "limit_price": None, "stop_price": None,
+                                                "trail_percent": None, "trail_price": None} for r in rows]
     closed_payload = closed(supa, now, book_name=name)
     return {"state": "live", "as_of": now.isoformat(), "book": name,
             "open": [r for r in rows if r["status"] not in _TERMINAL],
