@@ -59,8 +59,22 @@ def untrack(supa, idea_id: int) -> dict:
     Ideas record. Nothing is deleted: runs, shadow days, labels and fills keep
     their idea id, so historical attribution is never orphaned. The write
     itself requires live_at to still be null, so a go-live that lands first
-    wins the race and this raises AlreadySet instead of removing a live idea."""
-    return _set_once(supa, idea_id, "untracked_at", require_null=("live_at",))
+    wins the race and this raises AlreadySet instead of removing a live idea.
+    An idea that went live and was killed is the one carve-out: its live
+    chapter is closed, go_live can never fire on it again (live_at is set
+    once), and killing was its exit -- removal is the route's verdict for
+    that state, so a guarded first attempt that fails on live_at alone is
+    retried plainly once the re-read confirms the kill."""
+    try:
+        return _set_once(supa, idea_id, "untracked_at", require_null=("live_at",))
+    except AlreadySet:
+        rows = supa.table(IDEAS).select("live_at,killed_at,untracked_at").eq(
+            "id", idea_id).execute().data
+        row = rows[0] if rows else None
+        if (row and row.get("live_at") and row.get("killed_at")
+                and not row.get("untracked_at")):
+            return _set_once(supa, idea_id, "untracked_at")
+        raise
 
 
 def _all_ideas(supa) -> list[dict]:
