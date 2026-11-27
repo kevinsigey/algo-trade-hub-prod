@@ -31,6 +31,11 @@ class FakeLivePortfolio:
         self.live_ask_cents = 40.0
         self.live_market = True
         self.fill_count = "1.00"
+        # Per-call schedules (issue #619 tests): popped in order, then
+        # the flat attributes above apply.
+        self.fill_counts: list[str] | None = None
+        self.ask_cents_list: list[float] | None = None
+        self.raise_on_calls: set[int] | None = None  # 1-based create calls
 
     def assert_live_host(self):
         if self.refuse:
@@ -44,7 +49,8 @@ class FakeLivePortfolio:
     def get_market_data(self, ticker):
         if not self.live_market:
             return None
-        ask = self.live_ask_cents
+        ask = (self.ask_cents_list.pop(0) if self.ask_cents_list
+               else self.live_ask_cents)
         return {"market": {
             "yes_ask_dollars": f"{ask / 100:.4f}",
             "yes_bid_dollars": f"{(ask - 2) / 100:.4f}",
@@ -54,8 +60,12 @@ class FakeLivePortfolio:
 
     def create_order(self, **kw):
         self.placed.append(kw)
+        if self.raise_on_calls and len(self.placed) in self.raise_on_calls:
+            raise RuntimeError("response lost after acceptance")
+        fill_count = (self.fill_counts.pop(0) if self.fill_counts
+                      else self.fill_count)
         return {"order_id": f"ord-{len(self.placed)}",
-                "fill_count": self.fill_count,
+                "fill_count": fill_count,
                 "remaining_count": "0.00"}
 
     def get_orders(self, status=None, ticker=None):
@@ -179,11 +189,169 @@ def test_places_one_contract_under_45(db):
     assert row["status"] == "filled"
     assert row["contracts_requested"] == 1
     assert row["contracts_filled"] == 1
-    assert row["fill_price"] == 0.40
+    # The fake's response carries no fill price, so the lane records the
+    # limit as the worst case -- since the 2026-11-25 amendment that
+    # limit is the ask + 1c (41c here), not the ask itself.
+    assert portfolio.placed[0]["limit_price_cents"] == 41
+    assert row["fill_price"] == 0.41
+    assert row["attempts"] == 1 and row["filled_attempt"] == 1
     assert row["fee_usd"] == 0.02
     assert row["client_order_id"] == f"kl-{row['ticker']}"
     assert row["latency_s"] == 120.0
     assert any(a["evidence"]["event"] == "fill" for a in alerts(db))
+
+
+# -- the 2026-11-25 execution amendment (issue #619) --------------------------
+
+def test_limit_price_helper():
+    assert lane.limit_price(0.40, 0.40) == 0.41
+    # ask + 1c would breach frozen + 3c: the limit is the cap itself.
+    assert lane.limit_price(0.425, 0.40) == 0.43
+
+
+def test_limit_never_rounds_above_the_reserve(monkeypatch):
+    """CodeRabbit on PR #620: a fractional cap floors to the cent, so the
+    limit never sits above frozen + cap (the reserved cost)."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_SLIPPAGE", "0.025")
+    assert lane.limit_price(0.42, 0.40) == 0.42
+    assert lane.limit_price(0.40, 0.40) == 0.41
+
+
+def test_limit_is_capped_when_ask_plus_a_cent_breaches(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.live_ask_cents = 42.5  # edge .125 clears; 2.5c over frozen
+    seed_open(db, [decision()])
+    lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed[0]["limit_price_cents"] == 43
+
+
+def test_recross_fills_on_the_second_send(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00", "1.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert portfolio.placed[1]["client_order_id"].endswith("-r1")
+    assert summary["recrossed"] == 1 and summary["recross_filled"] == 1
+    assert summary["filled"] == 1 and summary["unfilled"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "filled"
+    assert row["attempts"] == 2 and row["filled_attempt"] == 2
+    assert row["client_order_id"].endswith("-r1")
+    assert row["contracts_filled"] == 1
+
+
+def test_recross_stops_when_the_edge_is_gone(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 50.0]  # fresh edge .05 < the bar
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    assert summary["recrossed"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+
+
+def test_recross_stops_at_the_slippage_cap(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 44.0]  # 4c over frozen: cap binds
+    seed_open(db, [decision()])
+    lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+
+
+def test_recross_never_a_third_attempt(db):
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00", "0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert summary["recrossed"] == 1 and summary["recross_filled"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 2
+    assert row.get("filled_attempt") is None
+
+
+def test_recross_error_keeps_the_claim_pending_under_the_recross_identity(db):
+    """CodeRabbit on PR #620: a re-cross whose response is lost after
+    acceptance must not be written off as unfilled -- the row stays
+    pending under the -r1 identity and reconciliation settles which."""
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    portfolio.raise_on_calls = {2}
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 2
+    assert summary["placed"] == 1 and summary["unfilled"] == 0
+    assert any("recross" in e for e in summary["errors"])
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "pending"
+    assert row["attempts"] == 2
+    assert row["client_order_id"].endswith("-r1")
+    assert "recross:" in (row.get("last_error") or "")
+
+
+def test_reservations_use_the_worst_payable_not_the_ask(db, monkeypatch):
+    """CodeRabbit on PR #620: cost accounting reserves at frozen + cap
+    (the worst either send can pay), so a ceiling between the ask cost
+    and the cap cost refuses the order instead of letting a fill at
+    the limit land over the line."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_NOTIONAL_PER_DAY_USD", "0.42")
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    seed_open(db, [decision()])  # frozen .40, ask .40, reserve .43
+    summary = lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert summary["skipped_cap"] == 1
+    row = db.db[lane.ORDERS][0]
+    assert row["skip_reason"] == "daily_notional_cap"
+
+
+def test_runner_loop_repeats_passes_inside_the_budget(monkeypatch):
+    from tradehub.scripts import kalshi_live_run as runner
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
+    monkeypatch.setattr(runner, "load_local_env", lambda: None)
+    monkeypatch.setattr(runner, "KalshiLivePortfolio", object)
+    monkeypatch.setattr(runner, "get_client", lambda: object())
+    passes: list[float] = []
+    monkeypatch.setattr(runner, "run_once",
+                        lambda supa, portfolio, now: passes.append(clock["t"]) or {})
+    reads = {"n": 0}
+
+    def fake_monotonic():
+        # A loop that stopped sleeping would never advance the clock:
+        # fail instead of hanging.
+        reads["n"] += 1
+        assert reads["n"] < 1000, "runner loop is not sleeping"
+        return clock["t"]
+
+    monkeypatch.setattr(runner.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(runner.time, "sleep", fake_sleep)
+    monkeypatch.setattr(runner.sys, "argv",
+                        ["kalshi_live_run", "--loop", "0.35", "--interval", "0.1"])
+    assert runner.main() == 0
+    # Passes at t=0, .1, .2, .3 exactly, with a requested sleep of the
+    # full interval between each pair -- a loop that dropped its pacing
+    # would spin at t=0 and fail both assertions.
+    assert passes == [0.0, 0.1, 0.2, 0.30000000000000004]
+    assert sleeps == [0.1, 0.1, 0.1]
+    # No --loop: exactly one pass.
+    passes.clear()
+    monkeypatch.setattr(runner.sys, "argv", ["kalshi_live_run"])
+    assert runner.main() == 0
+    assert len(passes) == 1
 
 
 def test_second_pass_on_same_decision_places_nothing(db):
@@ -480,12 +648,13 @@ def test_fill_price_and_fee_from_order_response(db):
     row = db.db[lane.ORDERS][0]
     assert row["fill_price"] == 0.39 and row["fee_usd"] == 0.03
     assert row["slippage"] == -0.01 and not row.get("last_error")
-    # Missing fields fall back to the limit, flagged.
+    # Missing fields fall back to the limit, flagged -- the limit being
+    # the amended ask + 1c since 2026-11-25.
     db2 = DB()
     seed_open(db2, [decision()])
     lane.run_once(db2, FakeLivePortfolio(), NOW)
     row = db2.db[lane.ORDERS][0]
-    assert row["fill_price"] == 0.40
+    assert row["fill_price"] == 0.41
     assert row["last_error"] == "fill_price_from_limit,fee_estimated"
 
 
@@ -881,3 +1050,61 @@ def test_paused_series_get_no_new_live_decisions(monkeypatch):
     assert "KXNATGAS15M" in lane.PAUSED_SERIES
     assert "KXNATGAS15M" not in seen
     assert {"KXWTI15M", "KXBRENT15M"} <= set(seen)
+
+
+def test_recross_not_sent_when_the_identity_write_runs_into_the_close_buffer(db, monkeypatch):
+    """CodeRabbit on PR #620: the clock is re-read after the -r1 identity
+    write; inside the close buffer nothing is sent and the row keeps the
+    first attempt's identity, unfilled."""
+    clock = {"t": NOW}
+    real_update = lane._update
+
+    def slow_update(supa, row, patch):
+        if patch.get("attempts") == 2:
+            clock["t"] = NOW + timedelta(minutes=9, seconds=30)  # 30s to close
+        return real_update(supa, row, patch)
+
+    monkeypatch.setattr(lane, "_update", slow_update)
+    monkeypatch.setattr(lane, "_utcnow", lambda: clock["t"])
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    portfolio.fill_counts = ["0.00"]
+    portfolio.ask_cents_list = [40.0, 40.0]
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert len(portfolio.placed) == 1
+    assert summary["recrossed"] == 0
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "unfilled" and row["attempts"] == 1
+    assert not row["client_order_id"].endswith("-r1")
+
+
+def test_adopted_recross_fill_marks_the_second_attempt(db):
+    """CodeRabbit on PR #620: a pending -r1 row adopted from the exchange
+    carries filled_attempt 2, so the scoreboard counts it."""
+    seed_rows(db, [order_row(status="pending", kalshi_order_id=None, live_ask=0.40,
+                             attempts=2, client_order_id="kl-a-r1",
+                             target="kalshi:KXWTI15M-a", ticker="KXWTI15M-a",
+                             window_close=(NOW + timedelta(minutes=5)).isoformat())])
+    portfolio = FakeLivePortfolio()
+    portfolio.get_orders = lambda **kw: [
+        {"order_id": "o-a", "client_order_id": "kl-a-r1", "status": "executed",
+         "fill_count": "1.00", "average_fill_price": "0.4100",
+         "average_fee_paid": "0.0200"}]
+    lane.run_once(db, portfolio, NOW)
+    row = db.db[lane.ORDERS][0]
+    assert row["status"] == "filled" and row["filled_attempt"] == 2
+    assert row["fill_price"] == 0.41 and "last_error" not in row
+
+
+def test_earlier_unfilled_claims_count_at_the_worst_payable(db, monkeypatch):
+    """CodeRabbit on PR #620: across passes, a claim with no known fill
+    counts at frozen + cap, not its ask. .43 + .43 > .85 refuses; the old
+    ask-based count (.40 + .43) would have placed."""
+    monkeypatch.setenv("KALSHI_LIVE_MAX_NOTIONAL_PER_DAY_USD", "0.85")
+    seed_rows(db, [order_row(status="unfilled", live_ask=0.40, client_order_id="kl-old",
+                             created_at=NOW.isoformat())])
+    portfolio = FakeLivePortfolio(balance_cents=1000)
+    seed_open(db, [decision()])
+    summary = lane.run_once(db, portfolio, NOW)
+    assert portfolio.placed == []
+    assert summary["skipped_cap"] == 1

@@ -89,3 +89,46 @@ Environment variables may lower these, never raise them.
 
 Metals; any gate or candidate lane on live money; changes to the paper rule
 or its scoring; the Alpaca books; sizing above 5% of balance.
+
+## Amendment — execution only (2026-11-25, issue #619)
+
+Kevin's amendment, approved 2026-11-25 after the lane's first two days.
+Effective at the deploy time of the merged PR that ships it. It changes
+how sends happen, never what gets decided: the rule, the series, the
+sizing, the 3¢ slippage cap, the edge bar, the $2 daily stop, the $5
+floor halt and both gates are all unchanged. Natgas stays paused.
+
+**Evidence.** Nov 24–25, oil only: 26 decisions → 15 never sent
+(edge_below_bar / slippage_cap at the cross — by design, not a defect),
+11 sent → 7 filled, 4 unfilled. All 4 unfilleds were Nov 25, all IOC at
+the live ask, all with latency_s 46–55s and the live ask below the
+frozen quote: the ~55s freeze→send gap of the 5-minute runner cadence
+loses the race on a moving tape. Day 1 sent 6/6 filled.
+
+**The three changes.**
+
+1. **Latency.** The runner loops inside the minute (cron every minute,
+   passes every ~8s), so a frozen decision is sent within seconds of
+   landing — target ~10s of frozen_at. latency_s keeps being recorded
+   on every row.
+2. **One bounded re-cross.** If an IOC returns unfilled, the lane
+   re-reads the book once and re-sends once — only if the edge still
+   clears the bar at the fresh ask and the fresh ask is at most the
+   frozen quote + 3¢ (the existing cap; it does not move). Same window
+   only, never a third attempt, and the re-send carries the same
+   decision's already-reserved contracts, never a second exposure.
+3. **+1¢ aggression inside the cap.** The limit is the live ask + 1¢,
+   still bounded by frozen + 3¢; if ask + 1¢ would breach the cap, the
+   limit is the cap. Kalshi matches at the resting price, so when the
+   book holds this costs nothing; it only rescues 1¢ uptick races.
+
+**Ledger marks.** `kalshi_live_orders.attempts` counts a row's sends
+(1 = first send, 2 = the re-cross went out) and `filled_attempt` says
+which send filled. Rows sent before this amendment carry attempts 0,
+so the 150-trade edge check can split the ledger pre/post amendment on
+that column, and first-send fills split from re-cross fills on
+filled_attempt.
+
+**Acceptance.** The first full day after deploy reports: sent→fill
+rate and mean latency_s against the ~55s / day-1 baseline, the
+re-cross count, and how many re-crosses filled.

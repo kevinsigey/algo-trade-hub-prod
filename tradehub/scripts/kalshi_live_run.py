@@ -1,4 +1,4 @@
-"""Timer entrypoint: one Kalshi LIVE micro-pilot pass (issue #590).
+"""Timer entrypoint: the Kalshi LIVE micro-pilot lane (issue #590).
 
 Runs tradehub/kalshi_live_lane.py's run_once against Kevin's live
 Kalshi account: reconcile open live rows, evaluate the pilot's gates,
@@ -8,23 +8,37 @@ pilot's sizing. Refuses loudly (exit 1) whenever the live guard fails
 the production host places nothing. Ships with the enable flag unset;
 Kevin sets it himself after reviewing the merged PR.
 
-Installed on the VPS as a systemd timer on the same +2-minute offset
-as the demo runner (the forecasts freeze on the 5-minute marks, so +2
-trades the same window's freeze while it is still open). Real money:
-the lane's own ceilings, daily stop, floor halt and gates are the
-protection, all in tradehub/kalshi_live_lane.py.
+Execution amendment (2026-11-25, issue #619): the freeze->send gap of
+the old 5-minute cadence (46-55s on the Nov 25 unfilleds) lost the
+race on a moving tape, so the installed cron now runs this entrypoint
+every minute with `--loop 55 --interval 8`: passes repeat inside the
+minute and a frozen decision is sent within seconds of landing. Each
+pass still records latency_s on its rows, so the improvement is
+measured by the same field that exposed the problem. A pass that
+raises is printed and the loop carries on; a guard refusal still
+exits 1 at once.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import UTC, datetime
 
 from tradehub.core.env import load_local_env
 from tradehub.core.kalshi_live_portfolio import KalshiLivePortfolio
 from tradehub.core.supabase_client import get_client
 from tradehub.kalshi_live_lane import run_once
+
+
+def _arg_value(flag: str) -> float | None:
+    if flag not in sys.argv:
+        return None
+    try:
+        return float(sys.argv[sys.argv.index(flag) + 1])
+    except (IndexError, ValueError):
+        return None
 
 
 def main() -> int:
@@ -34,9 +48,21 @@ def main() -> int:
     except ValueError as exc:
         print(json.dumps({"kalshi_live": "refused", "reason": str(exc)}))
         return 1
-    summary = run_once(get_client(), portfolio, datetime.now(UTC))
-    print(json.dumps({"kalshi_live": summary}, default=str))
-    return 1 if "refused" in summary else 0
+    supa = get_client()
+    loop_s = _arg_value("--loop") or 0.0
+    interval = _arg_value("--interval") or 8.0
+    started = time.monotonic()
+    while True:
+        try:
+            summary = run_once(supa, portfolio, datetime.now(UTC))
+        except Exception as exc:  # noqa: BLE001 -- one bad pass must not kill the loop
+            summary = {"errors": [f"pass raised: {exc}"]}
+        print(json.dumps({"kalshi_live": summary}, default=str), flush=True)
+        if "refused" in summary:
+            return 1
+        if loop_s <= 0 or time.monotonic() - started + interval >= loop_s:
+            return 0
+        time.sleep(interval)
 
 
 if __name__ == "__main__":

@@ -125,7 +125,9 @@ so applying a migration is a deliberate, dated act by a person rather than an as
 
 | 98 | `20261124000001_ideas_untracked.sql` (applied 2026-11-24 by Muse to the VPS-local database only, on Kevin's direction of 2026-11-24 (issue #601: a way to remove old ideas from tracking), adding `ideas.untracked_at` -- one set-once lifecycle column beside published_at / tracked_at / live_at / killed_at. When set, the idea leaves the tracked set (the shadow job and the weekly critic stop recording it) and the standing set on the Ideas record; nothing is deleted, so runs, shadow days, labels and fills keep their attribution. Read back: the column exists as `timestamp with time zone`. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
 
-**Watermark: `20261124000001_ideas_untracked.sql`**
+| 99 | `20261125000001_kalshi_live_attempts.sql` (applied 2026-11-25 by Muse to the VPS-local database only, on Kevin's direction of 2026-11-25 (issue #619: the live lane's execution amendment), adding `kalshi_live_orders.attempts` (integer, not null, default 0 -- the sends on a row: 1 first send, 2 the one bounded re-cross; among sent rows, 0 reads as pre-amendment) and `kalshi_live_orders.filled_attempt` (integer, nullable -- which send filled). Together they are the pre/post-amendment split the 150-trade edge check reads. Read back: both columns present with the expected types and default. The cloud project was deliberately NOT applied -- it stays the frozen rollback copy) |
+
+**Watermark: `20261125000001_kalshi_live_attempts.sql`**
 
 ## How to record a new one
 
