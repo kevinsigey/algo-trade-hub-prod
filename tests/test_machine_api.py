@@ -207,6 +207,98 @@ def test_stop_shapes_that_are_not_protective_stops_refuse(api, monkeypatch):
     assert sent == []
 
 
+def test_a_stop_limit_places_under_the_stop_tag(api, monkeypatch):
+    """Issue #623: stop-limit joins the protective family on the same terms --
+    gtc, both prices, the held-shares fence, the ext-<key>-stop- namespace."""
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 115)
+    r = _post(client, headers, side="sell", qty=100, order_type="stop_limit",
+              time_in_force="gtc", stop_price=65.55, limit_price=64.90)
+    assert r.status_code == 200
+    assert sent[0]["client_order_id"] == "ext-1-stop-run-1"
+    assert sent[0]["order_type"] == "stop_limit"
+    assert sent[0]["stop_price"] == 65.55 and sent[0]["limit_price"] == 64.90
+
+
+def test_a_trailing_stop_places_by_percent_and_by_price(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 115)
+    r = _post(client, headers, side="sell", qty=100, order_type="trailing_stop",
+              time_in_force="gtc", trail_percent=5)
+    assert r.status_code == 200
+    assert sent[0]["client_order_id"] == "ext-1-stop-run-1"
+    assert sent[0]["trail_percent"] == 5 and "trail_price" not in sent[0]
+    r = _post(client, headers, side="sell", qty=100, order_type="trailing_stop",
+              time_in_force="gtc", trail_price=3.25, client_order_id="run-2")
+    assert r.status_code == 200
+    assert sent[1]["trail_price"] == 3.25 and "trail_percent" not in sent[1]
+
+
+def test_new_protective_shapes_refuse(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 500)
+    for over in ({"order_type": "stop_limit", "time_in_force": "gtc", "stop_price": 65.55},  # no limit
+                 {"order_type": "stop_limit", "time_in_force": "gtc", "limit_price": 64.9},  # no stop
+                 {"order_type": "stop_limit", "time_in_force": "day", "stop_price": 65.55,
+                  "limit_price": 64.9},  # protective shapes are gtc only
+                 {"order_type": "trailing_stop", "time_in_force": "gtc"},  # neither trail field
+                 {"order_type": "trailing_stop", "time_in_force": "gtc",
+                  "trail_percent": 5, "trail_price": 3.0},  # both trail fields
+                 {"order_type": "trailing_stop", "time_in_force": "gtc", "trail_percent": 150},
+                 {"order_type": "trailing_stop", "time_in_force": "gtc", "trail_percent": 5,
+                  "limit_price": 10.0},  # a trailing stop takes no limit
+                 {"order_type": "stop", "time_in_force": "gtc", "stop_price": 65.55,
+                  "trail_percent": 5},  # trail fields are trailing-only
+                 {"order_type": "market", "trail_percent": 5},
+                 {"order_type": "stop_limit", "time_in_force": "gtc", "stop_price": 65.55,
+                  "limit_price": 64.9, "split": True}):
+        r = _post(client, headers, side="sell", qty=10, **over)
+        assert r.status_code == 422, over
+    assert sent == []
+
+
+def test_a_trailing_stop_refuses_beyond_the_uncovered_position(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 40)
+    r = _post(client, headers, side="sell", qty=100, order_type="trailing_stop",
+              time_in_force="gtc", trail_percent=5)
+    assert r.status_code == 422 and "uncovered shares" in r.json()["detail"] and sent == []
+
+
+def test_preflight_names_the_stop_namespace_for_the_new_shapes(api, monkeypatch):
+    client, db, sent = api
+    headers = _key(db)
+    monkeypatch.setattr(machine_api, "stop_capacity", lambda symbol, side, book=None: 115)
+    for over in ({"order_type": "stop_limit", "stop_price": 65.55, "limit_price": 64.9},
+                 {"order_type": "trailing_stop", "trail_percent": 5}):
+        r = client.post("/api/v1/orders/preflight", headers=headers, json={
+            "symbol": "XLE", "qty": 10, "side": "sell", "client_order_id": "run-9",
+            "time_in_force": "gtc", "reason": "test placement", **over})
+        assert r.status_code == 200 and r.json()["ok"], over
+        assert r.json()["plan"]["children"][0]["client_order_id"] == "ext-1-stop-run-9"
+    assert sent == []
+
+
+def test_broker_order_view_computes_the_trailing_stop_price():
+    base = {"id": "o-1", "client_order_id": "manual-rest-x", "symbol": "TTWO", "side": "sell",
+            "type": "trailing_stop", "time_in_force": "gtc", "qty": "200", "filled_qty": "0",
+            "status": "new", "submitted_at": "2026-11-27T15:00:00Z", "hwm": "230.00"}
+    view = machine_api.broker_order_view({**base, "trail_percent": "5"})
+    assert view["trail_percent"] == 5 and view["trailing_stop_price"] == 218.5
+    view = machine_api.broker_order_view({**base, "trail_price": "3.25"})
+    assert view["trailing_stop_price"] == 226.75
+    view = machine_api.broker_order_view({**base, "side": "buy", "trail_percent": "5"})
+    assert view["trailing_stop_price"] == 241.5
+    view = machine_api.broker_order_view({**base, "trail_percent": "5", "hwm": None})
+    assert view["trailing_stop_price"] is None
+    view = machine_api.broker_order_view({"id": "o-2", "type": "limit", "limit_price": "10"})
+    assert "trailing_stop_price" not in view and view["trail_percent"] is None
+
+
 def test_a_stop_fails_closed_when_positions_cannot_be_read(api, monkeypatch):
     client, db, sent = api
     headers = _key(db)

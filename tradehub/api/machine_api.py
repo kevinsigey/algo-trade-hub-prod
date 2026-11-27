@@ -334,9 +334,24 @@ def broker_order_view(order: dict, *, now: datetime | None = None) -> dict:
             "type": order.get("type"), "time_in_force": order.get("time_in_force"),
             "qty": num(order.get("qty")), "filled_qty": num(order.get("filled_qty")),
             "limit_price": num(order.get("limit_price")), "stop_price": num(order.get("stop_price")),
+            "trail_percent": num(order.get("trail_percent")), "trail_price": num(order.get("trail_price")),
+            "hwm": num(order.get("hwm")),
             "status": order.get("status"), "submitted_at": order.get("submitted_at"),
             "filled_avg_price": num(order.get("filled_avg_price")),
             **session_fields(order, now=now)}
+    if order.get("type") == "trailing_stop":
+        # The stop the broker would trigger at right now, off the high-water
+        # mark it reports (issue #623): a sell trails below the mark, a buy
+        # above it. Null until the broker reports a mark.
+        hwm = view["hwm"]
+        computed = None
+        if hwm is not None:
+            if view["trail_price"] is not None:
+                computed = hwm - view["trail_price"] if view["side"] == "sell" else hwm + view["trail_price"]
+            elif view["trail_percent"] is not None:
+                factor = view["trail_percent"] / 100
+                computed = hwm * (1 - factor) if view["side"] == "sell" else hwm * (1 + factor)
+        view["trailing_stop_price"] = round(computed, 4) if computed is not None else None
     if order.get("legs"):  # a combo carries its legs or it is not fully read
         view.update(_leg_readback(order, num))
         # The package's own net fill price, named as what it is (2026-11-09):
@@ -718,7 +733,8 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
     """The placement validators, shared verbatim by POST /api/v1/orders and the
     preflight route (2026-11-08): one code path, so a dry run can never promise
     what the real call would refuse. `spec` carries the order fields (symbol, qty,
-    side, order_type, time_in_force, limit_price, stop_price, split); qty is the
+    side, order_type, time_in_force, limit_price, stop_price, trail_percent,
+    trail_price, split); qty is the
     TOTAL for a split, whose per-child caps the returned chunk plan enforces.
 
     Returns {refusal, price, chunks, checks, symbol, book, daily_used, breaker}:
@@ -822,20 +838,37 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
         return out
     order_type, tif = spec.get("order_type") or "market", spec.get("time_in_force") or "day"
     limit_price, stop_price = spec.get("limit_price"), spec.get("stop_price")
+    trail_percent, trail_price = spec.get("trail_percent"), spec.get("trail_price")
     split = bool(spec.get("split"))
     qty = int(spec.get("qty") or 0)
     shape: tuple | None = None
-    if order_type not in ("market", "limit", "stop"):
-        shape = ("order_type", 422, "machine orders are market, limit or stop only")
-    elif split and order_type == "stop":
+    if order_type not in ("market", "limit", "stop", "stop_limit", "trailing_stop"):
+        shape = ("order_type", 422, "machine orders are market, limit, stop, stop-limit or trailing stop only")
+    elif split and order_type in ("stop", "stop_limit", "trailing_stop"):
         shape = ("validation", 422, "a protective stop is placed as one order; split is for market and limit orders")
-    elif order_type == "stop":
+    elif order_type in ("stop", "stop_limit", "trailing_stop"):
+        # The protective family (stop since 2026-11-02; stop-limit and trailing
+        # stops since issue #623, 2026-11-27): gtc only, each shape carrying
+        # exactly its own fields, all fenced to held shares at pricing below.
         if tif != "gtc":
             shape = ("order_type", 422, "a machine stop is good-till-cancelled: time_in_force must be gtc")
+        elif order_type == "trailing_stop":
+            if (trail_percent is None) == (trail_price is None):
+                shape = ("order_type", 422, "a trailing stop needs exactly one of trail_percent or trail_price")
+            elif trail_percent is not None and not 0 < trail_percent < 100:
+                shape = ("order_type", 422, "trail_percent must be between 0 and 100")
+            elif stop_price is not None:
+                shape = ("order_type", 422, "stop_price is for stop and stop-limit orders")
+            elif limit_price is not None:
+                shape = ("order_type", 422, "limit_price is for limit and stop-limit orders")
+        elif trail_percent is not None or trail_price is not None:
+            shape = ("order_type", 422, "trail fields are for trailing stops")
         elif stop_price is None:
             shape = ("order_type", 422, "a stop order needs a stop_price")
-        elif limit_price is not None:
-            shape = ("order_type", 422, "limit_price is for limit orders")
+        elif order_type == "stop" and limit_price is not None:
+            shape = ("order_type", 422, "limit_price is for limit and stop-limit orders")
+        elif order_type == "stop_limit" and limit_price is None:
+            shape = ("order_type", 422, "a stop-limit order needs a limit_price")
     else:
         if split and tif == "gtc":
             shape = ("validation", 422, "a good-till-cancelled order rests as one order; "
@@ -846,7 +879,9 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
             shape = ("validation", 422, "a good-till-cancelled machine order must be a limit "
                                         "order (stops ride their own gtc path)")
         elif stop_price is not None:
-            shape = ("order_type", 422, "stop_price is for stop orders")
+            shape = ("order_type", 422, "stop_price is for stop and stop-limit orders")
+        elif trail_percent is not None or trail_price is not None:
+            shape = ("order_type", 422, "trail fields are for trailing stops")
         elif order_type == "limit" and limit_price is None:
             shape = ("order_type", 422, "a limit order needs a limit_price")
         elif order_type == "market" and limit_price is not None:
@@ -911,7 +946,7 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
                   ("max_qty", 429, f"cap exceeded: max_qty is {key['max_qty']} per order for this key")):
         return out
     price: float | None = None
-    if order_type == "stop":
+    if order_type in ("stop", "stop_limit", "trailing_stop"):
         try:
             capacity = stop_capacity(symbol, side, book=book)
         except AccountNotConnected:
@@ -927,9 +962,27 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
                     ("position", 422,
                      f"a {side} stop for {qty} exceeds the {capacity} uncovered shares held in {symbol}")):
             return out
-        price = float(stop_price)  # the cap prices a stop at its stop, like a limit at its limit
-        checks.append({"name": "pricing", "ok": True, "blocking": True,
-                       "detail": f"priced at the stop {price}"})
+        if order_type == "trailing_stop":
+            # No fixed trigger exists to price at: the cap prices a trailing
+            # stop at the latest trade, like a market order -- and fails
+            # closed the same way when there is no price to check against.
+            try:
+                price = float(latest_price(symbol))
+            except Exception:  # noqa: BLE001
+                if not is_exit:
+                    gate("pricing", False, f"no latest price for {symbol}; the notional cap cannot be checked",
+                         ("notional_unpriced", 424, f"no latest price for {symbol}; the notional cap cannot be checked"))
+                    return out
+                checks.append({"name": "pricing", "ok": True, "blocking": True,
+                               "detail": f"no latest price for {symbol}; an exit does not need "
+                                         "one (the notional cap does not apply to a closing order)"})
+            else:
+                checks.append({"name": "pricing", "ok": True, "blocking": True,
+                               "detail": f"priced at the latest trade {price} (a trailing stop has no fixed trigger)"})
+        else:
+            price = float(stop_price)  # the cap prices a stop at its stop, like a limit at its limit
+            checks.append({"name": "pricing", "ok": True, "blocking": True,
+                           "detail": f"priced at the stop {price}"})
     elif order_type == "limit":
         price = float(limit_price)  # the cap prices a limit at its limit: no estimate involved
         checks.append({"name": "pricing", "ok": True, "blocking": True,
@@ -985,7 +1038,7 @@ def validate_order(supa, key: dict, spec: dict, *, dry_run: bool = False) -> dic
             return out
     breaker = breakers.check(supa, book)
     out["breaker"] = breaker
-    if breaker["tripped"] and order_type != "stop":  # a stop is already fenced to protect held shares
+    if breaker["tripped"] and order_type not in ("stop", "stop_limit", "trailing_stop"):  # a stop is already fenced to protect held shares
         try:
             closing = breakers.closes_position(side, qty, position_qty(symbol, book=book))
         except Exception:  # noqa: BLE001 -- can't tell it's a closing order, so it isn't one

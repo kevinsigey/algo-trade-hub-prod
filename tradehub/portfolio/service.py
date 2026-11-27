@@ -436,6 +436,7 @@ def _order_row(o: dict, titles: dict[int, str]) -> dict:
             "filled_qty": num("filled_qty"), "type": o.get("type") or o.get("order_type"),
             "time_in_force": o.get("time_in_force"), "status": o.get("status"),
             "limit_price": num("limit_price"), "stop_price": num("stop_price"),
+            "trail_percent": num("trail_percent"), "trail_price": num("trail_price"),
             "filled_avg_price": num("filled_avg_price"),
             "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
             "asset": "option" if _OPTION_SYMBOL.match(asset_symbol or "") else "stock",
