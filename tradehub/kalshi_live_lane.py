@@ -1337,7 +1337,11 @@ def build_scoreboard(supa, now: datetime) -> dict:
             "fee_usd": r.get("fee_usd"), "outcome": r.get("outcome"),
             "pnl": r.get("pnl"), "paper_pnl": r.get("paper_pnl"),
             "window_close": r.get("window_close"),
-        } for r in rows[:12]],
+        # Every fill, plus the newest 2000 orders of any kind, newest
+        # first: the book lists all trades and their P&L. ponytail: the
+        # 2000 cap trims only unfilled/skipped rows; page it if needed.
+        } for i, r in enumerate(rows)
+          if i < 2000 or int(r.get("contracts_filled") or 0) > 0],
     }
     board["balance_at"] = (state.get("balance") or {}).get("at")
     return board

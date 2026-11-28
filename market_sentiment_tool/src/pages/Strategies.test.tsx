@@ -71,7 +71,7 @@ async function open(name: string) {
   fireEvent.click(await screen.findByRole("button", { name: `Open ${name}` }));
   return screen.getByRole("dialog", { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") });
 }
-const OIL = "15-minute rules — oil & gas";
+const OIL = "15-min oil & gas";
 const boardModel = (version: string, label: string, series: string, n: number, needed: number, net: number,
                     extra: Record<string, unknown> = {}) => ({
   version, label, series, trades: n, net_cents: net, low95: -1.2, paired_low95: null, fill_short: 0, too_few: n < 10,
@@ -86,7 +86,7 @@ describe("Strategies", () => {
     render(<MemoryRouter><Strategies /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Strategies", level: 1 })).toBeInTheDocument();
     const live = screen.getByRole("region", { name: "Live models" });
-    for (const name of ["Kalshi live pilot — WTI & Brent", "Stock ideas", OIL, "WTI hourly best strike"]) {
+    for (const name of ["Kalshi live", "Stock ideas", OIL, "WTI hourly strike"]) {
       expect(await within(live).findByRole("region", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("region", { name: "On trial" })).toBeInTheDocument();
@@ -112,7 +112,7 @@ describe("Strategies", () => {
     const oil = screen.getByRole("region", { name: OIL });
     expect(await within(oil).findByText("+14.0¢")).toBeInTheDocument();
     expect(within(oil).getByText(/7 of 300 gated · 57% win · raw \+5\.0¢/)).toBeInTheDocument();
-    const hourly = screen.getByRole("region", { name: "WTI hourly best strike" });
+    const hourly = screen.getByRole("region", { name: "WTI hourly strike" });
     expect(await within(hourly).findByText("38%")).toBeInTheDocument();
     expect(within(hourly).getByText(/9 of 24 hit · \+1\.9¢ a contract/)).toBeInTheDocument();
   });
@@ -184,9 +184,9 @@ describe("Strategies", () => {
                                      Silver: { n: 0, net_per_contract: null, win_rate: null },
                                      Copper: { n: 1, net_per_contract: 0.02, win_rate: 1 } } } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const card = await screen.findByRole("region", { name: "15-minute metals rule" });
+    const card = await screen.findByRole("region", { name: "15-min metals" });
     expect(within(card).getByText("+10.3¢")).toBeInTheDocument();
-    const view = await open("15-minute metals rule");
+    const view = await open("15-min metals");
     for (const label of ["Gold", "Silver", "Copper"]) expect(within(view).getAllByText(label).length).toBeGreaterThan(0);
     expect(within(view).getByText(/3 gated trades · \+13\.0¢ a contract · 67% win/)).toBeInTheDocument();
     expect(within(view).getByText(/0 gated trades · raw 2 trades · −5\.0¢ a contract/)).toBeInTheDocument();
@@ -201,9 +201,9 @@ describe("Strategies", () => {
                 by_series: { Gold: zero, Silver: zero, Copper: zero },
                 gate: { forward: zero, by_series: { Gold: zero, Silver: zero, Copper: zero } } } } });
     render(<MemoryRouter><Strategies /></MemoryRouter>);
-    const card = await screen.findByRole("region", { name: "15-minute metals rule" });
+    const card = await screen.findByRole("region", { name: "15-min metals" });
     expect(within(card).getByText("Accruing")).toBeInTheDocument();
-    const view = await open("15-minute metals rule");
+    const view = await open("15-min metals");
     expect(within(view).getAllByText(/Accruing — no settled gated trades yet/)).toHaveLength(4);
   });
 
@@ -277,7 +277,7 @@ describe("Strategies", () => {
   it("hides the live pilot's dollars from the public and shows them to admin", async () => {
     const pilot = { state: "live", halted: false, halt_reason: null, balance: 9.87, pnl_since_start: -0.13,
                     decisions: 12, fills: 9, live_net_per_contract: 0.02, paper_net_per_contract: 0.05, orders: [] };
-    const NAME = "Kalshi live pilot — WTI & Brent";
+    const NAME = "Kalshi live";
     serve({ "/api/kalshi-demo": { state: "ok", live_pilot: { admin_only: true } } });
     const { unmount } = render(<MemoryRouter><Strategies /></MemoryRouter>);
     const pub = screen.getByRole("region", { name: NAME });

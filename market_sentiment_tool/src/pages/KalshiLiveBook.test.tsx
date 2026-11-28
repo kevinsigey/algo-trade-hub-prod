@@ -55,13 +55,16 @@ describe("Kalshi live book", () => {
     expect(screen.getByText("$0")).toBeInTheDocument();
   });
 
-  it("headlines Positions with the fill count and lists only filled orders", async () => {
+  it("headlines Trades with the fill count and win/loss, lists only fills, skipped orders behind a toggle", async () => {
     const skipped = { ...PILOT.orders[0], id: 8, status: "skipped_no_depth", skip_reason: "no_depth", contracts_filled: 0, pnl: null, fill_price: null };
     show({ ...PILOT, orders: [skipped, ...PILOT.orders] });
-    expect(await screen.findByText(/^fills · \d+ in the latest \d+ orders$/)).toBeInTheDocument();
+    expect(await screen.findByText("1 won · 0 lost · 0 open")).toBeInTheDocument();
     expect(screen.getByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
     expect(screen.queryByText(/skipped/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Trades" }));
+    expect(screen.getByText(/1 trades · 1 settled · P&L/)).toBeInTheDocument();
+    expect(screen.queryByText("skipped no depth")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 orders that did not fill" }));
     expect(screen.getByText("skipped no depth")).toBeInTheDocument();
   });
 
@@ -77,8 +80,8 @@ describe("Kalshi live book", () => {
     expect(await screen.findByText("WTI 15m · 10:00 · YES 41¢")).toBeInTheDocument();
     expect(screen.getAllByText("$10.25").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Running")).toBeInTheDocument();
-    // The orders table is the Positions card's open view.
-    fireEvent.click(screen.getByRole("button", { name: "Open Positions" }));
+    // The trades table is the Trades card's open view.
+    fireEvent.click(screen.getByRole("button", { name: "Open Trades" }));
     expect(screen.getByText("KXWTI15M-26NOV241000-00")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Slippage" })).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getByText("1.0¢")).toBeInTheDocument();
