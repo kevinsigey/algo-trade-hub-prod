@@ -10,6 +10,7 @@ import { FifteenSettlements } from "@/components/FifteenSettlements";
 import { SniperRecord } from "@/components/SniperRecord";
 import { StrikeRecordLine } from "@/components/StrikeRecordLine";
 import { sessionToken } from "@/components/RequireAdmin";
+import { TradesView } from "@/pages/KalshiLiveBook";
 import { GET_JSON_TIMEOUT_MS, getJson } from "@/lib/getJson";
 import type { KalshiDemoPayload } from "@/lib/kalshiDemo";
 
@@ -670,6 +671,7 @@ function PilotCard() {
   const cum = (full?.orders ?? []).filter((o) => o.pnl != null)
     .sort((a, b) => String(a.window_close ?? a.created_at).localeCompare(String(b.window_close ?? b.created_at)))
     .map((o) => ({ pnl: (run += o.pnl ?? 0) }));
+  const wins = (full?.orders ?? []).filter((o) => o.pnl != null && o.pnl > 0).length;
   const blurb = "A $10 live pilot runs the 15-minute oil rule on WTI & Brent with real money. Figures are admin-only.";
   const link = (
     <Link to="/portfolio?book=kalshi" className="relative z-10 inline-flex items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200">
@@ -677,11 +679,11 @@ function PilotCard() {
     </Link>
   );
   return (
-    <DashCard title="Kalshi live pilot — WTI & Brent" meta={REAL_MONEY} className="border-rose-500/30"
+    <DashCard title="Kalshi live" meta={REAL_MONEY} className="border-rose-500/30"
               value={full ? (full.balance == null ? "—" : usdPlain(full.balance)) : "Admin only"}
               valueClass={full ? "text-white" : "text-slate-400"}
               sub={full ? <><span className={toneOf(full.pnl_since_start)}>{money(full.pnl_since_start)}</span> since start · <span className={full.halted ? "text-rose-300" : undefined}>{status}</span></> : <span className="hidden sm:inline">{blurb}</span>}
-              hint="Live orders on a real Kalshi account."
+              hint="The 15-minute oil rule on WTI & Brent, live on a real Kalshi account. Open for every trade and its P&L."
               detail={
                 <div className="space-y-3">
                   {full ? (
@@ -694,6 +696,7 @@ function PilotCard() {
                         {cell("Live vs paper / contract", `${money(full.live_net_per_contract)} vs ${money(full.paper_net_per_contract)}`)}
                       </dl>
                       {cum.length > 1 && <Spark data={cum} lines={[{ key: "pnl", color: run >= 0 ? "#34d399" : "#fb7185" }]} height={120} />}
+                      <TradesView orders={full.orders} />
                     </>
                   ) : <p className="text-sm text-slate-400">{blurb}</p>}
                   {link}
@@ -702,7 +705,7 @@ function PilotCard() {
       {full ? (
         <>
           <Spark data={cum} lines={[{ key: "pnl", color: run >= 0 ? "#34d399" : "#fb7185" }]} height={40} />
-          <p className="mt-1 hidden text-xs tabular-nums text-slate-400 sm:block">Fills {full.fills} of {full.decisions}</p>
+          <p className="mt-1 hidden text-xs tabular-nums text-slate-400 sm:block">{full.fills} trades · {wins} won · <span className={toneOf(run)}>{money(run)}</span> settled</p>
         </>
       ) : null}
       <div className="mt-1 hidden sm:block">{link}</div>
@@ -971,7 +974,7 @@ export default function Strategies() {
       ),
     },
     {
-      id: "fifteen-rule", name: "15-minute rules — oil & gas", stage: "Paper record",
+      id: "fifteen-rule", name: "15-min oil & gas", stage: "Paper record",
       card: {
         value: oilAgg && oilAgg.n > 0 && oilAgg.net_per_contract != null ? cent1(oilAgg.net_per_contract) : "—",
         valueClass: toneOf(oilAgg?.net_per_contract) ?? "text-slate-200",
@@ -1144,7 +1147,7 @@ export default function Strategies() {
       ),
     },
     ...(hasMetals ? [{
-      id: "fifteen-metals", name: "15-minute metals rule", stage: "Paper record" as Stage,
+      id: "fifteen-metals", name: "15-min metals", stage: "Paper record" as Stage,
       card: {
         value: metalAgg && metalAgg.n > 0 && metalAgg.net_per_contract != null ? cent1(metalAgg.net_per_contract) : "Accruing",
         valueClass: toneOf(metalAgg && metalAgg.n > 0 ? metalAgg.net_per_contract : null) ?? "text-slate-400",
@@ -1167,7 +1170,7 @@ export default function Strategies() {
       ),
     }] : []),
     {
-      id: "hourly-picks", name: "WTI hourly best strike", stage: "Paper record",
+      id: "hourly-picks", name: "WTI hourly strike", stage: "Paper record",
       card: {
         value: strike?.settled ? `${Math.round(((strike.hits ?? 0) / strike.settled) * 100)}%` : "—",
         valueClass: toneOf(strike?.net_per_contract) ?? "text-slate-200",

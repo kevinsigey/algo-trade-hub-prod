@@ -1432,12 +1432,12 @@ describe("Portfolio summary and frame (2026-11-25 redesign)", () => {
     }
   });
 
-  it("has no Trade card on the Kalshi book, only Performance and Positions", async () => {
+  it("has no Trade card on the Kalshi book, only Performance and Trades", async () => {
     serveAll();
     pageAt("/portfolio?book=kalshi");
     expect(await screen.findByRole("region", { name: "Kalshi account" })).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Performance" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Positions" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Trades" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Trade" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Open Trade" })).toBeNull();
   });
@@ -1448,7 +1448,7 @@ describe("Portfolio summary and frame (2026-11-25 redesign)", () => {
     expect(await screen.findByRole("dialog", { name: "Performance" })).toBeInTheDocument();
     cleanup();
     pageAt("/portfolio?book=kalshi&tab=trade");
-    await screen.findByRole("region", { name: "Positions" });
+    await screen.findByRole("region", { name: "Trades" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

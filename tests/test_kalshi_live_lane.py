@@ -847,11 +847,14 @@ def test_scoreboard_totals_cover_all_rows(db):
     seed_rows(db, [order_row(status="skipped_cap", target=f"kalshi:s{i}",
                              ticker=f"s{i}", contracts_requested=0,
                              created_at="2026-11-22T15:00:00+00:00")
-                   for i in range(1005)])
+                   for i in range(2005)])
     board = lane.build_scoreboard(db, NOW)
     assert board["pnl_since_start"] == 0.58
     assert board["fills"] == 1 and board["settled"] == 1
-    assert len(board["orders"]) == 12
+    # The newest 2000 orders, plus every fill however old: the book's
+    # trade list never drops a trade.
+    assert len(board["orders"]) == 2001
+    assert board["orders"][-1]["pnl"] == 0.58
 
 
 def test_scoreboard_reads_stored_balance(db, monkeypatch):

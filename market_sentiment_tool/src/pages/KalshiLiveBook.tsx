@@ -103,6 +103,34 @@ export function OrdersTable({ orders }: { orders: KalshiLivePilot["orders"] }) {
   );
 }
 
+/** The Trades card's full view: every fill with its P&L and the total, then every
+ * order that did not fill (skipped or unfilled) behind one toggle. */
+export function TradesView({ orders }: { orders: KalshiLivePilot["orders"] }) {
+  const [rest, setRest] = useState(false);
+  const fills = orders.filter((o) => o.contracts_filled > 0);
+  const other = orders.filter((o) => o.contracts_filled <= 0);
+  const settled = fills.filter((o) => o.pnl != null);
+  const total = settled.reduce((a, o) => a + (o.pnl as number), 0);
+  return (
+    <div className="space-y-3">
+      <p className="text-sm tabular-nums text-slate-300">
+        {fills.length} trades · {settled.length} settled · P&amp;L{" "}
+        <span className={`font-semibold ${tone(settled.length ? total : null)}`}>{settled.length ? signed(total) : "—"}</span>
+      </p>
+      {fills.length ? <OrdersTable orders={fills} /> : <p className="text-xs text-slate-400">No fills yet.</p>}
+      {other.length > 0 && (
+        <div>
+          <button type="button" onClick={() => setRest((v) => !v)} aria-expanded={rest}
+                  className="text-xs font-medium text-slate-400 hover:text-white">
+            {rest ? "Hide" : "Show"} {other.length} orders that did not fill
+          </button>
+          {rest && <OrdersTable orders={other} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export type KalshiRead = {
   /** The pilot, only for the signed-in admin; null for a visitor or before the first read. */
   pilot: KalshiLivePilot | null;
@@ -235,27 +263,31 @@ export function pnlCurve(orders: Order[]): { t: string; cum: number }[] {
 /** Kalshi's two main cards, in the same frame as the paper books: Performance
  * (the pilot's P&L curve and progress) and Positions (open positions and recent
  * fills). No Trade card. */
-export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | "positions" }) {
+export function KalshiMain({ k, open: open_ }: { k: KalshiRead; open?: "performance" | "positions" }) {
   const p = k.pilot;
   if (!p) return null;
   const orders = p.orders;
   const gate = p.gates;
   const curve = pnlCurve(orders);
   const fills = orders.filter((o) => o.contracts_filled > 0);
+  const won = fills.filter((o) => o.pnl != null && o.pnl > 0).length;
+  const lost = fills.filter((o) => o.pnl != null && o.pnl <= 0).length;
+  const open = fills.filter((o) => o.pnl == null).length;
+  const settledPnl = curve.length ? curve[curve.length - 1].cum : null;
   return (
     <div className="grid flex-1 gap-2 lg:grid-cols-2">
       <DashCard title="Performance" value={signed(p.pnl_since_start)} valueClass={tone(p.pnl_since_start)}
                 sub="P&L since start" meta={<span className={REAL_MONEY_BADGE}>REAL MONEY</span>}
                 hint="The live pilot's scoreboard: P&L, fills and the two gates it must clear"
-                defaultOpen={open === "performance"} detailTitle="Live pilot" detail={<LivePilotCard pilot={p} />}>
+                defaultOpen={open_ === "performance"} detailTitle="Live pilot" detail={<LivePilotCard pilot={p} />}>
         <div className="relative min-h-[150px] flex-1">
           {curve.length >= 2 ? (<>
             <div className="absolute inset-0">
               <PnlChart curve={curve} />
             </div>
             <span className="absolute bottom-0 left-0 text-[10px] text-slate-500"
-                  title="Realized P&L of the settled trades among the latest orders. The headline is the balance change since start, which also counts fees and open positions.">
-              settled trades in the latest {orders.length} orders
+                  title="Realized P&L of every settled trade, net of fees.">
+              every settled trade · {curve.length}
             </span>
           </>) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
@@ -273,20 +305,22 @@ export function KalshiMain({ k, open }: { k: KalshiRead; open?: "performance" | 
           <Fig label="Edge gate" value={`${gate.edge.state} · ${gate.edge.settled}/${gate.edge.bar}`} hint="Needs 150 settled trades" />
         </dl>
       </DashCard>
-      <DashCard title="Positions" value={p.fills ?? "—"} sub={`fills · ${fills.length} in the latest ${orders.length} orders`}
-                hint="Recent filled orders. Open for every order, skipped ones included."
-                defaultOpen={open === "positions"} detailTitle={`Live orders · ${orders.length}`}
-                detail={orders.length ? <OrdersTable orders={orders} /> : undefined}>
+      <DashCard title="Trades" value={fills.length} sub={`${won} won · ${lost} lost · ${open} open`}
+                meta={<span className={`tabular-nums ${tone(settledPnl)}`}>{signed(settledPnl)}</span>}
+                hint="Every filled order and its P&L, newest first. Open for all of them, skipped orders included."
+                defaultOpen={open_ === "positions"} detailTitle={`Live trades · ${fills.length}`}
+                detail={orders.length ? <TradesView orders={orders} /> : undefined}>
         {fills.length ? (
           <PeekRows rows={fills.slice(0, PEEK).map((o, i) => ({
-            key: String(o.id ?? `${o.ticker}-${i}`), label: marketName(o), value: signed(o.pnl), valueClass: tone(o.pnl),
+            key: String(o.id ?? `${o.ticker}-${i}`), label: marketName(o),
+            value: o.pnl == null ? "open" : signed(o.pnl), valueClass: o.pnl == null ? "text-slate-400" : tone(o.pnl),
           }))} />
         ) : (
           <p className="text-xs text-slate-400">
             No fills yet. Live since {et(LIVE_SINCE)}: the lane only buys when the oil &amp; gas rule clears its 10-point bar.
           </p>
         )}
-        {orders.length > 0 && <p className="mt-1 text-xs text-slate-400">Show all {orders.length}</p>}
+        {fills.length > PEEK && <p className="mt-1 text-xs text-slate-400">Show all {fills.length}</p>}
       </DashCard>
     </div>
   );
